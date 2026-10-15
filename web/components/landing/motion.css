@@ -1,0 +1,209 @@
+/*
+ * Landing motion vocabulary M1 to M12 (07 8; 08 9.3). Transform and opacity only; CSS only, no Lenis, no GSAP.
+ * Three rules kept from Drop 1 (08 7):
+ *   (a) the kt-odometer rules and the --dur-* token swap on .lp, which odometer.tsx relies on for reduced motion;
+ *   (b) hidden start states exist only under a JavaScript-written attribute: html[data-motion="full"] (written by
+ *       the head script and MotionPreference) or data-post="pending", so everything is visible with scripts off;
+ *   (c) html[data-motion="reduced"] is the single reduced-motion switch, with the media query as the first-paint
+ *       backstop. Both blocks at the bottom must list the same selectors.
+ * Do not put .lp-float and .lp-reveal on one element: both drive `translate`. Hover lift (M4) drives `transform`.
+ */
+@layer theme, base, components, utilities;
+
+@layer components {
+  .lp {
+    /* Easing (07 8) */
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-in-out: cubic-bezier(0.45, 0, 0.55, 1);
+    --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+    /* Durations. --dur-colour is never zeroed (colour is state, not motion). */
+    --dur-fade: 200ms;
+    --dur-lift: 200ms;
+    --dur-toggle: 280ms;
+    --dur-acc: 280ms;
+    --dur-art: 400ms;
+    --dur-sign: 500ms;
+    --dur-rise: 600ms;
+    --dur-colour: 300ms;
+    --stagger: 70ms;
+    --dist-rise: 12px;
+    --dist-reveal: 16px;
+    /* Older names still read by the navbar, odometer and citation demo. */
+    --ease-post: var(--ease-out);
+    --ease-utility: cubic-bezier(0, 0, 0.58, 1);
+    --ease-retract: var(--ease-in);
+    --ease-linear: linear;
+    --dur-swap: 120ms;
+    --dur-row: 240ms;
+    --dur-fall: 320ms;
+    --dur-ink: 360ms;
+    --stagger-char: 18ms;
+    --dist-fall: 14px;
+  }
+
+  /* M1 soft float: hero card, spotlight floating card, step chips. Offset siblings with --float-delay (-1.75s). */
+  .lp-float { animation: lp-float 7s var(--ease-in-out) var(--float-delay, 0s) infinite alternate both; }
+  @keyframes lp-float { from { translate: 0 -4px; } to { translate: 0 4px; } }
+
+  /* M2 parallax: art layers inside a clipped wrapper, 1024 and wider, scroll-driven where supported.
+     Set --parallax (default 24px; far ridges about 0.06x, foreground about 0.14x, cap 48px). */
+  @supports (animation-timeline: view()) {
+    @media (min-width: 1024px) {
+      html[data-motion="full"] .lp .lp-parallax {
+        animation: lp-parallax linear both; animation-timeline: view(); animation-range: cover;
+      }
+    }
+  }
+  @keyframes lp-parallax { from { transform: translateY(calc(-1 * var(--parallax, 24px))); } to { transform: translateY(var(--parallax, 24px)); } }
+
+  /* M3 hero sequence: one shot after load. Set --enter-delay (0, 200, 400ms). Backwards fill only, so hover
+     transforms work afterwards. */
+  html[data-motion="full"] .lp .lp-enter { animation: lp-rise var(--dur-rise) var(--ease-out) var(--enter-delay, 0ms) backwards; }
+  @keyframes lp-rise { from { opacity: 0; transform: translateY(var(--dist-rise)); } }
+
+  /* M4 hover lift: fine pointers only. Floating cards also raise their shadow. */
+  @media (hover: hover) and (pointer: fine) {
+    .lp .lp-lift { transition: transform var(--dur-lift) var(--ease-out), box-shadow var(--dur-lift) var(--ease-out); }
+    .lp .lp-lift:hover { transform: translateY(-3px); }
+    .lp .lp-float-card.lp-lift:hover { box-shadow: var(--edge), var(--sh-over-art-hover); }
+    .lp .lp-float-card.glass.lp-lift:hover { box-shadow: var(--sh-glass-hover); }
+  }
+
+  /* M5 reveal rise: section intros, cards, plan cards (not paragraphs). Scroll-driven, so it needs no observer;
+     set --i for a 70ms-style stagger inside a group. */
+  @supports (animation-timeline: view()) {
+    html[data-motion="full"] .lp .lp-reveal {
+      animation: lp-reveal linear both; animation-timeline: view();
+      animation-range: entry calc(var(--i, 0) * 4%) entry calc(60% + var(--i, 0) * 4%);
+    }
+  }
+  @keyframes lp-reveal { from { opacity: 0; translate: 0 var(--dist-reveal); } to { opacity: 1; translate: none; } }
+
+  /* M6 connector draw, scrubbed by scroll across the gap. Fully drawn unless scroll-driven animations exist,
+     the viewport is 1024 or wider and motion is full.
+     ponytail: a top-to-bottom clip reveal, not stroke-dashoffset; every segment runs downward, so it reads the
+     same, and dash offsets are unreliable with vector-effect: non-scaling-stroke. */
+  @supports (animation-timeline: view()) {
+    @media (min-width: 1024px) {
+      html[data-motion="full"] .lp .lp-joint > svg {
+        animation: lp-draw linear both; animation-timeline: view(); animation-range: entry 20% cover 60%;
+      }
+    }
+  }
+  @keyframes lp-draw { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0 0 0 0); } }
+
+  /* M7 gradient drift: the ::before field of .lp-glow-dusk, .lp-dark-card or a tone panel's art layer.
+     At most two drifting fields per viewport. */
+  .lp .lp-drift::before { animation: lp-drift 48s var(--ease-in-out) infinite alternate both; }
+  @keyframes lp-drift {
+    from { transform: translate(-2%, -1%) rotate(-1.5deg); }
+    to { transform: translate(2%, 1%) rotate(1.5deg); }
+  }
+
+  /* M8 toggle slide: .lp-seg transitions use --dur-toggle (landing.css). Swapped copy cross-fades. */
+  .lp .lp-crossfade { transition: opacity var(--dur-fade) var(--ease-out); }
+
+  /* M9 accordion: the shadcn Accordion in entry-09 (panel timing on --dur-acc there). The icon is
+     <span class="lp-plus" aria-hidden="true"> in the trigger: its vertical bar turns to make a minus when expanded. */
+  .lp .lp-plus {
+    position: relative; display: inline-block; flex: none; width: 28px; height: 28px; border-radius: var(--r-pill); background: var(--sunk);
+  }
+  .lp .lp-plus::before, .lp .lp-plus::after {
+    content: ""; position: absolute; left: 50%; top: 50%; width: 12px; height: 1.5px; margin: -0.75px 0 0 -6px; background: var(--icon);
+  }
+  .lp .lp-plus::after { transform: rotate(90deg); transition: transform var(--dur-fade) var(--ease-out); }
+  .lp [aria-expanded="true"] > .lp-plus::after { transform: rotate(0deg); }
+
+  /* M11 nav state: put .lp-navbar on the header. Nav glass (docs/DESIGN.md "Frosted glass layer") lives on
+     ::before, so the scroll threshold only fades its opacity: the blur radius itself never animates. Glass by
+     default (also the no-JS and no-support state); scroll-driven, transparent at the top and in by 24px. Reduced
+     keeps the same two states but switches at 24px instead of fading. White bottom edge plus an ink hairline
+     under it; no drop shadow. */
+  .lp .lp-navbar::before {
+    content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    background: var(--glass-nav);
+    -webkit-backdrop-filter: var(--glass-nav-blur); backdrop-filter: var(--glass-nav-blur);
+    border-bottom: 1px solid var(--glass-nav-edge);
+    box-shadow: 0 1px 0 var(--glass-nav-hair);
+  }
+  @supports (animation-timeline: scroll()) {
+    html[data-motion] .lp .lp-navbar::before {
+      animation: lp-nav-state linear both; animation-timeline: scroll(root); animation-range: 0 24px;
+    }
+    html[data-motion="reduced"] .lp .lp-navbar::before { animation-timing-function: step-end; }
+    @media (prefers-reduced-motion: reduce) {
+      html:not([data-motion="full"]) .lp .lp-navbar::before { animation-timing-function: step-end; }
+    }
+  }
+  @keyframes lp-nav-state { from { opacity: 0; } }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .lp .lp-navbar::before { background: rgb(247 247 245 / 0.94); }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .lp .lp-navbar::before { background: var(--canvas); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  }
+  @media (forced-colors: active) {
+    .lp .lp-navbar::before {
+      background: Canvas; border-bottom-color: CanvasText; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none;
+    }
+  }
+
+  /* M12 approve stamp: the signature line writes in when it mounts (it only exists after Approve). */
+  html[data-motion="full"] .lp .lp-sign { animation: lp-sign var(--dur-sign) var(--ease-out) both; }
+  @keyframes lp-sign { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+  .lp .lp-sign { display: inline-block; }
+
+  /* Hero painting fade-in (08 9.1): the island writes data-decode="pending", then "done" after img.decode(). */
+  .lp img[data-decode] { transition: opacity var(--dur-art) var(--ease-out); }
+  .lp img[data-decode="pending"] { opacity: 0; }
+
+  /* JS-triggered entrances (rule b): an island writes data-post="pending" on a wrapper, then "live". */
+  .lp [data-post="pending"] .lp-post { opacity: 0; transform: translateY(var(--dist-rise)); }
+  .lp [data-post="live"] .lp-post {
+    transition: opacity var(--dur-rise) var(--ease-out) calc(var(--i, 0) * var(--stagger)),
+      transform var(--dur-rise) var(--ease-out) calc(var(--i, 0) * var(--stagger));
+  }
+
+  /* Refusal line fall (step 2): glyphs drop and fade, 18ms apart. citation-demo.tsx also skips it when reduced. */
+  .lp [data-cite-state="refused"] .kt-letter-fall [style*="--i"] {
+    display: inline-block; transform: translateY(var(--dist-fall)); opacity: 0;
+    transition: transform var(--dur-fall) var(--ease-retract) calc(var(--i) * var(--stagger-char)),
+      opacity var(--dur-fall) var(--ease-retract) calc(var(--i) * var(--stagger-char));
+  }
+
+  /* (a) kt-odometer, kt-odometer-price: digit columns translate to their digit; never wrap or spin. */
+  .lp .kt-odometer__col { display: inline-block; width: 1ch; height: 1lh; overflow: clip; vertical-align: top; }
+  .lp .kt-odometer__stack {
+    display: flex; flex-direction: column; transform: translateY(calc(var(--d, 0) * -1lh));
+    transition: transform var(--dur-row) var(--ease-post);
+  }
+  .lp .kt-odometer-price .kt-odometer__stack { transition-duration: var(--dur-ink); }
+
+  /* ===== Reduced motion (c): the footer control or the OS setting unless the visitor chose Full. =====
+     0.01ms, not 0, so transitionend and animationend still fire. Loops and scroll-linked moves stop outright. */
+  html[data-motion="reduced"] .lp {
+    --dur-fade: 0.01ms; --dur-lift: 0.01ms; --dur-toggle: 0.01ms; --dur-acc: 0.01ms; --dur-art: 0.01ms;
+    --dur-sign: 0.01ms; --dur-rise: 0.01ms; --dur-swap: 0.01ms; --dur-row: 0.01ms; --dur-fall: 0.01ms; --dur-ink: 0.01ms;
+    --stagger: 0ms; --stagger-char: 0ms; --dist-rise: 0px; --dist-reveal: 0px; --dist-fall: 0px;
+  }
+  html[data-motion="reduced"] .lp :is(.lp-float, .lp-parallax, .lp-enter, .lp-reveal, .lp-sign, .lp-joint > svg),
+  html[data-motion="reduced"] .lp .lp-drift::before {
+    animation: none !important; translate: none;
+  }
+  html[data-motion="reduced"] .lp .lp-lift:hover { transform: none; }
+  html[data-motion="reduced"] .lp img[data-decode] { opacity: 1; transition: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    html:not([data-motion="full"]) .lp {
+      --dur-fade: 0.01ms; --dur-lift: 0.01ms; --dur-toggle: 0.01ms; --dur-acc: 0.01ms; --dur-art: 0.01ms;
+      --dur-sign: 0.01ms; --dur-rise: 0.01ms; --dur-swap: 0.01ms; --dur-row: 0.01ms; --dur-fall: 0.01ms; --dur-ink: 0.01ms;
+      --stagger: 0ms; --stagger-char: 0ms; --dist-rise: 0px; --dist-reveal: 0px; --dist-fall: 0px;
+    }
+    html:not([data-motion="full"]) .lp :is(.lp-float, .lp-parallax, .lp-enter, .lp-reveal, .lp-sign, .lp-joint > svg),
+    html:not([data-motion="full"]) .lp .lp-drift::before {
+      animation: none !important; translate: none;
+    }
+    html:not([data-motion="full"]) .lp .lp-lift:hover { transform: none; }
+    html:not([data-motion="full"]) .lp img[data-decode] { opacity: 1; transition: none; }
+  }
+}

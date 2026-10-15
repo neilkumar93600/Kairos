@@ -1,0 +1,32 @@
+import "./landing.css";
+import "./motion.css";
+import type { ReactNode } from "react";
+import { landingCopy } from "@/content/landing-copy";
+import { Navbar } from "@/components/layout/navbar";
+import { Colophon } from "./entries/colophon";
+import { MotionToggle } from "./islands/motion-toggle";
+
+const { nav } = landingCopy;
+
+/**
+ * The .lp scope for "/". Skip links come first so they are the first tab stops. The colophon is the landing's
+ * footer and replaces the shared Footer here; other routes keep theirs. main clips sideways overflow as a safety
+ * net only (08 9.4); full-bleed bands clip themselves.
+ */
+export function LandingShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="lp flex min-h-full flex-1 flex-col">
+      <a className="lp-skip" href="#main">
+        {nav.skipMain}
+      </a>
+      <a className="lp-skip" href="#pricing">
+        {nav.skipPricing}
+      </a>
+      <Navbar variant="landing" sheetExtra={<MotionToggle variant="compact" />} />
+      <main id="main" tabIndex={-1} className="flex-1 overflow-x-clip">
+        {children}
+      </main>
+      <Colophon />
+    </div>
+  );
+}

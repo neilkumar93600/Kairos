@@ -1,0 +1,57 @@
+/* A10 closing band (08 1.10). Colour, grain and drift come from .lp-glow-dusk / .lp-drift in landing.css and motion.css;
+   this file only places the content. Nothing here hides anything, so no-JS and Reduced need no special case. */
+
+/* The closing gap sits above the band (the glow does not fill it). The stack sits at the top and the band is tall
+   enough that the serif line and button end inside the painting's calm upper 55 percent (prompt.md #10); the door
+   and path fill the lower part. ponytail: fixed heights per breakpoint from the measured stack; 200 percent text
+   zoom grows the band but can push the button below the calm line. */
+.lp-start {
+  margin-block-start: var(--gap-closing);
+  min-height: 640px;
+  display: grid;
+  place-items: start center;
+  padding-block: 56px;
+  scroll-margin-top: var(--nav-h);
+}
+@media (min-width: 768px) {
+  .lp-start { min-height: 560px; }
+}
+@media (min-width: 1024px) {
+  .lp-start { min-height: 600px; padding-block-start: 72px; }
+}
+@media (min-width: 1280px) {
+  .lp-start { min-height: 820px; padding-block-start: 80px; }
+}
+
+/* The door painting (prompt.md #10, 3:1), under the glow's ::before (-2) and grain (-1). Bottom-anchored, so the
+   door and path stay in frame at every width; the sky above is what crops. */
+.lp-start__art { position: absolute; inset: 0; z-index: -3; }
+.lp-start__art > img { object-fit: cover; object-position: 50% 100%; }
+
+/* Opens the band into the canvas above and the footer ground below. */
+.lp-start__fade {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: linear-gradient(to bottom, var(--canvas) 0, transparent 14%, transparent 80%, var(--canvas) 100%);
+}
+
+.lp-start__stack {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+}
+.lp-start__stack > .lp-serif-closing { max-width: 11em; }
+@media (min-width: 640px) {
+  .lp-start__tail { white-space: nowrap; }
+}
+
+/* Subline is --ink, not --body: --body is only 3.76:1 on the coral the glow reaches. The min-height holds the
+   lines of the longer approved sentence so the swap never moves the button. */
+.lp-start__stack > .lp-lead {
+  color: var(--ink); margin: 24px auto 0; min-height: 3lh;
+}
+@media (min-width: 640px) {
+  .lp-start__stack > .lp-lead { min-height: 2lh; }
+}
+.lp-start__cta { margin-top: 32px; }
+@media (max-width: 479px) {
+  .lp-start__cta { width: 100%; }
+}

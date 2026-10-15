@@ -1,0 +1,113 @@
+/* Pricing section (08 1.7, A8). Prefixed bp-, scoped under .lp; tokens come from landing.css and globals.css.
+   Unlayered on purpose (beats the components layer), so never set background on a .glass element here: the glass
+   fallbacks in landing.css must keep winning. Outer card 24, inner panel 16 (24 minus the 8 px card padding). */
+
+/* ===== Art banner: headline left on a Linen scrim, light-glass toggle right; stacks below 768 ===== */
+.lp .bp-banner {
+  position: relative; isolation: isolate; overflow: clip; border-radius: var(--r-media);
+  display: flex; flex-direction: column; justify-content: space-between; align-items: flex-start; gap: 28px;
+  min-height: 360px; padding: 28px 20px 20px;
+}
+.lp .bp-banner__art { position: absolute; inset: 0; z-index: -2; }
+.lp .bp-banner__art > img { object-position: 50% 55%; }
+.lp .bp-banner::after {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(180deg, rgb(247 247 245 / 0.8) 0%, rgb(247 247 245 / 0.45) 50%, transparent 75%);
+}
+.lp .bp-banner__copy { max-width: 520px; }
+.lp .bp-banner__sub { margin: 12px 0 0; max-width: 400px; }
+.lp .bp-seg { width: 100%; }
+.lp .bp-seg > label { padding-inline: 8px; }
+
+@media (min-width: 768px) {
+  .lp .bp-banner {
+    flex-direction: row; align-items: flex-end; min-height: 0; aspect-ratio: 3 / 1; padding: 40px;
+  }
+  .lp .bp-banner__art > img { object-position: 50% 42%; }
+  .lp .bp-banner::after {
+    background: linear-gradient(90deg, rgb(247 247 245 / 0.82) 0%, rgb(247 247 245 / 0.5) 42%, transparent 68%);
+  }
+  .lp .bp-seg { width: auto; flex: none; }
+  .lp .bp-seg > label { padding-inline: 16px; }
+}
+@media (min-width: 1280px) {
+  .lp .bp-banner { aspect-ratio: 4 / 1; padding: 48px 56px; }
+}
+
+/* ===== Plan cards: Paper White, ring, inner Bone panel, feature list. Subgrid aligns panels and lists per row. ===== */
+.lp .bp-plans {
+  list-style: none; margin: 16px 0 0; padding: 0;
+  display: grid; grid-template-columns: 1fr; gap: 16px;
+}
+@media (min-width: 768px) { .lp .bp-plans { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1280px) { .lp .bp-plans { grid-template-columns: repeat(4, 1fr); } }
+/* One column: the recommended plan comes first. DOM order stays by price. */
+@media (max-width: 767px) { .lp .bp-card--featured { order: -1; } }
+
+.lp .bp-card {
+  display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 0;
+  padding: 8px; border-radius: var(--r-media); background: var(--surface); box-shadow: var(--edge);
+}
+.lp .bp-panel {
+  position: relative; isolation: isolate; overflow: clip;
+  display: flex; flex-direction: column; gap: 8px; padding: 20px;
+  border-radius: var(--r-card); background: var(--sunk);
+}
+.lp .bp-card--featured .bp-panel { background: transparent; }
+.lp .bp-panel__art { position: absolute; inset: 0; z-index: -2; }
+/* Sky-heavy crop of the footbridge: blue at the top, lilac ridges in the middle, meadow green low down. */
+.lp .bp-panel__art > img { object-position: 30% 0; transform: scale(1.5); transform-origin: 30% 0; }
+/* Strong frost over the painting; the top-right corner stays clear so the light-glass pill sits on art, not glass. */
+.lp .bp-panel__frost {
+  /* Overhangs by 2px and the panel clips it: an edge or an anti-aliased corner let the sharp meadow show as a line. */
+  position: absolute; inset: -2px; z-index: -1; border: 0; border-radius: 0;
+  -webkit-mask-image: radial-gradient(75% 55% at 100% 0%, transparent 20%, #000 100%);
+  mask-image: radial-gradient(75% 55% at 100% 0%, transparent 20%, #000 100%);
+}
+.lp .bp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; }
+.lp .bp-head > h3 { margin: 0; }
+.lp .bp-flag { flex: none; }
+.lp .bp-for { margin: 0; max-width: 34ch; }
+.lp .bp-buy { display: flex; flex-direction: column; margin-top: auto; padding-top: 24px; }
+.lp .bp-price { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; margin: 0; }
+.lp .bp-per { font: 400 16px / 1.2 var(--font-ui); color: var(--faint); }
+.lp .bp-allow { margin: 8px 0 0; }
+.lp .bp-btn { width: 100%; margin-top: 20px; }
+.lp .bp-btn.lp-btn--outlined { background: var(--surface); }
+.lp .bp-note { margin: 10px 0 0; text-align: center; }
+@media (hover: hover) and (pointer: fine) {
+  .lp .bp-btn.lp-btn--outlined:hover { background: var(--surface); border-color: var(--ink); }
+}
+
+.lp .bp-incl { margin: 0; padding: 20px 12px 0; font: 500 14px / 1.4 var(--font-ui); color: var(--ink); }
+.lp .bp-feats {
+  list-style: none; margin: 0; padding: 12px 12px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.lp .bp-feats > li { display: flex; align-items: flex-start; gap: 10px; font: 400 var(--t-body-sm) / 1.5 var(--font-ui); color: var(--body); }
+.lp .bp-feats svg { flex: none; margin-top: 2px; color: var(--icon); }
+
+/* ===== Guarantee banner: pastel gradient under one strong-glass bar ===== */
+.lp .bp-promise {
+  position: relative; isolation: isolate; overflow: clip; margin-top: 16px;
+  display: grid; place-items: center; padding: 28px 16px; border-radius: var(--r-media);
+}
+.lp .bp-promise::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background:
+    radial-gradient(45% 140% at 0% 50%, rgb(170 182 242 / 0.9), transparent 70%),
+    radial-gradient(40% 140% at 100% 40%, rgb(242 184 102 / 0.85), transparent 70%),
+    radial-gradient(35% 120% at 72% 110%, rgb(235 169 180 / 0.85), transparent 70%),
+    linear-gradient(90deg, var(--art-lilac), var(--art-haze));
+}
+.lp .bp-promise__bar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0 20px;
+  margin: 0; padding: 8px 24px; border-radius: var(--r-card); text-align: center;
+  color: var(--ink); font: 500 var(--t-body-sm) / 1.4 var(--font-ui);
+}
+.lp .bp-promise__bar > span { padding-block: 4px; }
+.lp .bp-promise__bar > .lp-link { display: inline-flex; align-items: center; min-height: 44px; }
+@media (min-width: 768px) {
+  .lp .bp-promise { padding: 40px 32px; }
+  .lp .bp-promise__bar { border-radius: var(--r-pill); padding-inline: 28px; }
+}

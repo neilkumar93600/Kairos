@@ -1,0 +1,38 @@
+/* Step 2 sample card (08 1.5.2). A plain stylesheet with lp-cite* names; React flips data-cite-state, CSS does the
+   motion. The refusal fall itself (glyphs drop and fade) lives in motion.css under .kt-letter-fall. */
+
+/* A plain block, not a grid: the SAMPLE chip floats top-right of the card, and a grid would be pushed beside it. */
+.lp-cite { min-width: 0; }
+.lp-cite > * + * { margin-block-start: 12px; }
+
+/* The saved line and its citation chip. */
+.lp-cite__line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 0; color: var(--ink); }
+.lp-cite__line > span:first-child { min-width: 0; }
+
+/* The slot the refused line appears in. It keeps its height so the card never resizes. */
+.lp-cite__slot {
+  clear: both; display: grid; align-items: center; min-height: 32px; padding-block-start: 10px;
+  border-block-start: 1px solid var(--hairline); color: var(--ink);
+}
+.lp-cite__candidate { visibility: hidden; }
+/* data-cite-state lives on the card (.lp-cite__card), the parent of .lp-cite. */
+.lp-cite__card[data-cite-state="shown"] .lp-cite__candidate,
+.lp-cite__card[data-cite-state="refused"] .lp-cite__candidate { visibility: visible; }
+.lp-cite__glyph { display: inline-block; }
+
+.lp-cite__button { width: 100%; }
+
+/* The floating result chip: smaller padding than a full card, and it may wrap on narrow panels. */
+.lp-panel__chip.lp-cite__result {
+  padding: 8px 14px; max-width: calc(100% - 32px); border-radius: var(--r-pill);
+  font: 500 var(--t-caption) / 1.3 var(--font-ui);
+}
+
+/* Art brief: the refusal card sits on the left half and the writing table stays on the right. */
+@media (min-width: 1024px) {
+  .lp-panel__card.lp-cite__card { width: 60%; justify-self: start; margin-inline-start: 5%; }
+}
+
+@media (forced-colors: active) {
+  .lp-cite__slot { border-color: CanvasText; }
+}

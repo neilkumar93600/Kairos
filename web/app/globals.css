@@ -1,0 +1,299 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+/*
+ ---break---
+ */
+/* No dark theme: nothing sets .dark, so shadcn dark: utilities stay inert (without this they follow the OS setting). */
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Kairos tokens: Duna light system (docs/superpowers/specs/2026-10-15-kairos-landing-design/09-style-direction.md 3.1, 6, 7).
+ * 99 percent achromatic UI. Espresso fills buttons only. Aubergine Ink carries text, headings and the logo.
+ * Lime is an 8px status dot with a 1px ink ring, never a fill for anything else. Art hues stay inside art layers.
+ * Cards are separated by a 1px inset ring (--edge), not shadows. --sh-over-art is the one shadow, only over art.
+ */
+:root {
+  color-scheme: light;
+
+  /* Duna set (09 3.1) */
+  --canvas: #f7f7f5;          /* Linen: page background; every art fade ends here */
+  --surface: #ffffff;         /* Paper White: cards, plan cards, the approve mock; surfaces over art are glass */
+  --sunk: #edece7;            /* Bone: nested panels, sample chip, eyebrow pill, FAQ icon, toggle track */
+  --field: #eeeeee;           /* Mist: input fields only */
+  --ink: #1b0624;             /* Aubergine Ink: headings, strong text, logo, featured border, dark card base */
+  --action: #160f0c;          /* Espresso: primary button fill. Nothing else */
+  --action-hover: #2b211c;    /* primary button hover fill only, white label 15.7:1 */
+  --body: #444444;           /* Graphite: body text, input borders. 9.1:1 on Linen */
+  --faint: #5e5566;           /* Deep Ash (09 --muted, renamed: shadcn owns --muted): captions, indices, legal. 6.0:1 on Bone */
+  --icon: #292421;            /* Charcoal: line icons, nav links, connector line */
+  --rule: #898683;            /* Stone: hairlines and ghost-button borders. Never text */
+  --edge: inset 0 0 0 1px rgb(0 0 0 / 0.05);  /* every card edge, a box-shadow (09 --ring, renamed: shadcn owns --ring) */
+  --on-action: #ffffff;       /* label on Espresso, 19.0:1 */
+  --lime: #7fee64;            /* 8px status dot only, with a 1px --ink ring, beside its word */
+  --on-dark: #f7f7f5;         /* text on the one dark card */
+  --on-dark-muted: #c9bfcf;   /* secondary text on the dark card, 10.8:1 */
+  --sh-over-art: 0 1px 2px rgb(27 6 36 / 0.06), 0 12px 32px rgb(27 6 36 / 0.10);  /* surfaces over art only */
+  --sh-over-art-hover: 0 1px 2px rgb(27 6 36 / 0.06), 0 12px 32px rgb(27 6 36 / 0.14);
+
+  /* Frosted glass (docs/DESIGN.md "Frosted glass layer", 09 11): surfaces over art only, never on flat Linen
+     sections. Applied through .glass / .glass-strong / .glass-dark (landing.css). Blur is 12px below 768px. */
+  --glass: rgb(255 255 255 / 0.64);          /* light glass, default */
+  --glass-strong: rgb(255 255 255 / 0.78);   /* text 14px or smaller, dense rows, floating cards */
+  --glass-edge: rgb(255 255 255 / 0.60);
+  --glass-blur: blur(12px) saturate(140%);   /* 20px from 768 up */
+  --glass-hi: inset 0 1px 0 rgb(255 255 255 / 0.70);
+  --glass-hi-hover: inset 0 1px 0 rgb(255 255 255 / 0.85);
+  --sh-glass: var(--glass-hi), var(--sh-over-art);
+  --sh-glass-hover: var(--glass-hi-hover), 0 1px 2px rgb(27 6 36 / 0.06), 0 12px 32px rgb(27 6 36 / 0.14);
+  --glass-nav: rgb(247 247 245 / 0.72);      /* nav after scroll; transparent at top */
+  --glass-nav-blur: blur(12px) saturate(140%);   /* 16px from 768 up */
+  --glass-nav-edge: rgb(255 255 255 / 0.5);
+  --glass-nav-hair: rgb(27 6 36 / 0.06);
+  --glass-dark: rgb(27 6 36 / 0.42);         /* dark CTA card only */
+  --glass-dark-blur: blur(12px);             /* 16px from 768 up */
+  --glass-dark-edge: rgb(255 255 255 / 0.14);
+  --glass-fallback: rgb(255 255 255 / 0.94);
+
+  /* Art layers only (::before of art panels and the raster paintings). Never text, borders, buttons or badges.
+     Kept out of @theme so no utility class can reach them. */
+  --art-sky: #dce7f2;
+  --art-haze: #f6dcc8;
+  --art-river: #e8a87c;
+  --art-ridge: #9c8793;
+  --art-meadow: #a9b48c;
+  --art-periwinkle: #aab6f2;
+  --art-lilac: #d8c8e8;
+  --art-rose: #eba9b4;
+  --art-coral: #f08a5d;
+  --art-amber: #f2b866;
+  --art-olive: #a9a46a;
+  --art-dusk: #6f74c9;
+  --art-ember: #b4553a;
+  --art-mesh-mid: #4a3a5c;
+  --art-mesh-bright: #6b5a86;
+
+  /* Containers (09 7) */
+  --c-wide: 1440px;           /* nav, footer, page max width (owner, 2026-10-15) */
+  --c-main: 1280px;
+  --c-narrow: 1120px;
+  --c-copy: 760px;
+
+  /* Navbar height (07 A0): 60 below 768, 64 to 1023, 72 from 1024. The landing hero pads its top by this. */
+  --nav-h: 60px;
+
+  /* Radius: nothing under 8px (09 7) */
+  --r-input: 8px;
+  --r-card: 16px;
+  --r-media: 24px;
+  --r-pill: 9999px;
+  --r-button: var(--r-pill);  /* buttons are pills */
+
+  --ui-duration: 300ms;
+  --ui-ease: ease-out;
+
+  /*
+   * App aliases. The Drop 1 names stay so every page compiles; they now resolve to the light set.
+   * Status hues: the app keeps one error red and one warning amber (AA on Linen and Paper) for form errors
+   * and failed states; "good" is ink, carried by its word (09 6 rule 5). The landing uses none of the three.
+   */
+  --surface-raised: var(--sunk);   /* active nav, hover wash, skeletons */
+  --mint: var(--sunk);
+  --label: var(--faint);
+  --lead: var(--body);
+  --link: var(--ink);              /* links are ink with underline */
+  --micro: var(--faint);
+  --border: color-mix(in srgb, var(--rule) 40%, transparent);   /* card and table hairlines (decorative) */
+  --divider: var(--border);
+  --good: var(--ink);
+  --warn: #8a5a00;                 /* 5.5:1 on Linen */
+  --bad: #a3261c;                  /* 6.9:1 on Linen */
+  --danger-fill: #a3261c;          /* danger button fill, white label */
+
+  --obsidian: var(--surface-raised);
+  --smoke: var(--surface-raised);
+  --line: var(--border);
+  --subtle: var(--faint);
+
+  /* shadcn (base-ui) variables, shadcn semantics, Duna values (docs/DESIGN.md "Component library").
+     --border is the Duna hairline above. --muted and --accent are SURFACES here, --ring is a COLOUR. */
+  --background: var(--canvas);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface);
+  --popover-foreground: var(--ink);
+  --primary: var(--action);
+  --primary-foreground: var(--on-action);
+  --secondary: var(--sunk);
+  --secondary-foreground: var(--ink);
+  --muted: var(--sunk);                   /* bg-muted: subtle surface (Bone) */
+  --muted-foreground: var(--faint);       /* text-muted-foreground: Deep Ash */
+  --accent: var(--sunk);                  /* bg-accent: hover and selected wash (Bone) */
+  --accent-foreground: var(--ink);
+  --destructive: var(--bad);
+  --input: var(--body);                   /* input borders are Graphite (DESIGN.md Input Field) */
+  --ring: var(--ink);                     /* focus ring colour */
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 1rem;
+  --sidebar: var(--canvas);
+  --sidebar-foreground: var(--icon);
+  --sidebar-primary: var(--action);
+  --sidebar-primary-foreground: var(--on-action);
+  --sidebar-accent: var(--sunk);          /* active item: Bone fill, ink text (DESIGN.md App Shell) */
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+}
+
+@media (width >= 48rem) {
+  :root {
+    --nav-h: 64px;
+    --glass-blur: blur(20px) saturate(140%);
+    --glass-nav-blur: blur(16px) saturate(140%);
+    --glass-dark-blur: blur(16px);
+  }
+}
+@media (width >= 64rem) { :root { --nav-h: 72px; } }
+
+@theme inline {
+  /* Duna names */
+  --color-canvas: var(--canvas);
+  --color-sunk: var(--sunk);
+  --color-field: var(--field);
+  --color-ink: var(--ink);
+  --color-action: var(--action);
+  --color-action-hover: var(--action-hover);
+  --color-on-action: var(--on-action);
+  --color-icon: var(--icon);
+  --color-rule: var(--rule);
+  --color-lime: var(--lime);
+  --color-on-dark: var(--on-dark);
+  --color-on-dark-muted: var(--on-dark-muted);
+
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-mint: var(--mint);
+  --color-foreground: var(--foreground);
+  --color-body: var(--body);
+  --color-faint: var(--faint);      /* Deep Ash; same colour as text-muted-foreground */
+  --color-label: var(--label);
+  --color-lead: var(--lead);
+  --color-link: var(--link);
+  --color-micro: var(--micro);
+  --color-border: var(--border);
+  --color-divider: var(--divider);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-danger-fill: var(--danger-fill);
+
+  /* Legacy aliases (transitional) */
+  --color-subtle: var(--faint);
+  --color-line: var(--border);
+  --color-obsidian: var(--surface-raised);
+  --color-smoke: var(--surface-raised);
+
+  --radius-input: var(--r-input);     /* different names on purpose: a theme variable cannot reference itself */
+  --radius-card: var(--r-card);
+  --radius-media: var(--r-media);
+  --radius-button: var(--r-button);
+  --radius-pill: var(--r-pill);
+
+  --shadow-edge: var(--edge);
+  --shadow-over-art: var(--sh-over-art);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-inter-tight), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  /* Four art lines only, never under 36px (09 5) */
+  --font-serif: var(--font-instrument-serif), ui-serif, Georgia, serif;
+  --font-heading: var(--font-inter-tight), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-destructive: var(--destructive);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  /* Tailwind 4 defaults unspecified borders to currentColor. Make them hairlines. */
+  *, ::before, ::after { border-color: var(--border); }
+
+  html { background: var(--background);
+    @apply font-sans; }
+
+  body {
+    background: var(--background);
+    color: var(--body);
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-feature-settings: "cv11" 1;     /* Inter single-storey a */
+  }
+
+  /* Display face on page and section titles; weight 400. Hierarchy comes from size and tracking. */
+  h1, h2 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    color: var(--foreground);
+  }
+  /* Card titles and sub-headings are Inter 500. */
+  h3, h4 { font-weight: 500; color: var(--foreground); }
+  strong, b { font-weight: 500; }
+  th { font-weight: 400; }
+
+  ::selection { background: var(--ink); color: var(--canvas); }
+
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }   /* 09 6 rule 4 */
+
+  input[type="range"], input[type="radio"], input[type="checkbox"] { accent-color: var(--action); }
+
+  html { scroll-padding-top: calc(var(--nav-h) + 16px); }   /* WCAG 2.4.11: focused targets stay clear of the sticky navbar */
+  * { @apply outline-ring/50; }   /* shadcn default outline colour; :focus-visible above still wins */
+}
+
+/* Motion is utility only in the app: colour changes, 300ms ease-out. */
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 0.01ms !important; }
+  /* Next view-transitions guide: harmless while no <ViewTransition> exists (ARCH 8.2). */
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(*) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+  }
+}

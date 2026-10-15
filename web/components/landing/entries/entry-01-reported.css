@@ -1,0 +1,40 @@
+/* A3 problem trio (08 1.4). Prefixed en01-, scoped under .lp. */
+@layer theme, base, components, utilities;
+
+@layer components {
+  .lp .en01-cards {
+    list-style: none;
+    margin: var(--gap-intro) 0 0;
+    padding: 0;
+    display: grid;
+    gap: 16px;
+  }
+  .lp .en01-card {
+    display: grid;
+    grid-template-columns: 40px 40px 1fr;
+    grid-template-areas: "num icon title" ". . body";
+    column-gap: 12px;
+    align-items: center;
+    background: var(--sunk);
+    border-radius: 20px;
+    padding: 20px;
+  }
+  .lp .en01-num { grid-area: num; font-variant-numeric: tabular-nums; }
+  .lp .en01-icon { grid-area: icon; display: block; width: 40px; height: 40px; color: var(--icon); }
+  .lp .en01-icon svg { display: block; width: 100%; height: 100%; }
+  .lp .en01-title { grid-area: title; margin: 0; color: var(--ink); }
+  .lp .en01-body { grid-area: body; margin: 4px 0 0; color: var(--body); }
+
+  @media (min-width: 1024px) {
+    .lp .en01-cards { grid-template-columns: repeat(3, 1fr); gap: 24px; }
+    .lp .en01-card {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      min-height: 380px;
+      padding: 24px;
+    }
+    .lp .en01-icon { width: 96px; height: 96px; margin: auto 0; align-self: center; }
+    .lp .en01-title { margin-top: 24px; }
+  }
+}

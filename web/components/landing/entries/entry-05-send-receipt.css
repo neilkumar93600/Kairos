@@ -1,0 +1,19 @@
+/* Step 3 receipt card. Scoped by en05- and .lp; the card shell, panel and chip position come from landing.css. */
+
+.lp .en05-rows { clear: both; margin: 12px 0 0; }
+.lp .en05-row {
+  display: grid; grid-template-columns: 4.25rem 1fr; gap: 12px; align-items: baseline;
+  padding-block: 10px; border-top: 1px solid var(--hairline);
+}
+.lp .en05-row > dt { margin: 0; }
+.lp .en05-row > dd { margin: 0; color: var(--ink); }
+
+/* The "Failed · 0 credits" chip: a pill-sized floating card, not a full-padding card. */
+.lp .en05-failed {
+  padding: 8px 14px; border-radius: var(--r-pill); white-space: nowrap;
+  font: 500 var(--t-caption) / 1.2 var(--font-ui);
+}
+
+@media (forced-colors: active) {
+  .lp .en05-row { border-top-color: CanvasText; }
+}

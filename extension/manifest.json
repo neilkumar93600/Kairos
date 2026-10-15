@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Kairos",
+  "short_name": "Kairos",
+  "version": "0.1.0",
+  "description": "Fills and sends the job applications you approved in Kairos, from your own browser.",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage", "sidePanel", "tabs", "alarms"],
+  "host_permissions": [
+    "https://job-boards.greenhouse.io/*",
+    "https://boards.greenhouse.io/*",
+    "https://jobs.lever.co/*",
+    "https://jobs.ashbyhq.com/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "action": { "default_title": "Open Kairos" },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://job-boards.greenhouse.io/*",
+        "https://boards.greenhouse.io/*",
+        "https://jobs.lever.co/*",
+        "https://jobs.ashbyhq.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "externally_connectable": {
+    "matches": ["http://localhost:3000/*"]
+  }
+}

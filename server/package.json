@@ -1,0 +1,53 @@
+{
+  "name": "@auto-career/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Express API, BullMQ worker and Playwright applier. Deployed to Railway as three services.",
+  "scripts": {
+    "dev:api": "tsx watch --env-file=.env src/api.ts",
+    "dev:worker": "tsx watch --env-file=.env src/worker.ts",
+    "dev:applier": "tsx watch --env-file=.env src/applier.ts",
+    "build": "node build.mjs",
+    "start:api": "node dist/api.js",
+    "start:worker": "node dist/worker.js",
+    "start:applier": "node dist/applier.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx --env-file=.env src/migrate.ts",
+    "db:studio": "drizzle-kit studio",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "landing:sample": "tsx scripts/build-landing-fit-sample.ts"
+  },
+  "dependencies": {
+    "@auto-career/shared": "*",
+    "better-auth": "^1.7.7",
+    "bullmq": "^6.3.14",
+    "cors": "^2.8.6",
+    "drizzle-orm": "^0.45.4",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.1",
+    "helmet": "^8.3.0",
+    "ioredis": "^5.0.0",
+    "pino": "^10.4.0",
+    "pino-http": "^11.0.0",
+    "playwright-core": "^1.64.0",
+    "postgres": "^3.4.9",
+    "postmark": "^5.1.0",
+    "stripe": "^23.0.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/supertest": "^7.2.1",
+    "drizzle-kit": "^0.31.11",
+    "esbuild": "^0.28.2",
+    "pino-pretty": "^13.0.0",
+    "supertest": "^7.3.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.4"
+  }
+}

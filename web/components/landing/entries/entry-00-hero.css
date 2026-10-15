@@ -1,0 +1,76 @@
+/*
+ * A1 centred art hero (07 A1, 08 1.2 and 5, 09 8). Unlayered and scoped under .lp, so it wins over landing.css.
+ * Page y values in the specs include the nav. The navbar overlaps the hero by --nav-h (navbar.tsx), so the stage
+ * starts at page y 0 and the spec values apply as written; --pill-top is measured from the nav's bottom edge.
+ */
+.lp .lp-hero {
+  --hero-h: min(100svh + 160px, 860px); /* page y where the hero block ends */
+  --art-top: 380px;                     /* page y where the painting starts */
+  --pill-top: 40px;                     /* nav to status pill */
+  position: relative;
+}
+@media (min-width: 768px) {
+  .lp .lp-hero { --hero-h: 900px; --art-top: 360px; --pill-top: 72px; }
+}
+@media (min-width: 1024px) {
+  .lp .lp-hero { --hero-h: 920px; --art-top: 330px; --pill-top: 88px; }
+}
+@media (min-width: 1280px) {
+  .lp .lp-hero { --hero-h: 1000px; --art-top: 340px; --pill-top: 96px; }
+}
+
+/* Fixed height per breakpoint, so nothing below moves when the painting loads (08 9.1). min-, not block-size,
+   so 200 percent text zoom grows the box instead of clipping the copy. */
+.lp .lp-hero__stage {
+  position: relative; isolation: isolate; overflow: clip;
+  min-block-size: var(--hero-h);
+  padding-block-start: calc(var(--nav-h) + var(--pill-top));
+}
+/* Text scrim (09 6 rule 1), sized to the whole hero including the nav strip, as the spec measures it. */
+.lp .lp-hero__stage::before {
+  content: ""; position: absolute; z-index: -1; inset: 0; pointer-events: none;
+  background: radial-gradient(60% 45% at 50% 30%, rgb(247 247 245 / 0.85), transparent 70%);
+}
+
+/* Full bleed, top and bottom dissolve into the canvas. The gradient placeholder (.lp-art) shows until decode. */
+.lp .lp-hero__art {
+  position: absolute; z-index: -2; inset: var(--art-top) 0 0;
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 33%, #000 85%, transparent 100%);
+}
+/* ponytail: one flat painting, so one parallax layer; split into ridge layers when the layered source lands.
+   The layer overhangs by the parallax travel so no edge shows inside the mask. */
+.lp .lp-hero__layer { position: absolute; inset: -24px 0; --parallax: 24px; }
+.lp .lp-hero__layer img { object-fit: cover; object-position: 50% 60%; }
+
+/* Copy stack, centred on one axis (08 5.1). */
+.lp .lp-hero__copy { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.lp .lp-hero__h1 { max-inline-size: 720px; margin-block-start: 24px; }
+.lp .lp-hero__lead { margin-block-start: 20px; }
+.lp .lp-hero__cta { inline-size: 100%; margin-block-start: 28px; }
+@media (min-width: 768px) {
+  .lp .lp-hero__cta { inline-size: auto; }
+}
+
+/* The one floating card. Below 768: in flow, 24 under the hero, full width minus gutters.
+   No translate here: .lp-float drives `translate`, so centring uses margins. */
+.lp .lp-hero__card { inline-size: calc(100% - 2 * var(--gutter)); margin: 24px auto 0; }
+@media (min-width: 768px) {
+  .lp .lp-hero__card {
+    position: absolute; z-index: 1; top: 620px; left: 50%;
+    inline-size: 320px; margin: 0 0 0 -160px;
+  }
+}
+@media (min-width: 1024px) {
+  .lp .lp-hero__card { top: 600px; left: 40px; inline-size: 280px; margin: 0; }
+}
+@media (min-width: 1280px) {
+  /* x 112 at 1440: the left ridge's foot, clear of the copy column and the sun glint. */
+  .lp .lp-hero__card { top: 620px; left: max(var(--gutter), calc(50% - var(--c-wide) / 2 - 8px)); inline-size: 320px; }
+}
+.lp .lp-hero__card-title { font: 500 15px / 20px var(--font-ui); color: var(--ink); }
+.lp .lp-hero__card-fit {
+  display: flex; align-items: center; gap: 8px; margin-block-start: 8px;
+  font: 400 14px / 20px var(--font-ui); color: var(--body);
+}
+/* Fit number in ink, tabular, no accent colour (09 9.2). */
+.lp .lp-hero__card-fit strong { font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }

@@ -1,0 +1,31 @@
+{
+  "name": "auto-career",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Kairos by Gray Matter Labs: a fit-first AI job application agent.",
+  "workspaces": [
+    "shared",
+    "web",
+    "server",
+    "extension"
+  ],
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev:web": "npm run dev -w @auto-career/web",
+    "dev:api": "npm run dev:api -w @auto-career/server",
+    "dev:worker": "npm run dev:worker -w @auto-career/server",
+    "dev:applier": "npm run dev:applier -w @auto-career/server",
+    "dev:extension": "npm run dev -w @auto-career/extension",
+    "db:generate": "npm run db:generate -w @auto-career/server",
+    "db:migrate": "npm run db:migrate -w @auto-career/server",
+    "infra:up": "docker compose up -d postgres redis",
+    "infra:down": "docker compose down",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  }
+}
