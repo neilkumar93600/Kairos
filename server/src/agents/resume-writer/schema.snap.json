@@ -1,0 +1,97 @@
+{
+  "type": "object",
+  "properties": {
+    "suggestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sectionId": {
+            "type": "string"
+          },
+          "entryId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lineId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "rewrite",
+              "add",
+              "remove"
+            ]
+          },
+          "after": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "why": {
+            "type": "string"
+          },
+          "factIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "needsFact": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "role",
+                      "project",
+                      "skill",
+                      "metric",
+                      "education",
+                      "certification"
+                    ]
+                  },
+                  "question": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "question"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sectionId",
+          "entryId",
+          "lineId",
+          "action",
+          "after",
+          "why",
+          "factIds",
+          "needsFact"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "suggestions"
+  ],
+  "additionalProperties": false
+}

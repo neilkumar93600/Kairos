@@ -4,8 +4,9 @@ import { creditsPerInvoice, planForPriceId } from "../src/services/stripe";
 
 describe("billing math", () => {
   it("grants a week's share on weekly invoices and three months on quarterly ones", () => {
-    expect(creditsPerInvoice("starter", "month")).toBe(400);
-    expect(creditsPerInvoice("starter", "week")).toBe(94);
+    expect(creditsPerInvoice("starter", "month")).toBe(1000);
+    expect(creditsPerInvoice("starter", "week")).toBe(234);
+    expect(creditsPerInvoice("starter", "quarter")).toBe(3000);
     expect(creditsPerInvoice("pro", "quarter")).toBe(3600);
   });
 

@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { normalizeAshby } from "../src/services/ats/ashby";
+import { ashby, normalizeAshby } from "../src/services/ats/ashby";
 import { greenhouse, normalizeGreenhouse } from "../src/services/ats/greenhouse";
-import { normalizeLever } from "../src/services/ats/lever";
+import { lever, normalizeLever } from "../src/services/ats/lever";
 import { BoardNotFoundError } from "../src/services/ats/types";
 
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8"));
@@ -33,6 +33,19 @@ describe("ATS normalizers", () => {
     const jobs = normalizeAshby(fixture("ashby"));
     expect(jobs).toHaveLength(1);
     expect(jobs[0]).toMatchObject({ externalId: "9f8e", salaryMinUsd: 150000, salaryMaxUsd: 190000 });
+  });
+
+  it("gives every board request a 15 s abort signal", async () => {
+    const signals: (AbortSignal | null | undefined)[] = [];
+    const fake = async (_url: string, init?: RequestInit) => {
+      signals.push(init?.signal);
+      return new Response("not found", { status: 404 });
+    };
+    await greenhouse.fetchPosting("acme", "1", fake);
+    await lever.fetchPosting("acme", "1", fake);
+    await ashby.fetchPosting("acme", "1", fake);
+    expect(signals).toHaveLength(3);
+    for (const s of signals) expect(s).toBeInstanceOf(AbortSignal);
   });
 
   it("raises BoardNotFoundError on a 404 board", async () => {

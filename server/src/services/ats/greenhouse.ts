@@ -51,4 +51,11 @@ export const greenhouse: AtsAdapter = {
     if (status === 404) throw new BoardNotFoundError("greenhouse", boardToken);
     return normalizeGreenhouse(body, boardToken);
   },
+  /** Single-posting endpoint: GET boards-api.greenhouse.io/v1/boards/{token}/jobs/{id}?content=true. */
+  async fetchPosting(boardToken, postingId, fetchImpl = fetch) {
+    const url = `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(boardToken)}/jobs/${encodeURIComponent(postingId)}?content=true`;
+    const { status, body } = await getJson(url, fetchImpl);
+    if (status === 404) return null;
+    return normalizeGreenhouse({ jobs: [body] }, boardToken)[0] ?? null;
+  },
 };

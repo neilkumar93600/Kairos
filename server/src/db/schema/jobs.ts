@@ -39,6 +39,8 @@ export const jobs = pgTable(
     postedAt: timestamp("posted_at", { withTimezone: true }),
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
     closedAt: timestamp("closed_at", { withTimezone: true }),
+    /** "board" when polled, "manual_url" when a user pasted the posting's link. */
+    source: text("source").$type<"board" | "manual_url">().notNull().default("board"),
     raw: jsonb("raw"),
   },
   (t) => [

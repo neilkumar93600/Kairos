@@ -7,7 +7,7 @@ import { db } from "../db/client";
 import { applications, jobs } from "../db/schema";
 import { env } from "../lib/env";
 import { logger } from "../lib/logger";
-import { recordSubmission } from "../services/submissions";
+import { claimForCloud, recordSubmission } from "../services/submissions";
 import type { JobData } from "./queues";
 
 /**
@@ -34,8 +34,8 @@ export async function processCloudApply(job: Job<JobData["cloud-apply"]>) {
     .innerJoin(jobs, eq(jobs.id, applications.jobId))
     .where(eq(applications.id, job.data.applicationId));
   if (!row || row.app.status !== "approved" || row.app.channel !== "cloud") return { skipped: true };
-
-  await db().update(applications).set({ status: "submitting", updatedAt: new Date() }).where(eq(applications.id, row.app.id));
+  // The read above can be stale: a withdraw may land in between. Only the conditional claim decides.
+  if (!(await claimForCloud(db(), row.app.id))) return { skipped: true };
 
   const fail = (reason: string): SubmissionReport => ({
     applicationId: row.app.id,

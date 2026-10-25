@@ -75,7 +75,13 @@ profileRouter.post("/facts", validateBody(factSchema), async (req, res) => {
   res.status(201).json({ fact });
 });
 
-profileRouter.patch("/facts/:id", validateBody(factSchema.partial()), async (req, res) => {
+/** No default on confirmed: editing a fact's text must never confirm it as a side effect (truth lock reads confirmed facts). */
+export const factPatchSchema = factSchema
+  .extend({ confirmed: z.boolean() })
+  .partial()
+  .refine((body) => Object.keys(body).length > 0, "Send at least one field to change");
+
+profileRouter.patch("/facts/:id", validateBody(factPatchSchema), async (req, res) => {
   const id = parseParam(z.uuid(), req.params.id);
   const [fact] = await db()
     .update(facts)

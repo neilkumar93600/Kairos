@@ -27,13 +27,24 @@ export interface Plan {
   answerMemory: boolean;
   highlighted: boolean;
   features: string[];
+  /** Per-feature daily AI allowance (F11). Enforced by the workspace routes from P3. */
+  aiDailyAllowance: AiFeatureAllowance;
+  /** Per-user pipeline model-spend cap per UTC day (03-agent-runtime.md 9.1). [est] pending owner. */
+  dailyModelSpendCapUsd: number;
+  /** Interactive backstop per UTC day: 1.5 x sum(allowance x unit max cost) (9.1). */
+  interactiveSpendBackstopUsd: number;
 }
+
+/** The five metered AI features (F11); the ai_usage.feature check constraint names the same set. */
+export const AI_FEATURES = ["resumeSuggestions", "jobTailor", "applicationDrafts", "jobImports", "rehearsalTurns"] as const;
+export type AiFeature = (typeof AI_FEATURES)[number];
+export type AiFeatureAllowance = Record<AiFeature, number>;
 
 export const PLANS: readonly Plan[] = [
   {
     id: "free",
     name: "Free",
-    tagline: "Try it on 25 real applications.",
+    tagline: "See it work on your own search.",
     priceUsd: { week: null, month: 0, quarter: null },
     applicationsPerCycle: 25,
     resumeProfiles: 1,
@@ -51,13 +62,16 @@ export const PLANS: readonly Plan[] = [
       "Chrome extension apply",
       "Reply tracking by forwarding",
     ],
+    aiDailyAllowance: { resumeSuggestions: 10, jobTailor: 5, applicationDrafts: 10, jobImports: 3, rehearsalTurns: 0 },
+    dailyModelSpendCapUsd: 0.5,
+    interactiveSpendBackstopUsd: 0.62,
   },
   {
     id: "starter",
     name: "Starter",
     tagline: "For a steady search at your own pace.",
     priceUsd: { week: 6, month: 19, quarter: 45 },
-    applicationsPerCycle: 400,
+    applicationsPerCycle: 1000,
     resumeProfiles: 1,
     cloudApplier: false,
     priorityPolling: false,
@@ -66,12 +80,15 @@ export const PLANS: readonly Plan[] = [
     answerMemory: true,
     highlighted: false,
     features: [
-      "400 submitted applications per 30 days",
+      "1,000 submitted applications per 30 days",
       "Everything in Free",
       "Tailored cover letters",
       "Answer memory you approve",
       "Failed submits cost nothing",
     ],
+    aiDailyAllowance: { resumeSuggestions: 60, jobTailor: 30, applicationDrafts: 60, jobImports: 20, rehearsalTurns: 0 },
+    dailyModelSpendCapUsd: 2,
+    interactiveSpendBackstopUsd: 1.31,
   },
   {
     id: "pro",
@@ -93,6 +110,9 @@ export const PLANS: readonly Plan[] = [
       "Weekly outcome report and targeting suggestions",
       "3 resume profiles",
     ],
+    aiDailyAllowance: { resumeSuggestions: 120, jobTailor: 60, applicationDrafts: 120, jobImports: 40, rehearsalTurns: 20 },
+    dailyModelSpendCapUsd: 5,
+    interactiveSpendBackstopUsd: 2.7,
   },
   {
     id: "max",
@@ -114,6 +134,9 @@ export const PLANS: readonly Plan[] = [
       "10 resume profiles",
       "Priority support",
     ],
+    aiDailyAllowance: { resumeSuggestions: 240, jobTailor: 120, applicationDrafts: 240, jobImports: 80, rehearsalTurns: 40 },
+    dailyModelSpendCapUsd: 8,
+    interactiveSpendBackstopUsd: 4.53,
   },
 ];
 

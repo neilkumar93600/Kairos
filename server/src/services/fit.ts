@@ -1,5 +1,10 @@
 import { z } from "zod";
 import type { Preferences } from "@auto-career/shared";
+import { UNTRUSTED_RULES, untrusted } from "../ai/untrusted";
+import { runAgent } from "../llm/gateway";
+import { fitScorer } from "../agents/fit-scorer/spec";
+import { gatewayEnabled, serviceCtx } from "../llm/wire";
+import type { AgentCallContext } from "../agents/types";
 import { chatJson } from "./llm";
 
 export interface FitJob {
@@ -82,21 +87,30 @@ const fitScoreSchema = z.object({
 });
 
 /** Model judgment for jobs that passed the hard filters. Uses the fast tier to keep cost near a cent. */
-export async function scoreFit(job: FitJob, profileSummary: string): Promise<z.infer<typeof fitScoreSchema>> {
+export async function scoreFit(
+  job: FitJob,
+  profileSummary: string,
+  callCtx?: AgentCallContext,
+): Promise<z.infer<typeof fitScoreSchema>> {
+  if (!callCtx && gatewayEnabled()) callCtx = serviceCtx({});
+  if (callCtx) {
+    // The gateway path (LLM_GATEWAY=anthropic): the hard filters above are the caller's gate, so
+    // this call only ever sees pairs that passed them (INV-1).
+    const out = await runAgent(fitScorer, { profileSummary, job: { ...job } }, callCtx);
+    return { score: out.data.score, reasons: out.data.reasons };
+  }
+  const posting = `${job.title} at ${job.companyName}\nLocation: ${job.location ?? "unspecified"}${job.remote ? " (remote)" : ""}\n\n${job.descriptionText}`;
   return chatJson({
     tier: "fast",
+    agent: "fit-score",
     schema: fitScoreSchema,
     maxTokens: 300,
     messages: [
       {
         role: "system",
-        content:
-          'You judge how well a candidate fits a job. Reply as JSON {"score": 0-100, "reasons": [1-4 short reasons]}. Use only facts in the candidate summary. Penalize missing must-have requirements.',
+        content: `You judge how well a candidate fits a job. Reply as JSON {"score": 0-100, "reasons": [1-4 short reasons]}. Use only facts in the candidate summary. Penalize missing must-have requirements.\n\n${UNTRUSTED_RULES}`,
       },
-      {
-        role: "user",
-        content: `Candidate:\n${profileSummary}\n\nJob: ${job.title} at ${job.companyName}\nLocation: ${job.location ?? "unspecified"}${job.remote ? " (remote)" : ""}\n\n${job.descriptionText.slice(0, 6000)}`,
-      },
+      { role: "user", content: `Candidate:\n${profileSummary}\n\nJob:\n${untrusted("job", posting, 6300)}` },
     ],
   });
 }

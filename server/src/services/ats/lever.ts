@@ -49,4 +49,11 @@ export const lever: AtsAdapter = {
     if (status === 404) throw new BoardNotFoundError("lever", boardToken);
     return normalizeLever(body);
   },
+  /** Single-posting endpoint: GET api.lever.co/v0/postings/{site}/{id}. */
+  async fetchPosting(boardToken, postingId, fetchImpl = fetch) {
+    const url = `https://api.lever.co/v0/postings/${encodeURIComponent(boardToken)}/${encodeURIComponent(postingId)}`;
+    const { status, body } = await getJson(url, fetchImpl);
+    if (status === 404) return null;
+    return normalizeLever([body])[0] ?? null;
+  },
 };

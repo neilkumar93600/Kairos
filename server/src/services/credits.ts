@@ -9,6 +9,18 @@ export function availableCredits(balance: number, inFlight: number): number {
   return Math.max(0, balance - inFlight);
 }
 
+/**
+ * Balance minus in-flight in ONE statement, so both come from the same snapshot. Two separate reads under
+ * READ COMMITTED can straddle a submission report (debit and status change commit together) and overstate by one.
+ */
+export async function availableCreditsNow(db: Db | Tx, userId: string): Promise<number> {
+  const rows = (await db.execute(sql`
+    select (select coalesce(sum(${creditLedger.delta}), 0) from ${creditLedger} where ${creditLedger.userId} = ${userId})::int
+         - (select count(*) from ${applications} where ${applications.userId} = ${userId} and ${applications.status} in ('approved', 'submitting'))::int
+      as available`)) as unknown as { available: number }[];
+  return Math.max(0, Number(rows[0]?.available ?? 0));
+}
+
 export async function getBalance(db: Db | Tx, userId: string): Promise<number> {
   const [row] = await db
     .select({ balance: sql<number>`coalesce(sum(${creditLedger.delta}), 0)::int` })

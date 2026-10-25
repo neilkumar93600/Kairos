@@ -1,6 +1,6 @@
 import type { Job } from "bullmq";
 import { and, eq, isNull, lt, notInArray, or, sql } from "drizzle-orm";
-import { db } from "../db/client";
+import { db, type Db } from "../db/client";
 import { companies, jobs } from "../db/schema";
 import { logger } from "../lib/logger";
 import { atsAdapters, BoardNotFoundError } from "../services/ats";
@@ -31,6 +31,21 @@ async function scheduleDuePolls(): Promise<number> {
   return due.length;
 }
 
+/**
+ * Closes the company's open jobs that the board no longer lists. An empty board is treated as a transient
+ * outage, not "every job closed": closing everything would expire every match and draft for that company.
+ */
+// ponytail: a board that truly closes every posting stays open until it lists something again; add a second-empty-poll rule (needs a column) if that matters.
+export async function closeMissingJobs(database: Db, companyId: string, openIds: string[]): Promise<number> {
+  if (openIds.length === 0) return 0;
+  const closed = await database
+    .update(jobs)
+    .set({ closedAt: new Date() })
+    .where(and(eq(jobs.companyId, companyId), isNull(jobs.closedAt), notInArray(jobs.externalId, openIds)))
+    .returning({ id: jobs.id });
+  return closed.length;
+}
+
 async function pollCompany(companyId: string): Promise<{ added: number; closed: number }> {
   const [company] = await db().select().from(companies).where(eq(companies.id, companyId));
   if (!company || !company.active) return { added: 0, closed: 0 };
@@ -45,18 +60,11 @@ async function pollCompany(companyId: string): Promise<{ added: number; closed: 
           .returning({ id: jobs.id })
       : [];
 
-    const openIds = postings.map((p) => p.externalId);
-    const closed = await db()
-      .update(jobs)
-      .set({ closedAt: new Date() })
-      .where(
-        and(eq(jobs.companyId, companyId), isNull(jobs.closedAt), openIds.length ? notInArray(jobs.externalId, openIds) : sql`true`),
-      )
-      .returning({ id: jobs.id });
+    const closed = await closeMissingJobs(db(), companyId, postings.map((p) => p.externalId));
 
     await db().update(companies).set({ lastPolledAt: new Date(), lastPollError: null }).where(eq(companies.id, companyId));
     await Promise.all(inserted.map((j) => enqueue("score-matches", { jobId: j.id }, `score-${j.id}`)));
-    return { added: inserted.length, closed: closed.length };
+    return { added: inserted.length, closed };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await db()

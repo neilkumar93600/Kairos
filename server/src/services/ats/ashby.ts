@@ -64,4 +64,13 @@ export const ashby: AtsAdapter = {
     if (status === 404) throw new BoardNotFoundError("ashby", boardToken);
     return normalizeAshby(body);
   },
+  // ponytail: Ashby's public API has no single-posting endpoint, so this reads the whole board and picks one; fine until a board holds thousands of postings.
+  async fetchPosting(boardToken, postingId, fetchImpl = fetch) {
+    try {
+      return (await ashby.fetchBoard(boardToken, fetchImpl)).find((j) => j.externalId === postingId) ?? null;
+    } catch (err) {
+      if (err instanceof BoardNotFoundError) return null;
+      throw err;
+    }
+  },
 };

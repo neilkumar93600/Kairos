@@ -1,10 +1,9 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import { pinoHttp } from "pino-http";
 import { toNodeHandler } from "better-auth/node";
 import type { AuthGateway } from "./lib/auth";
-import { logger } from "./lib/logger";
+import { httpLogger } from "./lib/logger";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
 import { healthRouter, type HealthCheck } from "./routes/health";
 import { apiRouter } from "./routes";
@@ -24,7 +23,7 @@ export function createApp(deps: AppDeps) {
   app.disable("x-powered-by");
 
   app.use(helmet());
-  app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => req.url === "/health" } }));
+  app.use(httpLogger());
   app.use(cors({ origin: deps.corsOrigins, credentials: true, allowedHeaders: ["content-type", "authorization"] }));
 
   app.use(healthRouter(deps.healthChecks));

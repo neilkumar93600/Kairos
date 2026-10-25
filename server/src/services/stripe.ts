@@ -5,6 +5,13 @@ import { HttpError } from "../lib/errors";
 
 let client: Stripe | undefined;
 
+/**
+ * For Stripe calls made while holding a DB transaction or a user's request (webhook re-fetch, delete-account cancel).
+ * The SDK default is an 80 s timeout with 2 retries, which could pin a pooled connection for minutes; Stripe
+ * redelivers webhooks and the user can retry a delete, so fail fast instead.
+ */
+export const INLINE_REQUEST = { timeout: 10_000, maxNetworkRetries: 0 } satisfies Stripe.RequestOptions;
+
 export function stripe(): Stripe {
   const key = env().STRIPE_SECRET_KEY;
   if (!key) throw new HttpError(503, "billing_unavailable", "Billing is not configured");

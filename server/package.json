@@ -15,11 +15,14 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file=.env src/migrate.ts",
     "db:studio": "drizzle-kit studio",
+    "agents:snap": "node --import tsx --import ./scripts/md-register.mjs scripts/agents-snap.ts",
+    "agents:lock": "node --import tsx --import ./scripts/md-register.mjs scripts/agents-lock.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "landing:sample": "tsx scripts/build-landing-fit-sample.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.1.0",
     "@auto-career/shared": "*",
     "better-auth": "^1.7.7",
     "bullmq": "^6.3.14",

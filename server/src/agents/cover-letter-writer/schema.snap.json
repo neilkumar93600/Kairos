@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "properties": {
+    "paragraphs": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "At least 1 characters. At most 5000 characters."
+          },
+          "factIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 30 items."
+          }
+        },
+        "required": [
+          "text",
+          "factIds"
+        ],
+        "additionalProperties": false
+      },
+      "description": "At most 12 items."
+    }
+  },
+  "required": [
+    "paragraphs"
+  ],
+  "additionalProperties": false
+}

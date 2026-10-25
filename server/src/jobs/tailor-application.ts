@@ -1,6 +1,6 @@
 import type { Job } from "bullmq";
-import { and, eq } from "drizzle-orm";
-import type { ApplicationAnswer } from "@auto-career/shared";
+import { and, eq, sql } from "drizzle-orm";
+import type { ApplicationAnswer, ResumeLine } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, companies, facts, jobs, profiles, savedAnswers, user } from "../db/schema";
 import { logger } from "../lib/logger";
@@ -19,17 +19,22 @@ export async function processTailorApplication(job: Job<JobData["tailor-applicat
     .where(eq(applications.id, job.data.applicationId));
   if (!row || row.app.status !== "draft") return { skipped: true };
 
-  const userFacts = await db()
-    .select({ id: facts.id, kind: facts.kind, text: facts.text })
-    .from(facts)
-    .where(and(eq(facts.userId, row.app.userId), eq(facts.confirmed, true)));
-
-  const { kept, rejected } = await tailorResume(userFacts, {
-    title: row.job.title,
-    companyName: row.companyName,
-    descriptionText: row.job.descriptionText,
-  });
-  if (rejected.length) logger.info({ applicationId: row.app.id, rejected: rejected.length }, "truth lock dropped lines");
+  // The web's Create draft queues this job, then PATCHes the user's accepted lines. When those are already here,
+  // tailoring would be thrown away by the write below, so the model call is skipped.
+  let kept: ResumeLine[] = [];
+  if (row.app.resumeLines.length === 0) {
+    const userFacts = await db()
+      .select({ id: facts.id, kind: facts.kind, text: facts.text })
+      .from(facts)
+      .where(and(eq(facts.userId, row.app.userId), eq(facts.confirmed, true)));
+    const tailored = await tailorResume(userFacts, {
+      title: row.job.title,
+      companyName: row.companyName,
+      descriptionText: row.job.descriptionText,
+    });
+    kept = tailored.kept;
+    if (tailored.rejected.length) logger.info({ applicationId: row.app.id, rejected: tailored.rejected.length }, "truth lock dropped lines");
+  }
 
   const [firstName, ...rest] = row.person.name.trim().split(/\s+/);
   const base: ApplicationAnswer[] = [
@@ -50,6 +55,12 @@ export async function processTailorApplication(job: Job<JobData["tailor-applicat
     ...saved.map((s) => ({ fieldKey: s.questionKey, label: s.label, value: s.answer, source: "saved_answer" as const })),
   ];
 
-  await db().update(applications).set({ resumeLines: kept, answers, updatedAt: new Date() }).where(eq(applications.id, row.app.id));
+  // Each column is written only while it is still empty at write time: a PATCH that landed during the model call wins.
+  const ifEmpty = (column: typeof applications.resumeLines | typeof applications.answers, value: unknown[]) =>
+    sql`CASE WHEN ${column} = '[]'::jsonb THEN ${JSON.stringify(value)}::jsonb ELSE ${column} END`;
+  await db()
+    .update(applications)
+    .set({ resumeLines: ifEmpty(applications.resumeLines, kept), answers: ifEmpty(applications.answers, answers), updatedAt: new Date() })
+    .where(and(eq(applications.id, row.app.id), eq(applications.status, "draft")));
   return { lines: kept.length, answers: answers.length };
 }

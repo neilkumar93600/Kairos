@@ -8,3 +8,5 @@ process.env.INBOUND_WEBHOOK_SECRET ??= "test-inbound-secret";
 process.env.STRIPE_PRICES ??= JSON.stringify({ "starter:month": "price_starter_month", "pro:week": "price_pro_week" });
 process.env.NODE_ENV = "test";
 process.env.LOG_LEVEL = "fatal";
+// The gateway's userHash and stable fence nonce need the key; tests never hit the network.
+process.env.USER_HASH_KEY ??= Buffer.alloc(32, 7).toString("base64");

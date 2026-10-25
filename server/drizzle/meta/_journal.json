@@ -8,6 +8,20 @@
       "when": 1791884438413,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792752430420,
+      "tag": "0001_resume_workspace",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792851220097,
+      "tag": "0002_platform_02_llm_ledger",
+      "breakpoints": true
     }
   ]
 }

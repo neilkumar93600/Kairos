@@ -1,0 +1,38 @@
+{
+  "fit-scorer": {
+    "active": 1,
+    "versions": {
+      "1": "4a7fb84b833f4d048212bd6acad80b7a0479768b698ee236f13468eb69f675ed"
+    }
+  },
+  "resume-parser": {
+    "active": 1,
+    "versions": {
+      "1": "9d478c531a649f8d3da83b746de04979cfe050fb7d6e80b785a09a4428b4cc6f"
+    }
+  },
+  "resume-tailor": {
+    "active": 1,
+    "versions": {
+      "1": "56daa5a999d31075f51f084de24cfe646cc044c5c458076702f98d60bf12f5f7"
+    }
+  },
+  "resume-writer": {
+    "active": 1,
+    "versions": {
+      "1": "93689092284ef700de6e68175b3f6f6d9206733237a658b41a2664bae6c34066"
+    }
+  },
+  "answer-drafter": {
+    "active": 1,
+    "versions": {
+      "1": "3dac8c06ecec6f8322020b46d68736e158b339d8587627d63f41d46089bb97f8"
+    }
+  },
+  "cover-letter-writer": {
+    "active": 1,
+    "versions": {
+      "1": "0f7d34505f4b1b33213da00fbd4be820bfa017916c78ddf376fcfbcb39013f7e"
+    }
+  }
+}

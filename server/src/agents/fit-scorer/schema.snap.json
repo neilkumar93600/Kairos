@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "properties": {
+    "score": {
+      "type": "integer",
+      "description": "At least 0. At most 100."
+    },
+    "reasons": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "At least 1 characters. At most 200 characters."
+      },
+      "description": "At most 4 items."
+    }
+  },
+  "required": [
+    "score",
+    "reasons"
+  ],
+  "additionalProperties": false
+}

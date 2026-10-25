@@ -1,5 +1,5 @@
 import { boolean, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import type { Preferences } from "@auto-career/shared";
+import type { Preferences, ResumeInput } from "@auto-career/shared";
 import { user } from "./auth";
 import { factKind } from "./enums";
 
@@ -36,6 +36,39 @@ export const resumeProfiles = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("resume_profiles_user_idx").on(t.userId)],
+);
+
+/**
+ * The structured base resume the workspace edits (web contract: GET/PUT /api/resume).
+ * ponytail: one per user while the web contract has a single resume; key on (userId, resumeProfileId) when slots ship.
+ */
+export const resumes = pgTable(
+  "resumes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    resumeProfileId: uuid("resume_profile_id").references(() => resumeProfiles.id, { onDelete: "set null" }),
+    document: jsonb("document").$type<ResumeInput>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("resumes_user_uq").on(t.userId)],
+);
+
+/** A snapshot per save, so every change to the base resume can be undone. */
+export const resumeRevisions = pgTable(
+  "resume_revisions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    resumeId: uuid("resume_id")
+      .notNull()
+      .references(() => resumes.id, { onDelete: "cascade" }),
+    document: jsonb("document").$type<ResumeInput>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("resume_revisions_resume_idx").on(t.resumeId, t.createdAt)],
 );
 
 /** Atomic facts parsed from a resume. Tailored lines must cite these ids (the truth lock). */

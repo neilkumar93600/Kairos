@@ -36,10 +36,28 @@ const envSchema = z.object({
       }
     }),
 
-  LLM_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
-  LLM_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
-  LLM_MODEL_FAST: z.string().default("replace-with-a-small-cheap-model"),
-  LLM_MODEL_SMART: z.string().default("replace-with-a-stronger-model"),
+  // Model per agent: docs/superpowers/specs/2026-10-15-kairos-backend-design/_research/anthropic-models.md
+  ANTHROPIC_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** High-volume agents: parsing, scoring, drafting, first-pass verification. */
+  ANTHROPIC_MODEL_FAST: z.string().default("claude-haiku-5-5"),
+  /** Verifier escalations and the interactive resume writer. */
+  ANTHROPIC_MODEL_SMART: z.string().default("claude-sonnet-5-5"),
+
+  // Agent gateway (03-agent-runtime.md 16.1). Legacy reads ANTHROPIC_API_KEY only; the gateway
+  // reads the per-workspace keys and models live in the agent specs.
+  LLM_GATEWAY: z.enum(["anthropic", "legacy"]).default("legacy"),
+  ANTHROPIC_KEY_INTERACTIVE: z.preprocess(emptyToUndefined, z.string().optional()),
+  ANTHROPIC_KEY_BATCH: z.preprocess(emptyToUndefined, z.string().optional()),
+  ANTHROPIC_KEY_EVALS: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Stub URL for tests and load tests; refused in production. */
+  ANTHROPIC_BASE_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  /** 32 random bytes, base64; keys userHash and the stable fence nonce. */
+  USER_HASH_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  LLM_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(200).default(20),
+  LLM_RPM_HAIKU: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).optional()),
+  LLM_RPM_SONNET: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).optional()),
+  /** Only the evals and llm:record scripts set this; allows a real client under NODE_ENV=test. */
+  ALLOW_LLM_NETWORK: z.preprocess(emptyToUndefined, z.coerce.number().optional()),
 
   CHROMIUM_EXECUTABLE_PATH: z.preprocess(emptyToUndefined, z.string().optional()),
   APPLIER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
@@ -50,6 +68,14 @@ const envSchema = z.object({
   // that would put sign-up and reset codes in the logs, so refuse to boot.
   if (e.NODE_ENV === "production" && !e.POSTMARK_SERVER_TOKEN) {
     ctx.addIssue({ code: "custom", path: ["POSTMARK_SERVER_TOKEN"], message: "required in production" });
+  }
+  // Gateway rules (03-agent-runtime.md 15.1, 16.1): the stub URL and the user-hash key.
+  if (e.NODE_ENV === "production" && e.ANTHROPIC_BASE_URL && e.ANTHROPIC_BASE_URL !== "https://api.anthropic.com") {
+    ctx.addIssue({ code: "custom", path: ["ANTHROPIC_BASE_URL"], message: "must be absent or https://api.anthropic.com in production" });
+  }
+  if (e.NODE_ENV === "production" && e.LLM_GATEWAY === "anthropic") {
+    if (!e.ANTHROPIC_KEY_INTERACTIVE) ctx.addIssue({ code: "custom", path: ["ANTHROPIC_KEY_INTERACTIVE"], message: "required in production when LLM_GATEWAY=anthropic" });
+    if (!e.USER_HASH_KEY) ctx.addIssue({ code: "custom", path: ["USER_HASH_KEY"], message: "required in production when LLM_GATEWAY=anthropic" });
   }
 });
 

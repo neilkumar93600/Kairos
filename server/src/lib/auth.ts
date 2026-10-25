@@ -2,7 +2,10 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { bearer, emailOTP, oneTimeToken } from "better-auth/plugins";
 import { randomBytes } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { db, schema } from "../db/client";
+import { cancelBillingForDeletedUser } from "../services/billing-events";
+import { INLINE_REQUEST, stripe } from "../services/stripe";
 import { env } from "./env";
 import { logger } from "./logger";
 import { sendEmail } from "./mailer";
@@ -41,8 +44,23 @@ function createAuth() {
         ? { google: { clientId: e.GOOGLE_CLIENT_ID, clientSecret: e.GOOGLE_CLIENT_SECRET } }
         : {},
     user: {
-      // Settings > Delete account. Cascades remove the profile, applications, ledger and replies.
-      deleteUser: { enabled: true },
+      // Settings > Delete account. Stripe is cancelled first, then cascades remove the profile, applications, ledger and replies.
+      deleteUser: {
+        enabled: true,
+        // A Stripe outage throws here, which aborts the deletion: billing must never outlive the account.
+        beforeDelete: async (deleted) => {
+          if (!env().STRIPE_SECRET_KEY) return;
+          const [row] = await db()
+            .select({ stripeCustomerId: schema.subscriptions.stripeCustomerId })
+            .from(schema.subscriptions)
+            .where(eq(schema.subscriptions.userId, deleted.id));
+          const cancelled = await cancelBillingForDeletedUser(row?.stripeCustomerId ?? null, {
+            list: async (customer) => (await stripe().subscriptions.list({ customer, status: "all", limit: 100 }, INLINE_REQUEST)).data,
+            cancel: (id) => stripe().subscriptions.cancel(id, {}, INLINE_REQUEST),
+          });
+          if (cancelled) logger.info({ userId: deleted.id, cancelled }, "subscriptions cancelled before account deletion");
+        },
+      },
     },
     session: {
       expiresIn: 60 * 60 * 24 * 30,

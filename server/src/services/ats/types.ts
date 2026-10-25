@@ -21,6 +21,8 @@ export interface AtsAdapter {
   provider: AtsProvider;
   /** Reads every open posting on a public board. Throws BoardNotFoundError on 404. */
   fetchBoard(boardToken: string, fetchImpl?: FetchLike): Promise<NormalizedJob[]>;
+  /** Reads one posting by its board id, or null when it is missing or closed. Only calls the provider's public API. */
+  fetchPosting(boardToken: string, postingId: string, fetchImpl?: FetchLike): Promise<NormalizedJob | null>;
 }
 
 export class BoardNotFoundError extends Error {
@@ -58,8 +60,12 @@ export function looksRemote(...values: (string | null | undefined)[]): boolean {
   return values.some((v) => (v ? /\bremote\b/i.test(v) : false));
 }
 
+/** Every board request goes through here. A board that hangs fails after 15 s instead of holding an import or a poll. */
 export async function getJson(url: string, fetchImpl: FetchLike): Promise<{ status: number; body: unknown }> {
-  const res = await fetchImpl(url, { headers: { accept: "application/json", "user-agent": "KairosBot/1.0 (+https://kairos.app/bot)" } });
+  const res = await fetchImpl(url, {
+    headers: { accept: "application/json", "user-agent": "KairosBot/1.0 (+https://kairos.app/bot)" },
+    signal: AbortSignal.timeout(15_000),
+  });
   if (res.status === 404) return { status: 404, body: null };
   if (!res.ok) throw new Error(`GET ${url} failed with ${res.status}`);
   return { status: res.status, body: await res.json() };

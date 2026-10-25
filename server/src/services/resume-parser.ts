@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { FACT_KINDS } from "@auto-career/shared";
+import { runAgent } from "../llm/gateway";
+import { resumeParser } from "../agents/resume-parser/spec";
+import { gatewayEnabled } from "../llm/wire";
+import type { AgentCallContext } from "../agents/types";
 import { chatJson } from "./llm";
 
 const parsedFactsSchema = z.object({
@@ -11,9 +15,16 @@ const parsedFactsSchema = z.object({
 export type ParsedFact = z.infer<typeof parsedFactsSchema>["facts"][number];
 
 /** Splits resume text into atomic facts the user confirms during onboarding. */
-export async function parseResumeToFacts(resumeText: string): Promise<ParsedFact[]> {
+export async function parseResumeToFacts(resumeText: string, callCtx?: AgentCallContext): Promise<ParsedFact[]> {
+  if (callCtx ?? gatewayEnabled()) {
+    // The gateway path (LLM_GATEWAY=anthropic). Contact redaction joins when the route passes the
+    // profile (10.2); the resume arrives fenced already.
+    const out = await runAgent(resumeParser, { resumeText }, callCtx ?? {});
+    return out.data.facts;
+  }
   const result = await chatJson({
-    tier: "smart",
+    tier: "fast",
+    agent: "resume-parser",
     schema: parsedFactsSchema,
     maxTokens: 4000,
     messages: [

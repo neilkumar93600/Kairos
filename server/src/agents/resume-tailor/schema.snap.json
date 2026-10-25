@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "properties": {
+    "lines": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "section": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "At least 1 characters. At most 400 characters."
+          },
+          "factIds": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "section",
+          "text",
+          "factIds"
+        ],
+        "additionalProperties": false
+      },
+      "description": "At most 60 items."
+    }
+  },
+  "required": [
+    "lines"
+  ],
+  "additionalProperties": false
+}

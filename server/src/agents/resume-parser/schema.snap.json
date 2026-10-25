@@ -1,0 +1,44 @@
+{
+  "type": "object",
+  "properties": {
+    "facts": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "role",
+              "project",
+              "skill",
+              "metric",
+              "education",
+              "certification"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "description": "At least 3 characters. At most 400 characters."
+          },
+          "sourceSpan": {
+            "type": "string",
+            "description": "At least 1 characters. At most 400 characters."
+          }
+        },
+        "required": [
+          "kind",
+          "text",
+          "sourceSpan"
+        ],
+        "additionalProperties": false
+      },
+      "description": "At most 200 items."
+    }
+  },
+  "required": [
+    "facts"
+  ],
+  "additionalProperties": false
+}

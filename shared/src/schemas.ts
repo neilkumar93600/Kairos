@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SENIORITY_LEVELS, WORK_AUTHORIZATIONS } from "./types";
+import { FACT_KINDS, SENIORITY_LEVELS, WORK_AUTHORIZATIONS } from "./types";
 
 /** Search settings the fit gate enforces before any model call. */
 export const preferencesSchema = z.object({
@@ -76,3 +76,108 @@ export const contactMessageSchema = z.object({
   message: z.string().trim().min(10).max(4000),
 });
 export type ContactMessage = z.infer<typeof contactMessageSchema>;
+
+/* ---- Resume workspace (docs/superpowers/specs/2026-10-23-resume-workspace, section 6) ---- */
+
+export const RESUME_SECTION_KINDS = ["summary", "skills", "experience", "projects", "education", "certifications", "custom"] as const;
+export type ResumeSectionKind = (typeof RESUME_SECTION_KINDS)[number];
+
+/** One entry in a section: a role, project or degree with its lines. Summary and skills use one entry. */
+export const resumeEntrySchema = z.object({
+  id: z.string(),
+  heading: z.string().max(200),
+  subheading: z.string().max(200).nullable(),
+  meta: z.string().max(120).nullable(),
+  headingFactId: z.string().nullable(),
+  hidden: z.boolean(),
+  lines: z.array(resumeLineSchema).max(40),
+});
+export type ResumeEntry = z.infer<typeof resumeEntrySchema>;
+
+export const resumeSectionSchema = z.object({
+  id: z.string(),
+  kind: z.enum(RESUME_SECTION_KINDS),
+  title: z.string().min(1).max(60),
+  hidden: z.boolean(),
+  entries: z.array(resumeEntrySchema).max(30),
+});
+export type ResumeSection = z.infer<typeof resumeSectionSchema>;
+
+export const resumeContactSchema = z.object({
+  name: z.string().max(120),
+  email: z.string().max(200),
+  phone: z.string().max(40),
+  location: z.string().max(120),
+  links: z.array(z.string().max(300)).max(6),
+});
+export type ResumeContact = z.infer<typeof resumeContactSchema>;
+
+/** The structured base resume. Every line keeps the truth lock: resumeLineSchema needs at least one fact id. */
+export const resumeInputSchema = z.object({
+  name: z.string().min(1).max(120),
+  density: z.enum(["comfortable", "compact"]),
+  contact: resumeContactSchema,
+  sections: z.array(resumeSectionSchema).max(12),
+});
+export type ResumeInput = z.infer<typeof resumeInputSchema>;
+export const resumeSchema = resumeInputSchema.extend({ id: z.string(), updatedAt: z.iso.datetime() });
+export type Resume = z.infer<typeof resumeSchema>;
+
+/** A proposal from the Resume Writer. needsFact set means there is no text to accept, only a question. */
+export const resumeSuggestionSchema = z.object({
+  id: z.string(),
+  sectionId: z.string(),
+  entryId: z.string().nullable(),
+  lineId: z.string().nullable(),
+  action: z.enum(["rewrite", "add", "remove"]),
+  before: z.string().nullable(),
+  after: z.string().nullable(),
+  why: z.string().max(300),
+  factIds: z.array(z.string()),
+  needsFact: z.object({ kind: z.enum(FACT_KINDS), question: z.string().max(200) }).nullable(),
+});
+export type ResumeSuggestion = z.infer<typeof resumeSuggestionSchema>;
+
+export const SUGGESTION_SCOPES = ["resume", "section", "entry", "line", "summary", "skills"] as const;
+export const REFINE_OPTIONS = ["shorter", "longer", "result_first", "natural", "use_numbers"] as const;
+export const suggestionRequestSchema = z.object({
+  scope: z.enum(SUGGESTION_SCOPES),
+  sectionId: z.string().optional(),
+  entryId: z.string().optional(),
+  lineId: z.string().optional(),
+  jobId: z.string().optional(),
+  refine: z.enum(REFINE_OPTIONS).optional(),
+  /** The user's own words. The server saves it as an unconfirmed fact; only facts can be cited. */
+  note: z.string().trim().min(3).max(500).optional(),
+});
+export type SuggestionRequest = z.infer<typeof suggestionRequestSchema>;
+
+/**
+ * Deterministic match of a posting against confirmed facts (backend teardown F1, no LLM): Requirements coverage 40,
+ * Keyword match 30, Job title 20, Seniority 10. An unverifiable input leaves the denominator, never the numerator.
+ */
+export const jobFitSchema = z.object({
+  jobId: z.string(),
+  title: z.string(),
+  company: z.string(),
+  score: z.number().int().min(0).max(100),
+  basis: z.string(),
+  band: z.enum(["poor", "fair", "great"]).optional(),
+  categories: z
+    .array(z.object({ name: z.string(), points: z.number().min(0), max: z.number().min(0), reason: z.string().nullable() }))
+    .optional(),
+  requirements: z.array(
+    z.object({ id: z.string(), text: z.string(), required: z.boolean(), status: z.enum(["covered", "unconfirmed", "missing"]), factIds: z.array(z.string()) }),
+  ),
+  keywords: z.array(z.object({ term: z.string(), status: z.enum(["in_resume", "has_fact", "no_fact"]), factIds: z.array(z.string()) })),
+});
+export type JobFit = z.infer<typeof jobFitSchema>;
+
+export const importJobSchema = z.object({ url: z.url().max(500) });
+export type ImportJobInput = z.infer<typeof importJobSchema>;
+
+export const draftRequestSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("answer"), fieldKey: z.string().min(1).max(200) }),
+  z.object({ kind: z.literal("cover_letter") }),
+]);
+export type DraftRequest = z.infer<typeof draftRequestSchema>;

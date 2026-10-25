@@ -1,0 +1,37 @@
+/**
+ * Every route the frozen clients call (web/lib/api.ts, web/hooks/*.ts, extension/src/lib/api.ts), recorded 2026-10-23.
+ * Used by test/contract.test.ts (auth guard) and test/contract.int.test.ts (signed-in routing). Add, never rename.
+ */
+export const FROZEN_ROUTES: [method: "get" | "post" | "put" | "patch" | "delete", path: string][] = [
+  ["get", "/api/me"],
+  ["get", "/api/profile"],
+  ["put", "/api/profile/contact"],
+  ["put", "/api/profile/preferences"],
+  ["post", "/api/profile/resumes"],
+  ["get", "/api/profile/facts"],
+  ["post", "/api/profile/facts"],
+  ["patch", "/api/profile/facts/00000000-0000-4000-8000-000000000000"],
+  ["delete", "/api/profile/facts/00000000-0000-4000-8000-000000000000"],
+  ["get", "/api/matches"],
+  ["post", "/api/matches/00000000-0000-4000-8000-000000000000/queue"],
+  ["post", "/api/matches/00000000-0000-4000-8000-000000000000/skip"],
+  ["get", "/api/applications"],
+  ["get", "/api/applications?status=draft"],
+  ["get", "/api/applications/00000000-0000-4000-8000-000000000000"],
+  ["patch", "/api/applications/00000000-0000-4000-8000-000000000000"],
+  ["post", "/api/applications/approve"],
+  ["post", "/api/applications/00000000-0000-4000-8000-000000000000/withdraw"],
+  ["post", "/api/applications/00000000-0000-4000-8000-000000000000/drafts"],
+  ["get", "/api/credits"],
+  ["get", "/api/inbox"],
+  ["post", "/api/billing/checkout"],
+  ["post", "/api/billing/portal"],
+  ["get", "/api/resume"],
+  ["put", "/api/resume"],
+  ["post", "/api/resume/suggestions"],
+  ["post", "/api/jobs/import"],
+  ["get", "/api/jobs/00000000-0000-4000-8000-000000000000/fit"],
+  ["post", "/api/jobs/00000000-0000-4000-8000-000000000000/tailor"],
+  ["get", "/api/extension/queue"],
+  ["post", "/api/extension/report"],
+];

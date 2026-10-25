@@ -1,35 +1,61 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getPlan, type PlanId, type SubmissionReport, type SubmitChannel } from "@auto-career/shared";
 import type { Db } from "../db/client";
 import { applications, subscriptions } from "../db/schema";
 import { conflict, forbidden, notFound, paymentRequired } from "../lib/errors";
-import { availableCredits, chargeSubmission, countInFlight, getBalance } from "./credits";
+import { PAID_STATUSES } from "./billing-events";
+import { availableCreditsNow, chargeSubmission } from "./credits";
 
 export async function planFor(db: Db, userId: string): Promise<PlanId> {
   const [row] = await db.select({ plan: subscriptions.plan, status: subscriptions.status }).from(subscriptions).where(eq(subscriptions.userId, userId));
-  if (!row || !["active", "trialing"].includes(row.status)) return "free";
+  if (!row || !PAID_STATUSES.includes(row.status)) return "free";
   return row.plan;
 }
 
 /**
- * Moves drafts to approved. Checks credits up front so a user never approves more than they can send,
- * and blocks the cloud channel on plans without the cloud applier.
+ * Moves ready drafts to approved and blocks the cloud channel on plans without the cloud applier. A draft is ready
+ * when tailoring has written resume lines AND answers (the profile fields), so an empty or nameless application
+ * can never reach an employer. Credits are checked against the drafts that actually moved; a shortfall throws,
+ * which rolls the whole approval back.
  */
 export async function approveApplications(db: Db, userId: string, ids: string[], channel: SubmitChannel): Promise<string[]> {
   const plan = getPlan(await planFor(db, userId));
   if (channel === "cloud" && !plan.cloudApplier) throw forbidden("The cloud applier is on Pro and Max");
 
   return db.transaction(async (tx) => {
-    const available = availableCredits(await getBalance(tx, userId), await countInFlight(tx, userId));
-    if (available < ids.length) throw paymentRequired(`You have ${available} credits left for ${ids.length} applications`);
+    // One approval at a time per user: two tabs reading the same balance would otherwise both commit.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${userId}))`);
+    const available = await availableCreditsNow(tx, userId);
 
     const updated = await tx
       .update(applications)
       .set({ status: "approved", channel, approvedAt: new Date(), updatedAt: new Date() })
-      .where(and(eq(applications.userId, userId), inArray(applications.id, ids), eq(applications.status, "draft")))
+      .where(
+        and(
+          eq(applications.userId, userId),
+          inArray(applications.id, ids),
+          eq(applications.status, "draft"),
+          sql`jsonb_array_length(${applications.resumeLines}) > 0`,
+          sql`jsonb_array_length(${applications.answers}) > 0`,
+        ),
+      )
       .returning({ id: applications.id });
+    if (updated.length > available) throw paymentRequired(`You have ${available} credits left for ${updated.length} applications`);
     return updated.map((u) => u.id);
   });
+}
+
+/**
+ * The cloud applier's claim: approved -> submitting in one conditional update, so a withdraw that lands after the
+ * job was queued wins and the form is never opened. Returns false when there is nothing to send.
+ */
+export async function claimForCloud(db: Db, applicationId: string): Promise<boolean> {
+  const claimed = await db
+    .update(applications)
+    .set({ status: "submitting", updatedAt: new Date() })
+    .where(and(eq(applications.id, applicationId), eq(applications.status, "approved"), eq(applications.channel, "cloud")))
+    .returning({ id: applications.id });
+  return claimed.length > 0;
 }
 
 /** Records what the extension or cloud applier saw. Only a successful submission costs a credit. */
