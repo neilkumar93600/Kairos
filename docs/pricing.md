@@ -1,10 +1,10 @@
 # Kairos pricing
 
-Last updated 2026-10-13 · Source of truth in code: `shared/src/plans.ts`
+Last updated 2026-10-23 (Starter raised from 400 to 1,000 applications, owner decision) · Source of truth in code: `shared/src/plans.ts`
 
 ## Bottom line
 
-Four plans, and you pay for one thing: an application that actually went through. Free gives 25 submitted applications once. Starter is $19 a month for 400, Pro is $39 for 1,200 and adds the cloud applier, Max is $79 for 3,000 and adds 5-minute polling of the companies you target. Weekly and quarterly billing exist for people on a short clock (OPT) or a long search. Failed submissions cost nothing, and billing pauses itself when an offer email arrives.
+Four plans, and you pay for one thing: an application that actually went through. Free gives 25 submitted applications once. Starter is $19 a month for 1,000, Pro is $39 for 1,200 and adds the cloud applier, Max is $79 for 3,000 and adds 5-minute polling of the companies you target. Weekly and quarterly billing exist for people on a short clock (OPT) or a long search. Failed submissions cost nothing, and billing pauses itself when an offer email arrives.
 
 These are launch prices. Test them with the beta survey below before treating them as final.
 
@@ -26,8 +26,8 @@ The model is a subscription with a usage allowance. A credit is spent only when 
 | Monthly | $0 | $19 | $39 | $79 |
 | Weekly | | $6 | $12 | $25 |
 | Quarterly | | $45 | $95 | $189 |
-| Submitted applications | 25 once | 400 / 30 days | 1,200 / 30 days | 3,000 / 30 days |
-| Cost per application at full use (monthly) | | $0.048 | $0.033 | $0.026 |
+| Submitted applications | 25 once | 1,000 / 30 days | 1,200 / 30 days | 3,000 / 30 days |
+| Cost per application at full use (monthly) | | $0.019 | $0.033 | $0.026 |
 | Resume profiles | 1 | 1 | 3 | 10 |
 | Chrome extension apply | Yes | Yes | Yes | Yes |
 | Cloud applier (browser closed) | | | Yes | Yes |
@@ -47,12 +47,12 @@ Each paid step has one reason to move up, not a pile of features:
 ### Weekly and quarterly math
 
 - Weekly price is set so four weeks cost more than a month (Starter $6 a week is about $26 a month), which keeps monthly the default while letting someone with three weeks left on OPT pay only for those weeks.
-- Weekly invoices grant `ceil(applicationsPerCycle × 7 / 30)` credits: Starter 94, Pro 280, Max 700.
-- Quarterly is about 20% off three months (Starter $45 vs $57, Pro $95 vs $117, Max $189 vs $237) and grants three cycles at once: 1,200, 3,600 and 9,000.
+- Weekly invoices grant `ceil(applicationsPerCycle × 7 / 30)` credits: Starter 234, Pro 280, Max 700.
+- Quarterly is about 20% off three months (Starter $45 vs $57, Pro $95 vs $117, Max $189 vs $237) and grants three cycles at once: 3,000, 3,600 and 9,000.
 
 ### Rollover
 
-Unused paid credits roll over while the subscription is active, up to two invoices' worth of the plan's grant: on monthly billing Starter keeps up to 800, Pro 2,400 and Max 6,000; on weekly billing 188, 560 and 1,400; on quarterly billing 2,400, 7,200 and 18,000. Anything above that expires when the next invoice is paid, with an `expiry` ledger row the user can see. The free grant never expires. Build: Task 12 in `docs/06-implementation-plan.md`.
+Unused paid credits roll over while the subscription is active, up to two invoices' worth of the plan's grant: on monthly billing Starter keeps up to 2,000, Pro 2,400 and Max 6,000; on weekly billing 468, 560 and 1,400; on quarterly billing 6,000, 7,200 and 18,000. Anything above that expires when the next invoice is paid, with an `expiry` ledger row the user can see. The free grant never expires. Build: Task 12 in `docs/06-implementation-plan.md`.
 
 ## Competitor benchmarks
 
@@ -63,9 +63,9 @@ Collected on 2026-10-13 from public pages and reviews ([Scoutify's Tsenta review
 | Tsenta | $19 / $39 / $99 per month | 600 / 1,500 / 4,500 | $0.032 / $0.026 / $0.022 |
 | Scoutify (Sniper) | $25 per week | up to 500 per week | $0.05 |
 | Sprout | $19.99 per week | 50 | $0.40 |
-| Kairos | $19 / $39 / $79 per month | 400 / 1,200 / 3,000 | $0.048 / $0.033 / $0.026 |
+| Kairos | $19 / $39 / $79 per month | 1,000 / 1,200 / 3,000 | $0.019 / $0.033 / $0.026 |
 
-Positioning: the same entry price as Tsenta with fewer applications per dollar on purpose. The fit gate drops jobs that do not fit, so a user needs fewer submissions to reach the same number of interviews, and failed ones are free. Max is priced below Tsenta's top plan because 3,000 fit-checked applications a month is already more than most searches need.
+Positioning: at the entry price Kairos gives more than Tsenta (1,000 against 600 for $19, owner decision 2026-10-23). Pro and Max keep fewer applications per dollar on purpose: the fit gate drops jobs that do not fit, so a user needs fewer submissions to reach the same number of interviews, and failed ones are free. Max is priced below Tsenta's top plan because 3,000 fit-checked applications a month is already more than most searches need.
 
 ## Cost floor
 

@@ -95,7 +95,7 @@ Goal: a paid beta where users trust what goes out under their name.
 11. Given a form with required fields the filler cannot answer, when the filler runs with submit = true, then it does not click submit and reports the count of empty required fields. *(unit test + live Greenhouse, Lever and Ashby forms)*
 12. Given a forwarded email containing "pleased to offer", when it is classified, then it is tagged `offer` and an active Stripe subscription is paused.
 13. Given a redelivered Stripe webhook, when it arrives, then it is ignored (stripe_events idempotency).
-14. Given a weekly Starter invoice, when it is paid, then 94 credits are granted (400 × 7 / 30, rounded up). *(unit test)*
+14. Given a weekly Starter invoice, when it is paid, then 234 credits are granted (1,000 × 7 / 30, rounded up). *(unit test)*
 15. Given a Greenhouse board on a custom domain, when jobs are polled, then each apply URL points at the Greenhouse embed form, not the employer's careers page. *(unit test + live board)*
 
 ## Open questions

@@ -270,7 +270,7 @@ Owner: backend agent · Depends on: nothing · Inputs: `docs/pricing.md` rollove
 
 **Interfaces:** `rolloverExpiry(balanceAfterGrant: number, grant: number): number` returns the credits to expire, `max(0, balanceAfterGrant - 2 * grant)`, where `grant = creditsPerInvoice(plan, interval)`. Capping by the invoice's own grant keeps a fresh quarterly grant whole. The expiry row uses reason `expiry` and the same invoice id, so a redelivered webhook writes nothing. The free grant is never expired.
 
-- [ ] **Step 1:** Failing tests: Starter monthly with 700 left plus a 400 grant expires 300; Starter quarterly with 500 left plus a 1,200 grant expires 0; Starter weekly with 150 left plus a 94 grant expires 56; Pro with 100 left expires 0; redelivery writes no second row.
+- [ ] **Step 1:** Failing tests: Starter monthly with 1,500 left plus a 1,000 grant expires 500; Starter quarterly with 500 left plus a 3,000 grant expires 0; Starter weekly with 300 left plus a 234 grant expires 66; Pro with 100 left expires 0; redelivery writes no second row.
 - [ ] **Step 2:** Run. Expected: FAIL. **Step 3:** Implement. **Step 4:** Run. Expected: PASS.
 - [ ] **Step 5:** Commit `feat(server): cap credit rollover at two invoices of credits`.
 

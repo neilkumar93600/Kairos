@@ -500,6 +500,56 @@ Thin geometric line icons in Charcoal `#292421`, 1.25 px stroke, round caps and 
 
 The marketing site is a single centred axis on Linen. Order: nav, centred art hero, commitment strip, problem trio, "how it works" intro, four zig-zag steps with the spotlight between steps 2 and 3, the dark CTA card, pricing, compare, FAQ, the closing art band and the footer. Loud (art) and quiet (plain Linen) sections alternate, except the steps and spotlight, which form one chapter joined by the connector line. Containers (owner, 2026-10-15): 1440 (`--c-wide`) for nav and footer, 1280 (`--c-main`) for the strip, trio, spotlight and pricing, 1120 (`--c-narrow`) for steps, dark card, FAQ and compare, 760 (`--c-copy`) for every heading stack. Only the hero painting, the closing band and the footer hills break the container. Grids: 12 columns at 1440 and 1024, 8 at 768, 4 at 390. Section intros are centred stacks (optional fact pill, H2, subline, one control) with 72 / 64 / 56 / 40 px to their content. The signed-in app uses the same canvas, cards and type with a 240 px sidebar, a header and Paper White panels; it has no art, no serif and no dark card.
 
+## Glass everywhere (owner, 2026-10-23)
+
+The owner's decision "Glassmorphism will be throughout website" supersedes every rule above that limits glass to surfaces over art, that keeps flat Linen sections solid, or that says the signed-in app has no glass. The rules:
+
+- **Backdrop.** One fixed procedural valley haze (`.site-backdrop` in `web/app/globals.css`, rendered once in the root layout) sits behind every route: the valley's own hues (sky, haze, amber, meadow, lilac) as large soft radial glows on Linen. Paintings stay where they are and sit on top of it. Page wrappers that painted solid Linen (the `.lp` scope, layout shells) are transparent so the haze shows.
+- **Surfaces become frosted glass.** `.glass-panel` (Glass Strong `rgb(255 255 255 / 0.78)`, blur 12 px below 768 and 20 px from 768, saturate 140 percent, 1 px Glass Edge, inner highlight plus the over-art shadow) for anything with text at 16 px or smaller or dense rows: app panels, sidebar, header, tab bar, sheets, menus, popovers, dialogs, command palette, plan cards, feature cards, forms, FAQ and compare blocks, the legal and blog reading sheets. `.glass-soft` (Glass `0.64`) only for large type and for pills or chips that sit directly on art. The landing's existing `.lp .glass` and `FloatingCard` keep working and use the same tokens.
+- **Stays solid.** Inputs (Mist), buttons (Espresso, Paper White inverse), chips and badges inside glass (Bone), the dark CTA card, tooltips (ink), the resume document preview (it is paper), the colophon's own video stage, and print output.
+- **One blurred layer per surface.** Rows, list items and chips inside a glass panel are transparent or Bone; never glass on glass; at most about 8 glass surfaces in a viewport. Long lists get one glass panel, not glass rows (scroll performance on mid-range phones).
+- **Fallbacks are mandatory** and already in the classes: no backdrop-filter gives Glass Fallback `0.94`; `prefers-reduced-transparency` gives solid Paper White; `forced-colors` gives Canvas; print gives white.
+- **Contrast.** Text at 14 px or smaller sits only on `.glass-panel`. Text directly on the backdrop (page titles, section intros) keeps Ink and Graphite; the haze is light enough for Graphite at 7:1 or more.
+
+### Synthex-inspired layer (owner, 2026-10-23)
+
+The owner shared Dribbble "Synthex UI, Analytics SaaS Dashboard" (RonDesignLab) and chose: keep the Kairos palette and theme, take Synthex's layout and glass craft, switch the type to Urbanist, and adopt four patterns. This supersedes the Inter / Inter Tight type rules above.
+
+- **Type.** Urbanist (Google Fonts, `--font-urbanist`) for UI, body, headings and figures; Instrument Serif keeps its four landing art lines. Weights: 300 only for large figures at 40 px and up, 400 for body and headings, 500 for labels, buttons and nav, 600 for the footer. Tabular figures on all numbers.
+- **Milky glass.** Card radius 20 px; blur 24 px from 768 (14 px below), saturate 125 percent; Glass Edge at 0.55. Panels may nest one level as Bone or transparent blocks, never glass on glass.
+- **Big figures and hatched charts.** Overview figures are large light numerals (Urbanist 300, 44 to 56 px, ink) over a small Deep Ash label. Charts: a dotted line (ink points, 1.5 px line) over a hatched area fill (1 px diagonal lines at 45 degrees, Stone at 45 percent), dashed hairline gridlines, and thin pill bars where a bar chart fits. Achromatic, real data only.
+- **Floating stat tiles.** A small glass tile over a chart calls out one real figure (for example "3 drafts are waiting") with a close button; never an invented number.
+- **Filter chips.** Pill dropdown chips above lists ("Status", "Board", "Date"), glass-soft on the backdrop, Bone when active, each opening a menu of the real values with counts.
+
+## Inner pages (2026-10-23)
+
+Every route other than `/` follows the landing's system at a quieter scale. The landing keeps the one signature (the ledger story, the spotlight, the dark card); inner pages get the same craft in type, art and layout, not new spectacle.
+
+**Marketing shell.** `(landing)`, `(public)` and `(legal)` all render in `LandingShell` (`web/components/landing/landing-shell.tsx`): the `.lp` scope, the landing Navbar (the current page's link is underlined, `aria-current="page"`) and the Colophon footer. Inside it, build with the `.lp` primitives (`lp-wrap--{main,narrow,copy}`, `lp-section`, `SectionIntro`, `lp-h2`, `lp-h3`, `lp-h4`, `lp-lead`, `lp-body`, `lp-caption`, `lp-micro`, `lp-pill`, `lp-chip`, `lp-card`, `lp-btn` and its modifiers, `glass`, `FloatingCard`, `lp-dot`, `lp-link`) instead of re-creating them in Tailwind. Page-specific CSS lives next to the page's component, scoped under `.lp`.
+
+**Inner-page hero.** `PageHero` (`web/components/marketing/page-hero.tsx`): an optional fact pill (Bone, since it sits on Linen above the art), the h1 in Inter Tight 400 at 40 / 52 / 60 / 72 px (tracking −0.04em, never the serif), one lead line, at most one Espresso CTA, then the page's painting as a full-bleed band (260 / 360 / 420 / 480 px) that dissolves into Linen above and below. Up to two strong-glass FloatingCards may sit over the band (synthetic names, SAMPLE chip).
+
+| Route | Painting (`/landing/art/`) | Why it fits |
+|-------|-----------------------------|-------------|
+| `/how-it-works` | `step-1-fit-gate.png` | The gate on the path: the first step |
+| `/pricing` | `scene-b-footbridge.png` | The bridge you cross when you approve; the Pro card already uses it |
+| `/about` | `scene-c-noon-meadow.png` | The stamp on the stone: an application you would sign |
+| `/careers` | `footer-dusk-hills-2880x840.png` | Open horizon, a wide band crop |
+| `/contact` | `step-4-replies.png` | The mailbox |
+| `/blog` | `step-2-truth-lock.png` | The writing desk |
+| `/login`, `/sign-up`, other auth | `scene-a-dawn-valley-portrait.png` | Portrait crop for the auth side panel |
+| 404 | `dark-card-night.png` | The valley at night, one light left on: the way back |
+
+Blog posts, the legal pages and the error page carry no painting: they are reading pages on plain Linen.
+
+**Closing.** Pages that ask for sign-up (`/how-it-works`, `/pricing`, `/about`, `/careers`, `/blog`) end with the landing's closing band (`Entry10Start`), which keeps its serif line; it is the same element everywhere, not a new serif line. Legal pages, `/contact`, blog posts and the 404 end at the footer.
+
+**Density.** The landing budget holds per section (label of 1 to 3 words, headline of at most 8 words, one subline of at most 20 words, at most 3 short items, one visual, one CTA). Legal text and blog posts are exempt: they are long-form reading at `--c-copy` with a 66ch measure, 17 to 18 px body and 1.6 leading.
+
+**Auth.** Split layout from 1024: the form column on Linen (form max 400 px) and the portrait painting in a 24 px-radius panel inset 16 px from the viewport edge, with one strong-glass card stating a true product rule. Below 1024 the painting is a short band above the form or is dropped; the form is never pushed below the fold on a 390 by 844 phone.
+
+**App.** The signed-in app uses the App Shell and the shared primitives: `Panel` and `DataRow` (`components/shared/panel.tsx`), `StatusWord` and `APPLICATION_STATUS` (`components/shared/status.tsx`), `Badge`, `EmptyState`, `Skeleton`, `PageTitle`, `Field`, `Button` and `ButtonLink`, plus `components/ui` (shadcn, Duna-themed) for dialogs, tabs, selects and tables. No serif and no ambient motion: colour changes over 300 ms ease-out only. One exception for glass and art (owner, 2026-10-23: "our website frosted glassmorphism theme"): the desktop sidebar is a frosted glass panel (`.glass-panel` in globals.css) over the site-wide valley haze, with no image (owner, 2026-10-23: the reference sidebar has none). Its measurements follow the owner's "slukh" reference: 260 px expanded, 76 px rail, 16 px padding, 40 px logo row, 44 px items with 4 px gaps, 12 px item padding, 20 px icons; no search row (Cmd or Ctrl K opens the page jumper); the collapse toggle is a 28 px disc on the panel's right edge under the logo. Content panels stay solid Paper White on Linen. Every list has a designed empty state, a skeleton that matches the loaded layout, and an inline error with a retry. Phones get a real navigation (the sidebar is desktop only).
+
 ## Agent Prompt Guide
 
 primary action: #160f0c (filled action)

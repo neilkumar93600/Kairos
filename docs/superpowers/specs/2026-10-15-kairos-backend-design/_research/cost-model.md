@@ -11,7 +11,7 @@ Confidence tags: **[catalog]** price taken from the OpenRouter research (catalog
 ## 0. Bottom line
 
 1. **The $0.01 target holds, with headroom, if drafting stays on a cheap model.** With the recommended per-agent models, the all-in cost per submitted application is **$0.0033 (Free), $0.0035 (Starter), $0.0038 (Pro and Max)**: model calls about $0.0030, cloud applier $0.0003 (Pro and Max only), fixed infrastructure $0.0004. That is 33% to 38% of the TRD target.
-2. **The drafter model is the one decision that can break the target.** Moving resume-line tailoring, answers and cover letters to a $2 / $10 per million token model (Claude Sonnet 5, GPT-6 Sol) or to GLM 5.3 with mandatory reasoning raises the cost to **$0.026 to $0.030 per submitted application**, which is above the lowest revenue per application any plan earns (Max quarterly at full use, $0.021). The verifier agent is what makes a cheap drafter safe; the strong model is reserved for verifier escalations.
+2. **The drafter model is the one decision that can break the target.** Moving resume-line tailoring, answers and cover letters to a $2 / $10 per million token model (Claude Sonnet 5, GPT-6 Sol) or to GLM 5.3 with mandatory reasoning raises the cost to **$0.026 to $0.030 per submitted application**, which is above the lowest revenue per application any plan earns (Starter quarterly at full use, $0.015, after the 2026-10-23 change to 1,000 Starter applications; Max quarterly $0.021). The verifier agent is what makes a cheap drafter safe; the strong model is reserved for verifier escalations.
 3. **Pair volume, not price per call, is what grows with scale.** The as-built design (every user with preferences times every job that passes hard filters, long uncached prompt) would make 756,000 scoring calls per day at 2,000 companies ($206 to $413 per day) and 3.0 million per day at 10,000 companies ($825 to $1,650 per day). Activity gating, embedding pre-rank and per-plan daily caps bring this to 115,000 calls per day ($11.70) and 132,000 per day ($13.50) respectively: a 17x to 120x cost reduction that also makes the monthly bill bounded by user count, not by job count.
 4. **Base-case monthly spend at 10,000 registered users and 2,000 companies:** model calls about **$1,590**, Railway plus tools about **$265**, total about **$1,850** per month for about **528,000 submitted applications**. At 10,000 companies: about **$2,060** model plus about **$330** infrastructure for about **606,000** submitted applications.
 5. **Recommendation:** keep $0.01 as the hard ceiling (it is justified by revenue: see section 14), budget agents to an internal target of $0.005, and enforce it with per-call `max_price`, per-agent daily envelopes, per-user daily spend caps and two OpenRouter keys with hard daily limits (section 17).
@@ -413,11 +413,11 @@ Revenue is the plan price divided by submitted applications. Net of Stripe card 
 | Revenue per application at modeled usage, monthly billing (2,000 companies) | $19 / 145 = $0.131 | $39 / 208 = $0.187 | $79 / 221 = $0.357 |
 | Cost as share of that revenue | 2.7% | 2.0% | 1.1% |
 | Revenue per application at modeled usage, 10,000 companies | $0.131 | $39 / 231 = $0.169 | $79 / 410 = $0.193 |
-| Revenue per application at full use, monthly (`pricing.md`) | $0.0475 | $0.0325 | $0.0263 |
-| Cost as share, full use monthly | 7.4% | 11.7% | 14.4% |
-| Revenue per application at full use, weekly | $6 / 94 = $0.064 | $12 / 280 = $0.043 | $25 / 700 = $0.036 |
-| Revenue per application at full use, quarterly | $45 / 1,200 = $0.0375 | $95 / 3,600 = $0.0264 | $189 / 9,000 = $0.0210 |
-| Cost as share, full use quarterly (worst case) | 9.3% | 14.4% | 18.1% |
+| Revenue per application at full use, monthly (`pricing.md`; Starter 1,000 since 2026-10-23) | $0.019 | $0.0325 | $0.0263 |
+| Cost as share, full use monthly | 18.4% | 11.7% | 14.4% |
+| Revenue per application at full use, weekly | $6 / 234 = $0.026 | $12 / 280 = $0.043 | $25 / 700 = $0.036 |
+| Revenue per application at full use, quarterly | $45 / 3,000 = $0.015 | $95 / 3,600 = $0.0264 | $189 / 9,000 = $0.0210 |
+| Cost as share, full use quarterly (worst case) | 23.3% | 14.4% | 18.1% |
 | Model and compute per subscriber per month at modeled usage | $0.51 | $0.79 | $0.84 (2,000 companies), $1.56 (10,000) |
 | Max subscriber at full use (3,000 applications) | | | about $11.40 on $79 |
 
