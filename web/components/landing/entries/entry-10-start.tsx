@@ -10,8 +10,8 @@ const c = landingCopy.closing;
  * A10 closing band (08 1.10): serif line over the dusk door painting (prompt.md #10) and the procedural dusk glow,
  * one button. Server component; the only client piece is ApprovedLine, which swaps the subline once the visitor has
  * approved. The painting sits behind the glow (.lp-glow-dusk; hot colours drop below the text under 1024), whose
- * Linen ellipse is the text scrim and which stands in if the file is missing; the fade layer opens the band into
- * the canvas above and the footer below so no hard edge shows.
+ * Linen ellipse is the text scrim and which stands in if the file is missing; a mask dissolves the art layers into
+ * the site haze above and the footer below so no hard edge shows.
  */
 export function Entry10Start() {
   const [before, after] = c.sublineApproved.split("{approvedTime}");
@@ -29,7 +29,6 @@ export function Entry10Start() {
           sizes="(min-width: 1280px) 2460px, (min-width: 1024px) 1800px, (min-width: 768px) 1680px, 1920px"
         />
       </div>
-      <div className="lp-start__fade" aria-hidden="true" />
       <div className="lp-wrap lp-wrap--copy lp-start__stack">
         <h2 id="entry-10-title" className="lp-serif-closing">
           {words.join(" ")} <span className="lp-start__tail">{tail}</span>

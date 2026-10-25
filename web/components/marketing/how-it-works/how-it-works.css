@@ -1,0 +1,184 @@
+/*
+ * /how-it-works (docs/DESIGN.md "Inner pages"). Scoped under .lp, prefixed hiw-. Reuses the landing tokens and the
+ * .lp-panel, .lp-dot, .lp-square-open, .lp-chip and glass primitives from landing.css.
+ * Layout: below 1024 the step index is a contents card above the chapters; from 1024 it is a sticky rail beside
+ * them; from 1280 each chapter splits into text (head and facts) and its painting panel.
+ */
+
+/* ===== Steps section: rail plus chapters ===== */
+.lp .hiw-steps {
+  padding-block-start: var(--gap-section);
+  /* The rail markers read the chapters' view timelines, so both live under this scope. */
+  timeline-scope: --hiw-1, --hiw-2, --hiw-3, --hiw-4, --hiw-5;
+}
+.lp .hiw-steps__grid { display: grid; row-gap: 40px; }
+@media (min-width: 1024px) {
+  .lp .hiw-steps__grid { grid-template-columns: 220px minmax(0, 1fr); column-gap: 48px; align-items: start; }
+}
+@media (min-width: 1280px) {
+  .lp .hiw-steps__grid { grid-template-columns: 232px minmax(0, 1fr); column-gap: 64px; }
+}
+
+/* The rail: a strong-glass contents card on the haze (.glass-panel); sticky beside the chapters from 1024. */
+.lp .hiw-rail { padding: 20px 16px 12px; border-radius: var(--r-card); }
+@media (min-width: 1024px) {
+  .lp .hiw-rail { position: sticky; top: calc(var(--nav-h) + 32px); }
+}
+.lp .hiw-rail__title { padding-inline: 8px; margin: 0; }
+
+.lp .hiw-index { position: relative; list-style: none; margin: 8px 0 0; padding: 0; }
+/* The pen line through the badge centres (1.25 px Charcoal, as the landing connector). Badges paint over it. */
+.lp .hiw-index::before {
+  content: ""; position: absolute; inset-inline-start: calc(8px + 16px - 0.625px); top: 24px; bottom: 24px;
+  width: 1.25px; background: var(--icon);
+}
+.lp .hiw-index__link {
+  position: relative; display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 8px 12px 8px 8px;
+  border-radius: var(--r-pill); color: var(--icon); text-decoration: none;
+  font: 500 15px / 1.3 var(--font-ui);
+  transition: background-color var(--dur-colour) var(--ease-out), transform var(--dur-fade) var(--ease-out);
+}
+.lp .hiw-index__link:active { transform: translateY(1px); }
+/* 768 to 1023: the rail is full width above the chapters, so the steps run in one row along a horizontal line. */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .lp .hiw-index { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .lp .hiw-index::before { top: 24px; bottom: auto; inset-inline: 10%; width: auto; height: 1.25px; }
+  .lp .hiw-index__link { flex-direction: column; gap: 8px; padding: 8px 4px 12px; border-radius: var(--r-card); text-align: center; }
+}
+@media (hover: hover) and (pointer: fine) {
+  .lp .hiw-index__link:hover { background: var(--sunk); color: var(--ink); }
+}
+
+/* Step badge: Paper White circle, 1 px ink ring, ink numeral (the landing step badge). */
+.lp .hiw-badge {
+  position: relative; z-index: 1; display: grid; flex: none; place-items: center; width: 32px; height: 32px;
+  border-radius: var(--r-pill); background: var(--surface); box-shadow: inset 0 0 0 1px var(--ink);
+  color: var(--ink); font: 500 14px / 1 var(--font-ui); font-variant-numeric: tabular-nums;
+}
+/* "You are here": a filled ink badge over the outline one. Hidden unless its chapter crosses the reading line. */
+.lp .hiw-badge__on {
+  position: absolute; inset: 0; display: grid; place-items: center; border-radius: inherit;
+  background: var(--ink); color: var(--on-dark); opacity: 0;
+}
+
+/*
+ * CSS-only scroll spy: each chapter names a view timeline, inset to a thin reading line 38 percent down the
+ * viewport. While a chapter covers that line its marker is opaque (fill none, so it is transparent outside the
+ * range). Chapters touch each other, so exactly one is lit at a time. Opacity only; without support the rail
+ * stays a plain contents list.
+ */
+@supports (timeline-scope: none) and (animation-timeline: view()) {
+  .lp .hiw-chapter { view-timeline-inset: 38% 61%; }
+  .lp .hiw-chapter[data-step="1"] { view-timeline-name: --hiw-1; }
+  .lp .hiw-chapter[data-step="2"] { view-timeline-name: --hiw-2; }
+  .lp .hiw-chapter[data-step="3"] { view-timeline-name: --hiw-3; }
+  .lp .hiw-chapter[data-step="4"] { view-timeline-name: --hiw-4; }
+  .lp .hiw-chapter[data-step="5"] { view-timeline-name: --hiw-5; }
+  .lp .hiw-index__item .hiw-badge__on { animation: hiw-on linear none; animation-range: cover; }
+  .lp .hiw-index__item:nth-child(1) .hiw-badge__on { animation-timeline: --hiw-1; }
+  .lp .hiw-index__item:nth-child(2) .hiw-badge__on { animation-timeline: --hiw-2; }
+  .lp .hiw-index__item:nth-child(3) .hiw-badge__on { animation-timeline: --hiw-3; }
+  .lp .hiw-index__item:nth-child(4) .hiw-badge__on { animation-timeline: --hiw-4; }
+  .lp .hiw-index__item:nth-child(5) .hiw-badge__on { animation-timeline: --hiw-5; }
+}
+@keyframes hiw-on { from, to { opacity: 1; } }
+
+/* ===== Chapters ===== */
+.lp .hiw-chapters { list-style: none; margin: 0; padding: 0; }
+.lp .hiw-chapter {
+  display: grid; grid-template-areas: "head" "panel" "facts"; row-gap: 24px;
+  padding-block: 48px; border-top: 1px solid var(--hairline);
+}
+.lp .hiw-chapter:first-child { padding-block-start: 8px; border-top: 0; }
+@media (min-width: 768px) {
+  .lp .hiw-chapter { row-gap: 32px; padding-block: 64px; }
+}
+@media (min-width: 1024px) {
+  .lp .hiw-chapter:first-child { padding-block-start: 0; }
+}
+@media (min-width: 1280px) {
+  .lp .hiw-chapter {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); grid-template-rows: auto 1fr;
+    grid-template-areas: "head panel" "facts panel"; column-gap: 48px; padding-block: 80px;
+  }
+}
+.lp .hiw-chapter__head { grid-area: head; }
+.lp .hiw-chapter__label { display: flex; align-items: center; gap: 12px; margin: 0; }
+.lp .hiw-chapter__head > .lp-h3 { margin-block-start: 16px; }
+.lp .hiw-chapter__head > .lp-body { margin-block-start: 12px; max-width: var(--measure); }
+
+/* Facts: a document's definition rows. Term over detail on phones and at 1280 (narrow text column), side by side
+   between 768 and 1279. */
+.lp .hiw-facts { grid-area: facts; margin: 0; align-self: start; }
+.lp .hiw-facts > div { display: grid; gap: 4px; padding-block: 14px; border-top: 1px solid var(--hairline); }
+.lp .hiw-facts dt { font: 500 var(--t-body-sm) / 1.4 var(--font-ui); color: var(--ink); }
+.lp .hiw-facts dd { margin: 0; font: 400 var(--t-body-sm) / 1.6 var(--font-ui); color: var(--body); max-width: 60ch; }
+@media (min-width: 768px) and (max-width: 1279px) {
+  .lp .hiw-facts > div { grid-template-columns: 176px minmax(0, 1fr); column-gap: 24px; align-items: baseline; }
+}
+
+/* The painting panel (.lp-panel from landing.css). 16:10 until the split layout, then the landing's 4:3. The card
+   sits on the left over the calm side; each painting keeps its object on the right. */
+.lp .hiw-chapter > .lp-panel { grid-area: panel; align-self: start; }
+@media (min-width: 768px) {
+  .lp .hiw-chapter > .lp-panel { aspect-ratio: 16 / 10; }
+  .lp .hiw-chapter .lp-panel__card { justify-self: start; width: min(88%, 344px); margin-inline-start: 5%; }
+}
+@media (min-width: 1280px) {
+  /* The painting stays in view while the facts beside it are read. */
+  .lp .hiw-chapter > .lp-panel { aspect-ratio: 4 / 3; position: sticky; top: calc(var(--nav-h) + 32px); }
+}
+/* Phones: the card sits at the top and the painting's object (gate, table, bridge, stone, post box) shows below it. */
+@media (max-width: 767px) {
+  .lp .hiw-chapter > .lp-panel { place-items: start center; padding-block: 16px 112px; }
+  .lp .hiw-chapter .lp-panel__art > img { object-position: 70% 100% !important; }
+}
+
+/* ===== Sample card contents (inside FloatingCard: strong glass, so 14 px Deep Ash passes) ===== */
+.lp .hiw-card__title { margin: 0; font: 500 var(--t-body-sm) / 1.4 var(--font-ui); color: var(--ink); }
+.lp .hiw-card__meta { margin: 2px 0 0; font: 400 var(--t-caption) / 1.5 var(--font-ui); color: var(--faint); }
+.lp .hiw-rows { clear: both; list-style: none; margin: 12px 0 0; padding: 0; }
+.lp .hiw-rows > li, .lp .hiw-dl > div { padding-block: 10px; border-top: 1px solid var(--hairline); }
+.lp .hiw-rows > li:last-child, .lp .hiw-dl > div:last-child { padding-block-end: 0; }
+.lp .hiw-row__top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 0; color: var(--ink); }
+.lp .hiw-row__sub { margin: 2px 0 0; font: 400 var(--t-caption) / 1.5 var(--font-ui); color: var(--faint); }
+.lp .hiw-row__top > .lp-chip { min-height: 24px; }
+.lp .hiw-refused { color: var(--faint); text-decoration: line-through; text-decoration-thickness: 1px; }
+
+.lp .hiw-dl { clear: both; margin: 12px 0 0; }
+.lp .hiw-dl > div { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: 12px; align-items: baseline; }
+.lp .hiw-dl dt { margin: 0; font: 400 var(--t-caption) / 1.5 var(--font-ui); color: var(--faint); }
+.lp .hiw-dl dd { margin: 0; color: var(--ink); }
+
+/* Status word: the word carries the state, the mark only supports it (DESIGN "Status Dot and Status Words"). */
+.lp .hiw-status { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; color: var(--ink); }
+.lp .hiw-status--muted { color: var(--faint); }
+.lp .hiw-status-line { clear: both; margin: 12px 0 0; padding-block-start: 10px; border-top: 1px solid var(--hairline); }
+
+/* ===== What Kairos does not do: the 1:2 frame of FAQ and compare; the list is one glass panel ===== */
+.lp .hiw-limits { padding-block-start: var(--gap-section); }
+.lp .hiw-limits__grid { display: grid; row-gap: 32px; }
+.lp .hiw-limits__grid > .lp-intro + * { margin-block-start: 0; }
+@media (min-width: 1024px) {
+  .lp .hiw-limits__grid { grid-template-columns: 320px minmax(0, 1fr); column-gap: 64px; align-items: start; }
+}
+.lp .hiw-limits__list { list-style: none; margin: 0; padding: 0 20px; border-radius: var(--r-media); }
+@media (min-width: 768px) { .lp .hiw-limits__list { padding-inline: 28px; } }
+.lp .hiw-limits__item {
+  display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 16px;
+  padding-block: 24px; border-bottom: 1px solid var(--hairline);
+}
+.lp .hiw-limits__item:last-child { border-bottom: 0; }
+.lp .hiw-limits__item > svg { margin-block-start: 1px; }
+.lp .hiw-limits__item h3 { margin: 0; font: 500 18px / 1.4 var(--font-ui); color: var(--ink); }
+.lp .hiw-limits__item p { margin: 6px 0 0; max-width: 60ch; }
+.lp .hiw-icon { width: 24px; height: 24px; fill: none; stroke: var(--icon); stroke-width: 1.25; stroke-linecap: round; }
+.lp .hiw-icon * { vector-effect: non-scaling-stroke; }
+
+@media (forced-colors: active) {
+  .lp :is(.hiw-chapter, .hiw-facts > div, .hiw-rows > li, .hiw-dl > div, .hiw-status-line, .hiw-limits__list, .hiw-limits__item) {
+    border-color: CanvasText;
+  }
+  .lp .hiw-index::before { background: CanvasText; }
+  .lp .hiw-badge__on { background: Highlight; color: HighlightText; }
+}

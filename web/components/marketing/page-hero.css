@@ -1,0 +1,63 @@
+/*
+ * Inner-page hero (docs/DESIGN.md "Inner pages"). Scoped under .lp like the landing sections; reuses the landing
+ * tokens (--t-*, --gutter, art tokens). The page h1 is Inter Tight 400, never the serif (the serif keeps its four
+ * landing lines plus the shared closing band).
+ */
+.lp .lp-page-h1 {
+  font: 400 var(--t-page) / 1.04 var(--font-head);
+  letter-spacing: -0.04em;
+  color: var(--ink);
+  text-wrap: balance;
+  max-inline-size: 18ch;
+}
+.lp .lp-page-h1:focus { outline: none; }
+
+.lp .lp-page-hero {
+  --t-page: 40px;
+  --band-h: 260px;
+  position: relative;
+  isolation: isolate;
+  padding-block-start: calc(var(--nav-h) + 48px);
+}
+@media (min-width: 768px) {
+  .lp .lp-page-hero { --t-page: 52px; --band-h: 360px; padding-block-start: calc(var(--nav-h) + 72px); }
+}
+@media (min-width: 1024px) {
+  .lp .lp-page-hero { --t-page: 60px; --band-h: 420px; padding-block-start: calc(var(--nav-h) + 88px); }
+}
+@media (min-width: 1280px) {
+  .lp .lp-page-hero { --t-page: 72px; --band-h: 480px; padding-block-start: calc(var(--nav-h) + 96px); }
+}
+
+/* Same scrim as the landing hero, so the copy reads on Linen even where the sky shows through the fade. */
+.lp .lp-page-hero::before {
+  content: ""; position: absolute; z-index: -1; inset: 0 0 auto; block-size: calc(100% - var(--band-h) / 2);
+  pointer-events: none;
+  background: radial-gradient(60% 55% at 50% 35%, rgb(247 247 245 / 0.9), transparent 75%);
+}
+
+.lp .lp-page-hero__copy { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.lp .lp-page-hero__copy > .lp-pill { margin-block-end: 20px; }
+.lp .lp-page-hero__lead { margin-block-start: 20px; }
+.lp .lp-page-hero__cta { inline-size: 100%; margin-block-start: 28px; }
+@media (min-width: 768px) {
+  .lp .lp-page-hero__cta { inline-size: auto; }
+}
+
+/* The band starts under the copy and overlaps it slightly, so the sky runs up behind the lead. */
+.lp .lp-page-hero__band { position: relative; margin-block-start: clamp(-24px, -2vw, -8px); }
+.lp .lp-page-hero__art {
+  position: relative; z-index: -2; block-size: var(--band-h);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 30%, #000 78%, transparent 100%);
+}
+.lp .lp-page-hero__art img { object-fit: cover; }
+
+/* Cards: in flow under the art below 768, over the art from 768. FloatingCard supplies the glass. */
+.lp .lp-page-hero__cards { display: grid; gap: 16px; margin-block-start: -32px; }
+@media (min-width: 768px) {
+  .lp .lp-page-hero__cards {
+    position: absolute; inset: 0; margin: 0 auto; pointer-events: none;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .lp .lp-page-hero__cards > * { pointer-events: auto; inline-size: min(320px, 40%); }
+}

@@ -1,0 +1,112 @@
+/*
+ * Company pages (/about, /careers, /contact): the few layouts the landing primitives do not already cover.
+ * Prefixed co-, scoped under .lp. Type, colour, cards, pills and buttons come from landing.css; only placement
+ * lives here. Hairlines are --border (Stone at 40 percent, docs/DESIGN.md "App Panel and Data Row").
+ */
+@layer theme, base, components, utilities;
+
+@layer components {
+  /* The last section before the footer on /contact (no closing band there). */
+  .lp .co-section--end { padding-block-end: var(--gap-section); }
+
+  /* ===== 1:2 frame: heading column, then the content (the landing FAQ and compare frame) ===== */
+  .lp .co-frame { display: grid; gap: 24px; }
+  @media (min-width: 768px) {
+    .lp .co-frame { gap: 32px; }
+  }
+  @media (min-width: 1024px) {
+    .lp .co-frame { grid-template-columns: 300px minmax(0, 1fr); gap: 0 40px; align-items: start; }
+    /* Side by side, the intro gap would push the content column down. */
+    .lp .co-frame > .lp-intro + * { margin-block-start: 0; }
+  }
+  @media (min-width: 1280px) {
+    .lp .co-frame { grid-template-columns: 320px minmax(0, 1fr); column-gap: 48px; }
+  }
+
+  /* ===== Numbered hairline rows: the three product rules on /about, on one glass panel (.glass-panel) ===== */
+  .lp .co-rows { list-style: none; margin: 0; padding: 0 20px; border-radius: var(--r-media); }
+  .lp .co-row {
+    display: grid; grid-template-columns: 40px minmax(0, 1fr); column-gap: 16px;
+    padding-block: 24px; border-block-end: 1px solid var(--border);
+  }
+  .lp .co-row:last-child { border-block-end: 0; }
+  .lp .co-row__idx { padding-block-start: 5px; font-variant-numeric: tabular-nums; }
+  .lp .co-row__title { margin: 0; }
+  .lp .co-row__body { margin: 8px 0 0; max-width: 56ch; }
+  .lp .co-row__when { margin: 12px 0 0; display: flex; align-items: center; gap: 8px; }
+  .lp .co-row__when::before { content: ""; inline-size: 16px; block-size: 1px; background: var(--rule); }
+  @media (min-width: 768px) {
+    .lp .co-rows { padding-inline: 28px; }
+    .lp .co-row { grid-template-columns: 56px minmax(0, 1fr); padding-block: 28px; }
+  }
+
+  /* ===== Three strong-glass feature cards (.lp-card): compact rows below 1024 ===== */
+  .lp .co-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
+  .lp .co-card {
+    display: grid; grid-template-columns: 40px 40px minmax(0, 1fr); grid-template-areas: "num icon title" ". . body";
+    column-gap: 12px; align-items: center;
+  }
+  .lp .co-card__num { grid-area: num; font-variant-numeric: tabular-nums; }
+  .lp .co-card__icon { grid-area: icon; display: block; width: 40px; height: 40px; color: var(--icon); }
+  .lp .co-card__icon svg { display: block; width: 100%; height: 100%; }
+  .lp .co-card__title { grid-area: title; margin: 0; }
+  .lp .co-card__body { grid-area: body; margin: 4px 0 0; }
+  @media (min-width: 1024px) {
+    .lp .co-cards { grid-template-columns: repeat(3, 1fr); gap: 24px; }
+    .lp .co-card { display: flex; flex-direction: column; align-items: flex-start; min-height: 340px; }
+    .lp .co-card__icon { width: 96px; height: 96px; margin: auto 0; align-self: center; }
+    .lp .co-card__title { margin-top: 24px; }
+    .lp .co-card__body { margin-top: 8px; }
+  }
+
+  /* ===== Facts list: label over value, hairline rows (studio card, contact aside) ===== */
+  .lp .co-facts { margin: 0; }
+  .lp .co-facts > div { display: grid; gap: 4px; padding-block: 16px; border-block-start: 1px solid var(--border); }
+  .lp .co-facts > div:last-child { border-block-end: 1px solid var(--border); }
+  .lp .co-facts dd { margin: 0; font: 400 var(--t-body-sm) / 1.5 var(--font-ui); color: var(--ink); text-wrap: pretty; }
+  /* Inline links keep a 44 px hit area (docs/DESIGN.md "Text Link"); vertical padding on an inline box moves nothing. */
+  .lp :is(.co-facts, .co-contact__facts) a { padding-block: 12px; }
+
+  /* ===== The studio card on /about: text left, facts right ===== */
+  .lp .co-studio { display: grid; gap: 28px; }
+  .lp .co-studio__text > .lp-body { margin: 16px 0 0; }
+  @media (min-width: 1024px) {
+    .lp .co-studio { grid-template-columns: minmax(0, 1fr) 360px; column-gap: 64px; align-items: start; padding: 48px; }
+  }
+
+  /* ===== The write-in card on /careers ===== */
+  .lp .co-write { display: flex; flex-direction: column; gap: 20px; }
+  .lp .co-write__list { list-style: none; margin: 0; padding: 0; }
+  .lp .co-write__list > li {
+    display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 12px;
+    padding-block: 12px; border-block-start: 1px solid var(--border);
+    font: 400 var(--t-body-sm) / 1.5 var(--font-ui); color: var(--ink);
+  }
+  .lp .co-write__list > li:last-child { border-block-end: 1px solid var(--border); }
+  .lp .co-write__list > li::before { content: counter(co-item, decimal-leading-zero); counter-increment: co-item; font: 400 var(--t-caption) / 1.7 var(--font-ui); color: var(--faint); font-variant-numeric: tabular-nums; }
+  .lp .co-write__list { counter-reset: co-item; }
+  .lp .co-write > .lp-btn { align-self: stretch; }
+  @media (min-width: 768px) {
+    .lp .co-write > .lp-btn { align-self: flex-start; }
+  }
+
+  /* ===== /contact: the form card, then the facts; side by side from 1024 ===== */
+  .lp .co-contact { display: grid; gap: 32px; }
+  .lp .co-contact__title { margin: 0 0 24px; }
+  .lp .co-contact__facts > .lp-caption:last-child { margin-block-start: 16px; }
+  @media (min-width: 1024px) {
+    .lp .co-contact { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); column-gap: 48px; align-items: start; }
+    .lp .co-contact__facts { padding-block-start: var(--pad-card); }   /* its heading lines up with the card's */
+  }
+  @media (min-width: 1280px) {
+    .lp .co-contact { column-gap: 64px; }
+  }
+  /* Sent state: replaces the form inside the same card. */
+  .lp .co-sent { display: grid; gap: 8px; }
+  .lp .co-sent__title { margin: 0; display: flex; align-items: center; gap: 10px; }
+
+  /* ===== Sample card over the /about painting ===== */
+  .lp .co-float__title { margin: 0; font: 500 15px / 1.4 var(--font-ui); color: var(--ink); }
+  .lp .co-float__line { margin: 8px 0 0; display: flex; align-items: center; gap: 8px; color: var(--ink); }
+  .lp .co-float__meta { margin: 4px 0 0; }
+}

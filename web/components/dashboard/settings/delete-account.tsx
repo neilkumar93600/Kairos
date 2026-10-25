@@ -19,12 +19,16 @@ export function DeleteAccount() {
   }
 
   return (
-    <div className="flex max-w-md flex-col gap-4 rounded-card border border-bad/30 p-6">
+    <div className="flex max-w-md flex-col gap-4">
       <p className="text-sm text-body">This removes your profile, facts, applications, receipts and replies. Payment records stay with Stripe as tax law requires.</p>
       <Field label='Type "DELETE" to confirm' htmlFor="confirm-delete">
-        <Input id="confirm-delete" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+        <Input id="confirm-delete" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="off" />
       </Field>
-      {error ? <p role="alert" className="text-sm text-bad">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="text-sm text-bad">
+          {error}
+        </p>
+      ) : null}
       <div>
         <Button variant="danger" disabled={confirm !== "DELETE"} onClick={remove}>
           Delete my account

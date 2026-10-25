@@ -52,6 +52,7 @@ export const siteConfig = {
     { href: "/queue", label: "Review queue", icon: "queue" },
     { href: "/applications", label: "Applications", icon: "applications" },
     { href: "/inbox", label: "Replies", icon: "inbox" },
+    { href: "/resume", label: "Resume", icon: "resume" },
     { href: "/profile", label: "Profile", icon: "profile" },
     { href: "/preferences", label: "Preferences", icon: "preferences" },
     { href: "/billing", label: "Billing", icon: "billing" },

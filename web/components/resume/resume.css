@@ -1,0 +1,59 @@
+/*
+ * Resume document (spec 2026-10-23-resume-workspace, section 8): one single-column ATS-safe template. Inter 10.5pt on
+ * 1.3 (Compact 10pt on 1.25), 12pt section headings over a hairline, entry heading with dates right-aligned as text,
+ * real bullets. No columns, tables, icons or images. The same markup renders the on-screen preview and the print copy,
+ * so the preview is what prints.
+ */
+.rdoc {
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11" 1;
+  font-size: 10.5pt;
+  line-height: 1.3;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.rdoc[data-density="compact"] { font-size: 10pt; line-height: 1.25; }
+.rdoc p, .rdoc ul, .rdoc h1, .rdoc h2, .rdoc h3, .rdoc h4 { margin: 0; }
+.rdoc h1, .rdoc h2, .rdoc h3, .rdoc h4 { font-family: var(--font-sans); color: var(--ink); letter-spacing: 0; }
+
+.rdoc-name { font-size: 18pt; font-weight: 500; line-height: 1.15; letter-spacing: -0.01em !important; }
+.rdoc-contact { margin-top: 3pt !important; color: var(--body); }
+.rdoc-section { margin-top: 12pt; }
+.rdoc-section-title {
+  font-size: 12pt;
+  font-weight: 500;
+  line-height: 1.2;
+  padding-bottom: 2pt;
+  margin-bottom: 5pt !important;
+  border-bottom: 0.75pt solid var(--rule);
+  break-after: avoid;
+}
+.rdoc-entry + .rdoc-entry { margin-top: 7pt; }
+.rdoc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12pt; break-after: avoid; }
+.rdoc-head-title { font-size: inherit; font-weight: 500; }
+.rdoc-head-title span { font-weight: 400; }
+.rdoc-dates { flex-shrink: 0; white-space: nowrap; }
+.rdoc ul { list-style: disc; padding-left: 13pt; margin-top: 2pt; }
+.rdoc li { margin-top: 1.5pt; padding-left: 1pt; break-inside: avoid; }
+.rdoc li::marker { color: var(--ink); }
+.rdoc-para + .rdoc-para { margin-top: 2pt; }
+
+/* Screen only: lines picked from Check or Job match, and the redlines of Suggested edits. */
+@media screen {
+  .rdoc [data-highlight] { background: var(--sunk); box-shadow: 0 0 0 2pt var(--sunk); border-radius: 2pt; }
+  .rdoc del { color: var(--faint); text-decoration-thickness: 1px; }
+  .rdoc ins { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2pt; }
+  .rdoc .rdoc-note { display: block; margin-top: 2pt; color: var(--warn); font-size: 9.5pt; }
+
+  /* The print copy sits off screen and invisible; it is also the measuring copy for page count and long lines. */
+  .rprint { position: fixed; top: 0; left: -10000px; width: 7.3in; visibility: hidden; pointer-events: none; }
+}
+
+@page { size: letter; margin: 0.6in; }
+
+@media print {
+  /* Only when the workspace is on the page: everything but the print copy leaves the printed output. */
+  body:has(> .rprint) { background: #fff !important; }
+  body:has(> .rprint) > *:not(.rprint) { display: none !important; }
+  .rprint { position: static; width: auto; visibility: visible; }
+}

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
-import { CreditLedger } from "@/components/dashboard/billing/credit-ledger";
+import { Suspense } from "react";
+import { CheckoutNote } from "@/components/dashboard/billing/checkout-note";
+import { CreditBalance, CreditLedger } from "@/components/dashboard/billing/credit-ledger";
 import { PlanSummary } from "@/components/dashboard/billing/plan-summary";
 import { PageTitle } from "@/components/shared/page-title";
 
@@ -9,12 +11,13 @@ export default function BillingPage() {
   return (
     <>
       <PageTitle title="Billing" body="Credits are only used when an application goes through. Failed submits never cost one." />
-      <div className="flex flex-col gap-12">
+      <Suspense fallback={null}>
+        <CheckoutNote />
+      </Suspense>
+      <div className="flex max-w-5xl flex-col gap-6">
+        <CreditBalance />
         <PlanSummary />
-        <section className="flex flex-col gap-4">
-          <h2 className="">Credit ledger</h2>
-          <CreditLedger />
-        </section>
+        <CreditLedger />
       </div>
     </>
   );

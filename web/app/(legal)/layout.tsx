@@ -1,13 +1,6 @@
-import { Footer } from "@/components/layout/footer";
-import { Navbar } from "@/components/layout/navbar";
+import { LandingShell } from "@/components/landing/landing-shell";
 
-/** Terms, privacy, cookies and refunds: public, plain reading layout. */
+/** Terms, privacy, cookies and refunds: the marketing shell around a quiet reading layout (no art). */
 export default function LegalLayout({ children }: LayoutProps<"/">) {
-  return (
-    <>
-      <Navbar />
-      <main className="flex-1 py-16 md:py-20">{children}</main>
-      <Footer />
-    </>
-  );
+  return <LandingShell>{children}</LandingShell>;
 }

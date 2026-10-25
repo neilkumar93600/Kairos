@@ -26,9 +26,9 @@ export function Entry09Questions() {
             </a>
           </p>
         </div>
-        <Accordion multiple={false} className="en09-list border-t border-border">
+        <Accordion multiple={false} className="en09-list glass-panel">
           {c.items.map((item) => (
-            <AccordionItem key={item.q} value={item.q} className="border-b border-border">
+            <AccordionItem key={item.q} value={item.q} className="border-b border-border last:border-b-0">
               <AccordionTrigger className="en09-trigger min-h-14 items-center gap-6 border-0 py-4 font-sans text-base font-medium text-ink hover:no-underline focus-visible:border-transparent focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-3 focus-visible:outline-ink lg:min-h-16 lg:py-4.5 **:data-[slot=accordion-trigger-icon]:hidden!">
                 {item.q}
                 <span className="lp-plus" aria-hidden="true" />

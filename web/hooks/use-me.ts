@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import type { Plan } from "@auto-career/shared";
+import { useApiQuery } from "@/lib/use-api-query";
 import { api } from "@/lib/api";
 
 export interface Me {
@@ -14,5 +14,5 @@ export interface Me {
 }
 
 export function useMe() {
-  return useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/me") });
+  return useApiQuery({ queryKey: ["me"], queryFn: () => api<Me>("/me") });
 }

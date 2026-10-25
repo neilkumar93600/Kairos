@@ -74,7 +74,7 @@ export function BillingPlans() {
           return (
             <li
               key={plan.id}
-              className={cn("bp-card lp-reveal", featured && "bp-card--featured")}
+              className={cn("bp-card glass-panel lp-reveal", featured && "bp-card--featured")}
               style={{ "--i": k } as CSSProperties}
             >
               <div className="bp-panel">

@@ -40,8 +40,8 @@
      sections. Applied through .glass / .glass-strong / .glass-dark (landing.css). Blur is 12px below 768px. */
   --glass: rgb(255 255 255 / 0.64);          /* light glass, default */
   --glass-strong: rgb(255 255 255 / 0.78);   /* text 14px or smaller, dense rows, floating cards */
-  --glass-edge: rgb(255 255 255 / 0.60);
-  --glass-blur: blur(12px) saturate(140%);   /* 20px from 768 up */
+  --glass-edge: rgb(255 255 255 / 0.55);
+  --glass-blur: blur(14px) saturate(125%);   /* 24px from 768 up; less saturation reads milkier */
   --glass-hi: inset 0 1px 0 rgb(255 255 255 / 0.70);
   --glass-hi-hover: inset 0 1px 0 rgb(255 255 255 / 0.85);
   --sh-glass: var(--glass-hi), var(--sh-over-art);
@@ -84,7 +84,7 @@
 
   /* Radius: nothing under 8px (09 7) */
   --r-input: 8px;
-  --r-card: 16px;
+  --r-card: 20px;            /* softer, milkier panels (owner, Synthex reference, 2026-10-23) */
   --r-media: 24px;
   --r-pill: 9999px;
   --r-button: var(--r-pill);  /* buttons are pills */
@@ -153,7 +153,7 @@
 @media (width >= 48rem) {
   :root {
     --nav-h: 64px;
-    --glass-blur: blur(20px) saturate(140%);
+    --glass-blur: blur(24px) saturate(125%);
     --glass-nav-blur: blur(16px) saturate(140%);
     --glass-dark-blur: blur(16px);
   }
@@ -208,11 +208,11 @@
   --shadow-edge: var(--edge);
   --shadow-over-art: var(--sh-over-art);
 
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-inter-tight), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-urbanist), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-urbanist), ui-sans-serif, system-ui, sans-serif;
   /* Four art lines only, never under 36px (09 5) */
   --font-serif: var(--font-instrument-serif), ui-serif, Georgia, serif;
-  --font-heading: var(--font-inter-tight), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-urbanist), ui-sans-serif, system-ui, sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -258,7 +258,8 @@
     @apply font-sans; }
 
   body {
-    background: var(--background);
+    /* Transparent: a body background would paint over .site-backdrop (z-index -1). html keeps Linen, so no flash. */
+    background: transparent;
     color: var(--body);
     font-family: var(--font-sans);
     font-weight: 400;
@@ -284,6 +285,44 @@
 
   html { scroll-padding-top: calc(var(--nav-h) + 16px); }   /* WCAG 2.4.11: focused targets stay clear of the sticky navbar */
   * { @apply outline-ring/50; }   /* shadcn default outline colour; :focus-visible above still wins */
+}
+
+/* ===== Glass everywhere (owner, 2026-10-23: "Glassmorphism will be throughout website"; docs/DESIGN.md) =====
+   One fixed backdrop behind every route gives the frost colour to blur: the valley's own hues as soft haze, procedural
+   (no second painting, so it never fights the section paintings). Surfaces sit on it as neutral frosted glass.
+   .glass-panel: strong fill, for any text at 16px or smaller and dense rows (Ink 15.3:1, Graphite 7.8:1, Deep Ash
+   5.7:1 over the darkest art). .glass-soft: light fill, for large type, pills and chips that sit directly on art.
+   One blurred layer per surface: rows and chips inside a panel stay transparent or Bone, never glass on glass. */
+.site-backdrop {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(55% 45% at 8% 12%, color-mix(in srgb, var(--art-sky) 85%, transparent), transparent 72%),
+    radial-gradient(45% 40% at 92% 8%, color-mix(in srgb, var(--art-haze) 80%, transparent), transparent 70%),
+    radial-gradient(50% 45% at 85% 88%, color-mix(in srgb, var(--art-amber) 38%, transparent), transparent 70%),
+    radial-gradient(55% 50% at 12% 92%, color-mix(in srgb, var(--art-meadow) 42%, transparent), transparent 72%),
+    radial-gradient(35% 30% at 55% 50%, color-mix(in srgb, var(--art-lilac) 30%, transparent), transparent 70%),
+    var(--canvas);
+}
+.glass-panel, .glass-soft {
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--sh-glass);
+}
+.glass-panel { background: var(--glass-strong); }
+.glass-soft { background: var(--glass); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-panel, .glass-soft { background: var(--glass-fallback); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass-panel, .glass-soft { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@media (forced-colors: active) {
+  .glass-panel, .glass-soft { background: Canvas; border-color: CanvasText; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@media print {
+  .site-backdrop { display: none; }
+  .glass-panel, .glass-soft { background: #fff; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 
 /* Motion is utility only in the app: colour changes, 300ms ease-out. */

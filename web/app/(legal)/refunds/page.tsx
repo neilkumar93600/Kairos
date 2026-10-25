@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import { LegalDocument } from "@/components/legal/legal-document";
 
-export const metadata: Metadata = { title: "Refund policy" };
+export const metadata: Metadata = {
+  title: "Refund policy",
+  description: "When Kairos refunds credits and charges, and how to ask for a refund.",
+  alternates: { canonical: "/refunds" },
+};
 
 export default function RefundsPage() {
   return (

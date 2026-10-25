@@ -25,6 +25,12 @@
     .lp .en09-contact { margin-block-start: 20px; }
   }
 
+  /* One glass panel holds the rows (.glass-panel in globals.css); the rows inside stay transparent, hairline apart. */
+  .lp .en09-list { border-radius: var(--r-media); padding: 4px 20px; }
+  @media (min-width: 768px) {
+    .lp .en09-list { padding: 8px 28px; }
+  }
+
   /* Rows, type and the answer measure are utilities on the shadcn Accordion (entry-09-questions.tsx); the
      plus-to-minus icon state is in motion.css. */
 

@@ -10,12 +10,15 @@ const CSS = `
 .lp .cmp-table th, .lp .cmp-table td { text-align: start; font-weight: 400; }
 .lp .cmp-head { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
 .lp .cmp-row { display: grid; grid-template-columns: 1fr; gap: 8px; padding-block: 20px; border-top: 1px solid var(--hairline); }
-.lp .cmp-row:last-child { border-bottom: 1px solid var(--hairline); }
+.lp .cmp-sheet { border-radius: var(--r-media); padding: 4px 20px; }
+.lp .cmp-row:first-child { border-top: 0; }
 .lp .cmp-topic { font: 500 15px / 1.4 var(--font-ui); color: var(--ink); }
 .lp .cmp-cell { font: 400 17px / 1.45 var(--font-ui); color: var(--faint); }
 .lp .cmp-cell--k { color: var(--ink); }
 .lp .cmp-cell::before { content: attr(data-label); display: block; font: 500 12px / 1.4 var(--font-ui); letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); margin-bottom: 2px; }
 @media (min-width: 768px) {
+  .lp .cmp-sheet { padding: 24px 32px 4px; }
+  .lp .cmp-row:first-child { border-top: 1px solid var(--hairline); }
   .lp .cmp-head { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
   .lp .cmp-head tr, .lp .cmp-row { display: grid; grid-template-columns: 1fr 1fr; column-gap: 24px; }
   .lp .cmp-head tr { padding-bottom: 12px; font: 500 14px / 1.4 var(--font-ui); color: var(--faint); }
@@ -35,6 +38,7 @@ export function Entry08Compare() {
       <style>{CSS}</style>
       <div className="lp-wrap lp-wrap--narrow cmp">
         <SectionIntro titleId="compare-title" pill={c.pill} title={c.h2} align="start" />
+        <div className="cmp-sheet glass-panel">
         <table className="cmp-table" role="table">
           <thead className="cmp-head" role="rowgroup">
             <tr role="row">
@@ -53,6 +57,7 @@ export function Entry08Compare() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </section>
   );

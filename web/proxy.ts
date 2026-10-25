@@ -32,6 +32,7 @@ export const config = {
     "/queue/:path*",
     "/applications/:path*",
     "/inbox/:path*",
+    "/resume/:path*",
     "/profile/:path*",
     "/preferences/:path*",
     "/billing/:path*",

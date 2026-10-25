@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import type { EmailKind } from "@auto-career/shared";
+import { useApiQuery } from "@/lib/use-api-query";
 import { api } from "@/lib/api";
 
 export interface InboxEmail {
@@ -15,5 +15,5 @@ export interface InboxEmail {
 }
 
 export function useInbox() {
-  return useQuery({ queryKey: ["inbox"], queryFn: () => api<{ emails: InboxEmail[] }>("/inbox").then((r) => r.emails) });
+  return useApiQuery({ queryKey: ["inbox"], queryFn: () => api<{ emails: InboxEmail[] }>("/inbox").then((r) => r.emails) });
 }

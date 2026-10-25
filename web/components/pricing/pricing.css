@@ -1,0 +1,164 @@
+/*
+ * /pricing (docs/DESIGN.md "Inner pages", "Plan Card and Billing Toggle", "FAQ and Compare Rows"). Prefixed pr-,
+ * scoped under .lp, in the components layer like landing.css so Tailwind utilities still win. Tokens come from
+ * globals.css and landing.css. Glass everywhere (owner, 2026-10-23): plan cards, the toggle track and the compare
+ * sheet are .glass-panel on the haze, so no rule here sets background, border or box-shadow on those elements.
+ */
+@layer theme, base, components, utilities;
+
+@layer components {
+  /* ===== Hero sample cards (over the footbridge band) ===== */
+  .lp .pr-hcard__title { margin: 0; font: 500 15px / 1.4 var(--font-ui); color: var(--ink); }
+  .lp .pr-hcard__row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 10px 0 0;
+    font: 400 14px / 1.4 var(--font-ui); color: var(--ink);
+  }
+  .lp .pr-hcard__row > span:first-child { display: inline-flex; align-items: center; gap: 8px; }
+  .lp .pr-hcard__row--off > span:first-child { color: var(--faint); }
+
+  /* ===== Plans: intro left, Bone-track toggle right; stacked below 768 ===== */
+  .lp .pr-head { display: flex; flex-direction: column; align-items: flex-start; gap: 24px; }
+  .lp .pr-head > .pr-seg { margin-block-start: 0; inline-size: 100%; }
+  .lp .pr-seg > label { padding-inline: 8px; }
+  .lp .pr-seg > label:active { scale: 0.97; }
+  @media (hover: hover) and (pointer: fine) {
+    .lp .pr-seg > label:not(:has(input:checked, input:disabled)):hover { color: var(--ink); background: rgb(255 255 255 / 0.5); }
+  }
+  @media (min-width: 768px) {
+    .lp .pr-head { flex-direction: row; align-items: flex-end; justify-content: space-between; gap: 32px; }
+    .lp .pr-head > .pr-seg { inline-size: auto; flex: none; }
+    .lp .pr-seg > label { padding-inline: 18px; }
+  }
+
+  /* Cards: outer strong glass 24 with 8 px padding, inner Bone wash panel (24 minus 8). Subgrid lines up panels,
+     "What's included" and the lists across a row. DOM and visual order stay by price at every width. */
+  .lp .pr-plans {
+    list-style: none; margin: 40px 0 0; padding: 0;
+    display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px;
+  }
+  @media (min-width: 768px) { .lp .pr-plans { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-block-start: 48px; } }
+  @media (min-width: 1280px) { .lp .pr-plans { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-block-start: 56px; } }
+
+  .lp .pr-card {
+    display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 0;
+    padding: 8px; border-radius: var(--r-media);
+  }
+  /* Bone at 72 percent: a nested block inside the glass, never a second glass layer. */
+  .lp .pr-panel {
+    display: flex; flex-direction: column; gap: 8px; padding: 20px;
+    border-radius: calc(var(--r-media) - 8px); background: color-mix(in srgb, var(--sunk) 72%, transparent);
+  }
+  .lp .pr-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-block-size: 32px; }
+  .lp .pr-top > h3 { margin: 0; }
+  .lp .pr-flag {
+    display: inline-flex; flex: none; align-items: center; min-block-size: 28px; padding: 0 12px;
+    border-radius: var(--r-pill); background: var(--surface); box-shadow: inset 0 0 0 1px var(--ink);
+    color: var(--ink); font: 500 14px / 1 var(--font-ui);
+  }
+  .lp .pr-for { margin: 0; max-inline-size: 34ch; }
+  .lp .pr-buy { display: flex; flex-direction: column; margin-block-start: auto; padding-block-start: 24px; }
+  .lp .pr-price { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; margin: 0; }
+  .lp .pr-per { font: 400 16px / 1.2 var(--font-ui); color: var(--faint); }
+  .lp .pr-allow { margin: 8px 0 0; }
+  .lp .pr-save {
+    align-self: flex-start; display: inline-flex; align-items: center; min-block-size: 28px; margin: 10px 0 0; padding: 0 12px;
+    border-radius: var(--r-pill); background: var(--surface); box-shadow: var(--edge);
+    color: var(--ink); font: 500 14px / 1 var(--font-ui);
+  }
+  .lp .pr-btn { inline-size: 100%; margin-block-start: 20px; }
+  .lp .pr-btn:active { translate: 0 1px; }
+  .lp .pr-btn.lp-btn--outlined { background: var(--surface); }
+  @media (hover: hover) and (pointer: fine) {
+    .lp .pr-btn.lp-btn--outlined:hover { background: var(--surface); border-color: var(--ink); }
+  }
+  .lp .pr-note { margin: 10px 0 0; text-align: center; }
+  .lp .pr-incl { margin: 0; padding: 20px 12px 0; font: 500 14px / 1.4 var(--font-ui); color: var(--ink); }
+  .lp .pr-feats { list-style: none; margin: 0; padding: 12px 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .lp .pr-feats > li { display: flex; align-items: flex-start; gap: 10px; font: 400 var(--t-body-sm) / 1.5 var(--font-ui); color: var(--body); }
+  .lp .pr-feats svg { flex: none; margin-block-start: 2px; color: var(--icon); }
+
+  /* M8: after the first interval change, swapped prices, allowances and captions cross-fade in. */
+  html[data-motion="full"] .lp [data-swap] .pr-swap { animation: pr-swap var(--dur-toggle) var(--ease-out) both; }
+  @keyframes pr-swap { from { opacity: 0; translate: 0 4px; } }
+
+  /* The three billing notes under the cards: fine print with a hairline above each. */
+  .lp .pr-notes { display: grid; gap: 0 32px; margin: 40px 0 0; }
+  .lp .pr-notes > div { padding-block: 20px 0; border-block-start: 1px solid var(--hairline); }
+  .lp .pr-notes > div + div { margin-block-start: 20px; }
+  .lp .pr-notes dt { font: 500 15px / 1.4 var(--font-ui); color: var(--ink); }
+  .lp .pr-notes dd { margin: 6px 0 0; max-inline-size: 46ch; font: 400 var(--t-body-sm) / 1.6 var(--font-ui); color: var(--body); }
+  @media (min-width: 768px) {
+    .lp .pr-notes { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-block-start: 56px; }
+    .lp .pr-notes > div + div { margin-block-start: 0; }
+  }
+
+  /* ===== Calculator: copy left, the noon meadow panel right with one strong-glass card; stacked below 1024 ===== */
+  .lp .pr-calc { display: grid; gap: 40px; }
+  .lp .pr-calc .lp-intro + .pr-roll { margin-block-start: 20px; }
+  .lp .pr-roll { max-inline-size: 44ch; }
+  @media (min-width: 1024px) {
+    .lp .pr-calc { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); column-gap: 64px; align-items: center; }
+  }
+  .lp .pr-calc__panel .lp-panel__art > img { object-position: 50% 60%; }
+  .lp .pr-calc__top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .lp .pr-calc__label { font: 500 15px / 1.4 var(--font-ui); color: var(--ink); }
+  .lp .pr-calc__value {
+    font: 400 var(--t-h3) / 1 var(--font-head); letter-spacing: -0.025em; color: var(--ink);
+    font-feature-settings: "tnum" 1, "zero" 1;
+  }
+  /* Native range: Espresso fill through accent-color, 44 px tall hit area, the global ink focus ring. */
+  .lp .pr-range { display: block; inline-size: 100%; block-size: 44px; margin: 8px 0 0; cursor: pointer; accent-color: var(--action); }
+  .lp .pr-range:disabled { cursor: default; }
+  .lp .pr-calc__scale { display: flex; justify-content: space-between; font: 400 14px / 1.4 var(--font-ui); color: var(--faint); }
+  .lp .pr-calc__result {
+    margin: 16px 0 0; padding-block-start: 16px; border-block-start: 1px solid var(--hairline);
+    font: 500 var(--t-lead) / 1.4 var(--font-ui); letter-spacing: -0.01em; color: var(--ink); text-wrap: pretty;
+  }
+
+  /* ===== Comparison table on one glass sheet: stacked rows below 768, a real table from 768 ===== */
+  .lp .pr-sheet { border-radius: var(--r-media); padding: 4px 16px; }
+  @media (min-width: 768px) { .lp .pr-sheet { padding: 24px 32px 4px; } }
+  .lp .pr-table { inline-size: 100%; border-collapse: collapse; table-layout: fixed; }
+  .lp .pr-table :is(th, td) { text-align: start; font-weight: 400; }
+  .lp .pr-table thead {
+    position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap;
+  }
+  .lp .pr-table tbody tr {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 8px;
+    padding-block: 16px; border-block-start: 1px solid var(--hairline);
+  }
+  .lp .pr-table tbody tr:first-child { border-block-start: 0; }
+  .lp .pr-table tbody th { grid-column: 1 / -1; font: 500 15px / 1.4 var(--font-ui); color: var(--ink); }
+  .lp .pr-table td { font: 400 16px / 1.4 var(--font-ui); color: var(--ink); font-variant-numeric: tabular-nums; }
+  .lp .pr-table td[data-off] { color: var(--faint); }
+  .lp .pr-table td::before {
+    content: attr(data-label); display: block; margin-block-end: 2px;
+    font: 500 12px / 1.4 var(--font-ui); letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint);
+  }
+  @media (min-width: 768px) {
+    .lp .pr-table thead { position: static; inline-size: auto; block-size: auto; overflow: visible; clip: auto; white-space: normal; }
+    .lp .pr-table tbody tr { display: table-row; padding: 0; border: 0; }
+    .lp .pr-table thead th {
+      padding: 0 16px 14px 0; border-block-end: 1px solid var(--rule);
+      font: 500 15px / 1.4 var(--font-ui); color: var(--ink);
+    }
+    .lp .pr-table :is(tbody th, td) { padding: 16px 16px 16px 0; border-block-end: 1px solid var(--hairline); vertical-align: top; }
+    .lp .pr-table tbody tr:last-child :is(th, td) { border-block-end: 0; }
+    .lp .pr-table thead th:first-child { inline-size: 34%; }
+    .lp .pr-table tbody th { font: 400 16px / 1.45 var(--font-ui); color: var(--body); }
+    .lp .pr-table td::before { content: none; }
+  }
+
+  /* ===== FAQ: heading column and the native rows (FaqList), as the landing's A9 frame ===== */
+  .lp .pr-faq { display: grid; gap: 24px; }
+  .lp .pr-faq .lp-intro + .pr-contact { margin-block-start: 16px; }
+  .lp .pr-contact > .lp-link { display: inline-flex; align-items: center; min-block-size: 44px; }
+  @media (min-width: 768px) { .lp .pr-faq { gap: 32px; } }
+  @media (min-width: 1024px) {
+    .lp .pr-faq { grid-template-columns: 300px minmax(0, 1fr); gap: 0 40px; align-items: start; }
+  }
+  @media (min-width: 1280px) { .lp .pr-faq { grid-template-columns: 320px minmax(0, 1fr); } }
+}
+
+/* Unlayered on purpose: the featured card's ink edge must beat the unlayered .glass-panel border colour. */
+.lp .pr-card--featured.glass-panel { border-color: var(--ink); }

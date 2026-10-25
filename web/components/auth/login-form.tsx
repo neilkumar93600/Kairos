@@ -4,14 +4,18 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { authClient } from "@/lib/auth-client";
+import { safeNext } from "@/lib/safe-next";
 import { Button } from "../shared/button";
 import { Field, Input } from "../shared/field";
+import { EMAIL_RE, FormError, FormNotice, INPUT, OrDivider, PasswordInput, useFieldErrors } from "./fields";
 import { GoogleButton } from "./google-button";
 
 export function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get("next") ?? "/dashboard";
+  // Same-site paths only, so ?next= cannot send someone to another site after signing in.
+  const next = safeNext(params.get("next"));
+  const { errors, check, clear } = useFieldErrors();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -19,9 +23,15 @@ export function LoginForm() {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     const email = String(form.get("email"));
-    setPending(true);
+    const password = String(form.get("password"));
     setError(null);
-    const { error: err } = await authClient.signIn.email({ email, password: String(form.get("password")) });
+    const ok = check(e.currentTarget, {
+      email: !email ? "Enter your email." : EMAIL_RE.test(email) ? undefined : "Enter an email like name@example.com.",
+      password: password ? undefined : "Enter your password.",
+    });
+    if (!ok) return;
+    setPending(true);
+    const { error: err } = await authClient.signIn.email({ email, password });
     setPending(false);
     if (!err) return router.push(next);
     if (err.code === "EMAIL_NOT_VERIFIED") return router.push(`/verify-otp?email=${encodeURIComponent(email)}`);
@@ -29,32 +39,33 @@ export function LoginForm() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      {params.get("reset") ? <p className="rounded-[6px] border border-line bg-surface px-3 py-2 text-sm text-foreground">Password updated. Sign in with the new one.</p> : null}
+    <div className="flex flex-col gap-5">
+      {params.get("reset") ? <FormNotice>Password updated. Sign in with the new one.</FormNotice> : null}
       <GoogleButton next={next} />
-      <div className="flex items-center gap-3 text-xs text-subtle">
-        <span className="h-px flex-1 bg-line" /> or <span className="h-px flex-1 bg-line" />
-      </div>
-      <form onSubmit={onSubmit} className="flex flex-col gap-4">
-        <Field label="Email" htmlFor="email">
-          <Input id="email" name="email" type="email" autoComplete="email" required />
+      <OrDivider />
+      <form noValidate onSubmit={onSubmit} onInput={clear} className="flex flex-col gap-4">
+        <Field label="Email" htmlFor="email" error={errors.email}>
+          <Input id="email" name="email" type="email" autoComplete="email" required aria-invalid={Boolean(errors.email) || undefined} className={INPUT} />
         </Field>
-        <Field label="Password" htmlFor="password">
-          <Input id="password" name="password" type="password" autoComplete="current-password" required />
-        </Field>
-        {error ? <p role="alert" className="text-sm text-bad">{error}</p> : null}
-        <Button type="submit" disabled={pending}>
+        <div className="flex flex-col">
+          <Field label="Password" htmlFor="password" error={errors.password}>
+            <PasswordInput id="password" name="password" autoComplete="current-password" required aria-invalid={Boolean(errors.password) || undefined} />
+          </Field>
+          <Link href="/forgot-password" className="auth-link mt-3 self-end text-sm">
+            Forgot password?
+          </Link>
+        </div>
+        <FormError>{error}</FormError>
+        <Button type="submit" disabled={pending} className="w-full">
           {pending ? "Signing in…" : "Sign in"}
         </Button>
       </form>
-      <div className="flex justify-between text-sm">
-        <Link href="/forgot-password" className="text-body hover:text-foreground">
-          Forgot password?
-        </Link>
-        <Link href="/sign-up" className="text-foreground underline underline-offset-4">
+      <p className="auth__switch">
+        New to Kairos?{" "}
+        <Link href="/sign-up" className="auth-link">
           Create an account
         </Link>
-      </div>
+      </p>
     </div>
   );
 }

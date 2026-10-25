@@ -15,8 +15,7 @@
     grid-template-areas: "num icon title" ". . body";
     column-gap: 12px;
     align-items: center;
-    background: var(--sunk);
-    border-radius: 20px;
+    border-radius: 20px;  /* .glass-panel (globals.css) supplies fill, frost and edge */
     padding: 20px;
   }
   .lp .en01-num { grid-area: num; font-variant-numeric: tabular-nums; }

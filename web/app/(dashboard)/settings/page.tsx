@@ -3,26 +3,24 @@ import { DeleteAccount } from "@/components/dashboard/settings/delete-account";
 import { ExtensionConnect } from "@/components/dashboard/settings/extension-connect";
 import { ForwardingAddress } from "@/components/dashboard/settings/forwarding-address";
 import { PageTitle } from "@/components/shared/page-title";
+import { Panel } from "@/components/shared/panel";
 
 export const metadata: Metadata = { title: "Settings" };
 
 export default function SettingsPage() {
   return (
     <>
-      <PageTitle title="Settings" />
-      <div className="flex max-w-3xl flex-col gap-12">
-        <section className="flex flex-col gap-4">
-          <h2 className="">Chrome extension</h2>
+      <PageTitle title="Settings" body="Connect the extension, route replies to Kairos, or close your account." />
+      <div className="flex max-w-3xl flex-col gap-6">
+        <Panel title="Chrome extension" description="Connect it once so it can fill applications you approved.">
           <ExtensionConnect />
-        </section>
-        <section className="flex flex-col gap-4">
-          <h2 className="">Reply forwarding</h2>
+        </Panel>
+        <Panel title="Reply forwarding" description="Forward employer replies to this private address so they land in your inbox here.">
           <ForwardingAddress />
-        </section>
-        <section className="flex flex-col gap-4">
-          <h2 className="">Delete account</h2>
+        </Panel>
+        <Panel title="Delete account" className="mt-6 border border-danger-fill/50">
           <DeleteAccount />
-        </section>
+        </Panel>
       </div>
     </>
   );

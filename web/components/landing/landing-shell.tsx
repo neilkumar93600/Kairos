@@ -9,19 +9,21 @@ import { MotionToggle } from "./islands/motion-toggle";
 const { nav } = landingCopy;
 
 /**
- * The .lp scope for "/". Skip links come first so they are the first tab stops. The colophon is the landing's
- * footer and replaces the shared Footer here; other routes keep theirs. main clips sideways overflow as a safety
- * net only (08 9.4); full-bleed bands clip themselves.
+ * The .lp scope for every marketing route: "/", the (public) pages and the (legal) pages share this nav, the
+ * colophon footer and the landing type and colour system. Skip links come first so they are the first tab stops.
+ * main clips sideways overflow as a safety net only (08 9.4); full-bleed bands clip themselves.
  */
-export function LandingShell({ children }: { children: ReactNode }) {
+export function LandingShell({ children, skipPricing = false }: { children: ReactNode; skipPricing?: boolean }) {
   return (
     <div className="lp flex min-h-full flex-1 flex-col">
       <a className="lp-skip" href="#main">
         {nav.skipMain}
       </a>
-      <a className="lp-skip" href="#pricing">
-        {nav.skipPricing}
-      </a>
+      {skipPricing ? (
+        <a className="lp-skip" href="#pricing">
+          {nav.skipPricing}
+        </a>
+      ) : null}
       <Navbar variant="landing" sheetExtra={<MotionToggle variant="compact" />} />
       <main id="main" tabIndex={-1} className="flex-1 overflow-x-clip">
         {children}

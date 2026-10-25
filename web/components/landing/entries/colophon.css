@@ -20,26 +20,18 @@
   margin-top: -1px;
   overflow: hidden;
   isolation: isolate;
-  background: var(--ft-paper);
+  /* Top edge: the site haze (.site-backdrop) into paper over --ft-fade, so no seam shows against the section above.
+     The media starts 9 percent down (translateY below), so above it only this and the stage haze paint. */
+  --ft-fade: 56px;
+  background: linear-gradient(rgb(241 241 238 / 0), var(--ft-paper) var(--ft-fade));
   color: var(--ft-ink);
   /* Longhands, not the font shorthand, so the landing's cv11 (the Kairos single-storey a) still inherits. */
-  font-family: var(--font-inter), "Inter", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-family: var(--font-urbanist), "Urbanist", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   font-size: 16px;
   font-weight: 400;
   line-height: normal;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
-
-/* Top edge: Linen (the page canvas) into paper over 48 px, so no seam shows against the section above. */
-.lp .ft::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto;
-  z-index: 1;
-  height: 48px;
-  pointer-events: none;
-  background: linear-gradient(var(--canvas), var(--ft-paper));
 }
 
 /* ===== Stage: poster picture with the video over it; the video shows only while it plays ===== */
@@ -61,7 +53,7 @@
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(to bottom, var(--ft-paper) 0%, rgb(241 241 238 / 0.96) 26%, rgb(241 241 238 / 0.72) 44%, rgb(241 241 238 / 0) 70%);
+  background: linear-gradient(to bottom, rgb(241 241 238 / 0) 0, var(--ft-paper) var(--ft-fade), rgb(241 241 238 / 0.96) 26%, rgb(241 241 238 / 0.72) 44%, rgb(241 241 238 / 0) 70%);
 }
 
 /* ===== Wordmark, frosted glass. 429u makes "Kairos" span about 1200u (ink about 1180u) (the spec's 390u was sized for "Driftbar").
@@ -220,7 +212,8 @@
   font-weight: 500;
   letter-spacing: -0.025em;
 }
-.lp .ft-col__list a { color: inherit; text-decoration: none; transition: opacity 0.2s; }
+/* inline-flex with a 24px minimum: WCAG 2.5.8 target size; the list gap keeps neighbours apart. */
+.lp .ft-col__list a { display: inline-flex; align-items: center; min-height: 24px; color: inherit; text-decoration: none; transition: opacity 0.2s; }
 .lp .ft-col__list a:hover { opacity: 0.55; }
 
 /* ===== Motion: transitions off for reduced motion (media query as first-paint backstop, data-motion as the switch) ===== */
@@ -259,7 +252,7 @@ html[data-motion="reduced"] .lp .ft-col__list a { transition: none; }
   }
   /* Runs further down because the blue-hour hills are darker. */
   .lp .ft__stage::after {
-    background: linear-gradient(to bottom, var(--ft-paper) 0%, rgb(241 241 238 / 0.95) 50%, rgb(241 241 238 / 0.8) 68%, rgb(241 241 238 / 0) 90%);
+    background: linear-gradient(to bottom, rgb(241 241 238 / 0) 0, var(--ft-paper) var(--ft-fade), rgb(241 241 238 / 0.95) 50%, rgb(241 241 238 / 0.8) 68%, rgb(241 241 238 / 0) 90%);
   }
   .lp .ft__content {
     grid-template-columns: auto auto auto;

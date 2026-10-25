@@ -53,8 +53,8 @@ export async function Colophon() {
           <Logo className="ft-brand__logo" />
           <h2 className="ft-brand__title">Job applications you would sign.</h2>
           <p className="ft-brand__text">
-            Kairos finds jobs that fit, writes only from facts you confirmed, and sends nothing until you approve. Every
-            application comes with a receipt.
+            A job application agent that applies only where you fit, cites a confirmed fact for every line, and keeps a
+            receipt of everything it sends.
           </p>
           <p className="ft-brand__follow">Follow us</p>
           <ul className="ft-social" aria-label="Follow Kairos">

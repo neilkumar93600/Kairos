@@ -1,6 +1,7 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useApiQuery } from "@/lib/use-api-query";
 import { api, post } from "@/lib/api";
 
 export interface Match {
@@ -14,7 +15,7 @@ export interface Match {
 }
 
 export function useMatches() {
-  return useQuery({ queryKey: ["matches"], queryFn: () => api<{ matches: Match[] }>("/matches").then((r) => r.matches) });
+  return useApiQuery({ queryKey: ["matches"], queryFn: () => api<{ matches: Match[] }>("/matches").then((r) => r.matches) });
 }
 
 export function useMatchActions() {

@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import { LegalDocument } from "@/components/legal/legal-document";
 
-export const metadata: Metadata = { title: "Terms of service" };
+export const metadata: Metadata = {
+  title: "Terms of service",
+  description: "The terms for using Kairos, operated by Gray Matter Labs.",
+  alternates: { canonical: "/terms" },
+};
 
 export default function TermsPage() {
   return (

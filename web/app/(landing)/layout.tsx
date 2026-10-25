@@ -1,6 +1,6 @@
 import { LandingShell } from "@/components/landing/landing-shell";
 
-/** "/" only: wraps the landing in the .lp scope so its styles never reach other routes (ARCH 1.3). */
+/** "/" only: the landing is the one page with a #pricing skip target. */
 export default function LandingLayout({ children }: LayoutProps<"/">) {
-  return <LandingShell>{children}</LandingShell>;
+  return <LandingShell skipPricing>{children}</LandingShell>;
 }

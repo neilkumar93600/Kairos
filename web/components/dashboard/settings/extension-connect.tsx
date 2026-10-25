@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { connectExtension, isExtensionInstalled } from "@/lib/extension";
 import { Button } from "../../shared/button";
+import { StatusWord } from "../../shared/status";
 
 export function ExtensionConnect() {
   const [installed, setInstalled] = useState<boolean | null>(null);
@@ -20,17 +21,22 @@ export function ExtensionConnect() {
     return <p className="text-sm text-body">Install the Kairos extension from the Chrome Web Store, then reload this page.</p>;
   }
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
       <Button
-        disabled={installed === null || state === "connecting"}
+        disabled={installed === null || state === "connecting" || state === "connected"}
         onClick={async () => {
           setState("connecting");
           setState((await connectExtension()) ? "connected" : "failed");
         }}
       >
-        {state === "connected" ? "Connected" : "Connect extension"}
+        {state === "connecting" ? "Connecting" : "Connect extension"}
       </Button>
-      {state === "failed" ? <span className="text-sm text-bad">Could not connect. Make sure you are signed in, then try again.</span> : null}
+      {state === "connected" ? <StatusWord tone="positive">Connected</StatusWord> : null}
+      {state === "failed" ? (
+        <p role="alert" className="text-sm text-bad">
+          Could not connect. Make sure you are signed in, then try again.
+        </p>
+      ) : null}
     </div>
   );
 }

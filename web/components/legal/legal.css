@@ -1,0 +1,69 @@
+/* Legal reading layout: no art; the title sits on the site haze and the sections on one .glass-panel reading sheet
+   at a 66ch measure. Nothing here sets background, border or box-shadow on a .glass-panel element, so its fallbacks
+   (globals.css) keep working. Scoped under .lp (LandingShell). */
+.lp .legal { padding-block: calc(var(--nav-h) + 40px) var(--gap-section); }
+.lp .legal__grid { display: grid; gap: 32px; width: min(100% - 2 * var(--gutter), 1080px); margin-inline: auto; }
+.lp .legal__title { font: 400 var(--t-hero) / 1.05 var(--font-head); letter-spacing: -0.04em; color: var(--ink); }
+.lp .legal__meta { margin-block-start: 12px; font: 400 var(--t-caption) / 1.5 var(--font-ui); color: var(--faint); }
+.lp .legal__intro { margin-block-start: 20px; max-width: 66ch; font: 400 var(--t-lead) / 1.5 var(--font-ui); color: var(--body); text-wrap: pretty; }
+.lp .legal__toc a { display: flex; align-items: center; min-height: 44px; color: var(--ink); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.lp .legal__toc a:hover { text-decoration-thickness: 2px; }
+.lp .legal__toc a:active { opacity: 0.7; }
+.lp .legal__toc ol { list-style: none; margin: 0; padding: 0; }
+.lp .legal__toc-m { border-radius: var(--r-card); padding-inline: 16px; }
+.lp .legal__toc-m summary { display: flex; align-items: center; min-height: 48px; cursor: pointer; font: 500 16px / 1.3 var(--font-ui); color: var(--ink); }
+.lp .legal__toc-m summary { list-style: none; justify-content: space-between; }
+.lp .legal__toc-m summary::-webkit-details-marker { display: none; }
+.lp .legal__toc-m summary::after { content: ""; width: 8px; height: 8px; border: solid var(--ink); border-width: 0 2px 2px 0; transform: rotate(45deg) translateY(-2px); transition: transform 0.2s ease-out; }
+.lp .legal__toc-m[open] summary::after { transform: rotate(225deg) translateY(-2px); }
+.lp .legal__toc-m summary:hover { text-decoration: underline; }
+.lp .legal__toc-m summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 8px; }
+@media (prefers-reduced-motion: reduce) { .lp .legal__toc-m summary::after { transition: none; } }
+.lp .legal__toc-d { display: none; }
+.lp .legal__toc-label { font: 500 var(--t-micro) / 1.2 var(--font-ui); letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); margin-block-end: 8px; }
+.lp .legal__doc { padding: 4px 20px 32px; border-radius: var(--r-media); }
+.lp .legal__doc section { padding-block: 32px 0; margin-block: 0; border-block-start: 1px solid var(--border); scroll-margin-top: calc(var(--nav-h) + 16px); }
+.lp .legal__doc section:first-child { border-block-start: 0; padding-block-start: 24px; }
+.lp .legal__doc h2 { font: 500 24px / 1.25 var(--font-head); letter-spacing: -0.02em; color: var(--ink); }
+.lp .legal__doc p { margin-block-start: 14px; max-width: 66ch; font: 400 17px / 1.6 var(--font-ui); color: var(--body); text-wrap: pretty; }
+@media (min-width: 1024px) {
+  .lp .legal__grid { grid-template-columns: 200px minmax(0, calc(66ch + 96px)); column-gap: 64px; row-gap: 0; }
+  .lp .legal__doc { padding: 16px 48px 48px; }
+  .lp .legal__head, .lp .legal__doc { grid-column: 2; }
+  .lp .legal__toc-m { display: none; }
+  .lp .legal__toc-d { display: block; grid-column: 1; grid-row: 1 / span 2; position: sticky; top: calc(var(--nav-h) + 24px); align-self: start; }
+  .lp .legal__doc p { font-size: 18px; }
+  .lp .legal__head { padding-block-end: 40px; }
+}
+
+/* CSS-only current-section marker for the desktop contents: a bar beside the link is opaque while its section
+   covers a reading line 38% down the viewport. Opacity only; without support the list stays plain. */
+.lp .legal__toc-d a { position: relative; }
+.lp .legal__toc-d a::before { content: ""; position: absolute; inset-block: 10px; inset-inline-start: -12px; width: 2px; background: var(--ink); opacity: 0; }
+@supports (timeline-scope: none) and (animation-timeline: view()) {
+  .lp .legal__grid { timeline-scope: --lg-1, --lg-2, --lg-3, --lg-4, --lg-5, --lg-6, --lg-7, --lg-8; }
+  .lp .legal__doc section { view-timeline-inset: 38% 61%; }
+  .lp .legal__toc-d a::before { animation: legal-on linear none; animation-range: cover; }
+  .lp .legal__doc section:nth-child(1) { view-timeline-name: --lg-1; }
+  .lp .legal__toc-d li:nth-child(1) a::before { animation-timeline: --lg-1; }
+  .lp .legal__doc section:nth-child(2) { view-timeline-name: --lg-2; }
+  .lp .legal__toc-d li:nth-child(2) a::before { animation-timeline: --lg-2; }
+  .lp .legal__doc section:nth-child(3) { view-timeline-name: --lg-3; }
+  .lp .legal__toc-d li:nth-child(3) a::before { animation-timeline: --lg-3; }
+  .lp .legal__doc section:nth-child(4) { view-timeline-name: --lg-4; }
+  .lp .legal__toc-d li:nth-child(4) a::before { animation-timeline: --lg-4; }
+  .lp .legal__doc section:nth-child(5) { view-timeline-name: --lg-5; }
+  .lp .legal__toc-d li:nth-child(5) a::before { animation-timeline: --lg-5; }
+  .lp .legal__doc section:nth-child(6) { view-timeline-name: --lg-6; }
+  .lp .legal__toc-d li:nth-child(6) a::before { animation-timeline: --lg-6; }
+  .lp .legal__doc section:nth-child(7) { view-timeline-name: --lg-7; }
+  .lp .legal__toc-d li:nth-child(7) a::before { animation-timeline: --lg-7; }
+  .lp .legal__doc section:nth-child(8) { view-timeline-name: --lg-8; }
+  .lp .legal__toc-d li:nth-child(8) a::before { animation-timeline: --lg-8; }
+}
+@keyframes legal-on { from, to { opacity: 1; } }
+@media print {
+  .lp > :not(main), .lp .legal__toc-m, .lp .legal__toc-d { display: none !important; }
+  .lp .legal { padding-block: 0; }
+  .lp .legal__grid { display: block; width: auto; }
+}

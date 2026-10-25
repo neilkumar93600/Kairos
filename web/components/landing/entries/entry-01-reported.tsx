@@ -36,7 +36,7 @@ export function Entry01Reported() {
         <SectionIntro titleId="problems-title" pill={c.pill} title={c.h2} align="start" />
         <ol role="list" className="en01-cards">
           {c.cards.map((card, i) => (
-            <li key={card.title} className="en01-card lp-reveal" style={{ "--i": i + 1 } as CSSProperties}>
+            <li key={card.title} className="en01-card glass-panel lp-reveal" style={{ "--i": i + 1 } as CSSProperties}>
               <span className="lp-caption en01-num">{String(i + 1).padStart(3, "0")}</span>
               <span className="en01-icon" aria-hidden="true">
                 {ICONS[i]}

@@ -1,7 +1,8 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { FactKind, Preferences } from "@auto-career/shared";
+import { useApiQuery } from "@/lib/use-api-query";
 import { api, patch, post, put } from "@/lib/api";
 
 export interface Fact {
@@ -25,11 +26,11 @@ export interface Profile {
 }
 
 export function useProfile() {
-  return useQuery({ queryKey: ["profile"], queryFn: () => api<{ profile: Profile }>("/profile").then((r) => r.profile) });
+  return useApiQuery({ queryKey: ["profile"], queryFn: () => api<{ profile: Profile }>("/profile").then((r) => r.profile) });
 }
 
 export function useFacts() {
-  return useQuery({ queryKey: ["facts"], queryFn: () => api<{ facts: Fact[] }>("/profile/facts").then((r) => r.facts) });
+  return useApiQuery({ queryKey: ["facts"], queryFn: () => api<{ facts: Fact[] }>("/profile/facts").then((r) => r.facts) });
 }
 
 export function useProfileActions() {
@@ -43,5 +44,10 @@ export function useProfileActions() {
     }),
     deleteFact: useMutation({ mutationFn: (id: string) => api(`/profile/facts/${id}`, { method: "DELETE" }), onSuccess: refresh }),
     savePreferences: useMutation({ mutationFn: (prefs: Preferences) => put("/profile/preferences", prefs), onSuccess: refresh }),
+    /** A fact the user typed. confirmed defaults to true on the server, so "Add this fact" sends false explicitly. */
+    addFact: useMutation({
+      mutationFn: (input: { kind: FactKind; text: string; confirmed: boolean }) => post<{ fact: Fact }>("/profile/facts", input).then((r) => r.fact),
+      onSuccess: refresh,
+    }),
   };
 }

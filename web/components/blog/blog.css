@@ -1,0 +1,80 @@
+/* Blog index and post reading page. Scoped under .lp; reuses the landing tokens. */
+
+.lp .blog-meta { font-variant-numeric: tabular-nums; }
+
+/* Whole row is the target: the link's ::after covers the article. */
+.lp .blog-link { color: inherit; text-decoration: none; }
+.lp .blog-link::after { content: ""; position: absolute; inset: 0; }
+.lp .blog-link:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 5px; }
+.lp .blog-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 4px; }
+
+.lp .blog-list { padding-block: 56px 0; margin-block-end: calc(var(--gap-section) / 2); }
+@media (min-width: 1024px) { .lp .blog-list { padding-block-start: 72px; } }
+
+/* Glass everywhere (owner, 2026-10-23): the featured post is one .glass-panel card, the other posts share one
+   .glass-panel list (rows stay transparent, hairline apart), and a post reads on a .glass-panel sheet. Nothing here
+   sets background, border or box-shadow on those elements, so the panel fallbacks in globals.css keep working. */
+.lp .blog-featured {
+  position: relative; display: grid; gap: 16px; margin-block-end: 16px;
+  padding: 24px 20px 28px; border-radius: var(--r-media);
+}
+@media (min-width: 768px) { .lp .blog-featured { padding: 40px 40px 44px; } }
+.lp .blog-featured__title { max-inline-size: 20ch; }
+
+.lp .blog-rows { padding-inline: 20px; border-radius: var(--r-media); }
+@media (min-width: 768px) { .lp .blog-rows { padding-inline: 40px; } }
+.lp .blog-row {
+  position: relative; display: grid; gap: 8px; min-block-size: 44px;
+  padding-block: 28px; border-block-start: 1px solid var(--border);
+  transition: background-color 300ms var(--ease-out);
+}
+.lp .blog-row:first-child { border-block-start: 0; }
+.lp .blog-row__summary { margin-block-start: 8px; max-inline-size: 60ch; }
+@media (min-width: 768px) {
+  .lp .blog-row { grid-template-columns: 200px 1fr; gap: 32px; }
+  .lp .blog-row > .blog-meta { padding-block-start: 4px; }
+}
+
+/* Post page */
+.lp .post { padding-block: calc(var(--nav-h) + 40px) var(--gap-section); }
+.lp .post__back { display: inline-flex; align-items: center; min-block-size: 44px; font: 500 15px / 1.2 var(--font-ui); }
+/* The reading sheet: --c-copy wide, padding keeps the prose at its 66ch measure. */
+.lp .post__sheet { margin-block-start: 16px; padding: 28px 20px 32px; border-radius: var(--r-media); }
+@media (min-width: 768px) { .lp .post__sheet { padding: 48px 48px 40px; } }
+.lp .post__head { display: grid; gap: 16px; margin-block-end: 40px; }
+.lp .post__title {
+  font: 400 var(--t-h2) / 1.1 var(--font-head); letter-spacing: -0.035em; color: var(--ink); text-wrap: balance;
+}
+.lp .post__title:focus { outline: none; }
+@media (min-width: 1024px) { .lp .post__title { font-size: 48px; } }
+
+.lp .prose { max-inline-size: 66ch; font: 400 17px / 1.6 var(--font-ui); color: var(--body); }
+@media (min-width: 1024px) { .lp .prose { font-size: 18px; } }
+.lp .prose > * + * { margin-block-start: 1.25em; }
+.lp .prose :is(h2, h3) { font-family: var(--font-head); font-weight: 400; letter-spacing: -0.025em; line-height: 1.2; margin-block-start: 2em; color: var(--ink); }
+.lp .prose h2 { font-size: var(--t-h3); }
+.lp .prose h3 { font-size: var(--t-h4); }
+.lp .prose a { color: var(--ink); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.lp .prose a:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 2px; }
+.lp .prose :is(ul, ol) { padding-inline-start: 1.4em; }
+.lp .prose ul { list-style: disc; }
+.lp .prose ol { list-style: decimal; }
+.lp .prose li + li { margin-block-start: 0.5em; }
+.lp .prose blockquote { padding-inline-start: 20px; border-inline-start: 2px solid var(--ink); color: var(--ink); }
+.lp .prose :is(code, pre) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; background: var(--sunk); border-radius: 6px; }
+.lp .prose code { padding: 0.1em 0.35em; }
+.lp .prose pre { padding: 16px; overflow-x: auto; }
+.lp .prose pre code { padding: 0; background: none; }
+
+.lp .post__nav {
+  display: grid; gap: 12px; margin-block-start: 64px; padding-block-start: 24px; border-block-start: 1px solid var(--border);
+}
+@media (min-width: 640px) { .lp .post__nav { grid-template-columns: 1fr 1fr; gap: 32px; } }
+.lp .post__nav a {
+  display: grid; gap: 4px; min-block-size: 44px; padding-block: 8px; color: var(--ink); text-decoration: none;
+}
+.lp .post__nav a:hover .post__nav-title { text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; }
+.lp .post__nav a:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 4px; }
+.lp .post__nav-next { text-align: start; }
+@media (min-width: 640px) { .lp .post__nav-next { text-align: end; grid-column: 2; } }
+.lp .post__nav-title { font: 500 17px / 1.35 var(--font-ui); }

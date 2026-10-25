@@ -2,26 +2,30 @@ import type { ReactNode } from "react";
 
 export interface Faq {
   q: string;
-  /** Inline content only (it renders inside a <p>): text, optionally ending with a claim chip. */
+  /** Inline content only (it renders inside a <p>): text, optionally with an inline link. */
   a: ReactNode;
 }
 
 /**
- * Native <details> so it works without JavaScript and stays accessible. Used on the pricing and how-it-works pages.
- * A9 row (09 8): 1px Stone rule at 50 percent, question Ink 18/500, 28px Bone icon circle, answer Graphite 16.
+ * Native <details>, so every row opens without JavaScript and find-in-page reaches the answers (DESIGN "FAQ and
+ * Compare Rows": the /pricing billing FAQ keeps the native element; the landing uses the shadcn Accordion).
+ * Same look as the landing rows: one glass panel (.glass-panel) with hairlines between the rows, question Ink 500 16
+ * in a 56 / 64 px row, the 28 px Bone plus (.lp-plus, motion.css) that turns to a minus when open, answer Graphite
+ * 16 / 1.6 at a 600 px measure. Render inside the .lp scope.
  */
 export function FaqList({ items }: { items: Faq[] }) {
   return (
-    <div className="divide-y divide-rule/50 border-y border-rule/50">
+    <div className="glass-panel rounded-media px-5 py-1 md:px-7 md:py-2">
       {items.map((item) => (
-        <details key={item.q} className="group py-6">
-          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-6 text-lg font-medium text-ink [&::-webkit-details-marker]:hidden">
-            {item.q}
-            <span className="grid size-7 shrink-0 place-items-center rounded-pill bg-sunk text-sm text-ink transition-transform duration-300 ease-out group-open:rotate-45" aria-hidden>
-              +
-            </span>
+        <details key={item.q} className="group border-b border-border last:border-b-0">
+          <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-6 py-4 font-sans text-base font-medium text-ink lg:min-h-16 [&::-webkit-details-marker]:hidden">
+            <span className="decoration-1 underline-offset-3 group-hover:underline">{item.q}</span>
+            <span
+              className="lp-plus transition-transform duration-200 ease-out motion-reduce:transition-none group-active:scale-90 group-open:after:[transform:rotate(0deg)]"
+              aria-hidden="true"
+            />
           </summary>
-          <p className="mt-3 max-w-[70ch] text-base leading-relaxed text-body">{item.a}</p>
+          <p className="max-w-150 pb-6 text-base/[1.6] text-body">{item.a}</p>
         </details>
       ))}
     </div>

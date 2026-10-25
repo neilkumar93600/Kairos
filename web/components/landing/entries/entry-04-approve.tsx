@@ -19,7 +19,7 @@ const ART = "/landing/art/scene-b-footbridge.png";
 export function Entry04Approve() {
   return (
     <div id="entry-04" role="group" aria-labelledby="spotlight-title" className="lp-wrap lp-wrap--main">
-      <div className="grid rounded-[20px] bg-surface shadow-edge md:rounded-media lg:min-h-130 lg:grid-cols-[48fr_52fr] xl:min-h-140">
+      <div className="glass-panel grid rounded-[20px] md:rounded-media lg:min-h-130 lg:grid-cols-[48fr_52fr] xl:min-h-140">
         <div className="relative flex flex-col gap-4 px-4 pt-66 md:min-h-110 md:flex-row md:items-end md:gap-6 md:px-8 md:pt-8 lg:min-h-0 lg:flex-col lg:items-start lg:justify-center lg:px-0 lg:py-12">
           <div className="lp-art lp-grain absolute inset-x-0 top-0 h-90 rounded-t-[20px] md:inset-0 md:h-auto md:rounded-t-media lg:rounded-r-none lg:rounded-l-media">
             {/* Decorative: the H2 carries the meaning. Bridge right of centre, under the floating card (08 3.2). */}

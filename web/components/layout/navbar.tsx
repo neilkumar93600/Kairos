@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { List, X } from "@phosphor-icons/react";
 import { landingCopy } from "@/content/landing-copy";
@@ -25,7 +26,7 @@ const CLOSE_MS = 120; // the sheet fades out before dialog.close()
 
 function NavLogo() {
   return (
-    <Link href="/" aria-label={nav.logoAria} className="inline-flex min-h-11 items-center gap-2 text-ink">
+    <Link href="/" aria-label={nav.logoAria} className="inline-flex min-h-11 items-center gap-2 text-ink transition-opacity duration-300 hover:opacity-70">
       <LogoMark className="size-6" />
       <span aria-hidden="true" className="font-display text-xl font-medium leading-none tracking-[-0.02em]">
         {siteConfig.name}
@@ -34,11 +35,14 @@ function NavLogo() {
   );
 }
 
-const textLink = "inline-flex min-h-11 items-center underline-offset-[3px] decoration-1 hover:text-ink hover:underline";
+const textLink =
+  "inline-flex min-h-11 items-center underline-offset-[3px] decoration-1 hover:text-ink hover:underline aria-[current=page]:text-ink aria-[current=page]:underline";
 
 export function Navbar({ variant = "default", sheetExtra }: NavbarProps) {
   const landing = variant === "landing";
   const links = landing ? siteConfig.publicNav.slice(0, 3) : siteConfig.publicNav;
+  const pathname = usePathname();
+  const current = (href: string) => (pathname === href || pathname.startsWith(`${href}/`) ? "page" : undefined);
   const [open, setOpen] = useState(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const menuRef = useRef<HTMLButtonElement>(null);
@@ -88,7 +92,7 @@ export function Navbar({ variant = "default", sheetExtra }: NavbarProps) {
           {/* Desktop links, centred. Hidden below 1024px, where the menu sheet takes over. */}
           <nav aria-label="Main" className="kn-nav-links mx-auto hidden items-center gap-8 text-[15px] text-icon lg:flex xl:gap-10">
             {links.map((l) => (
-              <Link key={l.href} href={l.href} className={textLink}>
+              <Link key={l.href} href={l.href} aria-current={current(l.href)} className={textLink}>
                 {l.label}
               </Link>
             ))}
@@ -145,7 +149,13 @@ export function Navbar({ variant = "default", sheetExtra }: NavbarProps) {
         </div>
         <nav aria-label="Main" className="px-5 md:px-8">
           {links.map((l) => (
-            <Link key={l.href} href={l.href} onClick={requestClose} className="flex min-h-14 items-center border-b border-rule/40 text-lg text-ink">
+            <Link
+              key={l.href}
+              href={l.href}
+              onClick={requestClose}
+              aria-current={current(l.href)}
+              className="flex min-h-14 items-center border-b border-rule/40 text-lg text-ink aria-[current=page]:underline aria-[current=page]:underline-offset-[3px]"
+            >
               {l.label}
             </Link>
           ))}

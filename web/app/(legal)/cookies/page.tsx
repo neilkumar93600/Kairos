@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import { LegalDocument } from "@/components/legal/legal-document";
 
-export const metadata: Metadata = { title: "Cookie policy" };
+export const metadata: Metadata = {
+  title: "Cookie policy",
+  description: "The cookies Kairos sets, what each one is for, and how to control them.",
+  alternates: { canonical: "/cookies" },
+};
 
 export default function CookiesPage() {
   return (

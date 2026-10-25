@@ -6,13 +6,13 @@ const r = (o: Partial<ReceiptInput> = {}) =>
 
 describe("creditsPerInvoice", () => {
   it("grants per invoice: weekly ceil(n*7/30), monthly n, quarterly 3n", () => {
-    expect(creditsPerInvoice("starter", "week")).toBe(94);
+    expect(creditsPerInvoice("starter", "week")).toBe(234);
     expect(creditsPerInvoice("pro", "week")).toBe(280);
     expect(creditsPerInvoice("max", "week")).toBe(700);
-    expect(creditsPerInvoice("starter", "month")).toBe(400);
+    expect(creditsPerInvoice("starter", "month")).toBe(1000);
     expect(creditsPerInvoice("pro", "month")).toBe(1200);
     expect(creditsPerInvoice("max", "month")).toBe(3000);
-    expect(creditsPerInvoice("starter", "quarter")).toBe(1200);
+    expect(creditsPerInvoice("starter", "quarter")).toBe(3000);
     expect(creditsPerInvoice("pro", "quarter")).toBe(3600);
     expect(creditsPerInvoice("max", "quarter")).toBe(9000);
   });
@@ -22,9 +22,9 @@ describe("computeReceipt full use", () => {
   it("matches the published per-application figures", () => {
     const full = (plan: ReceiptInput["plan"], interval: ReceiptInput["interval"]) =>
       r({ plan, interval, submitted: 1 }).fullUseThousandths;
-    expect([full("starter", "month"), full("pro", "month"), full("max", "month")]).toEqual([48, 33, 26]);
-    expect([full("starter", "week"), full("pro", "week"), full("max", "week")]).toEqual([64, 43, 36]);
-    expect([full("starter", "quarter"), full("pro", "quarter"), full("max", "quarter")]).toEqual([38, 26, 21]);
+    expect([full("starter", "month"), full("pro", "month"), full("max", "month")]).toEqual([19, 33, 26]);
+    expect([full("starter", "week"), full("pro", "week"), full("max", "week")]).toEqual([26, 43, 36]);
+    expect([full("starter", "quarter"), full("pro", "quarter"), full("max", "quarter")]).toEqual([15, 26, 21]);
   });
 });
 

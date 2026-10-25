@@ -1,42 +1,96 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { PLANS } from "@auto-career/shared";
+import { landingCopy } from "@/content/landing-copy";
+import { siteConfig } from "@/lib/site";
+import { Entry10Start } from "@/components/landing/entries/entry-10-start";
+import { FloatingCard } from "@/components/landing/floating-card";
+import { SectionIntro } from "@/components/landing/section-intro";
+import { PageHero } from "@/components/marketing/page-hero";
 import { PlanComparison } from "@/components/pricing/plan-comparison";
-import { Container } from "@/components/shared/container";
-import { CtaBand } from "@/components/shared/cta-band";
+import { PricingBoard } from "@/components/pricing/pricing-board";
+import { pricingCopy } from "@/components/pricing/pricing-copy";
 import { FaqList } from "@/components/shared/faq-list";
-import { PricingPlans } from "@/components/shared/pricing-plans";
-import { SectionHeading } from "@/components/shared/section-heading";
+import "@/components/pricing/pricing.css";
 
-export const metadata: Metadata = { title: "Pricing", description: "Free for 25 applications. Paid plans from $19 a month, or weekly." };
+const { hero, compare, faq } = pricingCopy;
+const free = PLANS.find((p) => p.id === "free");
+const fromMonthly = Math.min(...PLANS.filter((p) => p.id !== "free").map((p) => p.priceUsd.month ?? Infinity));
 
-const pricingFaqs = [
-  { q: "Can I cancel any time?", a: "Yes, in one click from Billing. You keep access until the end of the period you paid for." },
-  { q: "What happens when I run out of credits?", a: "Nothing sends until the next cycle or until you upgrade. We never charge overage." },
-  { q: "Do unused credits roll over?", a: "Yes. Unused credits carry over while your subscription is active." },
-  { q: "Why is there a weekly plan?", a: "Many searches end in a few weeks. Weekly billing means you stop paying when you get the job." },
-  { q: "Do you offer refunds?", a: "Failed submissions never use a credit. For charges, see the refund policy linked in the footer." },
-];
+export const metadata: Metadata = {
+  title: "Pricing",
+  description: `Free for ${free?.applicationsPerCycle ?? 25} applications. Paid plans from $${fromMonthly} a month, billed weekly, monthly or quarterly.`,
+  alternates: { canonical: "/pricing" },
+};
 
+const faqItems = faq.items.map((item) => ({
+  q: item.q,
+  a:
+    "link" in item ? (
+      <>
+        {item.a}{" "}
+        <Link className="lp-link" href={item.link.href}>
+          {item.link.label}
+        </Link>
+        .
+      </>
+    ) : (
+      item.a
+    ),
+}));
+
+/**
+ * /pricing: PageHero over the footbridge with two sample credit rows, the plans and the calculator (one client
+ * island, one interval), the comparison table, the billing FAQ on native <details>, then the landing closing band.
+ */
 export default function PricingPage() {
   return (
     <>
-      <section className="py-16 md:py-20">
-        <Container className="flex flex-col gap-10">
-          <SectionHeading eyebrow="Pricing" title="Pay for applications that went through." body="Every plan includes the fit gate, truth-locked tailoring, editing before send and receipts. Higher plans add volume and the cloud applier." />
-          <PricingPlans />
-        </Container>
-      </section>
-      <section className="border-t border-line py-16">
-        <Container>
+      <PageHero
+        titleId="pricing-title"
+        title={hero.title}
+        lead={hero.lead}
+        art={{ src: "/landing/art/scene-b-footbridge.png", alt: hero.artAlt, position: "50% 60%" }}
+      >
+        {hero.cards.map((card, i) => (
+          <FloatingCard key={card.title} float={i ? "-3.5s" : true} lift>
+            <p className="pr-hcard__title">{card.title}</p>
+            <p className={card.charged ? "pr-hcard__row" : "pr-hcard__row pr-hcard__row--off"}>
+              <span>
+                {card.charged ? <span className="lp-dot" aria-hidden="true" /> : null}
+                {card.status}
+              </span>
+              <span>{card.credit}</span>
+            </p>
+          </FloatingCard>
+        ))}
+      </PageHero>
+
+      <PricingBoard />
+
+      <section aria-labelledby="compare-title" className="lp-section">
+        <div className="lp-wrap lp-wrap--narrow">
+          <SectionIntro titleId="compare-title" title={compare.title} subline={compare.subline} align="start" />
           <PlanComparison />
-        </Container>
+        </div>
       </section>
-      <section className="border-t border-line py-16">
-        <Container className="grid grid-cols-1 gap-10 lg:grid-cols-[1fr_1.6fr]">
-          <SectionHeading title="Billing questions" />
-          <FaqList items={pricingFaqs} />
-        </Container>
+
+      <section aria-labelledby="faq-title" className="lp-section">
+        <div className="lp-wrap lp-wrap--narrow pr-faq">
+          <div>
+            <SectionIntro titleId="faq-title" title={faq.title} align="start" />
+            <p className="lp-caption pr-contact">
+              {landingCopy.faq.contact}{" "}
+              <a className="lp-link" href={`mailto:${siteConfig.supportEmail}`}>
+                {siteConfig.supportEmail}
+              </a>
+            </p>
+          </div>
+          <FaqList items={faqItems} />
+        </div>
       </section>
-      <CtaBand />
+
+      <Entry10Start />
     </>
   );
 }

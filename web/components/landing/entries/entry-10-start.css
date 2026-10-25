@@ -28,10 +28,20 @@
 .lp-start__art { position: absolute; inset: 0; z-index: -3; }
 .lp-start__art > img { object-fit: cover; object-position: 50% 100%; }
 
-/* Opens the band into the canvas above and the footer ground below. */
-.lp-start__fade {
-  position: absolute; inset: 0; z-index: 0; pointer-events: none;
-  background: linear-gradient(to bottom, var(--canvas) 0, transparent 14%, transparent 80%, var(--canvas) 100%);
+/* Opens the band into the haze above and the footer below: the painting, glow and grain dissolve to transparent
+   (a mask, not a Linen fade, so no Linen strip shows against the .site-backdrop haze). The copy is not masked.
+   The glow and grain boxes overhang the band by 8 percent (landing.css) and drift, so their mask starts later. */
+.lp-start__art {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 80%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 80%, transparent 100%);
+}
+.lp-start.lp-glow-dusk::before {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0 8%, #000 22%, #000 76%, transparent 92%);
+  mask-image: linear-gradient(to bottom, transparent 0 8%, #000 22%, #000 76%, transparent 92%);
+}
+.lp-start.lp-glow-dusk::after {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 80%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 80%, transparent 100%);
 }
 
 .lp-start__stack {

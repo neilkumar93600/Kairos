@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import { LegalDocument } from "@/components/legal/legal-document";
 
-export const metadata: Metadata = { title: "Privacy policy" };
+export const metadata: Metadata = {
+  title: "Privacy policy",
+  description: "What Kairos collects, why, who it is shared with, and how to export or delete it.",
+  alternates: { canonical: "/privacy" },
+};
 
 export default function PrivacyPage() {
   return (
