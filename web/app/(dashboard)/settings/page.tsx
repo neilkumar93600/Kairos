@@ -18,7 +18,7 @@ export default function SettingsPage() {
         <Panel title="Reply forwarding" description="Forward employer replies to this private address so they land in your inbox here.">
           <ForwardingAddress />
         </Panel>
-        <Panel title="Delete account" className="mt-6 border border-danger-fill/50">
+        <Panel title="Delete account" className="mt-6 border border-danger-fill/50!">
           <DeleteAccount />
         </Panel>
       </div>

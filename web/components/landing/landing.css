@@ -92,11 +92,11 @@
   .lp-serif-hero { font-size: var(--t-hero); line-height: 1.02; letter-spacing: -0.015em; }
   .lp-serif-h2 { font-size: var(--t-serif-h2); line-height: 1.08; letter-spacing: -0.01em; }
   .lp-serif-closing { font-size: var(--t-closing); line-height: 1; letter-spacing: -0.01em; }
-  .lp-h2 { font: 400 var(--t-h2) / 1.1 var(--font-head); letter-spacing: -0.035em; color: var(--ink); text-wrap: balance; }
+  .lp-h2 { font: 400 var(--t-h2) / 1.1 var(--font-head); letter-spacing: -0.025em; color: var(--ink); text-wrap: balance; }
   .lp-h3 { font: 400 var(--t-h3) / 1.2 var(--font-head); letter-spacing: -0.025em; color: var(--ink); text-wrap: balance; }
   .lp-h4 { font: 500 var(--t-h4) / 1.3 var(--font-ui); letter-spacing: -0.02em; color: var(--ink); }
   .lp-numeral {
-    font: 400 var(--t-numeral) / 1 var(--font-head); letter-spacing: -0.045em; color: var(--ink);
+    font: 400 var(--t-numeral) / 1 var(--font-head); letter-spacing: -0.03em; color: var(--ink);
     font-feature-settings: "tnum" 1, "zero" 1;
   }
   .lp-lead { font: 400 var(--t-lead) / 1.4 var(--font-ui); letter-spacing: -0.01em; color: var(--body); max-width: var(--measure); text-wrap: pretty; }

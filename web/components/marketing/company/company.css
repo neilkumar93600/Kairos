@@ -93,10 +93,10 @@
   /* ===== /contact: the form card, then the facts; side by side from 1024 ===== */
   .lp .co-contact { display: grid; gap: 32px; }
   .lp .co-contact__title { margin: 0 0 24px; }
+  .lp .co-contact__facts { padding: var(--pad-card); border-radius: var(--r-card); }   /* .glass-panel, as the form card */
   .lp .co-contact__facts > .lp-caption:last-child { margin-block-start: 16px; }
   @media (min-width: 1024px) {
     .lp .co-contact { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); column-gap: 48px; align-items: start; }
-    .lp .co-contact__facts { padding-block-start: var(--pad-card); }   /* its heading lines up with the card's */
   }
   @media (min-width: 1280px) {
     .lp .co-contact { column-gap: 64px; }

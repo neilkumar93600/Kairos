@@ -38,17 +38,17 @@
 /* Post page */
 .lp .post { padding-block: calc(var(--nav-h) + 40px) var(--gap-section); }
 .lp .post__back { display: inline-flex; align-items: center; min-block-size: 44px; font: 500 15px / 1.2 var(--font-ui); }
-/* The reading sheet: --c-copy wide, padding keeps the prose at its 66ch measure. */
+/* The reading sheet: --c-copy wide, padding keeps the prose at its 36rem measure (about 70 characters of Urbanist). */
 .lp .post__sheet { margin-block-start: 16px; padding: 28px 20px 32px; border-radius: var(--r-media); }
 @media (min-width: 768px) { .lp .post__sheet { padding: 48px 48px 40px; } }
 .lp .post__head { display: grid; gap: 16px; margin-block-end: 40px; }
 .lp .post__title {
-  font: 400 var(--t-h2) / 1.1 var(--font-head); letter-spacing: -0.035em; color: var(--ink); text-wrap: balance;
+  font: 400 var(--t-h2) / 1.1 var(--font-head); letter-spacing: -0.025em; color: var(--ink); text-wrap: balance;
 }
 .lp .post__title:focus { outline: none; }
 @media (min-width: 1024px) { .lp .post__title { font-size: 48px; } }
 
-.lp .prose { max-inline-size: 66ch; font: 400 17px / 1.6 var(--font-ui); color: var(--body); }
+.lp .prose { max-inline-size: 36rem; font: 400 17px / 1.6 var(--font-ui); color: var(--body); }
 @media (min-width: 1024px) { .lp .prose { font-size: 18px; } }
 .lp .prose > * + * { margin-block-start: 1.25em; }
 .lp .prose :is(h2, h3) { font-family: var(--font-head); font-weight: 400; letter-spacing: -0.025em; line-height: 1.2; margin-block-start: 2em; color: var(--ink); }

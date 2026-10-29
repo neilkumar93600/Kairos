@@ -32,7 +32,7 @@ export default function ContactPage() {
             </h2>
             <ContactForm />
           </div>
-          <aside aria-labelledby="contact-facts-title" className="co-contact__facts">
+          <aside aria-labelledby="contact-facts-title" className="co-contact__facts glass-panel">
             <h2 id="contact-facts-title" className="lp-h4 co-contact__title">
               What to expect
             </h2>

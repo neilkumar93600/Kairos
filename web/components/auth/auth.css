@@ -40,7 +40,7 @@
 
   /* Heading: Inter Tight 400, never the serif. */
   .auth .auth__heading { margin-block-end: 28px; }
-  .auth .auth__h1 { font: 400 32px / 1.1 var(--font-head); letter-spacing: -0.035em; color: var(--ink); text-wrap: balance; }
+  .auth .auth__h1 { font: 400 32px / 1.1 var(--font-head); letter-spacing: -0.025em; color: var(--ink); text-wrap: balance; }
   .auth .auth__lead { margin-block-start: 12px; font: 400 16px / 1.5 var(--font-ui); color: var(--body); text-wrap: pretty; }
 
   /* Standalone text links keep the underline. The ::before grows the target to 44px, so the focus ring still hugs

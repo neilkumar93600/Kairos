@@ -299,7 +299,7 @@
     radial-gradient(55% 45% at 8% 12%, color-mix(in srgb, var(--art-sky) 85%, transparent), transparent 72%),
     radial-gradient(45% 40% at 92% 8%, color-mix(in srgb, var(--art-haze) 80%, transparent), transparent 70%),
     radial-gradient(50% 45% at 85% 88%, color-mix(in srgb, var(--art-amber) 38%, transparent), transparent 70%),
-    radial-gradient(55% 50% at 12% 92%, color-mix(in srgb, var(--art-meadow) 42%, transparent), transparent 72%),
+    radial-gradient(55% 50% at 12% 92%, color-mix(in srgb, var(--art-meadow) 36%, transparent), transparent 72%), /* 36 keeps Graphite on bare haze above 7:1 */
     radial-gradient(35% 30% at 55% 50%, color-mix(in srgb, var(--art-lilac) 30%, transparent), transparent 70%),
     var(--canvas);
 }

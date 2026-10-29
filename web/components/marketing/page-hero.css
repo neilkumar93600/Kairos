@@ -5,7 +5,7 @@
  */
 .lp .lp-page-h1 {
   font: 400 var(--t-page) / 1.04 var(--font-head);
-  letter-spacing: -0.04em;
+  letter-spacing: -0.03em;  /* Urbanist is wider than Inter Tight; -0.04em crowded the letters */
   color: var(--ink);
   text-wrap: balance;
   max-inline-size: 18ch;

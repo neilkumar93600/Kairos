@@ -13,7 +13,7 @@ export const DAYS = 14;
 /** Axis text: Deep Ash 12px, the recessive layer (DESIGN.md "Synthex-inspired layer"). */
 export const AXIS_TICK = { fill: "var(--faint)", fontSize: 12 };
 /** Dashed hairline gridlines, horizontal only. */
-export const GRID = { vertical: false, strokeDasharray: "2 4", stroke: "var(--rule)", strokeOpacity: 0.55 } as const;
+export const GRID = { vertical: false, strokeDasharray: "4 4", stroke: "var(--rule)", strokeOpacity: 0.55 } as const;
 
 const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 
@@ -36,7 +36,7 @@ export function perDay(items: { at: string | null; n?: number }[], days = DAYS) 
 export function ChartTip({ active, payload, label, unit }: { active?: boolean; payload?: readonly { value?: unknown }[]; label?: unknown; unit: (n: number) => string }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-input bg-ink px-3 py-2 text-sm shadow-(--sh-over-art)">
+    <div className="rounded-input bg-ink px-3 py-2 text-sm shadow-over-art">
       <p className="font-medium text-on-dark tabular-nums">{unit(Number(payload[0].value ?? 0))}</p>
       <p className="text-on-dark-muted">{String(label)}</p>
     </div>

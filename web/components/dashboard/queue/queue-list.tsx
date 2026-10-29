@@ -112,7 +112,7 @@ export function QueueList() {
     <div className="flex flex-col gap-6">
       {notice}
       <div className="grid gap-6 lg:grid-cols-[20rem_minmax(0,1fr)] lg:items-start xl:grid-cols-[23rem_minmax(0,1fr)]">
-        <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-6 lg:max-h-[calc(100dvh-3rem)] lg:overflow-y-auto">
+        <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-[calc(var(--app-header-h)+1.5rem)] lg:max-h-[calc(100dvh-var(--app-header-h)-3rem)] lg:overflow-y-auto">
           <Panel
             flush
             title="Drafts to approve"

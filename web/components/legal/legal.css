@@ -1,11 +1,11 @@
 /* Legal reading layout: no art; the title sits on the site haze and the sections on one .glass-panel reading sheet
-   at a 66ch measure. Nothing here sets background, border or box-shadow on a .glass-panel element, so its fallbacks
+   at a 36rem measure (about 70 characters of Urbanist; 66ch ran near 90). Nothing here sets background, border or box-shadow on a .glass-panel element, so its fallbacks
    (globals.css) keep working. Scoped under .lp (LandingShell). */
 .lp .legal { padding-block: calc(var(--nav-h) + 40px) var(--gap-section); }
 .lp .legal__grid { display: grid; gap: 32px; width: min(100% - 2 * var(--gutter), 1080px); margin-inline: auto; }
-.lp .legal__title { font: 400 var(--t-hero) / 1.05 var(--font-head); letter-spacing: -0.04em; color: var(--ink); }
+.lp .legal__title { font: 400 var(--t-hero) / 1.05 var(--font-head); letter-spacing: -0.03em; color: var(--ink); }
 .lp .legal__meta { margin-block-start: 12px; font: 400 var(--t-caption) / 1.5 var(--font-ui); color: var(--faint); }
-.lp .legal__intro { margin-block-start: 20px; max-width: 66ch; font: 400 var(--t-lead) / 1.5 var(--font-ui); color: var(--body); text-wrap: pretty; }
+.lp .legal__intro { margin-block-start: 20px; max-width: 36rem; font: 400 var(--t-lead) / 1.5 var(--font-ui); color: var(--body); text-wrap: pretty; }
 .lp .legal__toc a { display: flex; align-items: center; min-height: 44px; color: var(--ink); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
 .lp .legal__toc a:hover { text-decoration-thickness: 2px; }
 .lp .legal__toc a:active { opacity: 0.7; }
@@ -21,14 +21,14 @@
 @media (prefers-reduced-motion: reduce) { .lp .legal__toc-m summary::after { transition: none; } }
 .lp .legal__toc-d { display: none; }
 .lp .legal__toc-label { font: 500 var(--t-micro) / 1.2 var(--font-ui); letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); margin-block-end: 8px; }
-.lp .legal__doc { padding: 4px 20px 32px; border-radius: var(--r-media); }
-.lp .legal__doc section { padding-block: 32px 0; margin-block: 0; border-block-start: 1px solid var(--border); scroll-margin-top: calc(var(--nav-h) + 16px); }
+.lp .legal__doc { padding: 4px 20px 8px; border-radius: var(--r-media); }
+.lp .legal__doc section { padding-block: 28px; margin-block: 0; border-block-start: 1px solid var(--border); scroll-margin-top: calc(var(--nav-h) + 16px); }
 .lp .legal__doc section:first-child { border-block-start: 0; padding-block-start: 24px; }
 .lp .legal__doc h2 { font: 500 24px / 1.25 var(--font-head); letter-spacing: -0.02em; color: var(--ink); }
-.lp .legal__doc p { margin-block-start: 14px; max-width: 66ch; font: 400 17px / 1.6 var(--font-ui); color: var(--body); text-wrap: pretty; }
+.lp .legal__doc p { margin-block-start: 14px; max-width: 36rem; font: 400 17px / 1.6 var(--font-ui); color: var(--body); text-wrap: pretty; }
 @media (min-width: 1024px) {
-  .lp .legal__grid { grid-template-columns: 200px minmax(0, calc(66ch + 96px)); column-gap: 64px; row-gap: 0; }
-  .lp .legal__doc { padding: 16px 48px 48px; }
+  .lp .legal__grid { grid-template-columns: 200px minmax(0, calc(36rem + 96px)); column-gap: 64px; row-gap: 0; }
+  .lp .legal__doc { padding: 16px 48px 20px; }
   .lp .legal__head, .lp .legal__doc { grid-column: 2; }
   .lp .legal__toc-m { display: none; }
   .lp .legal__toc-d { display: block; grid-column: 1; grid-row: 1 / span 2; position: sticky; top: calc(var(--nav-h) + 24px); align-self: start; }

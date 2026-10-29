@@ -118,7 +118,7 @@
   font-size: calc(20 * var(--u));
   font-weight: 600;
   line-height: 1.2;
-  letter-spacing: -0.045em;
+  letter-spacing: -0.02em;  /* Urbanist at 20px: -0.045em crowded */
 }
 .lp .ft-brand__text {
   max-width: calc(412 * var(--u));
@@ -192,7 +192,7 @@
   font-size: calc(16 * var(--u));
   font-weight: 600;
   line-height: 1;
-  letter-spacing: -0.045em;
+  letter-spacing: -0.02em;
 }
 .lp .ft-col__list {
   display: grid;

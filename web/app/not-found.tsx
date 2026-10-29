@@ -22,7 +22,7 @@ export default function NotFound() {
           style={{ maxWidth: "var(--c-copy)" }}
         >
           <p className="lp-micro">Error 404</p>
-          <h1 className="lp-page-h1" style={{ font: "400 var(--t-hero) / 1.05 var(--font-head)", letterSpacing: "-0.04em" }}>
+          <h1 className="lp-page-h1" style={{ font: "400 var(--t-hero) / 1.05 var(--font-head)", letterSpacing: "-0.03em" }}>
             This page is not here.
           </h1>
           <p className="lp-lead">The link may be old, or the page may have moved.</p>

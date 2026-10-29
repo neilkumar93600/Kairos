@@ -482,7 +482,7 @@ function Workspace({ initial, jobId = null, initialSuggestions = [], initialFit 
           </div>
         ) : null}
 
-        <div role="group" aria-label="Workspace view" className="glass-panel sticky top-0 z-20 rounded-card px-2 py-2 xl:hidden">
+        <div role="group" aria-label="Workspace view" className="glass-panel sticky top-[var(--app-header-h)] z-20 rounded-card px-2 py-2 xl:hidden">
           <div className="grid grid-cols-3 rounded-pill bg-sunk p-1">
             {(["edit", "preview", "match"] as const).map((v) => (
               <button
