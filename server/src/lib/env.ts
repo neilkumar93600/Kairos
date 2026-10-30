@@ -13,6 +13,14 @@ const envSchema = z.object({
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().url(),
   WEB_ORIGIN: z.string().url(),
+  /** Comma-separated user ids that may use the cloud channel until the applier is contained (WP-04). Empty: nobody. */
+  OWNER_USER_IDS: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .default("")
+      .transform((raw) => raw.split(",").map((id) => id.trim()).filter(Boolean)),
+  ),
   EXTENSION_ORIGIN: z.preprocess(emptyToUndefined, z.string().startsWith("chrome-extension://").optional()),
   GOOGLE_CLIENT_ID: z.preprocess(emptyToUndefined, z.string().optional()),
   GOOGLE_CLIENT_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),

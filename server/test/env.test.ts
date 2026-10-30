@@ -22,4 +22,9 @@ describe("parseEnv", () => {
   it("accepts production with an email token", () => {
     expect(parseEnv({ ...base, NODE_ENV: "production", POSTMARK_SERVER_TOKEN: "pm-token" }).NODE_ENV).toBe("production");
   });
+
+  it("OWNER_USER_IDS is empty by default (nobody owns the cloud channel) and splits a comma list", () => {
+    expect(parseEnv(base).OWNER_USER_IDS).toEqual([]);
+    expect(parseEnv({ ...base, OWNER_USER_IDS: " a1 ,b2,," }).OWNER_USER_IDS).toEqual(["a1", "b2"]);
+  });
 });
