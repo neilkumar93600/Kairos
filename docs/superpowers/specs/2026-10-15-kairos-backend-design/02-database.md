@@ -1,5 +1,20 @@
 # 02. Database design (integrated): Kairos backend on Postgres 18 and DBOS Transact
 
+> **Amended 2026-10-30 (WP-43), ADR-001 Revision 3 (`01-architecture.md` A.11).** The owner decision "PRD authoritative, one numbering lane" is in force: the resume-suite PRD (`../2026-10-29-resume-suite/README.md`, approved 2026-10-29) governs the `resumes`, `resume_revisions`, import, tracker and `application_events` tables, and the sent resume snapshot is frozen and rendered at approval. What changed in this file, each marked `[Amended 2026-10-30, WP-43]` where it stands:
+>
+> | Section | Amendment |
+> |---|---|
+> | 1, 4.4 | Table count and connection budget: pointers to the README master capacity table (governing figures 118 base and 134 growth worst case; 74 before the DBOS seam exists) |
+> | 7.1.3 to 7.1.5 | `resume_imports` (PRD D8): source and parse state move off `resume_profiles`; `import_id` on `employments` and `facts` |
+> | 7.1.7 | `resumes`: many per resume profile (base and tailored), the PRD columns; `resumes_user_slot_uq` and `resumes_user_uq` are dropped |
+> | 7.1.8 | `resume_revisions`: PRD reasons, user-named and automatic named revisions, keep 50 unnamed plus every named one |
+> | 7.3.1 | `applications.resume_snapshot` and `resume_file_key` (replaces `resume_pdf_key`), written at approval; failure code `render_failed` |
+> | 7.3.4 | `application_events` is keyed by tracker item with an `application_id` link and a `payload` |
+> | 7.7 (new) | The tables the PRD adds: `resume_imports`, `tracker_items`, `contacts`, `contact_jobs`, `interviews` |
+> | 14.3 | One numbering lane: the numbers below are an apply order, not reserved file names; PRD migrations take the next free number; DDL is Postgres 17-compatible until PG18 is confirmed |
+>
+> Revision 2 text outside those sections is unchanged. `README.md` of this directory holds the name map (`resume_pdf_key` is `resume_file_key`, `detail` is `payload`) for the files that still use the old names.
+
 Status: integrated design for implementation, **revision 2, written 2026-10-25** (revision 1 was written 2026-10-23; project calendar date 2026-10-16 for the spec set). Revision 2 absorbs the as-built migration `server/drizzle/0002_platform_02_llm_ledger.sql` (applied on the working branch and immutable from now on) and the requests filed against revision 1 by `03-agent-runtime.md` (8.2, 13.4), `05-api.md` (24.1, DB-1 to DB-9) and `06-infrastructure.md` (deltas X1, X2, X3, X14, X15, X16, runner rules of 3.7, hardening H1 and H3); section 2.1 lists every revision-2 change. It merges the six domain drafts under `_db/` (`identity-profile.md`, `catalog-matching.md`, `applications.md`, `billing.md`, `messaging.md`, `platform.md`) into one consistent schema, written against `01-architecture.md` revision 2 (ADR-001, postgres-durable on DBOS Transact 5.3.0, Anthropic agents), `04-matching.md`, the spike results in `_research/spike-s-d1-local.md`, the resume workspace contract (`docs/superpowers/specs/2026-10-23-resume-workspace/README.md`, sections 3, 6, 7 and 8), and the current schema (`server/drizzle/0000_init.sql`, `0001_resume_workspace.sql`, `server/src/db/schema/*.ts`).
 
 **Precedence.** Where this document differs from a domain draft, this document wins, and section 2 says why. Where a domain draft carries detail this document only summarizes (long function bodies that did not change, per-domain row-size arithmetic, per-domain test fixtures), the draft section named in the text is the authoritative text and is part of this specification. Where this document differs from `01-architecture.md` B.10, this document wins for the schema and section 2 lists the change so the architecture text can be reconciled. The spike S-D1 correction table overrides both.
@@ -18,7 +33,7 @@ Evidence tags: **[V]** verified against a repository file, a domain draft that e
 |---|---|
 | Engine | Railway `postgres-ssl:18` with pgBackRest PITR; extension `pg_trgm` |
 | Databases | `kairos` (business state, schema `public`, plus schema `dbos` for the datasource table) and `kairos_dbos` (DBOS checkpoints, owned by the SDK) |
-| Tables in `kairos.public` | **55** (19 exist today: the 17 of `0000_init.sql` plus `resumes` and `resume_revisions` of `0001_resume_workspace.sql`; 36 are new) |
+| Tables in `kairos.public` | **55** (19 exist today: the 17 of `0000_init.sql` plus `resumes` and `resume_revisions` of `0001_resume_workspace.sql`; 36 are new) plus the **5** PRD tables of 7.7, **60** in all [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] |
 | Other relations | `dbos.transaction_completion`; views `applier_payload_v` (internal), `scan_target_v`, `job_ghost_verdict_v` and the four `ops_*_v` dashboard views of `06-infrastructure.md` 6.8; weekly partitions of `llm_calls`; the transient `matches_shadow` during phase P4 only |
 | Postgres enum types | 9, all existing: `application_status`, `ats_provider`, `billing_interval`, `credit_reason`, `email_kind`, `fact_kind`, `match_status` (gains `below_bar`, server only), `plan_id`, `submit_channel`. Every new closed set is `text` with a named `CHECK` |
 | Partitioned tables | 1: `llm_calls` (weekly range partitions, dropped after 90 days) |
@@ -27,7 +42,7 @@ Evidence tags: **[V]** verified against a repository file, a domain draft that e
 | Applier surface | 1 view (`scan_target_v`), 7 `SECURITY DEFINER` functions (`claim_cloud_attempt`, `get_applier_payload`, `mark_browser_launched`, `mark_attempt_phase`, `record_attempt_result`, `store_form_questions`, `heartbeat_executor`), `SELECT` on `ops_flags` and `EXECUTE` on `ops_flag_on`. `applier_payload_v` still exists but is no longer granted to the applier (revision 2, `06-infrastructure.md` H1) |
 | Size after 12 months at the cost-model ceiling [est] | about 108 GB in `kairos` and `kairos_dbos` together (section 12.3); realistic first year about 60 to 70 GB |
 | Write load at growth [est] | about 13 DBOS checkpoint writes a second on average (about 55 per submitted application, target 60, alert 80), about 10 business row writes a second on average, peaks about 10 times higher |
-| Migration | As built: `0000_init`, `0001_resume_workspace`, `0002_platform_02_llm_ledger`. Planned: 32 more ordered migrations (labels `0003` to `0033` plus `0015a`) over phases P1 to P7, the contract releases and phase 2; every step additive until the contract releases; the recorded contract suite stays green after every step (section 14) |
+| Migration | As built: `0000_init`, `0001_resume_workspace`, `0002_platform_02_llm_ledger`. Planned: 32 more ordered migrations (labels `0003` to `0033` plus `0015a`, now an apply order and not reserved file names, 14.3) over phases P1 to P7, the contract releases and phase 2, plus the PRD lane of 14.3; every step additive until the contract releases; the recorded contract suite stays green after every step (section 14) |
 
 The design rests on six rules that every section applies:
 
@@ -126,7 +141,7 @@ A constraint that guards existing data is added `NOT VALID` in the expand migrat
 
 ### 3.5 HOT discipline
 
-Columns updated on hot paths are kept out of every index key and predicate so the update is heap-only: `applications.lease_session_id`, `lease_expires_at`, `current_attempt_id`, `row_version`, `verification`, `questions`, `resume_pdf_key`, `facts_snapshot_hash`, `prepared_at`, `receipt`, `receipt_summary`, `revision`; `submission_attempts.heartbeat_at`, `phase`; `credit_balances.balance`, `in_flight`; `session.updated_at` is indexed by design (one refresh a day per session); `profiles.facts_version`; `user_daily_usage` and `ai_usage` counters; `dbos_executors.last_seen_at`; `rate_limits.points`. Tables with frequent same-row updates get a `fillfactor` below 100 (section 13.2).
+Columns updated on hot paths are kept out of every index key and predicate so the update is heap-only: `applications.lease_session_id`, `lease_expires_at`, `current_attempt_id`, `row_version`, `verification`, `questions`, `resume_file_key`, `facts_snapshot_hash`, `prepared_at`, `receipt`, `receipt_summary`, `revision`; `submission_attempts.heartbeat_at`, `phase`; `credit_balances.balance`, `in_flight`; `session.updated_at` is indexed by design (one refresh a day per session); `profiles.facts_version`; `user_daily_usage` and `ai_usage` counters; `dbos_executors.last_seen_at`; `rate_limits.points`. Tables with frequent same-row updates get a `fillfactor` below 100 (section 13.2).
 
 ### 3.6 No row-level security
 
@@ -251,7 +266,7 @@ The applier has no table or payload-view privilege, no model key, no data key an
 
 ### 4.4 Connections
 
-PgBouncer (Railway-managed, transaction mode, `06-infrastructure.md` X1) carries every `kairos` application pool, including the DBOS Drizzle datasource [verify in the Railway half of S-D1]; DBOS system pools connect directly to `kairos_dbos` (DBOS holds a `LISTEN` connection per process); the migrator and `pgbackup` connect directly (`DATABASE_UNPOOLED_URL`, `DATABASE_BACKUP_URL`). Worst-case budget (`06-infrastructure.md` 9.2 is authoritative; `DEFAULT_POOL_SIZE = 20` per role): PgBouncer server side 60 (`kairos_api`, `kairos_worker`, `kairos_applier`, 20 each) plus 6 (`kairos_metrics`, `kairos_readonly`, connection limit 3 each); direct DBOS 44 at base and 60 at growth (per replica: api pool 3 plus listener 1, worker 5 plus 1, applier 2 plus 1); `pgbackup`, migrator and operator console 5; superuser reserve 3. Total **118 of 200 at base and 134 of 200 at growth**; expected use 40 to 60 [est]. Alert when PgBouncer `cl_waiting` is above 0 for a minute or server connections exceed 160 (A-PG-8). Nothing in the schema uses session state: no session advisory locks (only `pg_advisory_xact_lock`), no `SET` outside `SET LOCAL` or `set_config(..., true)`, no `LISTEN` on `kairos`, no temporary tables, no prepared statements that outlive a transaction (`pg` with named statements disabled through PgBouncer, or PgBouncer 1.24 `max_prepared_statements` [verify S-P1]).
+PgBouncer (Railway-managed, transaction mode, `06-infrastructure.md` X1) carries every `kairos` application pool, including the DBOS Drizzle datasource [verify in the Railway half of S-D1]; DBOS system pools connect directly to `kairos_dbos` (DBOS holds a `LISTEN` connection per process); the migrator and `pgbackup` connect directly (`DATABASE_UNPOOLED_URL`, `DATABASE_BACKUP_URL`). Worst-case budget (`06-infrastructure.md` 9.2 is authoritative; `DEFAULT_POOL_SIZE = 20` per role): PgBouncer server side 60 (`kairos_api`, `kairos_worker`, `kairos_applier`, 20 each) plus 6 (`kairos_metrics`, `kairos_readonly`, connection limit 3 each); direct DBOS 44 at base and 60 at growth (per replica: api pool 3 plus listener 1, worker 5 plus 1, applier 2 plus 1); `pgbackup`, migrator and operator console 5; superuser reserve 3. Total **118 of 200 at base and 134 of 200 at growth**; expected use 40 to 60 [est]. [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] These are the governing figures (README master capacity table). The direct DBOS terms (44 base, 60 growth) exist only when the durable seam of ADR-001 Revision 3 runs, so before it the worst case is 74 in both sizings; each replica added beyond the growth topology adds 4 (api), 6 (worker) or 3 (applier) direct connections once the seam runs. Alert when PgBouncer `cl_waiting` is above 0 for a minute or server connections exceed 160 (A-PG-8). Nothing in the schema uses session state: no session advisory locks (only `pg_advisory_xact_lock`), no `SET` outside `SET LOCAL` or `set_config(..., true)`, no `LISTEN` on `kairos`, no temporary tables, no prepared statements that outlive a transaction (`pg` with named statements disabled through PgBouncer, or PgBouncer 1.24 `max_prepared_statements` [verify S-P1]).
 
 ---
 
@@ -638,6 +653,11 @@ ALTER TABLE resume_profiles ALTER COLUMN source_text_enc SET STORAGE EXTERNAL;
 CREATE INDEX        resume_profiles_user_idx          ON resume_profiles (user_id);                        -- slot list, plan count, cascade
 CREATE UNIQUE INDEX resume_profiles_one_default_uq    ON resume_profiles (user_id) WHERE is_default;       -- one default slot
 CREATE INDEX        resume_profiles_parse_pending_idx ON resume_profiles (updated_at) WHERE parse_status IN ('pending','parsing');
+-- [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] PRD D8: a profile can hold several import sources, each with its own parse state, so the single-source columns
+-- (source_text, source_text_enc, source_hash, source_kind, file_key, parse_status, parse_attempts, parse_error, parser_version, parsed_at)
+-- are the LEGACY path. They stay until WP-17 backfills one resume_imports row (7.7) per existing profile and moves the parse claim to it;
+-- the existing contract steps (0030, 0032) then null and drop source_text as planned. resume_profiles remains the career-track row:
+-- name, is_default, plan-gated count (1, 1, 3, 10). The parse worker's claim, attempts and stuck-parse reset move to resume_imports.
 
 -- 7.1.4 employments (F3): one job per slot; provenance like facts; not citable itself.
 CREATE TABLE employments (
@@ -654,6 +674,7 @@ CREATE TABLE employments (
   confirmed         boolean     NOT NULL DEFAULT false,
   confirmed_at      timestamptz,
   import_key        text,                                     -- sha256 of normalized title|company|start_month (re-parse identity)
+  import_id         uuid        REFERENCES resume_imports(id) ON DELETE SET NULL,   -- [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] the import that first created the row (7.7)
   created_at        timestamptz NOT NULL DEFAULT now(),
   updated_at        timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT employments_title_ck        CHECK (char_length(btrim(title))   BETWEEN 1 AND 200),
@@ -681,6 +702,7 @@ CREATE TABLE facts (
   text              text        NOT NULL,
   source_span       text,
   source_span_hash  text,                                     -- import identity; never returned by a route
+  import_id         uuid        REFERENCES resume_imports(id) ON DELETE SET NULL,   -- [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] the import this fact came from (PRD 12)
   asserted_by       text        NOT NULL DEFAULT 'import',
   confirmed         boolean     NOT NULL DEFAULT false,
   confirmed_at      timestamptz,                              -- part of facts_snapshot_hash
@@ -693,6 +715,10 @@ CREATE TABLE facts (
   CONSTRAINT facts_confirmed_at_ck CHECK (confirmed = (confirmed_at IS NOT NULL))
 );
 CREATE UNIQUE INDEX facts_import_identity_uq ON facts (resume_profile_id, source_span_hash);  -- re-parse idempotent; FK index
+-- [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] D8 keeps this index as it is: it is keyed by the profile, so the same line arriving in a second import is a
+-- conflict and is skipped ("Already in your profile"), and employments_import_uq does the same for a role. A re-parse of ONE import deletes
+-- only the unconfirmed facts WHERE import_id = that import and not re-found, then inserts with ON CONFLICT DO NOTHING; a confirmed fact, and
+-- another import's facts, are never deleted. delete_resume_slot() keeps removing only unconfirmed imported facts of the slot.
 CREATE INDEX        facts_user_created_idx   ON facts (user_id, created_at);                  -- GET /api/profile/facts; cascade
 CREATE INDEX        facts_user_confirmed_idx ON facts (user_id) WHERE confirmed;              -- every pipeline read of citable facts
 CREATE INDEX        facts_employment_idx     ON facts (employment_id) WHERE employment_id IS NOT NULL;
@@ -724,25 +750,52 @@ CREATE TABLE saved_answers (
 CREATE UNIQUE INDEX saved_answers_user_question_uq ON saved_answers (user_id, question_key);
 CREATE INDEX        saved_answers_source_app_idx   ON saved_answers (source_application_id) WHERE source_application_id IS NOT NULL;
 
--- 7.1.7 resumes: the base resume of one slot (decision D: tailored edits live in the application draft).
+-- 7.1.7 resumes: base resumes and tailored copies. [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] Replaces "the base resume of one slot": PRD 6.1 and 12 allow up to 10 base
+-- resumes per resume profile (plus one tailored copy per job), so resumes_user_slot_uq and resumes_user_uq are DROPPED (the latter was
+-- the skeleton rule from 0001; the former existed only in revision 2). Columns marked (as-built) exist in 0001; all others are added by
+-- the expand migration of 14.3 (nullable or defaulted first, constraints NOT VALID, then validated).
 CREATE TABLE resumes (
-  id                uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id           text        NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
-  resume_profile_id uuid        REFERENCES resume_profiles(id) ON DELETE CASCADE,   -- R-3; null = the no-slot resume
-  document          jsonb       NOT NULL,                     -- ResumeInput validated by resumeSchema; fact ids inside
-  template          text        NOT NULL DEFAULT 'kairos-single-v1',
-  version           integer     NOT NULL DEFAULT 1,           -- bumped by resumes_guard when document changes
-  document_hash     text        GENERATED ALWAYS AS (md5(document::text)) STORED,   -- change detection only
-  created_at        timestamptz NOT NULL DEFAULT now(),
-  updated_at        timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT resumes_user_slot_uq      UNIQUE NULLS NOT DISTINCT (user_id, resume_profile_id),
+  id                uuid        PRIMARY KEY DEFAULT gen_random_uuid(),                -- (as-built)
+  user_id           text        NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,     -- (as-built)
+  resume_profile_id uuid        NOT NULL REFERENCES resume_profiles(id) ON DELETE CASCADE,   -- (as-built, nullable and SET NULL there). R-3. NOT NULL after the
+                                                                                      -- backfill that attaches the old no-slot resume to the user's default profile, so
+                                                                                      -- the per-profile default index below constrains every row
+  kind              text        NOT NULL DEFAULT 'base',                              -- 'base' | 'tailored'
+  name              text        NOT NULL DEFAULT 'Resume',
+  is_default        boolean     NOT NULL DEFAULT false,                               -- exactly one base per resume profile
+  target_roles      text[]      NOT NULL DEFAULT '{}',
+  base_resume_id    uuid        REFERENCES resumes(id) ON DELETE SET NULL,            -- tailored copy -> its base; null once the base is deleted
+  job_id            uuid        REFERENCES jobs(id) ON DELETE SET NULL,               -- tailored copy -> its job; SET NULL so the 180-day job purge never deletes a resume
+  application_id    uuid        REFERENCES applications(id) ON DELETE SET NULL,       -- set when the application is queued
+  document          jsonb       NOT NULL,                                             -- (as-built) ResumeInput validated by resumeSchema; fact ids inside
+  template_id       text        NOT NULL DEFAULT 'kairos-single-v1',                  -- PRD 7.2 `templateId` (revision 2 called this column `template`)
+  accent            text,                                                             -- swatch id of the template, or null
+  page_size         text        NOT NULL DEFAULT 'letter',
+  level             text,                                                             -- a SENIORITY_LEVELS value (PRD 8.1); the CHECK is generated from shared/ by the migration
+  archived_at       timestamptz,
+  version           integer     NOT NULL DEFAULT 1,                                   -- bumped by resumes_guard when document changes
+  document_hash     text        GENERATED ALWAYS AS (md5(document::text)) STORED,     -- change detection only
+  created_at        timestamptz NOT NULL DEFAULT now(),                               -- (as-built)
+  updated_at        timestamptz NOT NULL DEFAULT now(),                               -- (as-built)
+  CONSTRAINT resumes_kind_ck           CHECK (kind IN ('base','tailored')),
+  CONSTRAINT resumes_shape_ck          CHECK ((kind = 'base' AND job_id IS NULL AND base_resume_id IS NULL)
+                                              OR (kind = 'tailored' AND NOT is_default)),   -- a tailored copy is never the default; base_resume_id is nullable after base delete
+  CONSTRAINT resumes_name_ck           CHECK (char_length(btrim(name)) BETWEEN 1 AND 80),
+  CONSTRAINT resumes_target_roles_ck   CHECK (cardinality(target_roles) <= 10),
+  CONSTRAINT resumes_page_size_ck      CHECK (page_size IN ('letter','a4')),
   CONSTRAINT resumes_document_shape_ck CHECK (jsonb_typeof(document) = 'object' AND jsonb_typeof(document->'sections') = 'array'
                                               AND octet_length(document::text) <= 400000),
-  CONSTRAINT resumes_template_ck       CHECK (template ~ '^[a-z0-9][a-z0-9-]{0,39}$'),
+  CONSTRAINT resumes_template_ck       CHECK (template_id ~ '^[a-z0-9][a-z0-9-]{0,39}$'),
   CONSTRAINT resumes_version_ck        CHECK (version >= 1)
 );
-CREATE UNIQUE INDEX resumes_user_uq     ON resumes (user_id);   -- skeleton rule; dropped in the release that enables RESUME_SLOTS_MULTI
-CREATE INDEX        resumes_profile_idx ON resumes (resume_profile_id) WHERE resume_profile_id IS NOT NULL;
+CREATE UNIQUE INDEX resumes_default_uq       ON resumes (resume_profile_id) WHERE is_default AND kind = 'base' AND archived_at IS NULL;   -- one default base per profile
+CREATE UNIQUE INDEX resumes_user_job_uq      ON resumes (user_id, job_id) WHERE kind = 'tailored' AND archived_at IS NULL AND job_id IS NOT NULL;   -- one active tailored copy per job (PRD 6.1)
+CREATE INDEX        resumes_profile_idx      ON resumes (resume_profile_id, kind, updated_at DESC);         -- library list; cascade
+CREATE INDEX        resumes_base_idx         ON resumes (base_resume_id) WHERE base_resume_id IS NOT NULL;   -- FK side; reply rate by base resume (PRD 9.6)
+CREATE INDEX        resumes_application_idx  ON resumes (application_id) WHERE application_id IS NOT NULL;  -- FK side
+CREATE INDEX        resumes_job_idx          ON resumes (job_id) WHERE job_id IS NOT NULL;                  -- FK side
+-- Rules in code: at most 10 base resumes per profile (409 limit_reached), the default cannot be deleted while it is the only default, the last
+-- base cannot be deleted (PRD 6.5, 11). The library read is the new GET /api/resumes; GET /api/resume stays an alias of the profile's default base.
 ALTER TABLE resumes SET (autovacuum_vacuum_scale_factor = 0.05, autovacuum_analyze_scale_factor = 0.05);
 
 -- 7.1.8 resume_revisions (F4): the document as it was before a change; immutable except name.
@@ -752,19 +805,19 @@ CREATE TABLE resume_revisions (
   document       jsonb       NOT NULL,
   document_hash  text        GENERATED ALWAYS AS (md5(document::text)) STORED,
   resume_version integer     NOT NULL,
-  reason         text        NOT NULL DEFAULT 'save',
-  name           text,
+  reason         text        NOT NULL DEFAULT 'edit',
+  name           text,                                       -- [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] set on a user-named revision and on the automatic before_ai / before_tailor revisions; a named revision is never pruned
   created_by     text        NOT NULL DEFAULT 'user',
   created_at     timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT resume_revisions_reason_ck     CHECK (reason IN ('save','pre_ai','pre_autopilot','restore','import','fact_change')),
+  CONSTRAINT resume_revisions_reason_ck     CHECK (reason IN ('edit','named','before_ai','before_tailor','restore','import','fact_change')),   -- [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] PRD 12 reasons; `import` and `fact_change` are system reasons the PRD is silent on and stay (fact_change keeps a removed-citation edit restorable). Mapping from revision 2: save -> edit, pre_ai -> before_ai, pre_autopilot -> before_tailor
   CONSTRAINT resume_revisions_created_by_ck CHECK (created_by IN ('user','system')),
   CONSTRAINT resume_revisions_name_ck       CHECK (char_length(btrim(name)) BETWEEN 1 AND 80),
   CONSTRAINT resume_revisions_doc_ck        CHECK (jsonb_typeof(document) = 'object' AND octet_length(document::text) <= 400000),
   CONSTRAINT resume_revisions_version_ck    CHECK (resume_version >= 1)
 );
 CREATE INDEX        resume_revisions_resume_created_idx ON resume_revisions (resume_id, created_at DESC, id DESC);
-CREATE UNIQUE INDEX resume_revisions_name_uq            ON resume_revisions (resume_id, lower(name)) WHERE name IS NOT NULL;
--- Written only by snapshot_resume() and ensure_resume_revision(); pruned by prune_resume_revisions() (100 newest + named + referenced).
+CREATE UNIQUE INDEX resume_revisions_name_uq            ON resume_revisions (resume_id, lower(name)) WHERE reason = 'named';   -- [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] unique among USER-named revisions only; automatic names (before_tailor, before_ai) repeat
+-- Written only by snapshot_resume() and ensure_resume_revision(); pruned by prune_resume_revisions() ([Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] the 50 newest unnamed + every named + referenced; was 100).
 
 -- 7.1.9 autopilot_settings: opt-in record; no row means off.
 CREATE TABLE autopilot_settings (
@@ -1101,7 +1154,8 @@ CREATE TABLE applications (
   questions               jsonb,                                           -- question snapshot with plan and sensitive flag; null after scrub
   verification            jsonb,                                           -- VerificationSummary {state, promptVersion, checked, supported, escalated, dropped[{kind,ref,rule}], verifiedAt}
   facts_snapshot_hash     text,                                            -- facts_snapshot_hash(user_id, fact ids) at preparation
-  resume_pdf_key          text,
+  resume_snapshot         jsonb,                                           -- [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] the tailored resume document + template, accent and page size, frozen by approveCore in the approving transaction; null on drafts; written once
+  resume_file_key         text,                                            -- [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] R2 key of the rendered snapshot PDF (this is the column revision 2 called resume_pdf_key); written once, after approval, by the render job; never by prepare
   prepared_at             timestamptz,
   gate_override           boolean            NOT NULL DEFAULT false,       -- below_bar manual import; Autopilot never sends it
   receipt                 jsonb,
@@ -1120,7 +1174,7 @@ CREATE TABLE applications (
   CONSTRAINT applications_approved_by_ck  CHECK (approved_by IS NULL OR approved_by IN ('user','autopilot')),
   CONSTRAINT applications_failure_code_ck CHECK (failure_code IS NULL OR failure_code IN ('challenge','posting_closed','required_missing',
                                                  'applier_error','unconfirmed','timeout','no_report','plan_lapsed','cloud_unavailable_for_ats',
-                                                 'extension_reported')),
+                                                 'extension_reported','render_failed')),   -- [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] render_failed: the snapshot could not be rendered before the send (PRD 7.6); never charged, resendable, never ambiguous
   CONSTRAINT applications_stage_ck        CHECK (stage IS NULL OR stage IN ('applied','in_review','assessment','interviewing','offer','rejected')),
   CONSTRAINT applications_approval_shape_ck CHECK ((status IN ('approved','submitting','submitted','failed')
                                                     AND approved_at IS NOT NULL AND approved_by IS NOT NULL AND channel IS NOT NULL)
@@ -1135,8 +1189,9 @@ CREATE TABLE applications (
   CONSTRAINT applications_submitting_ck   CHECK (status <> 'submitting' OR current_attempt_id IS NOT NULL),
   CONSTRAINT applications_autopilot_ck    CHECK (approved_by IS DISTINCT FROM 'autopilot' OR gate_override = false),
   CONSTRAINT applications_expired_ck      CHECK (draft_state <> 'expired' OR (status IN ('draft','withdrawn') AND resume_lines = '[]'::jsonb
-                                                 AND answers = '[]'::jsonb AND cover_letter IS NULL AND resume_pdf_key IS NULL)),
+                                                 AND answers = '[]'::jsonb AND cover_letter IS NULL AND resume_file_key IS NULL AND resume_snapshot IS NULL)),
   CONSTRAINT applications_scrub_ck        CHECK (content_scrubbed_at IS NULL OR status IN ('submitted','withdrawn')),
+  CONSTRAINT applications_snapshot_ck     CHECK ((status <> 'draft' OR (resume_snapshot IS NULL AND resume_file_key IS NULL)) AND (resume_snapshot IS NULL OR octet_length(resume_snapshot::text) <= 400000)),   -- [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] drafts carry no snapshot; return-to-draft clears both; rows approved before the cut-over may lack one (VALIDATE only after the backfill decision of WP-42)
   CONSTRAINT applications_json_ck         CHECK (jsonb_typeof(resume_lines) = 'array' AND jsonb_array_length(resume_lines) <= 200
                                                  AND jsonb_typeof(answers) = 'array' AND jsonb_array_length(answers) <= 200
                                                  AND (questions IS NULL OR (jsonb_typeof(questions) = 'array' AND jsonb_array_length(questions) <= 200))
@@ -1146,11 +1201,17 @@ CREATE TABLE applications (
                                                  AND (receipt IS NULL OR jsonb_typeof(receipt) = 'object')
                                                  AND (receipt_summary IS NULL OR jsonb_typeof(receipt_summary) = 'object')),
   CONSTRAINT applications_text_ck         CHECK ((facts_snapshot_hash IS NULL OR facts_snapshot_hash ~ '^[0-9a-f]{64}$')
-                                                 AND (resume_pdf_key IS NULL OR char_length(resume_pdf_key) <= 200)
+                                                 AND (resume_file_key IS NULL OR char_length(resume_file_key) <= 200)
                                                  AND (failure_reason IS NULL OR char_length(failure_reason) <= 500)
                                                  AND (lease_session_id IS NULL OR char_length(lease_session_id) <= 100))
 );
 -- Invariant index (INV-4): one application per (user, job). The other indexes are in section 11.
+-- [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] Snapshot rules (PRD 6.1, 7.6, 12). approveCore freezes resume_snapshot in the approving transaction; the render job (BullMQ, id
+-- render:<application_id>:<attempt_no>) renders it with Typst, stores the PDF under snapshots/<user_id>/<content hash>.pdf in R2 (no 30-day
+-- lifecycle: the receipt must keep showing exactly what was sent; deleted with the account or by the retention rule of WP-25) and sets
+-- resume_file_key with a conditional UPDATE. Neither column is ever changed once set, except by return-to-draft, which clears both.
+-- The send waits for resume_file_key: the extension queue omits the item and the cloud claim refuses until it is set; if rendering still fails
+-- after the job's retries the attempt ends failed/render_failed, nothing is charged and the in-flight credit is released.
 CREATE UNIQUE INDEX applications_user_job_uq ON applications (user_id, job_id);
 ALTER TABLE applications SET (fillfactor = 90, autovacuum_vacuum_scale_factor = 0.02, autovacuum_analyze_scale_factor = 0.05);
 ALTER TABLE applications ALTER COLUMN resume_lines SET COMPRESSION lz4, ALTER COLUMN answers SET COMPRESSION lz4,
@@ -1249,27 +1310,35 @@ CREATE TABLE verification_results (
 );
 CREATE UNIQUE INDEX verification_results_run_item_uq ON verification_results (run_id, item_kind, item_id, check_source);   -- replay inserts nothing
 
--- 7.3.4 application_events (F5): append-only history; ids, codes and counts only.
+-- 7.3.4 application_events (F5): append-only history; ids, codes and counts only. [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] Keyed by tracker item (PRD 12) with a link to the
+-- application. Every application has a tracker item (PRD 9.1: created with the draft, in the same transaction), so application writers resolve
+-- tracker_item_id through tracker_items_application_uq. Tracker-only items have events and no application. `detail` is renamed `payload`; the
+-- privacy bounds of revision 2 stay (scalars only, 1 KB, no strings over 200 characters): note text, contact data and interview notes never enter an event.
 CREATE TABLE application_events (
-  id             bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  application_id uuid        NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
-  user_id        text        NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
-  kind           text        NOT NULL,
-  actor          text        NOT NULL,
-  detail         jsonb       NOT NULL DEFAULT '{}',
-  dedupe_key     text,
-  at             timestamptz NOT NULL DEFAULT now(),
+  id              bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tracker_item_id uuid        NOT NULL REFERENCES tracker_items(id) ON DELETE CASCADE,
+  application_id  uuid        REFERENCES applications(id) ON DELETE CASCADE,       -- null for tracker-only items
+  user_id         text        NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+  kind            text        NOT NULL,
+  actor           text        NOT NULL,
+  source          text        GENERATED ALWAYS AS (CASE WHEN actor = 'user' THEN 'user' ELSE 'system' END) STORED,   -- the PRD's `source`
+  payload         jsonb       NOT NULL DEFAULT '{}',
+  dedupe_key      text,
+  at              timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT application_events_kind_ck   CHECK (kind IN ('drafted','verified','edited','approved','auto_approved','sent','failed','resent',
                                                   'withdrawn','reply_confirmation','reply_rejection','reply_interview','reply_assessment',
-                                                  'reply_offer','gone_quiet','reminder_sent')),
+                                                  'reply_offer','gone_quiet','reminder_sent',
+                                                  'saved','resume_linked','stage_changed','interview_added','note_added')),   -- the last five are the tracker kinds of PRD 9.3
   CONSTRAINT application_events_actor_ck  CHECK (actor IN ('user','autopilot','system','employer')),
+  CONSTRAINT application_events_app_ck    CHECK (application_id IS NOT NULL OR kind IN ('saved','stage_changed','interview_added','note_added')),
   CONSTRAINT application_events_dedupe_ck CHECK (dedupe_key IS NULL OR dedupe_key ~ '^[a-z0-9_:.-]{1,100}$'),
-  CONSTRAINT application_events_detail_ck CHECK (jsonb_typeof(detail) = 'object' AND pg_column_size(detail) <= 1024
-      AND NOT jsonb_path_exists(detail, '$.* ? (@.type() == "object" || @.type() == "array")')
-      AND NOT jsonb_path_exists(detail, '$.* ? (@ like_regex "^.{201}")'))
+  CONSTRAINT application_events_payload_ck CHECK (jsonb_typeof(payload) = 'object' AND pg_column_size(payload) <= 1024
+      AND NOT jsonb_path_exists(payload, '$.* ? (@.type() == "object" || @.type() == "array")')
+      AND NOT jsonb_path_exists(payload, '$.* ? (@ like_regex "^.{201}")'))
 );
-CREATE UNIQUE INDEX application_events_dedupe_uq ON application_events (application_id, dedupe_key) WHERE dedupe_key IS NOT NULL;
+CREATE UNIQUE INDEX application_events_dedupe_uq ON application_events (tracker_item_id, dedupe_key) WHERE dedupe_key IS NOT NULL;
 -- Trigger: application_events_immutable_bud (UPDATE and DELETE refused except inside a foreign-key action).
+-- "Refunded" in the PRD timeline is the `failed` event of a send that was never charged; there is no refund event (the credit is released, not returned).
 
 -- 7.3.5 reminders (F5): advisory rows consumed by the digest; the digest validates, nothing else cancels.
 CREATE TABLE reminders (
@@ -1979,6 +2048,19 @@ CREATE TABLE IF NOT EXISTS dbos.transaction_completion (
 
 `kairos_dbos` (the DBOS system database: `workflow_status`, `operation_outputs`, workflow inputs, queues, schedules, application versions) is owned and migrated by the SDK as `dbos_migrator`; this design never adds a column, index or trigger to it. Its roles, connection budget, retention through `DBOS.deleteWorkflows`, the three read-only views in schema `kairos_ops` and the pins are platform 5.2 and 5.5 to 5.8.
 
+### 7.7 Tables owned by the resume-suite PRD (new, 2026-10-30)
+
+[Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] The PRD (`../2026-10-29-resume-suite/README.md` section 12) is the authoritative column list for five tables the revision 2 design did not have. They are listed here so the grant matrix (4.2), the foreign-key index check (11.4) and the erasure inventory (16.1) cover them. The package that builds each writes the DDL from the PRD and this section; WP-42 lands `tracker_items` (application_events needs it), WP-17 lands `resume_imports`, WP-21 lands `contacts`, `contact_jobs` and `interviews`.
+
+| Table | Source of columns | Rules decided here (defaults; the owning package may refine with a note in its migration) |
+|---|---|---|
+| `resume_imports` | PRD 12 (D8): `resume_profile_id`, `source_kind` (`pdf`, `docx`, `linkedin_pdf`, `text`), `file_key` (R2, nullable), `parse_status`, timestamps; plus the parse columns moved from `resume_profiles` (7.1.3): `parse_attempts`, `parse_error`, `parser_version`, `parsed_at`, `source_hash`, `source_text_enc` for the pasted-text kind | `resume_profile_id NOT NULL` `ON DELETE CASCADE`; the same CHECK shapes as the legacy columns (`file_key` starts with `uploads/<user_id>/`, `parse_error` code shape, status set); the pending-parse partial index moves here; `facts.import_id` and `employments.import_id` point here with `SET NULL`; the parse job claims by this row |
+| `tracker_items` | PRD 12: `user_id`, `job_id` nullable, `application_id` nullable, manual `title`, `company`, `location`, `url`, `stage`, `stage_set_by` (`system`, `user`), `closed_reason`, `position`, `notes`, `salary_text`, `archived_at`, timestamps; plus `job_snapshot jsonb` (PRD 9.3 requires a job description that survives the posting; no column was listed) | `user_id` `CASCADE`; `job_id` and `application_id` `SET NULL` (a purged job must not delete the user's item); unique `(user_id, application_id)` and unique `(user_id, job_id)`, both partial on NOT NULL (INV-4 makes one application per job, so "Save to tracker" is idempotent); `stage` CHECK `saved, drafting, applied, interviewing, offer, closed`; `closed_reason` required exactly when `stage = 'closed'` (`rejected, withdrawn, not_pursuing, posting_closed`); `notes` and `salary_text` length-bounded and never copied into events or logs; `job_snapshot` at most 64 KB, kept until the item or the account is deleted; `position` type is the fractional-index method WP-21 chooses (PRD 15) |
+| `contacts`, `contact_jobs` | PRD 9.4, 12: name, title, company, email, phone, LinkedIn URL, notes; `contact_jobs` links a contact to a tracker item | Per-user caps and length bounds set by WP-21; hard delete; `contact_jobs` primary key `(contact_id, tracker_item_id)` with both sides `CASCADE`; same-owner trigger (`assert_same_owner`) on every cross reference |
+| `interviews` | PRD 9.5, 12: tracker item, start with time zone (stored as `timestamptz` plus an IANA zone name), duration, kind (`phone, video, onsite, assessment, other`), location or link, outcome, notes | `tracker_item_id` `CASCADE`; the `.ics` is generated on read; email reminders are Later |
+
+Grants follow the pattern of the identity domain: `kairos_api` SIUD on `resume_imports`, `tracker_items`, `contacts`, `contact_jobs`, `interviews`; `kairos_worker` S/I/U on `resume_imports` (the parse job) and S on `tracker_items` (stage moves are written by the lifecycle services through `kairos_api` and `kairos_worker` under the same-owner triggers); the applier has no access. Lock order (5.1): `tracker_items` sits with the application children (position 7). Erasure (16.1): all five cascade with the account. Retention: with the account.
+
 ---
 
 ## 8. Functions, triggers and views
@@ -2140,7 +2222,7 @@ END $$;   -- form_questions_shape_ck rejects more than 150 questions or 128 KB i
 -- applier_payload_v (final): applications 5.8 plus billing's two trailing plan columns (R-20).
 CREATE OR REPLACE VIEW applier_payload_v WITH (security_barrier = true) AS
 SELECT a.id AS application_id, a.user_id, a.status, a.channel, a.attempt_no, a.current_attempt_id,
-       a.answers, a.resume_lines, a.cover_letter, a.resume_pdf_key,
+       a.answers, a.resume_lines, a.cover_letter, a.resume_file_key,
        j.apply_url, j.closed_at, j.external_id, c.ats, c.apply_host,
        s.plan, s.status AS subscription_status, s.current_period_end,
        s.past_due_since, effective_plan(s.plan, s.status, s.past_due_since) AS effective_plan
@@ -2192,11 +2274,11 @@ GRANT EXECUTE ON FUNCTION get_applier_payload(uuid, text) TO kairos_applier;
 CREATE FUNCTION applications_row_version() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF (NEW.status, NEW.draft_state, NEW.draft_issue, NEW.revision, NEW.verification, NEW.resume_lines, NEW.resume_line_entries,
-      NEW.answers, NEW.cover_letter, NEW.resume_pdf_key, NEW.receipt, NEW.receipt_summary, NEW.failure_code, NEW.failure_reason,
+      NEW.answers, NEW.cover_letter, NEW.resume_snapshot, NEW.resume_file_key, NEW.receipt, NEW.receipt_summary, NEW.failure_code, NEW.failure_reason,
       NEW.stage, NEW.channel, NEW.approved_at, NEW.content_scrubbed_at)
      IS DISTINCT FROM
      (OLD.status, OLD.draft_state, OLD.draft_issue, OLD.revision, OLD.verification, OLD.resume_lines, OLD.resume_line_entries,
-      OLD.answers, OLD.cover_letter, OLD.resume_pdf_key, OLD.receipt, OLD.receipt_summary, OLD.failure_code, OLD.failure_reason,
+      OLD.answers, OLD.cover_letter, OLD.resume_snapshot, OLD.resume_file_key, OLD.receipt, OLD.receipt_summary, OLD.failure_code, OLD.failure_reason,
       OLD.stage, OLD.channel, OLD.approved_at, OLD.content_scrubbed_at) THEN
     NEW.row_version := OLD.row_version + 1;
   ELSE
@@ -2268,7 +2350,7 @@ Every product invariant, the database mechanism that enforces it (where one is p
 | INV-21 Migrations never edited after applied | Drizzle journal checksums; `drizzle-kit check` in CI | Review gate |
 | INV-23 Closed postings never charge | `posting_closed` is a non-resendable failure code; `closeJob` sets `closed_by = 'apply_page'`; `jobs_closed_coherent_ck` | Settlement |
 | Autopilot hands-off rules: off switch, spike pause, receipts, notification per send | Rule A1 lock order; `autopilot_settings` checks; `notifications_dedupe_uq (user_id, kind, entity_id)` makes one `autopilot_sent` notification per application; `application_events` `auto_approved` then `sent` is the receipt trail | `submission-health` |
-| Workspace contract: one base resume per slot; revisions before AI runs; tailored edits in the draft | `resumes_user_slot_uq`, `resumes_user_uq` until slots ship; `snapshot_resume` and `ensure_resume_revision` are the only revision writers; `resume_revisions_immutable`; `applications.resume_base_revision_id` with `SET NULL` | Routes |
+| Workspace contract: revisions before AI runs; the sent resume is the frozen snapshot [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] (was: one base resume per slot, tailored edits in the draft) | `resumes_default_uq`, `resumes_user_job_uq`; `applications.resume_snapshot` written at approval and never changed; `snapshot_resume` and `ensure_resume_revision` are the only revision writers; `resume_revisions_immutable`; `applications.resume_base_revision_id` with `SET NULL` | Routes |
 | F11 allowance cannot be overspent by a race | The guarded upsert of `ai_usage` enforces the limit in the statement that spends it | Refund on provider failure |
 | ETag, `304` and `If-Match` correctness (05-api 3.1, 15.2) | `applications_row_version_bu` owns `row_version` | Routes compare it in the `WHERE` clause |
 | Never Opus or Fable in production | `llm_calls_model_ck`; `ops_flags_value_ck` for `model_pin:<agentId>` | Gateway model registry |
@@ -2371,11 +2453,12 @@ stateDiagram-v2
 | `facts` | `facts_employment_idx` | `(employment_id) WHERE employment_id IS NOT NULL` | P | Employment `SET NULL`, entry facts |
 | `saved_answers` | `saved_answers_user_question_uq` | `(user_id, question_key)` | U | One answer per question; cascade |
 | `saved_answers` | `saved_answers_source_app_idx` | `(source_application_id) WHERE ... IS NOT NULL` | P | Application `SET NULL` |
-| `resumes` | `resumes_user_slot_uq` | `(user_id, resume_profile_id) NULLS NOT DISTINCT` | U | One base resume per slot; `GET /api/resume?profileId=` |
-| `resumes` | `resumes_user_uq` | `(user_id)` | U | Skeleton rule until slots ship |
-| `resumes` | `resumes_profile_idx` | `(resume_profile_id) WHERE ... IS NOT NULL` | P | Slot cascade |
+| `resumes` | `resumes_default_uq` | `(resume_profile_id) WHERE is_default AND kind = 'base' AND archived_at IS NULL` | UP | One default base per profile [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] (replaces `resumes_user_slot_uq` and `resumes_user_uq`) |
+| `resumes` | `resumes_user_job_uq` | `(user_id, job_id) WHERE kind = 'tailored' AND archived_at IS NULL AND job_id IS NOT NULL` | UP | One active tailored copy per job |
+| `resumes` | `resumes_profile_idx` | `(resume_profile_id, kind, updated_at DESC)` | | Library list; profile cascade |
+| `resumes` | `resumes_base_idx`, `resumes_application_idx`, `resumes_job_idx` | `(base_resume_id)`, `(application_id)`, `(job_id)`, each partial on NOT NULL | P | Foreign-key sides |
 | `resume_revisions` | `resume_revisions_resume_created_idx` | `(resume_id, created_at DESC, id DESC)` | | Revision list H-8, latest lookup, pruning, cascade |
-| `resume_revisions` | `resume_revisions_name_uq` | `(resume_id, lower(name)) WHERE name IS NOT NULL` | UP | Unique revision names |
+| `resume_revisions` | `resume_revisions_name_uq` | `(resume_id, lower(name)) WHERE reason = 'named'` | UP | Unique user-named revisions [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] |
 | `autopilot_settings` | `autopilot_settings_on_idx` | `(user_id) WHERE enabled` | P | Plan-change sync, global freeze fan-out, hourly summary |
 | `saved_searches` | `saved_searches_user_name_uq` | `(user_id, lower(name))` | U | Unique names; list; cascade |
 | `saved_searches` | `saved_searches_due_idx` | `(next_digest_at) WHERE frequency <> 'off'` | P | Hourly digest claim |
@@ -2436,8 +2519,9 @@ stateDiagram-v2
 | `verification_results` | `verification_results_run_item_uq` | `(run_id, item_kind, item_id, check_source)` | U | Replay inserts nothing |
 | `verification_results` | `verification_results_app_idx` | `(application_id, created_at)` | | Quality review; cascade |
 | `verification_results` | `verification_results_created_brin` | `USING brin (created_at)` | B | Dashboards, 90-day retention |
-| `application_events` | `application_events_dedupe_uq` | `(application_id, dedupe_key) WHERE dedupe_key IS NOT NULL` | UP | Idempotent writers |
-| `application_events` | `application_events_app_idx` | `(application_id, at, id)` | | Timeline; "has a reply"; cascade |
+| `application_events` | `application_events_dedupe_uq` | `(tracker_item_id, dedupe_key) WHERE dedupe_key IS NOT NULL` | UP | Idempotent writers [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] |
+| `application_events` | `application_events_item_idx` | `(tracker_item_id, at, id)` | | Tracker timeline; cascade |
+| `application_events` | `application_events_app_idx` | `(application_id, at, id) WHERE application_id IS NOT NULL` | P | Application timeline; "has a reply"; cascade |
 | `application_events` | `application_events_user_idx` | `(user_id, at DESC)` | | Hourly Autopilot summary; user cascade |
 | `reminders` | `reminders_app_kind_uq` | `(application_id, kind) WHERE application_id IS NOT NULL` | UP | One reminder per kind; application cascade |
 | `reminders` | `reminders_match_kind_uq` | `(match_id, kind) WHERE match_id IS NOT NULL` | UP | Match cascade |
@@ -2502,7 +2586,7 @@ Tables with no index beyond their primary key, by design: `profiles` (beyond the
 | `session_user_id_idx` | Dropped | `session_user_updated_idx` (strict prefix) | `0030_identity_04_contract` |
 | `facts_user_idx` | Dropped | `facts_user_created_idx` | same |
 | `resume_revisions_resume_idx` | Dropped | `resume_revisions_resume_created_idx` | same |
-| `resumes_user_uq` | Dropped | `resumes_user_slot_uq` | `0033_identity_06_multi_slot` (the release that enables `RESUME_SLOTS_MULTI`) |
+| `resumes_user_uq` | Dropped [Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] | `resumes_default_uq` and `resumes_user_job_uq` | the PRD expand migration `resume_suite_01_versions` (14.3), not phase 2: R1 ships several resumes per profile |
 | `applications_user_status_idx` | Dropped | `applications_user_status_updated_idx` | `0028_apps_08_contract` |
 | `matches_user_status_idx` | Dropped | `matches_user_new_idx` plus `matches_user_job_uq` | `0029_catalog_05_contract` |
 | `credit_ledger_user_idx` | Dropped | `credit_ledger_user_created_idx` | `0009_billing_02_ledger_balances` |
@@ -2556,7 +2640,7 @@ Every rule runs in a DBOS schedule on the worker, in batches (5,000 rows by `cti
 | `session`, `verification` | 7 days and 1 day after expiry | `identity-nightly` R-2 | sequential (small) |
 | `auth_rate_limit`, `rate_limits` | Expired rows removed continuously; unlogged | Better Auth, library, `housekeeping` | key |
 | `resume_profiles.source_text` | Nulled once ciphertext exists, then dropped (contract) | migration | |
-| `resume_revisions` | 100 newest per resume plus named plus referenced | on write; R-10 daily | `resume_revisions_resume_created_idx` |
+| `resume_revisions` | 50 newest unnamed per resume plus every named plus referenced ([Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"]; was 100) | on write; R-10 daily | `resume_revisions_resume_created_idx` |
 | `jobs.search_tsv` | Cleared 14 days after close | `retention` | `jobs_closed_idx` |
 | `jobs` closed and unreferenced | Deleted after 180 days (cascades `form_questions`, ghost rows, `tailor_cache`) | `retention` | `jobs_closed_idx`, `applications_job_idx`, `matches_job_idx` |
 | `jobs` closed and referenced | `description_text`, `card`, `raw` purged after 180 days | `retention` | `jobs_closed_idx` |
@@ -2695,7 +2779,7 @@ No existing column is renamed or retyped, and no column a frozen client reads is
 
 ### 14.3 Ordered migrations
 
-Numbers give the apply order; the journal index is assigned when the file is merged. "Old code" means the skeleton paths that still serve users not yet on the new flag; every migration up to the contract releases is compatible with them.
+Numbers give the apply order; the journal index is assigned when the file is merged. **[Amended 2026-10-30, WP-43, decision "PRD authoritative, one numbering lane"] One numbering lane.** The numbers in this table are labels for an apply order, not reserved file names: today's journal ends at `0002_platform_02_llm_ledger`, and the next file is `0003`. Every migration, whether from this table or from the PRD lane below, takes the next free number in merge order, and the data lane (L4) alone allocates numbers and regenerates the Drizzle journal on rebase, so two packages never claim the same one. DDL stays Postgres 17-compatible (no `uuidv7()` default, no PG18-only syntax) until Postgres 18 is confirmed on Railway (S-P1, WP-13); rows below that use `uuidv7()` or `lz4` are applied once it is. The PRD lane (resume suite, builds on today's Express server per D7) is part of the same sequence: "Old code" means the skeleton paths that still serve users not yet on the new flag; every migration up to the contract releases is compatible with them.
 
 | # | Name | Phase and release | Content | Gate before it ships |
 |---|---|---|---|---|
@@ -2709,7 +2793,7 @@ Numbers give the apply order; the journal index is assigned when the file is mer
 | 0009 | `billing_02_ledger_balances` | P2 | `LOCK TABLE credit_ledger, applications IN SHARE MODE`; ledger constraints and indexes; `credit_balances` with backfill B-9 and both triggers; `credit_ledger_archive`, `archive_user_ledger`, archive and immutability triggers; grants | Billing M2 pre-checks pass |
 | 0010 | `messaging_01_expand` | P2 | `inbound_emails` columns (`text_body` nullable), early checks and indexes; `contact_messages` columns and backfill B-12; `forwarding_verifications`, `email_sends`, `notifications` | |
 | 0011 | `platform_03_links_erasure` | P2 | `action_tokens`, `deletion_tasks`, `deletion_tasks_guard` | Pulled forward from P6 (platform P18) |
-| 0012 | `apps_01_expand` | P2 | 23 `applications` columns (constant defaults, no rewrite), `id` default `uuidv7()`; `submission_attempts`, `application_events` with all their constraints and indexes; early `NOT VALID` checks; triggers including status guard **v1**; applier functions; `applier_payload_v` (needs 0007 and 0008); grants | |
+| 0012 | `apps_01_expand` | P2 | 23 `applications` columns (constant defaults, no rewrite), `id` default `uuidv7()`; `submission_attempts`, `application_events` (in the shape of 7.3.4, which needs `tracker_items` first: see the PRD lane) with all their constraints and indexes; early `NOT VALID` checks; triggers including status guard **v1**; applier functions; `applier_payload_v` (needs 0007 and 0008); grants | |
 | 0013 | `apps_02_backfill` | P2 | Backfill B-8 (applications 8.3) then `VALIDATE` of the early checks | |
 | 0014 | `apps_03_indexes` | P2, `-- kairos:no-transaction` | The 16 new `applications` indexes with `CREATE INDEX CONCURRENTLY IF NOT EXISTS` (always concurrent, so the file is the same in every environment) | |
 | 0015 | `billing_03_offer_pause` | P2 | `offer_pause_candidates` | |
@@ -2731,7 +2815,10 @@ Numbers give the apply order; the journal index is assigned when the file is mer
 | 0030 | `identity_04_contract` | After P7 | Drop `session_user_id_idx`, `facts_user_idx`, `resume_revisions_resume_idx`; null `resume_profiles.source_text` where ciphertext exists (batched script first) | Seven days with no scan of the dropped indexes (`pg_stat_user_indexes`) |
 | 0031 | `messaging_03_contract` | After P7 | Recreate `inbound_emails_hidden_no_body_ck` without `text_body`; drop `text_body` | Zero rows with `text_body IS NOT NULL` |
 | 0032 | `identity_05_drop_source_text` | One release after 0030 | Drop `resume_profiles.source_text` | Previous release reads only ciphertext |
-| 0033 | `identity_06_multi_slot` | Phase 2 | Drop `resumes_user_uq` | The release that enables `RESUME_SLOTS_MULTI` |
+| 0033 | `identity_06_multi_slot` | Phase 2 | **Superseded 2026-10-30:** `resumes_user_uq` is dropped by `resume_suite_01_versions` below; `RESUME_SLOTS_MULTI` now means several resume PROFILES (plan-gated 1, 1, 3, 10), which is independent of several resumes per profile | n/a |
+| (PRD lane) | `resume_suite_01_versions` | R1, WP-17 | `resumes` columns, constraints and indexes of 7.1.7 (drops `resumes_user_uq`; backfill: each existing resume becomes the default base of its profile, a no-slot resume joins the user's default profile, then `resume_profile_id SET NOT NULL`); `resume_revisions` columns, reasons and indexes of 7.1.8; `resume_imports` (7.7) with a backfill of one row per existing profile; `facts.import_id`, `employments.import_id` | The runner and role cutover of WP-12 |
+| (PRD lane) | `resume_suite_02_tracker_events` | WP-42, before the writers WP-24, WP-29, WP-41, WP-21 | `tracker_items` (7.7) and `application_events` in the shape of 7.3.4 (empty table today, so no rewrite); `applications.resume_snapshot`, `resume_file_key`, `applications_snapshot_ck` (`NOT VALID`), failure code `render_failed` | `resume_suite_01_versions` |
+| (PRD lane) | `resume_suite_03_contacts_interviews` | R4, WP-21 | `contacts`, `contact_jobs`, `interviews` (7.7) | `resume_suite_02_tracker_events` |
 
 Grant block of 0004 for the objects of 0002. Until it runs, the default privileges of 4.1 give `kairos_api` and `kairos_worker` full DML on the four tables; both files ship in release P1 R1, so no deployed code runs with the wider grant.
 
