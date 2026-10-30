@@ -49,11 +49,13 @@ describe("body parser errors leave as 4xx, not 500", () => {
 
 describe("inbound token is checked before the body is read", () => {
   const app = createApp({ auth: { handler: async () => new Response("{}"), getSession: async () => null }, corsOrigins: [], healthChecks: {} });
-  // Not valid JSON: if anything parsed it, the answer would be 400 invalid_json, not 403.
-  const gzipped = gzipSync(Buffer.from("{".repeat(50_000)));
+  // A decompression bomb: ~50 KB on the wire, 50 MB inflated, and not valid JSON. Anything that inflated or parsed it
+  // would take far longer and answer 400 invalid_json, not 403.
+  const gzipped = gzipSync(Buffer.alloc(50 * 1024 * 1024, 0x7b));
   const post = (query: string) => request(app).post(`/api/webhooks/inbound-email${query}`).set("content-type", "application/json").set("content-encoding", "gzip").send(gzipped);
 
   it("a gzip body with a bad token is 403 without being inflated or parsed", async () => {
+    expect(gzipped.length).toBeLessThan(200 * 1024);
     const res = await post("?token=wrong-token-wrong-token");
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe("forbidden");

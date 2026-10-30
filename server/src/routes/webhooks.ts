@@ -65,7 +65,10 @@ const postmarkInbound = z.object({
 });
 
 /** Stored mail text is capped here, so a 35 MB reply cannot fill the table; the classifier reads the first 4,000 characters anyway. */
-const INBOUND_TEXT_MAX_CHARS = 16_384;
+const INBOUND_TEXT_MAX_BYTES = 16_384;
+
+/** Cuts to a UTF-8 byte budget; a character split by the cut decodes to U+FFFD, which is trimmed off the end. */
+const capText = (text: string) => Buffer.from(text).subarray(0, INBOUND_TEXT_MAX_BYTES).toString().replace(/\uFFFD+$/, "");
 
 /** The token rides in the query string, so it is checked before any byte of the body is read or inflated. */
 function requireInboundToken(req: Request, _res: Response, next: NextFunction) {
@@ -88,7 +91,7 @@ webhooksRouter.post("/inbound-email", requireInboundToken, express.json({ limit:
 
   const [stored] = await db()
     .insert(inboundEmails)
-    .values({ userId: profile.userId, providerMessageId: mail.MessageID, sender: mail.From, subject: mail.Subject, textBody: mail.TextBody.slice(0, INBOUND_TEXT_MAX_CHARS) })
+    .values({ userId: profile.userId, providerMessageId: mail.MessageID, sender: mail.From, subject: mail.Subject, textBody: capText(mail.TextBody) })
     .onConflictDoNothing()
     .returning({ id: inboundEmails.id });
   if (stored) await enqueue("classify-email", { inboundEmailId: stored.id }, `classify-${stored.id}`);

@@ -39,14 +39,3 @@ export function planForPriceId(priceId: string): { plan: PlanId; interval: Billi
 
 // The grant math lives in shared so the landing calculator and billing cannot drift; re-exported for existing callers.
 export { creditsPerInvoice };
-
-/**
- * Pauses collection on a subscription. No caller since WP-00: the direct pause on any 'offer' email was removed
- * (CISO mustFix 5). The confirmed offer_pause_candidates flow (user confirmation, 48-hour undo) is its only intended caller.
- */
-export async function pauseForOffer(stripeSubscriptionId: string): Promise<void> {
-  await stripe().subscriptions.update(stripeSubscriptionId, {
-    pause_collection: { behavior: "void" },
-    metadata: { pausedBy: "offer-email" },
-  });
-}
