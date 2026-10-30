@@ -8,6 +8,8 @@ import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from ".
 // P0 invariant tests (ADR-001 B.14): pinned on the skeleton so the DBOS migration (P2-P4) cannot regress them.
 // The app's global db() reads DATABASE_URL lazily, so it is set before any app module loads.
 process.env.DATABASE_URL = testDbUrl("invariants");
+// A filler bundle that does not exist makes the cloud applier fail before it opens a browser (see the INV-5 cloud test).
+process.env.FILLER_SCRIPT_PATH = "/nonexistent/filler.js";
 
 const scoreFit = vi.fn(async () => ({ score: 90, reasons: ["Strong match"] }));
 vi.mock("../src/services/fit", async (importOriginal) => ({ ...(await importOriginal<typeof import("../src/services/fit")>()), scoreFit }));
@@ -24,6 +26,7 @@ const PREFS: Preferences = {
   fitThreshold: 75,
   maxApplicationsPerCompanyPer30Days: 2,
 };
+const ANSWER = { fieldKey: "first_name", label: "First name", value: "Test", source: "profile" as const };
 const LINE = { id: "l1", section: "Experience", text: "Built the billing service", factIds: ["f1"] };
 
 describe.skipIf(!hasTestDb)("P0 invariants against Postgres", () => {
@@ -56,7 +59,7 @@ describe.skipIf(!hasTestDb)("P0 invariants against Postgres", () => {
     return j!.id;
   }
   async function application(userId: string, jobId: string, status: "draft" | "approved", channel: "extension" | null) {
-    const [a] = await db.insert(schema.applications).values({ userId, jobId, status, channel, resumeLines: [LINE] }).returning();
+    const [a] = await db.insert(schema.applications).values({ userId, jobId, status, channel, resumeLines: [LINE], answers: [ANSWER] }).returning();
     return a!.id;
   }
   async function candidate(id: string, prefs: Preferences) {
@@ -78,6 +81,81 @@ describe.skipIf(!hasTestDb)("P0 invariants against Postgres", () => {
       .from(schema.creditLedger)
       .where(and(eq(schema.creditLedger.applicationId, appId), eq(schema.creditLedger.reason, "submission")));
     expect(charges).toHaveLength(1);
+  });
+
+  describe("INV-5: a failed submission is never charged", () => {
+    const failedReport = (applicationId: string) => ({
+      applicationId,
+      outcome: "failed" as const,
+      failureReason: "Form not found",
+      filledFields: [],
+      submittedAt: new Date().toISOString(),
+    });
+    const ledgerFor = (userId: string) => db.select().from(schema.creditLedger).where(eq(schema.creditLedger.userId, userId));
+
+    it("extension report: no ledger row, the in-flight credit is freed, and a late 'submitted' cannot charge it", async () => {
+      const { recordSubmission } = await import("../src/services/submissions");
+      const { availableCreditsNow } = await import("../src/services/credits");
+      const userId = await seedUser(db, { credits: 5 });
+      const appId = await application(userId, await job(await company("Acme"), "a"), "approved", "extension");
+      const rowsBefore = (await ledgerFor(userId)).length;
+      await expect(availableCreditsNow(db, userId)).resolves.toBe(4); // the approved application holds one credit
+
+      await recordSubmission(db, userId, failedReport(appId), "extension");
+      expect(await ledgerFor(userId)).toHaveLength(rowsBefore);
+      await expect(availableCreditsNow(db, userId)).resolves.toBe(5);
+
+      // The employer page can still be submitted by hand later; the product must not bill for what it marked failed.
+      const late = { ...failedReport(appId), outcome: "submitted" as const };
+      await expect(recordSubmission(db, userId, late, "extension")).rejects.toMatchObject({ status: 409 });
+      expect(await ledgerFor(userId)).toHaveLength(rowsBefore);
+    });
+
+    it("cloud applier: a failed attempt ends the application as failed with zero ledger rows added", async () => {
+      const { processCloudApply } = await import("../src/jobs/cloud-apply");
+      const userId = await seedUser(db, { credits: 5 });
+      const appId = await application(userId, await job(await company("Acme"), "a"), "approved", "cloud");
+      const rowsBefore = (await ledgerFor(userId)).length;
+
+      await processCloudApply({ data: { applicationId: appId } } as Parameters<typeof processCloudApply>[0]);
+
+      const [row] = await db.select().from(schema.applications).where(eq(schema.applications.id, appId));
+      expect(row?.status).toBe("failed");
+      expect(await ledgerFor(userId)).toHaveLength(rowsBefore);
+    });
+  });
+
+  describe("plan gating: the cloud applier is Pro and Max only", () => {
+    async function approveAs(userId: string, channel: "cloud" | "extension", ids: string[]) {
+      const { createApp } = await import("../src/app");
+      const app = createApp({
+        auth: {
+          handler: async () => new Response("{}"),
+          getSession: async () => ({ user: { id: userId, email: "p@test.local", name: "P", emailVerified: true }, sessionId: "s" }),
+        },
+        corsOrigins: [],
+        healthChecks: {},
+      });
+      return request(app).post("/api/applications/approve").send({ applicationIds: ids, channel });
+    }
+
+    it("a Free user approving the cloud channel gets 403 and nothing moves", async () => {
+      const userId = await seedUser(db, { credits: 5 });
+      const appId = await application(userId, await job(await company("Acme"), "a"), "draft", null);
+      const res = await approveAs(userId, "cloud", [appId]);
+      expect(res.status).toBe(403);
+      expect(res.body.error?.code ?? res.body.code).toBe("forbidden");
+      const [row] = await db.select().from(schema.applications).where(eq(schema.applications.id, appId));
+      expect(row?.status).toBe("draft");
+    });
+
+    it("a Free user can still approve the extension channel", async () => {
+      const userId = await seedUser(db, { credits: 5 });
+      const appId = await application(userId, await job(await company("Acme"), "a"), "draft", null);
+      const res = await approveAs(userId, "extension", [appId]);
+      expect(res.status).toBe(200);
+      expect(res.body.approved).toEqual([appId]);
+    });
   });
 
   it("the extension queue never lists a draft: nothing is sent before approval", async () => {
