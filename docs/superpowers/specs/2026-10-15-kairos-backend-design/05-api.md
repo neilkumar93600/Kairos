@@ -1,5 +1,16 @@
 # Kairos backend: the API layer (05-api)
 
+> **Amended 2026-10-30 (WP-43), ADR-001 Revision 3 (`01-architecture.md` A.11).** Two decisions change this file; each change is marked where it stands.
+>
+> | Section | Amendment |
+> |---|---|
+> | 5.1 | `BETTER_AUTH_URL` is the **web origin** (the Vercel production origin), not the API origin, because the browser reaches the API through the web app's `/api` rewrite and the OAuth state cookie lives on that host. `API_PUBLIC_ORIGIN` is a separate variable. Other sign-in providers are hidden until configured; account linking and OAuth token encryption are explicit |
+> | 5.5 | The client IP is no longer chosen by `x-vercel-id` (a direct caller can forge it). The Vercel hop is authenticated with a shared secret header; without it only the rightmost `x-forwarded-for` entry is trusted |
+> | 4.4, 9.2a, 11 | The resume-suite PRD routes (`/api/resumes*`, `/api/profile/imports*`, `/api/tracker*`, contacts, interviews, templates) are added; the `/api/resume*` routes become aliases of the default base resume; a spent daily AI allowance is 429 `daily_allowance` (never 402) |
+> | 10.5, 13 | The application PDF is the render of the frozen snapshot at approval: `resume_file_key` (revision 2 called it `resume_pdf_key`) |
+>
+> The unchanged remainder of this file is Revision 2.
+
 Revision 1 (complete), 2026-10-23. Status: Proposed, part of the backend re-architecture spec set that `01-architecture.md` (revision 2, ADR-001, postgres-durable on DBOS Transact with Anthropic agents) opens. This file specifies the HTTP layer of the `api` process: framework and request pipeline, conventions, the error model, authentication and sessions, rate limits, idempotency, pagination, the full route inventory with zod schemas in `shared/`, the proof that every frozen client call keeps working, the extension channel, webhooks, how the web app learns a draft is ready, internal operations endpoints, versioning and deprecation, observability, tests, and the phase in which each piece lands.
 
 Scope boundary: this file owns HTTP. The state machine, `approveCore`, `recordOutcome`, the prepare pipeline, matching and the agents are specified in `01-architecture.md` and the downstream specs; this file states exactly how each is reached over HTTP and what the caller sees. Table and workflow names are the architect's, used exactly (`credit_balances`, `submission_attempts`, `application_events`, `autopilot_settings`, `saved_searches`, `rate_limits`, `ops_flags`, `ops_audit`, `action_tokens`, `ai_usage`, and the workflows `queueMatch`, `approveApplications`, `resendApplication`, `ingestStripeEvent`, `ingestInboundEmail`). `02-database.md` is written in parallel from the per-domain drafts in `_db/`; the schema additions and alignments this API needs are listed in section 24.1 for that document to absorb.
@@ -45,7 +56,7 @@ Reading the code against `01-architecture.md` found nine differences. Each is re
 | F-2 | `PATCH` 422 `truth_lock` "each element gains optional `reason`" (B.6.13) | Elements are already `{ line, reason }` with `reason` a free-text string (`"cites no fact"`), and `web/components/dashboard/queue/application-editor.tsx` reads `d.line.id`. | Keep `{ line, reason }` exactly; the new machine-readable code is a second optional field, `rule`. Answers and the cover letter use `{ answer }` and `{ coverLetter }` elements, which old code ignores because it reads `line` only. |
 | F-3 | The rate limiter returns the envelope (B.6.13) | `express-rate-limit`'s default handler writes a plain-text body for the IP limiter [code: `middleware/rate-limit.ts`]; only `writerLimiter` returns the envelope. | All 429 responses use the envelope with `details.reason`. The contact form checks only the status [code: `contact-form.tsx`]. |
 | F-4 | Malformed JSON is a client error | The committed baseline answered 500 `internal` for a body-parser error. The uncommitted working tree of 2026-10-23 already maps `entity.parse.failed` to 400 `invalid_json`, `entity.too.large` to 413 `payload_too_large` and any other exposed 4xx parser error to 400 `bad_request` [code: `middleware/error-handler.ts`]. | This revision keeps the working-tree mapping and adds `requestId` to it. No client depends on the old 500. |
-| F-5 | `trust proxy` is `1` [code: `app.ts`] and per-IP limits are meaningful | Web traffic reaches Railway through the Vercel rewrite, so with one trusted hop `req.ip` is Vercel's egress address for every web user. Extension traffic goes straight to Railway (it uses `__API_BASE__`) and has one hop. | `clientIp()` in section 5.5 with `TRUSTED_PROXY_HOPS`, proven by spike S-B1; IP limits are confined to anonymous traffic (A-6). |
+| F-5 | `trust proxy` is `1` [code: `app.ts`] and per-IP limits are meaningful (amended 2026-10-30: see 5.5, the hop is authenticated by `x-kairos-edge`) | Web traffic reaches Railway through the Vercel rewrite, so with one trusted hop `req.ip` is Vercel's egress address for every web user. Extension traffic goes straight to Railway (it uses `__API_BASE__`) and has one hop. | `clientIp()` in section 5.5 with `TRUSTED_PROXY_HOPS`, proven by spike S-B1; IP limits are confined to anonymous traffic (A-6). |
 | F-6 | A resume echo is harmless | `POST /api/profile/resumes` returns the whole `resume_profiles` row including `sourceText` up to 60,000 characters; P6 encrypts that column [code]. | The response drops `sourceText` and `fileKey`. No client reads them (`uploadResume` ignores the body). Listed in section 12.4. |
 | F-7 | An owner edit of a fact's text "confirms that text" (B.6.13) | `factPatchSchema` has no default for `confirmed` and a comment states that editing text must never confirm as a side effect [code: `routes/profile.ts`]. | `confirmed` changes only when present in the body. Editing the text of an already confirmed fact keeps it confirmed, refreshes `confirmed_at` and sets `asserted_by = 'user'`; editing an unconfirmed fact leaves it unconfirmed. Flagged as open question 2. |
 | F-8 | `PATCH /api/applications/:id` verifies edited answers and paragraphs (D-04) | `applicationAnswerSchema` has no fact ids and the draft-assist flow sends only `value` [code]. | Optional additive `factIds` per answer and `coverLetterFactIds`; without them the server checks containment against all confirmed facts (section 10.6). Open question 1. |
@@ -326,7 +337,10 @@ Every error from `/api/*` except Better Auth's own routes (4.6) leaves as
 | `idempotency_key_reused` | 422 | `workflow-id` routes with a key whose earlier request differed | none | yes |
 | `limit_reached` | 422 | `POST /api/saved-searches` (10), rehearsal sessions per application (2) | `{ limit }` | yes |
 | `payment_required` | 402 | `POST /api/applications/approve`, resend | `{ available, requested }` | |
-| `rate_limited` | 429 | any rate-limited or metered route | 6.6 | |
+| `rate_limited` | 429 | any rate-limited or metered route; a spent daily AI allowance is `details.reason = "daily_allowance"` with `resetsAt` (never 402) | 6.6 | |
+| `limit_reached` (resume cap) | 409 | `POST /api/resumes` (10 base resumes per profile) *[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 11)]* | `{ limit }` | |
+| `is_default`, `last_base`, `read_only`, `exists`, `stage_owned_by_pipeline` | 409 | the PRD routes of 9.2a (default or last base resume cannot be deleted; a sent resume is read-only; a tailored copy already exists; a stage the pipeline owns) *[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 11)]* | none (`exists` carries the id) | yes |
+| `no_text_layer` | 422 | `POST /api/profile/imports` (a scanned PDF) *[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 11)]* | none | yes |
 | `checkout_failed` | 502 | `POST /api/billing/checkout` | none | |
 | `billing_unavailable` | 503 | Stripe not configured or unreachable | none | |
 | `ai_unavailable` | 503 | workspace AI routes while `ops_flags.llm_paused` is set or after retries and tier-up fail | `{ retryAfterSec }` | yes |
@@ -394,24 +408,26 @@ Better Auth 1.7.10 remains the identity layer: email and password with six-digit
 // server/src/modules/identity/auth.ts  (specification-level; option names [verify S-B1])
 betterAuth({
   appName: "Kairos",
-  baseURL: env.BETTER_AUTH_URL,                       // the public API origin, API_PUBLIC_ORIGIN
+  baseURL: env.BETTER_AUTH_URL,                       // the WEB origin (Vercel production), NOT the API origin; [Amended 2026-10-30, WP-43]
   secret: env.BETTER_AUTH_SECRET,
   basePath: "/api/auth",
   trustedOrigins: [env.WEB_ORIGIN, ...(env.EXTENSION_ORIGIN ? [env.EXTENSION_ORIGIN] : []), ...env.CSRF_ALLOWED_ORIGINS],
   database: drizzleAdapter(authDb(), { provider: "pg", schema }),           // application pool through PgBouncer
   emailAndPassword: { enabled: true, requireEmailVerification: true, minPasswordLength: 10, maxPasswordLength: 128,
                       revokeSessionsOnPasswordReset: true },
-  socialProviders: google ? { google } : {},
+  socialProviders: google ? { google } : {},          // only providers the server has credentials for; the web hides the rest (decision: email+OTP and Google)
+  account: { encryptOAuthTokens: true,
+             accountLinking: { enabled: true, trustedProviders: ["google"], requireLocalEmailVerified: true } },   // explicit, matches the 1.7.7 default; pre-hijack test required
   session: {
     expiresIn: 60 * 60 * 24 * 30,                     // 30 days (kept)
     updateAge: 60 * 60 * 24,                          // refresh once a day (kept)
     freshAge: 60 * 60 * 24,                           // "recent sign-in" window for session-fresh routes
     cookieCache: { enabled: true, maxAge: 300 },      // a signed copy of the session in a second cookie, 5 minutes
   },
-  rateLimit: { enabled: false },                      // limits enforced from hooks.before against rate_limits (6.4)
+  rateLimit: { enabled: true, storage: "database" },   // [Amended 2026-10-30, WP-43] database storage so limits hold across replicas and redeploys; the hooks of 6.4 add the per-email and per-IP classes against rate_limits
   advanced: {
     useSecureCookies: env.NODE_ENV === "production",
-    ipAddress: { ipAddressHeaders: ["x-forwarded-for"] },                    // aligned with clientIp() (5.5)
+    ipAddress: { ipAddressHeaders: ["x-kairos-client-ip"] },                // [Amended 2026-10-30, WP-43] the header the edge secret vouches for (5.5); never x-forwarded-for, whose first entry is client-chosen
   },
   user: { deleteUser: { enabled: true, beforeDelete /* Stripe cancel, deletion_tasks, R2 tombstone: arch B.6.11 */ } },
   plugins: [emailOTP({ otpLength: 6, expiresIn: 600, allowedAttempts: 5, sendVerificationOnSignUp: true,
@@ -422,6 +438,8 @@ betterAuth({
   hooks: { before: authLimits, after: releaseLeasesOnSignOut },
 });
 ```
+
+**`BETTER_AUTH_URL` and the OAuth callback** *[Amended 2026-10-30, WP-43, ADR-001 Revision 3: CISO should-fix "x-vercel-id design"; gap api-auth-security-02]* Set `BETTER_AUTH_URL` and `WEB_ORIGIN` to the exact Vercel production origin and register the Google redirect URI as `https://<web origin>/api/auth/callback/google`. The browser calls `/api/auth/*` on the web origin, Vercel rewrites it to the Railway API, and the OAuth state cookie is set on, and must return to, the web host; with the API origin here Google's callback lands on a host that never saw the state and fails with `state_mismatch`. Vercel preview origins are listed explicitly in `CSRF_ALLOWED_ORIGINS` and `trustedOrigins`; there is no wildcard. The production build of the web app fails when `API_ORIGIN` is unset (it must not fall back to `http://localhost:4000`). The extension, signed-link pages and emails use `API_PUBLIC_ORIGIN`, which is the public Railway API origin and is no longer assumed equal to `BETTER_AUTH_URL`.
 
 `createUserBody` is the existing transaction [code] plus the `credit_balances` row and `normalized_email_hash`; it is idempotent (`ON CONFLICT DO NOTHING`), and the 5-minute "sign-up without profile" reconciler is its safety net [arch B.5.8].
 
@@ -466,18 +484,20 @@ export function requireAuth(gateway: AuthGateway, kind: Exclude<AuthKind, "publi
 
 ### 5.5 Client IP
 
+*[Amended 2026-10-30, WP-43, ADR-001 Revision 3: CISO should-fix "x-vercel-id design"; gap api-auth-security-02]* Revision 2 chose the hop count by whether a request carried `x-vercel-id`. That header is client-controlled: a caller who reaches the public Railway API directly can send `x-vercel-id` together with `X-Forwarded-For: <any address>`, the chain then has no more entries than the Vercel hop count, and `clientIp()` returned the forged first entry, which defeats the anonymous, sign-in and sign-up limits. The replacement authenticates the hop instead of guessing it.
+
 ```ts
-// server/src/api/client-ip.ts
+// server/src/middleware/client-ip.ts
 export function clientIp(req: Request): string {
-  // X-Forwarded-For is "client, proxy1, proxy2". Railway's edge appends the address it saw; Vercel's rewrite
-  // puts the browser's address first. Walk from the right and skip TRUSTED_PROXY_HOPS entries.
-  const xff = (req.headers["x-forwarded-for"] as string | undefined)?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
-  const hops = viaVercel(req) ? env.TRUSTED_PROXY_HOPS_VERCEL : env.TRUSTED_PROXY_HOPS_DIRECT;
-  return xff.length > hops ? xff[xff.length - 1 - hops]! : (xff[0] ?? req.socket.remoteAddress ?? "0.0.0.0");
+  // 1. The web app's edge (web/proxy.ts) sets x-kairos-edge = KAIROS_EDGE_SECRET and x-kairos-client-ip = Vercel's x-real-ip on every /api/* rewrite.
+  //    Express strips BOTH headers unless the secret matches (timingSafeEqual on equal-length digests).
+  // 2. A matching secret: the client IP is x-kairos-client-ip.
+  // 3. Anything else (the extension, webhooks, direct callers): the rightmost x-forwarded-for entry, which is the address Railway's edge appended,
+  //    skipping TRUSTED_PROXY_HOPS_DIRECT further proxies from the right. Entries to its left are client-controlled and are never used.
 }
 ```
 
-`viaVercel(req)` is true when the request carries `x-vercel-id` [verify S-B1]. Defaults: `TRUSTED_PROXY_HOPS_DIRECT=1` (the extension and webhooks), `TRUSTED_PROXY_HOPS_VERCEL=2` (the web through the rewrite). Spike S-B1 sends probe requests through the real Vercel rewrite to `GET /api/admin/request-info` and records the exact header chain; the two numbers are set from that evidence. Express's `trust proxy` setting stays `1` for `req.protocol` and secure-cookie decisions; `req.ip` is not used. A client that spoofs `x-vercel-id` can only choose which hop count is applied to its own address, which affects only its own anonymous rate-limit key.
+Better Auth reads the same value through `advanced.ipAddress.ipAddressHeaders: ["x-kairos-client-ip"]` (5.1), the Express limiters key anonymous traffic on `clientIp()` and signed-in traffic on the user id (600 a minute), and the Better Auth limiter uses database storage, so the three agree and survive replicas and redeploys. `TRUSTED_PROXY_HOPS_VERCEL` is removed. `TRUSTED_PROXY_HOPS_DIRECT` and the secret are set from spike S-B1's header probe through the real rewrite (`GET /api/admin/request-info`), never assumed; Express's `trust proxy` stays `1` for `req.protocol` and secure-cookie decisions, and `req.ip` is not used. Required tests: a request carrying a forged `x-vercel-id`, a forged `x-kairos-client-ip` without the secret, and a forged `X-Forwarded-For`, sent directly to the API, resolves to the rightmost real address and cannot choose its limiter bucket; a request with the right secret resolves to `x-kairos-client-ip`. The secret `KAIROS_EDGE_SECRET` is created in Vercel and Railway (owner action) and rotated like `LINK_SIGNING_KEY`.
 
 ### 5.6 CSRF and origin checking
 
@@ -788,6 +808,21 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `admin.autopilot.pause` | `POST /api/admin/users/:userId/autopilot/pause` | `adminReasonSchema` | 200 `{ pausedAt }` | P5 |
 
 **Counts.** The registry holds **91 routes**: 36 existing routes (all 36 that the skeleton serves under `server/src/routes/`, including `GET /health` and the two webhook routes) and 55 new ones (38 user-facing and 17 under `/api/admin`). Of the 36 existing routes, 15 are `frozen` (nothing changes), 20 are `frozen+additive` and 1 is `frozen` with a scheduled sunset (the legacy Postmark URL). Twelve Better Auth paths (9.3) are served beside them and are not in the registry. By the phase in which each row's v2 behavior is live: P1 16 routes, P2 24, P3 28, P4 8, P5 3, P6 11, and the legacy webhook P1 to P2 plus 7 days (section 22 lists them).
+
+### 9.2a Routes added by the resume-suite PRD (2026-10-30)
+
+*[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 11)]* The PRD (section 11) is authoritative for these shapes; schemas live in `shared/src/schemas.ts` (WP-16). All are `session`, class `user_api` unless noted, and none is a workflow. `GET /api/resume`, `PUT /api/resume` and `POST /api/jobs/:jobId/tailor` stay as aliases of the profile's default base resume (tailor now saves the copy, D2) until the web stops calling them; `/api/resume/pdf`, `/api/resume/revisions` and the revision restore and rename routes of 11.1 act on that same default base resume and are aliases of the `/api/resumes/:id/...` routes below.
+
+| Registry name | Route | Notes | Package |
+|---|---|---|---|
+| `resumes.list`, `resumes.create`, `resumes.get`, `resumes.put`, `resumes.delete`, `resumes.setDefault` | `GET/POST /api/resumes`, `GET/PUT/DELETE /api/resumes/:id`, `POST /api/resumes/:id/default` | `?kind=base\|tailored`; 409 `limit_reached` (10 base per profile), 409 `is_default`, 409 `last_base`, 409 `read_only` (sent), 422 `truth_lock` | WP-17 |
+| `resumes.revisions.*` | `GET/POST /api/resumes/:id/revisions`, `POST /api/resumes/:id/revisions/:revId/restore` | Keep 50 unnamed and every named revision (`02-database.md` 7.1.8); restore re-runs the truth lock | WP-17 |
+| `resumes.export` | `GET /api/resumes/:id/export?format=pdf\|docx\|txt` | PDF is the Typst render (503 `service_unavailable` falls back to the browser print); class `user_api`, deadline 30 s; renders deduplicate by content hash | WP-19, WP-39 |
+| `resumes.tailor`, `resumes.suggestions` | `POST /api/resumes/tailor`, `POST /api/resumes/suggestions` | `ai_burst`; allowance `jobTailor` and `resumeSuggestions`; a spent allowance is 429 `daily_allowance`; `tailor` answers 409 `exists` with the existing id | WP-17, WP-31 |
+| `templates.list` | `GET /api/templates` | `{ templates: { id, name, atsSafe, accents }[] }` | WP-39 |
+| `imports.create`, `imports.get`, `facts.confirm` | `POST /api/profile/imports` (multipart file or `{ text }`, 202), `GET /api/profile/imports/:id`, `POST /api/profile/facts/confirm` | Multipart is the PRD's shape and replaces the raw-body upload route of 12.3 for imports; the 5 MB cap through the Vercel rewrite is measured in S-INF2; 413, 415, 422 `no_text_layer` | WP-17 |
+| `tracker.*` | `GET/POST /api/tracker`, `PATCH /api/tracker/:id`, `GET /api/tracker/:id/events`, `GET /api/tracker/insights` | 409 `stage_owned_by_pipeline`; insights 403 `forbidden` below Pro (D10) | WP-21 |
+| `contacts.*`, `interviews.*` | `GET/POST/PATCH/DELETE /api/contacts[/:id]`, `GET /api/interviews`, `POST/PATCH/DELETE /api/tracker/:id/interviews[/:iid]`, `GET /api/tracker/:id/interviews/:iid.ics` | `.ics` is `text/calendar` | WP-21 |
 
 ### 9.3 Better Auth routes
 
@@ -1175,7 +1210,7 @@ The skeleton answers `{ applicationId: null }` with status 200 for every refusal
 
 | Object | Exposed (frozen keys, byte-compatible) | Exposed (additive, optional) | Never exposed |
 |---|---|---|---|
-| `application` | `id`, `userId`, `jobId`, `matchId`, `resumeProfileId`, `status`, `channel`, `resumeLines`, `answers`, `coverLetter`, `receipt`, `failureReason`, `approvedAt`, `submittedAt`, `createdAt`, `updatedAt` | `draftState`, `draftIssue`, `verification { state, supported, dropped[] }`, `approvedBy`, `stage`, `receiptSummary { filled, total, skipped, generated }`, `failureCode`, `attemptNo`, `rowVersion` | `lease_session_id`, `lease_expires_at`, `facts_snapshot_hash`, the questions snapshot, `resume_pdf_key`, `resume_base_revision_id`, `resume_line_entries`, `gate_override`, attempt rows and evidence |
+| `application` | `id`, `userId`, `jobId`, `matchId`, `resumeProfileId`, `status`, `channel`, `resumeLines`, `answers`, `coverLetter`, `receipt`, `failureReason`, `approvedAt`, `submittedAt`, `createdAt`, `updatedAt` | `draftState`, `draftIssue`, `verification { state, supported, dropped[] }`, `approvedBy`, `stage`, `receiptSummary { filled, total, skipped, generated }`, `failureCode`, `attemptNo`, `rowVersion` | `lease_session_id`, `lease_expires_at`, `facts_snapshot_hash`, the questions snapshot, `resume_file_key`, `resume_base_revision_id`, `resume_line_entries`, `gate_override`, attempt rows and evidence |
 | `job` | `id`, `companyId`, `externalId`, `title`, `location`, `remote`, `department`, `descriptionText`, `applyUrl`, `salaryMinUsd`, `salaryMaxUsd`, `postedAt`, `firstSeenAt`, `closedAt`, `source`, `raw` | none | the job card, hints, `ghost_verdict`, `injection_suspect`, content hashes, card claim columns |
 | `companyName` | the string | | |
 
@@ -1233,7 +1268,7 @@ sequenceDiagram
 
 **`POST /api/applications/:id/prepare`** re-runs preparation for a draft that is `failed`, `stale` or `needs_facts` (the last after the user adds a fact). A conditional update sets `draft_state = 'pending'`, clears `draft_issue` and increments `revision` (the preparation generation of `02-database.md`; `row_version` moves too, through its trigger), then the seam starts `prepareApplication` with id `prepare:<id>:<newRevision>` without waiting. Status 202 `{ id, draftState: "pending" }`. A draft that is already `pending` or `ready`, an `expired` draft, or an application that is not `draft`: 409 `conflict` with `details { draftState }`. Limit class `prepare` (10 per minute).
 
-**`GET /api/applications/:id/pdf`** streams the tailored resume PDF the extension and applier will upload: `application/pdf`, `Content-Disposition: attachment; filename="<company>-<title>-resume.pdf"` (ASCII-folded, 80 characters), `Cache-Control: private, no-store`. 409 `not_ready` with `details { draftState }` while `resume_pdf_key` is empty. The bytes are read from R2 by key inside the handler, never redirected.
+**`GET /api/applications/:id/pdf`** *[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 11)]* streams the resume PDF of the application. For a `draft` it renders the tailored copy on demand (content-hash cache); for an approved or later application it streams the frozen snapshot file `resume_file_key` and answers 409 `not_ready` while that file is not rendered yet. Revision 2 text: streams the tailored resume PDF the extension and applier will upload: `application/pdf`, `Content-Disposition: attachment; filename="<company>-<title>-resume.pdf"` (ASCII-folded, 80 characters), `Cache-Control: private, no-store`. 409 `not_ready` with `details { draftState }` while `resume_file_key` is empty (for a draft the on-demand render means this applies only to approved rows whose snapshot is still rendering). The bytes are read from R2 by key inside the handler, never redirected.
 
 **`GET /api/applications/:id/events`** returns `{ events, nextCursor? }` from the append-only `application_events` ledger, `at asc, id asc`, default 200. An event is `{ id, kind, actor, at, detail }`; `detail` is a small object of scalars (ids, codes, counts), never free text, so an event never carries personal content.
 
@@ -1289,6 +1324,8 @@ The response is the same object as GET. `channel` is derived from the plan (`ext
 ---
 
 ## 11. Resume workspace and job routes
+
+> *[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 11)]* The routes of 11.1 are the workspace contract of 2026-10-23 and keep working unchanged, but they now address the profile's **default base resume**; the PRD's `/api/resumes*` routes (9.2a) address any resume, with the revision policy of the PRD (50 unnamed plus every named, reasons `edit`, `named`, `before_ai`, `before_tailor`, `restore`) replacing the 100-revision window and the `save`, `pre_ai`, `pre_autopilot` reasons named below. `GET /api/resume` no longer builds a default document into a one-per-slot row; it returns the default base (creating it on first call from confirmed facts, as before). A spent allowance is 429 `daily_allowance` throughout.
 
 These routes implement the binding contract (README sections 3, 6, 7, 8; schemas at the end of `shared/src/schemas.ts`) exactly. All run synchronously on the api; none needs a workflow. The model-backed ones consume an allowance (11.5) and are limited by `ai_burst`.
 
@@ -1417,7 +1454,7 @@ Rules (arch B.8.10): limits come only from `shared/src/plans.ts` (`aiDailyAllowa
 4. The handler then starts `parseResume` through the seam, with the id `parse:<resumeProfileId>:<sourceHash8>`, carrying only the profile id (workflow inputs are ids only, 7.1 and arch B.5.6).
 5. Response 202 `{ resume: { id, name, isDefault, createdAt } }`.
 
-The upload route takes the file as the raw request body, not multipart (no multipart parser dependency, no temporary files). Query: `name` (required) and `source` (`resume` or `linkedin`, the user's own LinkedIn profile PDF export). Accepted media types are `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document` and `application/octet-stream`; the content is identified by magic bytes (`%PDF-`, or `PK\x03\x04` plus a `[Content_Types].xml` entry for `word/document.xml`), never by the extension or header. Over 5 MB (`Content-Length` is checked before reading): 413 `payload_too_large`, `details { limitBytes: 5242880 }`. Anything else, and any macro-enabled file: 415 `unsupported_media_type`, `details { detected }`. Parsing happens in the worker under resource caps (arch B.11.5); the api never extracts text from an upload.
+*[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 11)]* Resume import is now `POST /api/profile/imports` (9.2a), which creates a `resume_imports` row per source (`02-database.md` 7.7) so one profile can hold several sources; the legacy `POST /api/profile/resumes/upload` route below is kept until the web stops calling it. Revision 2 text: The upload route takes the file as the raw request body, not multipart (no multipart parser dependency, no temporary files). Query: `name` (required) and `source` (`resume` or `linkedin`, the user's own LinkedIn profile PDF export). Accepted media types are `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document` and `application/octet-stream`; the content is identified by magic bytes (`%PDF-`, or `PK\x03\x04` plus a `[Content_Types].xml` entry for `word/document.xml`), never by the extension or header. Over 5 MB (`Content-Length` is checked before reading): 413 `payload_too_large`, `details { limitBytes: 5242880 }`. Anything else, and any macro-enabled file: 415 `unsupported_media_type`, `details { detected }`. Parsing happens in the worker under resource caps (arch B.11.5); the api never extracts text from an upload.
 
 Parsing finishes in seconds [est: 5 to 20] and inserts unconfirmed facts. There is no parse-status route: the frozen web refreshes the facts list after the 202, and a new screen polls `GET /api/profile/facts` every 3 seconds for up to 60 seconds.
 
@@ -1485,7 +1522,7 @@ UPDATE applications a
    SET lease_session_id = $session, lease_expires_at = now() + interval '10 minutes'
   FROM picked
  WHERE a.id = picked.id
-RETURNING a.id, a.job_id, a.answers, a.resume_lines, a.cover_letter, a.resume_pdf_key, a.attempt_no;
+RETURNING a.id, a.job_id, a.answers, a.resume_lines, a.cover_letter, a.resume_file_key, a.attempt_no;
 ```
 
 The route then joins `jobs` for `apply_url` and `title` and sorts the rows by `approved_at`.
@@ -1496,7 +1533,7 @@ The route then joins `jobs` for `apply_url` and `title` and sorts the rows by `a
 | Size | At most 20 items. A realistic item is 15 to 30 KB, so a full response is about 0.6 MB. The schema maxima (200 lines, 200 answers, a 6,000-character letter) are far larger, and the edit route's 1 MB body limit bounds what one draft can hold. |
 | Who is listed | Only the caller's `approved` rows on the `extension` channel whose lease is free, expired or already held by this session. An item whose lease another session holds is invisible to this one. Starter Autopilot approvals (`approved_by = 'autopilot'`) appear like any other item: the frozen extension still needs the user to press send. |
 | Renewal | Calling the queue again from the same session renews the lease on the same rows for another 10 minutes. The frozen side panel calls it once per open, so the lease protects the 10 minutes after the panel opens, not the hours the item may sit in the panel's memory; that is why a report is always accepted regardless of lease state (13.4). |
-| `resumePdfUrl` | Present only when the application has a rendered PDF (`resume_pdf_key` set). Format and token in 13.5. Applications approved before P3 have none and the field is omitted, exactly as today. |
+| `resumePdfUrl` | Present only when the application has a rendered PDF (`resume_file_key` set). Format and token in 13.5. Applications approved before P3 have none and the field is omitted, exactly as today. |
 | Errors | The universal set only. A caller whose email is not verified gets 403 `email_unverified`, which the extension shows as `api_403` and does not treat as a lost session. |
 | Plan | Available on every plan; the cloud-only gates apply to approval, not to reading the queue. |
 
@@ -1553,7 +1590,7 @@ The 409 message keeps the skeleton's wording, "Application is {status}, not appr
 |---|---|
 | Token | `base64url(payload) "." base64url(HMAC-SHA256(LINK_SIGNING_KEY, payload))`, payload `{ purpose: "resume_pdf", applicationId, attemptNo, exp }`. Stateless: no `action_tokens` row, because the token is reusable until `exp` (the content script may fetch it twice, and a retry must work). |
 | Lifetime | 24 hours (`EXTENSION_PDF_TOKEN_TTL_SEC = 86400`). Longer than the visibility lease on purpose: the side panel keeps its queue in memory and the user may press send hours after opening it, and an expired link would make the filler silently skip the resume (the filler records "Resume" as missing but does not refuse to submit). The ATS receives this exact file in the upload moments later, so the link adds no exposure. |
-| Handler | Verify the HMAC, then `exp`, then the path id equals `payload.applicationId`; then one read: the application is `approved` or `submitting`, `channel = 'extension'`, `attempt_no = payload.attemptNo` and `resume_pdf_key` is set. Any failure answers the same 410 `link_expired` JSON envelope (the page never says which check failed). The route is unauthenticated by session (the content script has no cookie or bearer) and limited by `pdf_link` (30 per 10 minutes per application; a failed token check consumes `link` per IP instead, so forged tokens cannot exhaust a real user's allowance). Withdrawing, submitting or re-approving (a new `attempt_no`) kills the link at once. |
+| Handler | Verify the HMAC, then `exp`, then the path id equals `payload.applicationId`; then one read: the application is `approved` or `submitting`, `channel = 'extension'`, `attempt_no = payload.attemptNo` and `resume_file_key` is set. Any failure answers the same 410 `link_expired` JSON envelope (the page never says which check failed). The route is unauthenticated by session (the content script has no cookie or bearer) and limited by `pdf_link` (30 per 10 minutes per application; a failed token check consumes `link` per IP instead, so forged tokens cannot exhaust a real user's allowance). Withdrawing, submitting or re-approving (a new `attempt_no`) kills the link at once. |
 | Body | `application/pdf` streamed from R2 by key inside the handler. `Content-Disposition: inline; filename="resume.pdf"`, `Cache-Control: private, no-store`, `Content-Length` set, `X-Content-Type-Options: nosniff`. |
 | CORS | `Access-Control-Allow-Origin: <Origin>` only when `Origin` is in `EXTENSION_PDF_ORIGINS` (default: `https://job-boards.greenhouse.io`, `https://boards.greenhouse.io`, `https://jobs.lever.co`, `https://jobs.ashbyhq.com`), plus `Vary: Origin`, `Cross-Origin-Resource-Policy: cross-origin`. No `Access-Control-Allow-Credentials`. Any other origin gets the PDF without CORS headers (a browser then blocks it), so the URL is useless on a page that should not have it. |
 | Log hygiene | The query string `t` is redacted from every log line (section 19.2). |
@@ -1780,7 +1817,7 @@ The owner operates alone and there is no admin UI (A-11). These routes are the H
 
 | Id | What it does | Notes |
 |---|---|---|
-| `admin.requestInfo` `GET /api/admin/request-info` | Returns what the api saw of this request: `remoteAddress`, the `x-forwarded-for` chain, whether `x-vercel-id` is present, the hop count applied, the resolved `clientIp`, `x-forwarded-proto`, `host` and the request id. Cookies and `Authorization` are never echoed. | Spike S-B1 calls it through the real Vercel rewrite and directly to record both header chains; the two `TRUSTED_PROXY_HOPS_*` values are set from that evidence (5.5). |
+| `admin.requestInfo` `GET /api/admin/request-info` | Returns what the api saw of this request: `remoteAddress`, the `x-forwarded-for` chain, whether a valid `x-kairos-edge` secret was presented (never the secret itself), the `TRUSTED_PROXY_HOPS_DIRECT` applied, the resolved `clientIp`, `x-forwarded-proto`, `host` and the request id. Cookies and `Authorization` are never echoed. | Spike S-B1 calls it through the real Vercel rewrite and directly to record both header chains; `TRUSTED_PROXY_HOPS_DIRECT` is set from that evidence (5.5, amended 2026-10-30). |
 | `admin.flags.list` `GET /api/admin/flags` | `{ flags, featureFlags }`: every `ops_flags` row (`key`, `active`, `expiresAt`, `reason`, `setBy`, `setAt`, `detail`) and every `feature_flags` row. | At most about 45 rows. |
 | `admin.flags.set` `PUT /api/admin/flags/:name` | Upserts one `ops_flags` row with `adminFlagSetSchema`: `active`, optional typed `value` (stored in `detail.value`) and optional `expiresInMinutes`. `reason` column is `operator_request`, `set_by` is `operator:<userId>`. | Unknown key: 404 `not_found` (the table's key check is closed). The catalogue the route accepts: `pause_polling`, `pause_scoring`, `pause_drafting`, `pause_cloud_apply`, `llm_batch_paused`, `llm_paused`, `approvals_frozen`, `autopilot_frozen`, `llm_shed_level`, `extension_only:<ats>`, `host_backoff:<host>`, `agent_disabled:<agentId>`, `prompt_pin:<agentId>`, `model_pin:<agentId>`. Takes effect within the 10-second in-process cache. |
 | `admin.featureFlags.set` `PUT /api/admin/feature-flags/:name` | Updates `enabled`, `rollout_percent` and the plan cohort of one `feature_flags` row (`LIFECYCLE_V2`, `PREPARE_V2`, `WORKSPACE_API`, `MATCHING_V2`, `CLOUD_APPLY_V2`, `AUTOPILOT`, and the canary and shadow keys). | Raising a percentage only adds users (the bucket is stable). Allow and deny user lists are edited with SQL and an audit row, never over HTTP. |
@@ -2062,12 +2099,13 @@ Validated by one zod schema at boot (`server/src/lib/env.ts`, kept); an invalid 
 | `DATABASE_POOL_MAX` | int, 10 | Application pool size per replica (B.4.2) |
 | `DBOS_SYSTEM_DATABASE_URL` | url, required | Direct connection to `kairos_dbos`, credential `dbos_api` (not through PgBouncer) |
 | `DBOS_SYS_POOL_SIZE` | int, 3 | System-database pool per api replica (B.4.2) |
-| `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` | string min 32, url | Better Auth secret and its public base URL |
-| `API_PUBLIC_ORIGIN` | url, required | The public API origin used in emailed links, signed-link form posts and CSRF allowances; equals `BETTER_AUTH_URL` unless a custom domain differs |
+| `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` | string min 32, url | Better Auth secret and its base URL, which is the **web origin** (5.1, amended 2026-10-30) |
+| `API_PUBLIC_ORIGIN` | url, required | The public API origin used in emailed links, signed-link form posts and CSRF allowances. Amended 2026-10-30: no longer equal to `BETTER_AUTH_URL` (the web origin) |
 | `WEB_ORIGIN` | url, required | The web origin: CORS, redirects (`success_url`, `cancel_url`), CSRF |
 | `EXTENSION_ORIGIN` | `chrome-extension://<id>`, Prod | Added to CORS; the extension calls the API cross-origin (13.1) |
 | `CSRF_ALLOWED_ORIGINS` | comma list, empty | Extra exact origins for cookie-authenticated unsafe methods (Vercel previews). One `*` label wildcard per entry is allowed in the host (`https://kairos-web-*.vercel.app`), matching `[a-z0-9-]+` within one DNS label |
-| `TRUSTED_PROXY_HOPS_DIRECT`, `TRUSTED_PROXY_HOPS_VERCEL` | int, 1 and 2 | Hops skipped in `x-forwarded-for` (5.5); set from spike S-B1 evidence |
+| `TRUSTED_PROXY_HOPS_DIRECT` | int | Trusted proxy entries skipped from the right of `x-forwarded-for` when no valid edge secret is presented (5.5); set from spike S-B1 evidence. `TRUSTED_PROXY_HOPS_VERCEL` is removed (2026-10-30) |
+| `KAIROS_EDGE_SECRET` | string min 32, Prod | Shared with `web/proxy.ts`; vouches for `x-kairos-client-ip` (5.5). Unset in production fails closed: every request is treated as direct |
 | `FRESH_SESSION_MAX_AGE_SEC` | int, 86400 | The recent sign-in window for `session-fresh` and `admin` |
 | `ADMIN_USER_IDS` | comma list, empty | Better Auth user ids allowed on `/api/admin/*`; empty means no admin surface |
 | `LINK_SIGNING_KEY` | string min 32, Prod | HMAC key for resend, offer-pause, unsubscribe and `resume_pdf` tokens (rotated by accepting the previous key for the token lifetime, `LINK_SIGNING_KEY_PREVIOUS`) |
@@ -2084,7 +2122,7 @@ Validated by one zod schema at boot (`server/src/lib/env.ts`, kept); an invalid 
 | `ANTHROPIC_KEY_INTERACTIVE`, `ANTHROPIC_ADMIN_KEY` | strings | The api holds only the interactive key (B.4.1); the admin key only if the reconciliation lives here (`03-agent-runtime.md`) |
 | `REDIS_URL` | url, optional | Exists only until phase P7 removes Redis and BullMQ; `/health` reports `redis` only while it is set |
 
-Production refinements (`superRefine`): `POSTMARK_SERVER_TOKEN`, `EXTENSION_ORIGIN`, `LINK_SIGNING_KEY`, `POSTMARK_INBOUND_*` and `DATA_KEKS` are required; `BETTER_AUTH_URL` and `API_PUBLIC_ORIGIN` must be `https`; `ADMIN_USER_IDS` entries must match `^[A-Za-z0-9_-]{1,64}$`. A boot test asserts that no variable named `*_KEY` or `*_SECRET` can be read by the logger.
+Production refinements (`superRefine`): `POSTMARK_SERVER_TOKEN`, `EXTENSION_ORIGIN`, `LINK_SIGNING_KEY`, `POSTMARK_INBOUND_*` and `DATA_KEKS` are required; `BETTER_AUTH_URL`, `API_PUBLIC_ORIGIN` and `KAIROS_EDGE_SECRET` are required, the first two `https`; `ADMIN_USER_IDS` entries must match `^[A-Za-z0-9_-]{1,64}$`. A boot test asserts that no variable named `*_KEY` or `*_SECRET` can be read by the logger.
 
 ### 20.2 Feature flags and kill switches the routes read
 
@@ -2172,7 +2210,7 @@ The drills of 14.6, plus: every recorded Stripe event of the P2 fixture set repl
 
 ### 21.7 Authentication, sessions and rate limits
 
-Revocation: a revoked session still authenticates on a cached cookie for at most 5 minutes on `session` routes and not at all on `session-nocache` routes; a bearer token from `verify` authenticates (S-B1); a session idle for more than 30 days is 401. `clientIp`: a table of `x-forwarded-for` chains and `x-vercel-id` presence with the expected resolved address, including a spoofed leading entry. `originGuard`: cookie plus no `Origin` and `Sec-Fetch-Site: same-origin` passes; a foreign `Origin` is 403 `origin_not_allowed`; bearer skips the check; `CSRF_ALLOWED_ORIGINS` wildcard matches one label only. Limiters: `auth_*` classes fail closed with the database down (503), general classes fail open; IP limits never apply to a signed-in request on a shared address; a 120-request burst from one IP without credentials is limited at 120.
+Revocation: a revoked session still authenticates on a cached cookie for at most 5 minutes on `session` routes and not at all on `session-nocache` routes; a bearer token from `verify` authenticates (S-B1); a session idle for more than 30 days is 401. `clientIp` (amended 2026-10-30, 5.5): a table of `x-forwarded-for` chains, `x-vercel-id` values and edge-secret presence with the expected resolved address, including a spoofed leading entry and a forged `x-vercel-id` sent directly (it must not change the result). `originGuard`: cookie plus no `Origin` and `Sec-Fetch-Site: same-origin` passes; a foreign `Origin` is 403 `origin_not_allowed`; bearer skips the check; `CSRF_ALLOWED_ORIGINS` wildcard matches one label only. Limiters: `auth_*` classes fail closed with the database down (503), general classes fail open; IP limits never apply to a signed-in request on a shared address; a 120-request burst from one IP without credentials is limited at 120.
 
 ### 21.8 The extension channel
 
@@ -2180,7 +2218,7 @@ The 7-row report table of 13.4 and the lease rules, each as a test with two sess
 
 ### 21.9 Serialization and leak tests
 
-For every frozen route, the response key set must be a subset of its allowlist in the registry (the `serializer` of A-4); the seeded-marker test inserts a unique marker into every internal column (`lease_session_id`, `facts_snapshot_hash`, `resume_pdf_key`, `sensitive_answers_enc`, Stripe ids, `source_text`) and asserts that no response of any route contains it. The PII scans of other documents (`kairos_dbos`, logs, Sentry events) include the markers sent through the api (19.2).
+For every frozen route, the response key set must be a subset of its allowlist in the registry (the `serializer` of A-4); the seeded-marker test inserts a unique marker into every internal column (`lease_session_id`, `facts_snapshot_hash`, `resume_file_key`, `sensitive_answers_enc`, Stripe ids, `source_text`) and asserts that no response of any route contains it. The PII scans of other documents (`kairos_dbos`, logs, Sentry events) include the markers sent through the api (19.2).
 
 ### 21.10 Truth lock over HTTP (AC-6)
 
@@ -2305,7 +2343,7 @@ Nothing else in this file names a queue option, a queue constructor or a garbage
 
 **Headers:** `x-request-id`, `Idempotency-Key`, `Idempotent-Replayed`, `X-Kairos-Client`, `Kairos-Contract`, `Kairos-Allowance`, `RateLimit-Policy`, `RateLimit`, `Retry-After`, `ETag`, `If-Match`, `If-None-Match`, `Deprecation`, `Sunset`.
 
-**Config keys and env vars:** `API_PUBLIC_ORIGIN`, `EXTENSION_ORIGIN`, `CSRF_ALLOWED_ORIGINS`, `TRUSTED_PROXY_HOPS_DIRECT`, `TRUSTED_PROXY_HOPS_VERCEL`, `FRESH_SESSION_MAX_AGE_SEC`, `ADMIN_USER_IDS`, `LINK_SIGNING_KEY` (and `LINK_SIGNING_KEY_PREVIOUS`), `EXTENSION_PDF_ORIGINS`, `EXTENSION_PDF_TOKEN_TTL_SEC`, `STRIPE_WEBHOOK_SECRET_PREVIOUS`, `POSTMARK_INBOUND_PATH_SECRET` (and `_PREVIOUS`), `POSTMARK_INBOUND_BASIC_USER`, `POSTMARK_INBOUND_BASIC_PASSWORD`, `INBOUND_WEBHOOK_SECRET` (legacy), `CLIENT_MIN_VERSIONS`, `USER_HASH_KEY`, `RENDER_CONCURRENCY`, `LARGE_BODY_PERMITS`, `DBOS_SYSTEM_DATABASE_URL`, `DBOS_SYS_POOL_SIZE`, `DATABASE_POOL_MAX`, `GIT_SHA`; flags `LIFECYCLE_V2`, `PREPARE_V2`, `WORKSPACE_API`, `MATCHING_V2`, `CLOUD_APPLY_V2`, `AUTOPILOT`, `approvals_frozen`, `autopilot_frozen`, `llm_paused`, `pause_drafting`, `extension_only:<ats>`, `agent_disabled:<agentId>`, `prompt_pin:<agentId>`, `model_pin:<agentId>`, `llm_shed_level`.
+**Config keys and env vars:** `API_PUBLIC_ORIGIN`, `EXTENSION_ORIGIN`, `CSRF_ALLOWED_ORIGINS`, `TRUSTED_PROXY_HOPS_DIRECT`, `KAIROS_EDGE_SECRET`, `FRESH_SESSION_MAX_AGE_SEC`, `ADMIN_USER_IDS`, `LINK_SIGNING_KEY` (and `LINK_SIGNING_KEY_PREVIOUS`), `EXTENSION_PDF_ORIGINS`, `EXTENSION_PDF_TOKEN_TTL_SEC`, `STRIPE_WEBHOOK_SECRET_PREVIOUS`, `POSTMARK_INBOUND_PATH_SECRET` (and `_PREVIOUS`), `POSTMARK_INBOUND_BASIC_USER`, `POSTMARK_INBOUND_BASIC_PASSWORD`, `INBOUND_WEBHOOK_SECRET` (legacy), `CLIENT_MIN_VERSIONS`, `USER_HASH_KEY`, `RENDER_CONCURRENCY`, `LARGE_BODY_PERMITS`, `DBOS_SYSTEM_DATABASE_URL`, `DBOS_SYS_POOL_SIZE`, `DATABASE_POOL_MAX`, `GIT_SHA`; flags `LIFECYCLE_V2`, `PREPARE_V2`, `WORKSPACE_API`, `MATCHING_V2`, `CLOUD_APPLY_V2`, `AUTOPILOT`, `approvals_frozen`, `autopilot_frozen`, `llm_paused`, `pause_drafting`, `extension_only:<ats>`, `agent_disabled:<agentId>`, `prompt_pin:<agentId>`, `model_pin:<agentId>`, `llm_shed_level`.
 
 **Rate-limit classes:** `anon`, `user_api`, `ai_burst`, `upload`, `contact`, `link`, `webhook_ip`, `admin_write`, `ghost_report`, `prepare`, `billing`, `pdf_link`, and the `auth_*` classes of 6.4 (`auth_signin_ip`, `auth_signin_email`, `auth_signup_ip`, `auth_otp_send_email`, `auth_otp_send_ip`, `auth_otp_verify_email`, `auth_reset_ip`, `auth_ott_generate_user`, `auth_ott_verify_ip`, `auth_delete_user`, `auth_default_ip`).
 
