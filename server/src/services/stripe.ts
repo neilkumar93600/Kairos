@@ -41,8 +41,8 @@ export function planForPriceId(priceId: string): { plan: PlanId; interval: Billi
 export { creditsPerInvoice };
 
 /**
- * Pauses collection when an offer email arrives, so nobody is charged after landing the job.
- * The user resumes from the billing portal; the subscription webhook syncs the paused state.
+ * Pauses collection on a subscription. No caller since WP-00: the direct pause on any 'offer' email was removed
+ * (CISO mustFix 5). The confirmed offer_pause_candidates flow (user confirmation, 48-hour undo) is its only intended caller.
  */
 export async function pauseForOffer(stripeSubscriptionId: string): Promise<void> {
   await stripe().subscriptions.update(stripeSubscriptionId, {
