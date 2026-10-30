@@ -19,6 +19,8 @@
     "agents:lock": "node --import tsx --import ./scripts/md-register.mjs scripts/agents-lock.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
+    "frozen:check": "tsx scripts/frozen-extension.ts check",
+    "frozen:update": "tsx scripts/frozen-extension.ts update",
     "test": "vitest run",
     "landing:sample": "tsx scripts/build-landing-fit-sample.ts"
   },
