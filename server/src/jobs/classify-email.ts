@@ -3,7 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { applications, companies, inboundEmails, jobs, subscriptions } from "../db/schema";
 import { env } from "../lib/env";
-import { logger } from "../lib/logger";
+import { logger, logUserHash } from "../lib/logger";
 import { classifyByRules } from "../services/email-classifier";
 import { pauseForOffer } from "../services/stripe";
 import type { JobData } from "./queues";
@@ -35,7 +35,7 @@ export async function processClassifyEmail(job: Job<JobData["classify-email"]>) 
     const [sub] = await db().select().from(subscriptions).where(eq(subscriptions.userId, email.userId));
     if (sub?.stripeSubscriptionId && sub.status === "active") {
       await pauseForOffer(sub.stripeSubscriptionId);
-      logger.info({ userId: email.userId }, "paused subscription after offer email");
+      logger.info({ userHash: logUserHash(email.userId) }, "paused subscription after offer email");
     }
   }
   return { kind, linked: Boolean(linked) };
