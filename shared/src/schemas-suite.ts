@@ -68,6 +68,9 @@ export const factSchema = z.object({
 });
 export type Fact = z.infer<typeof factSchema>;
 
+/** 422 `truth_lock` details, as on today's PUT /resume: the ids of the lines that cite no confirmed fact ("headline" for the headline). */
+export const truthLockDetailsSchema = z.object({ lineIds: z.array(z.string()).min(1) });
+
 /* ---- R1: resumes, revisions ---- */
 
 export const resumeSummarySchema = z.object({
@@ -285,7 +288,7 @@ export const patchTrackerItemRequestSchema = z
 export type PatchTrackerItemRequest = z.infer<typeof patchTrackerItemRequestSchema>;
 
 /** 409 `stage_owned_by_pipeline` details.reason (PRD 9.1); the message holds the user-facing words. */
-export const STAGE_LOCK_REASONS = ["approve_in_review_queue", "withdraw_first"] as const;
+export const STAGE_LOCK_REASONS = ["approve_in_review_queue", "withdraw_first", "pipeline_stage"] as const;
 export const stageLockDetailsSchema = z.object({ reason: z.enum(STAGE_LOCK_REASONS) });
 
 /**
