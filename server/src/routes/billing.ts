@@ -32,7 +32,7 @@ billingRouter.post("/checkout", validateBody(checkoutSchema), async (req, res) =
     line_items: [{ price: priceIdFor(plan, interval), quantity: 1 }],
     client_reference_id: me.id,
     subscription_data: { metadata: { userId: me.id } },
-    allow_promotion_codes: true,
+    allow_promotion_codes: false,
     success_url: `${env().WEB_ORIGIN}/billing?checkout=success`,
     cancel_url: `${env().WEB_ORIGIN}/pricing?checkout=cancelled`,
   });

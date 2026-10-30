@@ -21,11 +21,12 @@ export const jobsRouter = Router();
 const dbIo: ImportIo = {
   fetchPosting: fetchPostingFromBoard,
   async upsertCompany(ats, boardToken, name) {
-    // active: true. The fetch just proved the board exists, and only a polled board learns that a posting closed;
-    // an unpolled one would keep a closed posting queueable forever.
+    // active: false. A pasted board is user-controlled input: polling it would insert its whole posting list and
+    // score every posting for every user (denial of wallet). Only the owner activates a company.
+    // ponytail: an unpolled board never learns that this posting closed; add a close-only poll (CISO mustFix 3) when imports matter.
     const [created] = await db()
       .insert(companies)
-      .values({ ats, boardToken, name, active: true })
+      .values({ ats, boardToken, name, active: false })
       .onConflictDoNothing({ target: [companies.ats, companies.boardToken] })
       .returning({ id: companies.id, name: companies.name });
     if (created) return created;
