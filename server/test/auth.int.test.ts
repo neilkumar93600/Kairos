@@ -208,4 +208,26 @@ describe.skipIf(!hasTestDb)("Better Auth end to end", () => {
       await new Promise((resolve) => server.close(resolve));
     }
   });
+
+  it("deletes its user when a step after sign-up fails, and exits non-zero", async () => {
+    const real = authGateway();
+    // /api/me answers 401 while Better Auth itself works, so the run fails after sign-up and sign-in.
+    const broken = createApp({ auth: { handler: real.handler, getSession: async () => null }, corsOrigins: [WEB], healthChecks: {} });
+    const server = broken.listen(0);
+    try {
+      const { port } = server.address() as AddressInfo;
+      const script = fileURLToPath(new URL("../../scripts/smoke.mjs", import.meta.url));
+      const run = promisify(execFile)(process.execPath, [script], {
+        env: { ...process.env, SMOKE_BASE_URL: `http://127.0.0.1:${port}`, SMOKE_WEB_ORIGIN: WEB, SMOKE_MAIL_SINK: sink },
+        timeout: 30_000,
+      });
+      const failed = (await run.then(() => null, (err: { code?: number; stderr?: string }) => err))!;
+      expect(failed?.code).toBe(1);
+      expect(failed.stderr).toContain("FAIL GET /api/me");
+      expect(failed.stderr).toMatch(/cleanup: deleted smoke-/);
+      expect(await tdb.select().from(schema.user)).toHaveLength(0);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
 });

@@ -44,11 +44,24 @@ async function call(method, path, body) {
 }
 
 function check(step, ok, detail) {
-  if (!ok) {
-    console.error(`FAIL ${step}: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`);
-    process.exit(1);
-  }
+  if (!ok) throw new Error(`FAIL ${step}: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`);
   console.log(`${step} ok`);
+}
+
+/** Best effort after a failed run: delete the smoke user (signing in again if needed) or name it for manual removal. */
+async function cleanup() {
+  try {
+    let removed = await call("POST", "/api/auth/delete-user", { password: PASSWORD });
+    if (removed.status !== 200) {
+      jar.clear();
+      await call("POST", "/api/auth/sign-in/email", { email: EMAIL, password: PASSWORD });
+      removed = await call("POST", "/api/auth/delete-user", { password: PASSWORD });
+    }
+    if (removed.status !== 200) throw new Error(`${removed.status} ${removed.text}`);
+    console.error(`cleanup: deleted ${EMAIL}`);
+  } catch (err) {
+    console.error(`cleanup failed, remove ${EMAIL} by hand: ${err.message}`);
+  }
 }
 
 async function verificationCode() {
@@ -72,38 +85,49 @@ async function verificationCode() {
 
 console.log(`smoke against ${BASE} (origin ${WEB}) as ${EMAIL}, probe id ${PROBE}`);
 
-const providers = await call("GET", "/api/auth-providers");
-check("GET /api/auth-providers", providers.status === 200 && providers.json?.providers?.includes("email"), providers.text);
-console.log(`  providers: ${providers.json.providers.join(", ")}`);
+let created = false;
+let deleted = false;
+try {
+  const providers = await call("GET", "/api/auth-providers");
+  check("GET /api/auth-providers", providers.status === 200 && providers.json?.providers?.includes("email"), providers.text);
+  console.log(`  providers: ${providers.json.providers.join(", ")}`);
 
-const signUp = await call("POST", "/api/auth/sign-up/email", { email: EMAIL, password: PASSWORD, name: "Smoke Test" });
-check("sign up", signUp.status === 200, signUp.text);
+  const signUp = await call("POST", "/api/auth/sign-up/email", { email: EMAIL, password: PASSWORD, name: "Smoke Test" });
+  check("sign up", signUp.status === 200, signUp.text);
+  created = true;
 
-const verify = await call("POST", "/api/auth/email-otp/verify-email", { email: EMAIL, otp: await verificationCode() });
-check("verify OTP", verify.status === 200, verify.text);
+  const verify = await call("POST", "/api/auth/email-otp/verify-email", { email: EMAIL, otp: await verificationCode() });
+  check("verify OTP", verify.status === 200, verify.text);
 
-jar.clear();
-const signIn = await call("POST", "/api/auth/sign-in/email", { email: EMAIL, password: PASSWORD });
-check("sign in", signIn.status === 200 && [...jar.keys()].some((k) => k.endsWith("session_token")), signIn.text);
+  jar.clear();
+  const signIn = await call("POST", "/api/auth/sign-in/email", { email: EMAIL, password: PASSWORD });
+  check("sign in", signIn.status === 200 && [...jar.keys()].some((k) => k.endsWith("session_token")), signIn.text);
 
-const me = await call("GET", "/api/me");
-check("GET /api/me", me.status === 200 && me.json?.user?.email === EMAIL.toLowerCase(), me.text);
+  const me = await call("GET", "/api/me");
+  check("GET /api/me", me.status === 200 && me.json?.user?.email === EMAIL.toLowerCase(), me.text);
 
-if (providers.json.providers.includes("google")) {
-  const social = await call("POST", "/api/auth/sign-in/social", { provider: "google", callbackURL: "/dashboard", disableRedirect: true });
-  const url = social.json?.url ? new URL(social.json.url) : null;
-  const redirectUri = url?.searchParams.get("redirect_uri");
-  check(
-    "google redirect",
-    url?.hostname === "accounts.google.com" && redirectUri === `${WEB}/api/auth/callback/google`,
-    `redirect_uri ${redirectUri}, expected ${WEB}/api/auth/callback/google`,
-  );
-  console.log(`  finish the Google sign-in by hand in a browser at ${WEB}/login`);
-} else {
-  console.log("google not configured, skipped");
+  if (providers.json.providers.includes("google")) {
+    const social = await call("POST", "/api/auth/sign-in/social", { provider: "google", callbackURL: "/dashboard", disableRedirect: true });
+    const url = social.json?.url ? new URL(social.json.url) : null;
+    const redirectUri = url?.searchParams.get("redirect_uri");
+    check(
+      "google redirect",
+      url?.hostname === "accounts.google.com" && redirectUri === `${WEB}/api/auth/callback/google`,
+      `redirect_uri ${redirectUri}, expected ${WEB}/api/auth/callback/google`,
+    );
+    console.log(`  finish the Google sign-in by hand in a browser at ${WEB}/login`);
+  } else {
+    console.log("google not configured, skipped");
+  }
+
+  const removed = await call("POST", "/api/auth/delete-user", { password: PASSWORD });
+  check("delete smoke user", removed.status === 200, removed.text);
+  deleted = true;
+
+  console.log(`smoke passed (probe id ${PROBE})`);
+} catch (err) {
+  console.error(err.message);
+  process.exitCode = 1;
+} finally {
+  if (created && !deleted) await cleanup();
 }
-
-const removed = await call("POST", "/api/auth/delete-user", { password: PASSWORD });
-check("delete smoke user", removed.status === 200, removed.text);
-
-console.log(`smoke passed (probe id ${PROBE})`);
