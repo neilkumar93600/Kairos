@@ -15,6 +15,12 @@ describe("agent registry", () => {
     { active: number; versions: Record<string, string> }
   >;
 
+  it("prompt text and fingerprints ignore CRLF, so Windows and Linux checkouts agree", () => {
+    const crlf = promptAsset("x", 1, "a\r\nb", {});
+    expect(crlf.fingerprint).toBe(promptAsset("x", 1, "a\nb", {}).fingerprint);
+    expect(crlf.system).toBe("a\nb");
+  });
+
   it("registers the six P1 agents", () => {
     expect(Object.keys(AGENTS).sort()).toEqual(
       ["answer-drafter", "cover-letter-writer", "fit-scorer", "resume-parser", "resume-tailor", "resume-writer"].sort(),

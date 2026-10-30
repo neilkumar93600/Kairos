@@ -12,8 +12,10 @@ import { canonicalJson } from "../llm/schema";
  * covered byte-for-byte by its own unit tests instead. The lock file is still CI-checked.
  */
 export function promptAsset(agentId: string, version: number, systemText: string, schemaSnapshot: Record<string, unknown>): PromptAsset {
+  // Windows checkouts (core.autocrlf) turn the LF prompt files into CRLF; the model and the lock see one text on every OS.
+  const system = systemText.replace(/\r\n/g, "\n");
   const fingerprint = createHash("sha256")
-    .update(`${systemText}\n--schema--\n${canonicalJson(schemaSnapshot)}`)
+    .update(`${system}\n--schema--\n${canonicalJson(schemaSnapshot)}`)
     .digest("hex");
-  return { version, system: systemText, fingerprint };
+  return { version, system, fingerprint };
 }
