@@ -7,7 +7,7 @@ import { db, schema } from "../db/client";
 import { cancelBillingForDeletedUser } from "../services/billing-events";
 import { INLINE_REQUEST, stripe } from "../services/stripe";
 import { env } from "./env";
-import { logger } from "./logger";
+import { logger, logUserHash } from "./logger";
 import { sendEmail } from "./mailer";
 
 const OTP_SUBJECTS = {
@@ -58,7 +58,7 @@ function createAuth() {
             list: async (customer) => (await stripe().subscriptions.list({ customer, status: "all", limit: 100 }, INLINE_REQUEST)).data,
             cancel: (id) => stripe().subscriptions.cancel(id, {}, INLINE_REQUEST),
           });
-          if (cancelled) logger.info({ userId: deleted.id, cancelled }, "subscriptions cancelled before account deletion");
+          if (cancelled) logger.info({ userHash: logUserHash(deleted.id), cancelled }, "subscriptions cancelled before account deletion");
         },
       },
     },
@@ -105,7 +105,7 @@ function createAuth() {
               await tx.insert(schema.subscriptions).values({ userId: created.id, plan: "free" });
               await tx.insert(schema.creditLedger).values({ userId: created.id, delta: 25, reason: "free_grant" });
             });
-            logger.info({ userId: created.id }, "user onboarded");
+            logger.info({ userHash: logUserHash(created.id) }, "user onboarded");
           },
         },
       },

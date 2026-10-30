@@ -4,8 +4,8 @@ import { createApp } from "../src/app";
 import { redactUrl } from "../src/lib/logger";
 
 describe("redactUrl", () => {
-  it("masks the inbound webhook token and keeps the rest of the URL", () => {
-    expect(redactUrl("/api/webhooks/inbound-email?token=abc&x=1")).toBe("/api/webhooks/inbound-email?token=[redacted]&x=1");
+  it("cuts the query string, which can hold the inbound webhook token", () => {
+    expect(redactUrl("/api/webhooks/inbound-email?token=abc&x=1")).toBe("/api/webhooks/inbound-email");
   });
 
   it("leaves a URL without a query unchanged", () => {

@@ -12,22 +12,24 @@ const BODY_ERRORS: Record<string, [status: number, code: string, message: string
   "entity.too.large": [413, "payload_too_large", "The request body is too large"],
 };
 
-/** Every error leaves as { error: { code, message, details? } }. Unknown errors never leak internals. */
+/** Every error leaves as { error: { code, message, details?, requestId? } }. Unknown errors never leak internals. */
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
+  const requestId = res.getHeader("x-request-id");
+  const rid = typeof requestId === "string" ? { requestId } : {};
   if (err instanceof HttpError) {
-    res.status(err.status).json({ error: { code: err.code, message: err.message, details: err.details } });
+    res.status(err.status).json({ error: { code: err.code, message: err.message, details: err.details, ...rid } });
     return;
   }
   const parser = err as { type?: string; status?: number; expose?: boolean } | null;
   const known = parser?.type ? BODY_ERRORS[parser.type] : undefined;
   if (known) {
-    res.status(known[0]).json({ error: { code: known[1], message: known[2] } });
+    res.status(known[0]).json({ error: { code: known[1], message: known[2], ...rid } });
     return;
   }
   if (parser?.expose && typeof parser.status === "number" && parser.status >= 400 && parser.status < 500) {
-    res.status(parser.status).json({ error: { code: "bad_request", message: "The request could not be read" } });
+    res.status(parser.status).json({ error: { code: "bad_request", message: "The request could not be read", ...rid } });
     return;
   }
-  logger.error({ err, path: req.path, method: req.method }, "unhandled error");
-  res.status(500).json({ error: { code: "internal", message: "Something went wrong on our side" } });
+  logger.error({ err, requestId, path: req.path, method: req.method }, "unhandled error");
+  res.status(500).json({ error: { code: "internal", message: "Something went wrong on our side", ...rid } });
 }

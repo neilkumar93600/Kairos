@@ -2,7 +2,7 @@ import type { Job } from "bullmq";
 import { and, eq, gte, isNotNull, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { applications, companies, facts, jobs, matches, profiles } from "../db/schema";
-import { logger } from "../lib/logger";
+import { logger, logUserHash } from "../lib/logger";
 import { passesHardFilters, scoreFit } from "../services/fit";
 import type { JobData } from "./queues";
 
@@ -65,7 +65,7 @@ export async function processScoreMatches(job: Job<JobData["score-matches"]>) {
         .onConflictDoNothing();
       stored += 1;
     } catch (err) {
-      logger.warn({ err, userId: candidate.userId, jobId: row.job.id }, "fit scoring failed");
+      logger.warn({ err, userHash: logUserHash(candidate.userId), jobId: row.job.id }, "fit scoring failed");
     }
   }
   return { stored };
