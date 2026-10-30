@@ -394,7 +394,7 @@ Better Auth 1.7.10 remains the identity layer: email and password with six-digit
 // server/src/modules/identity/auth.ts  (specification-level; option names [verify S-B1])
 betterAuth({
   appName: "Kairos",
-  baseURL: env.BETTER_AUTH_URL,                       // the public API origin, API_PUBLIC_ORIGIN
+  baseURL: env.BETTER_AUTH_URL,                       // the web origin (WP-02 amendment below), not API_PUBLIC_ORIGIN
   secret: env.BETTER_AUTH_SECRET,
   basePath: "/api/auth",
   trustedOrigins: [env.WEB_ORIGIN, ...(env.EXTENSION_ORIGIN ? [env.EXTENSION_ORIGIN] : []), ...env.CSRF_ALLOWED_ORIGINS],
@@ -402,6 +402,8 @@ betterAuth({
   emailAndPassword: { enabled: true, requireEmailVerification: true, minPasswordLength: 10, maxPasswordLength: 128,
                       revokeSessionsOnPasswordReset: true },
   socialProviders: google ? { google } : {},
+  account: { encryptOAuthTokens: true,                // built (WP-02)
+             accountLinking: { enabled: true, trustedProviders: ["google"], requireLocalEmailVerified: true } },
   session: {
     expiresIn: 60 * 60 * 24 * 30,                     // 30 days (kept)
     updateAge: 60 * 60 * 24,                          // refresh once a day (kept)
@@ -422,6 +424,8 @@ betterAuth({
   hooks: { before: authLimits, after: releaseLeasesOnSignOut },
 });
 ```
+
+**Amendment (WP-02, 2026-10-30): origins and providers.** The browser reaches Better Auth only through the web app's `/api` rewrite, so the session cookie and the OAuth state cookie are set on the web host. `BETTER_AUTH_URL` is therefore the web origin and equals `WEB_ORIGIN` (the Vercel production origin); in production the API refuses to boot unless both are the same `https` origin [code: `lib/env.ts`]. The Google redirect URI registered in the Google console is `<WEB_ORIGIN>/api/auth/callback/google`; using the API origin would fail with `state_mismatch`. `CSRF_ALLOWED_ORIGINS` holds extra exact origins only (a Vercel preview alias, a second domain); wildcard entries are refused at boot, which supersedes the one-label wildcard in section 20 for `trustedOrigins`. `API_PUBLIC_ORIGIN` keeps its meaning for emailed links and signed forms. Sign-in methods are email+OTP and Google; `GET /api/auth-providers` (public, additive) answers `{ providers: ("email" | "google")[] }` with the configured subset, and the web shows only those. `maxPasswordLength: 128` and `revokeSessionsOnPasswordReset: true` are built; the pre-hijack case (an unverified password sign-up for an email, then Google for the same email) does not link [code: `test/auth.int.test.ts`]. Local and staging sign-in are checked by `scripts/smoke.mjs`; outside production `MAIL_SINK_FILE` makes the mailer write codes to a file instead of sending them.
 
 `createUserBody` is the existing transaction [code] plus the `credit_balances` row and `normalized_email_hash`; it is idempotent (`ON CONFLICT DO NOTHING`), and the 5-minute "sign-up without profile" reconciler is its safety net [arch B.5.8].
 
