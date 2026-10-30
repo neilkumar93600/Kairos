@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { chromium } from "playwright-core";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
@@ -26,6 +27,7 @@ const { createApp } = await import("../src/app");
 const { closeDb, db: globalDb } = await import("../src/db/client");
 const schema = await import("../src/db/schema");
 const { stripe } = await import("../src/services/stripe");
+const { processCloudApply } = await import("../src/jobs/cloud-apply");
 const { processClassifyEmail } = await import("../src/jobs/classify-email");
 const { processPollBoards } = await import("../src/jobs/poll-boards");
 const { atsAdapters } = await import("../src/services/ats");
@@ -106,6 +108,37 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       expect(enqueue).toHaveBeenCalledWith("cloud-apply", { applicationId: id }, `apply-${id}`);
     });
 
+    it("the worker refuses a non-owner's already-approved cloud row: no browser, marked failed, no credit", async () => {
+      const userId = await signIn();
+      const id = await draftFor(userId);
+      await tdb.update(schema.applications).set({ status: "approved", channel: "cloud" }).where(eq(schema.applications.id, id));
+      const launch = vi.spyOn(chromium, "launch").mockRejectedValue(new Error("browser must not start"));
+
+      const result = await processCloudApply({ data: { applicationId: id } } as never);
+
+      expect(result).toEqual({ submitted: false });
+      expect(launch).not.toHaveBeenCalled();
+      const [row] = await tdb.select().from(schema.applications).where(eq(schema.applications.id, id));
+      expect(row?.status).toBe("failed");
+      expect(row?.failureReason).toBe("The cloud applier is not open yet");
+      const ledger = await tdb.select().from(schema.creditLedger).where(eq(schema.creditLedger.userId, userId));
+      expect(ledger.map((l) => l.reason)).not.toContain("submission");
+    });
+
+    it("the worker lets the owner's approved cloud row through the gate", async () => {
+      const userId = await signIn(OWNER);
+      const id = await draftFor(userId);
+      await tdb.update(schema.applications).set({ status: "approved", channel: "cloud" }).where(eq(schema.applications.id, id));
+      vi.spyOn(chromium, "launch").mockRejectedValue(new Error("browser stub"));
+
+      await processCloudApply({ data: { applicationId: id } } as never);
+
+      // Past the gate: the run fails later (no filler bundle or browser in tests), not with the gate's message.
+      const [row] = await tdb.select().from(schema.applications).where(eq(schema.applications.id, id));
+      expect(row?.status).toBe("failed");
+      expect(row?.failureReason).not.toBe("The cloud applier is not open yet");
+    });
+
     it("the extension channel stays open to everyone", async () => {
       const userId = await signIn();
       const id = await draftFor(userId);
@@ -125,7 +158,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
         .insert(schema.inboundEmails)
         .values({ userId, providerMessageId: "m1", sender: "hr@acme.com", subject: "Job offer", textBody: "We are pleased to extend an offer of employment." })
         .returning();
-      const update = vi.spyOn(stripe().subscriptions, "update");
+      const update = vi.spyOn(stripe().subscriptions, "update").mockResolvedValue({} as never);
 
       const result = await processClassifyEmail({ data: { inboundEmailId: mail!.id } } as never);
 
@@ -157,6 +190,18 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       expect(res.body).toEqual({ stored: true });
       const [row] = await tdb.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, "big"));
       expect(row?.textBody).toHaveLength(16_384);
+    });
+
+    it("the cap is in bytes: multi-byte text stays within 16 KB and no character is cut in half", async () => {
+      const userId = await signIn();
+      const res = await request(app)
+        .post("/api/webhooks/inbound-email?token=test-inbound-secret")
+        .send({ MessageID: "wide", From: "hr@acme.com", To: `u-${userId}@replies.test`, Subject: "Hello", TextBody: "\u00e9\u{1F600}".repeat(20_000) });
+      expect(res.body).toEqual({ stored: true });
+      const [row] = await tdb.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, "wide"));
+      expect(Buffer.byteLength(row!.textBody)).toBeLessThanOrEqual(16_384);
+      expect(row!.textBody).not.toContain("\uFFFD");
+      expect(row!.textBody.length).toBeGreaterThan(1000);
     });
 
     it("the inbox query selects a 280-character slice in SQL, never the full body", () => {
