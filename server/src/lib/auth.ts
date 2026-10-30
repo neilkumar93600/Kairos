@@ -1,3 +1,4 @@
+import type { AuthProvider } from "@auto-career/shared";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { bearer, emailOTP, oneTimeToken } from "better-auth/plugins";
@@ -6,7 +7,6 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "../db/client";
 import { cancelBillingForDeletedUser } from "../services/billing-events";
 import { INLINE_REQUEST, stripe } from "../services/stripe";
-import type { AuthProvider } from "@auto-career/shared";
 import { env, type Env } from "./env";
 import { logger } from "./logger";
 import { sendEmail } from "./mailer";
@@ -54,10 +54,9 @@ function createAuth() {
       // account whose email is unverified: that row may be a squatter's pre-registration (pre-hijack).
       accountLinking: { enabled: true, trustedProviders: ["google"], requireLocalEmailVerified: true },
     },
-    socialProviders:
-      e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET
-        ? { google: { clientId: e.GOOGLE_CLIENT_ID, clientSecret: e.GOOGLE_CLIENT_SECRET } }
-        : {},
+    socialProviders: configuredProviders(e).includes("google")
+      ? { google: { clientId: e.GOOGLE_CLIENT_ID!, clientSecret: e.GOOGLE_CLIENT_SECRET! } }
+      : {},
     user: {
       // Settings > Delete account. Stripe is cancelled first, then cascades remove the profile, applications, ledger and replies.
       deleteUser: {
@@ -107,6 +106,12 @@ function createAuth() {
       bearer(),
     ],
     databaseHooks: {
+      // Google's id token is a signed JWT with the email and sub. Better Auth does not encrypt it and nothing reads it
+      // after the callback, so it is never stored.
+      account: {
+        create: { before: async (account) => ({ data: { ...account, idToken: null } }) },
+        update: { before: async (account) => ({ data: { ...account, idToken: null } }) },
+      },
       user: {
         create: {
           // Every new user gets a profile, a free plan row and the free credit grant in one transaction.

@@ -147,6 +147,22 @@ describe.skipIf(!hasTestDb)("Better Auth end to end", () => {
     expect(await sessionsOf(userId)).toHaveLength(1);
   });
 
+  // Better Auth does not encrypt id_token (a signed JWT carrying email and sub), and nothing reads it after the callback.
+  it("never stores Google's id token, on first link or on a later sign-in", async () => {
+    const userId = await seedUser(tdb);
+    const email = `${userId}@test.local`;
+    const googleRow = async () =>
+      (await tdb.select().from(schema.account).where(and(eq(schema.account.userId, userId), eq(schema.account.providerId, "google"))))[0];
+
+    expect((await googleSignIn(request.agent(app), { sub: "google-idt", email, email_verified: true, name: "Owner" })).status).toBe(302);
+    expect((await googleRow())?.idToken).toBeNull();
+
+    expect((await googleSignIn(request.agent(app), { sub: "google-idt", email, email_verified: true, name: "Owner" })).status).toBe(302);
+    const row = await googleRow();
+    expect(row?.accessToken).toBeTruthy();
+    expect(row?.idToken).toBeNull();
+  });
+
   it("refuses a password longer than 128 characters", async () => {
     const res = await signUp(request.agent(app), "long@test.local", "p".repeat(129));
     expect(res.status).toBe(400);
