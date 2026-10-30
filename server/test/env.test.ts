@@ -35,6 +35,20 @@ describe("parseEnv", () => {
     expect(() => parseEnv({ ...prod, BETTER_AUTH_URL: "http://kairos.app", WEB_ORIGIN: "http://kairos.app" })).toThrow(/WEB_ORIGIN: must be https in production/);
   });
 
+  it("refuses a BETTER_AUTH_URL with a path in production, so basePath stays /api/auth on the web origin", () => {
+    expect(() => parseEnv({ ...prod, BETTER_AUTH_URL: "https://kairos.app/app" })).toThrow(/BETTER_AUTH_URL: must be a bare origin/);
+    expect(parseEnv({ ...prod, BETTER_AUTH_URL: "https://kairos.app/" }).NODE_ENV).toBe("production");
+  });
+
+  // Every listed origin is trusted by Better Auth as a request origin and a redirect target.
+  it("refuses plain http entries in CSRF_ALLOWED_ORIGINS in production", () => {
+    expect(() => parseEnv({ ...prod, CSRF_ALLOWED_ORIGINS: "https://www.kairos.app,http://preview.kairos.app" })).toThrow(
+      /CSRF_ALLOWED_ORIGINS: "http:\/\/preview.kairos.app" must be https in production/,
+    );
+    expect(parseEnv({ ...prod, CSRF_ALLOWED_ORIGINS: "https://www.kairos.app" }).CSRF_ALLOWED_ORIGINS).toEqual(["https://www.kairos.app"]);
+    expect(parseEnv({ ...base, CSRF_ALLOWED_ORIGINS: "http://localhost:3001" }).CSRF_ALLOWED_ORIGINS).toEqual(["http://localhost:3001"]);
+  });
+
   it("parses CSRF_ALLOWED_ORIGINS as a list of exact origins", () => {
     expect(parseEnv({ ...base, CSRF_ALLOWED_ORIGINS: "https://kairos-git-main-team.vercel.app, https://www.kairos.app" }).CSRF_ALLOWED_ORIGINS).toEqual([
       "https://kairos-git-main-team.vercel.app",

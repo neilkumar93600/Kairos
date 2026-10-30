@@ -95,8 +95,19 @@ const envSchema = z.object({
     for (const key of ["BETTER_AUTH_URL", "WEB_ORIGIN"] as const) {
       if (!e[key].startsWith("https://")) ctx.addIssue({ code: "custom", path: [key], message: "must be https in production" });
     }
-    if (new URL(e.BETTER_AUTH_URL).origin !== new URL(e.WEB_ORIGIN).origin) {
+    const authUrl = new URL(e.BETTER_AUTH_URL);
+    if (authUrl.origin !== new URL(e.WEB_ORIGIN).origin) {
       ctx.addIssue({ code: "custom", path: ["BETTER_AUTH_URL"], message: "must equal WEB_ORIGIN in production (the Vercel origin)" });
+    }
+    // A path here would move every auth route off /api/auth and break the Google redirect_uri.
+    if (authUrl.href !== `${authUrl.origin}/`) {
+      ctx.addIssue({ code: "custom", path: ["BETTER_AUTH_URL"], message: "must be a bare origin like https://host (no path) in production" });
+    }
+    // Each entry is a trusted request origin and redirect target, so production takes https only.
+    for (const origin of e.CSRF_ALLOWED_ORIGINS) {
+      if (!origin.startsWith("https://")) {
+        ctx.addIssue({ code: "custom", path: ["CSRF_ALLOWED_ORIGINS"], message: `"${origin}" must be https in production` });
+      }
     }
   }
   // Gateway rules (03-agent-runtime.md 15.1, 16.1): the stub URL and the user-hash key.
