@@ -280,6 +280,12 @@ const MATCHERS = Object.entries(SKILLS).map(([term, aliases]) => {
   return { term, re: new RegExp(`(?<![a-z0-9_.])(?:${names.join("|")})(?![a-z0-9_+#])`, "i") };
 });
 
+/** Every one-word skill name and alias, lowercase; ambiguous bare names excluded. checkClaims leaves these to findSkills. */
+const SKILL_WORDS = new Set(
+  Object.entries(SKILLS).flatMap(([term, aliases]) => [...(AMBIGUOUS.has(term) ? [] : [term]), ...aliases].filter((n) => !/\s/.test(n))),
+);
+export const isSkillWord = (word: string): boolean => SKILL_WORDS.has(word.toLowerCase());
+
 /** Canonical skill terms found in the text, deduped, in first-seen order. Unrecognized terms emit nothing. */
 export function findSkills(text: string): string[] {
   const hits: { term: string; at: number }[] = [];

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { UNTRUSTED_RULES, untrusted } from "../ai/untrusted";
 import { HttpError } from "../lib/errors";
-import { inventedDetails } from "./invented-details";
+import { checkClaims } from "../llm/claims";
 import { runAgent } from "../llm/gateway";
 import { answerDrafter } from "../agents/answer-drafter/spec";
 import { coverLetterWriter } from "../agents/cover-letter-writer/spec";
@@ -46,10 +46,12 @@ const truthLock = () => new HttpError(422, "truth_lock", "The draft cited facts 
 
 /**
  * A draft passes only if it cites at least one fact, every cited id is a confirmed fact of this user (`ok` maps id to
- * text), and it adds no number or skill its cited facts lack.
+ * text), and checkClaims finds nothing its cited facts lack. The target company may be named (B.9.6).
  */
-const verified = (p: { text: string; factIds: string[] }, ok: ReadonlyMap<string, string>) =>
-  p.factIds.length > 0 && p.factIds.every((id) => ok.has(id)) && !inventedDetails(p.text, p.factIds.map((id) => ok.get(id)!)).length;
+const verified = (p: { text: string; factIds: string[] }, ok: ReadonlyMap<string, string>, job: Job) =>
+  p.factIds.length > 0 &&
+  p.factIds.every((id) => ok.has(id)) &&
+  !checkClaims(p.text, p.factIds.map((id) => ok.get(id)!), { allow: [job.company] }).length;
 
 /**
  * Drafts one application answer. Never called for sensitive questions: the route checks first and this refuses too.
@@ -69,7 +71,7 @@ export async function draftAnswer(
       { label: input.label, facts: input.facts, savedAnswers: input.savedAnswers ?? null, job: input.job },
       deps.callCtx ?? {},
     ).then((r) => r.data);
-    if (verified(out, ok)) return { text: out.text.trim(), factIds: [...new Set(out.factIds)] };
+    if (verified(out, ok, input.job)) return { text: out.text.trim(), factIds: [...new Set(out.factIds)] };
     throw truthLock();
   }
   const chat = deps.chat ?? chatJson;
@@ -89,7 +91,7 @@ export async function draftAnswer(
   ];
   for (let attempt = 0; attempt < 2; attempt++) {
     const out = await chat({ tier: "fast", agent: "draft-writer", schema: answerSchema, maxTokens: 500, messages });
-    if (verified(out, ok)) return { text: out.text.trim(), factIds: [...new Set(out.factIds)] };
+    if (verified(out, ok, input.job)) return { text: out.text.trim(), factIds: [...new Set(out.factIds)] };
   }
   throw truthLock();
 }
@@ -100,7 +102,7 @@ export async function draftCoverLetter(input: { job: Job; facts: DraftFact[] }, 
   if (deps.callCtx || (!deps.chat && gatewayEnabled())) {
     // The gateway path (LLM_GATEWAY=anthropic); the same paragraph filter applies in code.
     const out = await runAgent(coverLetterWriter, { facts: input.facts, job: input.job }, deps.callCtx ?? {}).then((r) => r.data);
-    const kept = out.paragraphs.filter((p) => verified(p, ok));
+    const kept = out.paragraphs.filter((p) => verified(p, ok, input.job));
     if (kept.length === 0) throw truthLock();
     return { text: kept.map((p) => p.text.trim()).join("\n\n"), factIds: [...new Set(kept.flatMap((p) => p.factIds))] };
   }
@@ -121,7 +123,7 @@ export async function draftCoverLetter(input: { job: Job; facts: DraftFact[] }, 
   const kept: { text: string; factIds: string[] }[] = [];
   let words = 0;
   for (const p of out.paragraphs) {
-    if (!verified(p, ok)) continue;
+    if (!verified(p, ok, input.job)) continue;
     const n = p.text.trim().split(/\s+/).length;
     if (kept.length >= MAX_PARAGRAPHS || words + n > MAX_WORDS) break;
     kept.push({ text: p.text.trim(), factIds: p.factIds });

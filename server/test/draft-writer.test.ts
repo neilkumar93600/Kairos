@@ -55,6 +55,20 @@ describe("draftCoverLetter", () => {
     expect(r.text).toBe("I built a billing API at Acme.\n\nI write TypeScript.");
   });
 
+  it("drops paragraphs with an invented employer, title, tool or link, and allows the target company (checkClaims)", async () => {
+    const chat = vi.fn().mockResolvedValue({
+      paragraphs: [
+        { text: "I built a billing API at Acme and want to do it at Globex.", factIds: ["f1"] },
+        { text: "I built a billing API at Initech.", factIds: ["f1"] },
+        { text: "As a senior engineer I built a billing API at Acme.", factIds: ["f1"] },
+        { text: "I built a billing API at Acme with Pulumi.", factIds: ["f1"] },
+        { text: "See my billing API at github.com/me/billing.", factIds: ["f1"] },
+      ],
+    });
+    const r = await draftCoverLetter({ job, facts }, { chat: chat as never });
+    expect(r.text).toBe("I built a billing API at Acme and want to do it at Globex.");
+  });
+
   it("uses the fast tier and fences the job description as untrusted", async () => {
     const chat = vi.fn().mockResolvedValue({ paragraphs: [{ text: "ok", factIds: ["f1"] }] });
     await draftCoverLetter({ job, facts }, { chat: chat as never });
@@ -106,6 +120,12 @@ describe("draftAnswer", () => {
       .mockResolvedValueOnce({ text: "I built a billing API in Rust.", factIds: ["f1"] })
       .mockResolvedValueOnce({ text: "I built a billing API.", factIds: ["f1"] });
     expect((await draftAnswer({ label: "Why us?", job, facts }, { chat: chat as never })).text).toBe("I built a billing API.");
+    expect(chat).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats an invented employer as a failure: one retry, then 422", async () => {
+    const chat = vi.fn().mockResolvedValue({ text: "I built a billing API at Initech.", factIds: ["f1"] });
+    await expect(draftAnswer({ label: "Why us?", job, facts }, { chat: chat as never })).rejects.toMatchObject({ status: 422, code: "truth_lock" });
     expect(chat).toHaveBeenCalledTimes(2);
   });
 

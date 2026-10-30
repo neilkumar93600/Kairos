@@ -6,9 +6,13 @@ import { env } from "../lib/env";
  * unit test seeds every pattern and asserts nothing survives.
  */
 
-const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
+export const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 const PHONE = /\+?\d[\d ().-]{7,}\d/g;
 const URL = /\bhttps?:\/\/\S+/gi;
+/** Links: a scheme or www., or a bare domain on a common TLD followed by a path ("github.com/jane", not "Node.js/Express"). */
+export const LINK = /\b(?:https?:\/\/|www\.)[^\s,;)]+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|dev|ai|co|app|me|in|us|uk|edu|gov)\/[^\s,;)]*/gi;
+/** Phone-shaped runs with at least 9 digits; "2019 - 2023" has 8 and stays a date range. */
+export const phonesIn = (text: string): string[] => (text.match(PHONE) ?? []).filter((p) => p.replace(/\D/g, "").length >= 9);
 const ADDRESS = /\b\d{1,5}\s+[\w.]+(?:\s+[\w.]+)*\s+(?:street|st\.?|avenue|ave\.?|road|rd\.?|lane|ln\.?|drive|dr\.?|court|ct\.?|boulevard|blvd\.?|way|place|pl\.?|sector|nagar|road)\b/gi;
 
 /** Replaces emails, phone numbers, URLs and street-address patterns with [email], [phone], [link], [address]. */

@@ -11,7 +11,7 @@ import {
 } from "@auto-career/shared";
 import { UNTRUSTED_RULES, untrusted } from "../ai/untrusted";
 import { HttpError } from "../lib/errors";
-import { inventedDetails } from "./invented-details";
+import { checkClaims } from "../llm/claims";
 import { runAgent } from "../llm/gateway";
 import { resumeWriter } from "../agents/resume-writer/spec";
 import { gatewayEnabled } from "../llm/wire";
@@ -195,8 +195,8 @@ function verify(m: ModelSuggestion, t: Targets, citable: Map<string, ProfileFact
   // ponytail: text citing no fact, or any id that is not confirmed and owned, is dropped, not turned into a needsFact:
   // which detail is missing is unknown, so a question would be a guess. The model asks its own questions (rule 3).
   if (!factIds.length || factIds.some((id) => !citable.has(id))) return null;
-  // Truth rule 2 for numbers and tools, checked here rather than trusted to the prompt.
-  if (inventedDetails(after, factIds.map((id) => citable.get(id)?.text ?? "")).length) return null;
+  // Truth rule 2 (numbers, titles, entities, tools, links), checked here rather than trusted to the prompt.
+  if (checkClaims(after, factIds.map((id) => citable.get(id)?.text ?? "")).length) return null;
   if (refine === "shorter" && where.before !== null && after.length >= where.before.length) return null;
   return { ...base, action: m.action, after, factIds, needsFact: null };
 }
