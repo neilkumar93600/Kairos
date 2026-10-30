@@ -1,11 +1,8 @@
 import type { Job } from "bullmq";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db/client";
-import { applications, companies, inboundEmails, jobs, subscriptions } from "../db/schema";
-import { env } from "../lib/env";
-import { logger, logUserHash } from "../lib/logger";
+import { applications, companies, inboundEmails, jobs } from "../db/schema";
 import { classifyByRules } from "../services/email-classifier";
-import { pauseForOffer } from "../services/stripe";
 import type { JobData } from "./queues";
 
 /** Tags a forwarded reply and links it to the most recent submitted application at the company it names. */
@@ -31,12 +28,7 @@ export async function processClassifyEmail(job: Job<JobData["classify-email"]>) 
     .set({ kind, applicationId: linked?.id ?? null })
     .where(eq(inboundEmails.id, email.id));
 
-  if (kind === "offer" && env().STRIPE_SECRET_KEY) {
-    const [sub] = await db().select().from(subscriptions).where(eq(subscriptions.userId, email.userId));
-    if (sub?.stripeSubscriptionId && sub.status === "active") {
-      await pauseForOffer(sub.stripeSubscriptionId);
-      logger.info({ userHash: logUserHash(email.userId) }, "paused subscription after offer email");
-    }
-  }
+  // An 'offer' tag changes no billing state: pausing Stripe on a regex match let a forwarded fake offer keep a paid plan
+  // for free (CISO mustFix 5). The offer_pause_candidates flow (user confirmation, 48-hour undo) replaces it later.
   return { kind, linked: Boolean(linked) };
 }

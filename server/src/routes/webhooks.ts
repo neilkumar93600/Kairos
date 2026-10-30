@@ -1,5 +1,5 @@
-import express, { Router } from "express";
-import { timingSafeEqual } from "node:crypto";
+import express, { Router, type NextFunction, type Request, type Response } from "express";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { and, eq, isNull, or } from "drizzle-orm";
 import type Stripe from "stripe";
 import { z } from "zod";
@@ -14,10 +14,10 @@ import { INLINE_REQUEST, stripe } from "../services/stripe";
 /** Provider webhooks. Mounted at /api/webhooks BEFORE express.json(), because Stripe signs the raw body. */
 export const webhooksRouter = Router();
 
+/** Constant-time compare that also hides the secret's length: both sides are hashed to 32 bytes first. */
 function safeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  return ab.length === bb.length && timingSafeEqual(ab, bb);
+  const digest = (v: string) => createHash("sha256").update(v).digest();
+  return timingSafeEqual(digest(a), digest(b));
 }
 
 webhooksRouter.post("/stripe", express.raw({ type: "application/json" }), async (req, res) => {
@@ -64,14 +64,24 @@ const postmarkInbound = z.object({
   TextBody: z.string().default(""),
 });
 
-/** Postmark inbound webhook for forwarded replies. The URL carries ?token=INBOUND_WEBHOOK_SECRET. */
-// Postmark accepts messages up to 35 MB and posts attachments base64-encoded in the JSON, so the body can be larger
-// still. A reply (offer or rejection) must never be lost to a size limit, hence 50 MB on this one route.
-// ponytail: the whole body is parsed in memory; stream-parse and drop Attachments if large mail becomes common.
-webhooksRouter.post("/inbound-email", express.json({ limit: "50mb" }), async (req, res) => {
-  const token = typeof req.query.token === "string" ? req.query.token : "";
-  if (!safeEqual(token, env().INBOUND_WEBHOOK_SECRET)) throw new HttpError(401, "unauthorized", "Bad inbound token");
+/** Stored mail text is capped here, so a 35 MB reply cannot fill the table; the classifier reads the first 4,000 characters anyway. */
+const INBOUND_TEXT_MAX_BYTES = 16_384;
 
+/** Cuts to a UTF-8 byte budget; a character split by the cut decodes to U+FFFD, which is trimmed off the end. */
+const capText = (text: string) => Buffer.from(text).subarray(0, INBOUND_TEXT_MAX_BYTES).toString().replace(/\uFFFD+$/, "");
+
+/** The token rides in the query string, so it is checked before any byte of the body is read or inflated. */
+function requireInboundToken(req: Request, _res: Response, next: NextFunction) {
+  const token = typeof req.query.token === "string" ? req.query.token : "";
+  if (!safeEqual(token, env().INBOUND_WEBHOOK_SECRET)) throw new HttpError(403, "forbidden", "Bad inbound token");
+  next();
+}
+
+// Postmark accepts messages up to 35 MB and posts attachments base64-encoded in the JSON, so the body can be larger
+// still. A reply (offer or rejection) must never be lost to a size limit, hence 50 MB on this one route, but only
+// after the token passes. inflate:false: Postmark sends plain JSON, and a small gzip body must not expand into 50 MB.
+// ponytail: the whole body is parsed in memory; stream-parse and drop Attachments if large mail becomes common.
+webhooksRouter.post("/inbound-email", requireInboundToken, express.json({ limit: "50mb", inflate: false }), async (req, res) => {
   const parsed = postmarkInbound.safeParse(req.body);
   if (!parsed.success) throw new HttpError(422, "invalid_body", "Some fields are invalid", parsed.error.issues);
   const mail = parsed.data;
@@ -81,7 +91,7 @@ webhooksRouter.post("/inbound-email", express.json({ limit: "50mb" }), async (re
 
   const [stored] = await db()
     .insert(inboundEmails)
-    .values({ userId: profile.userId, providerMessageId: mail.MessageID, sender: mail.From, subject: mail.Subject, textBody: mail.TextBody })
+    .values({ userId: profile.userId, providerMessageId: mail.MessageID, sender: mail.From, subject: mail.Subject, textBody: capText(mail.TextBody) })
     .onConflictDoNothing()
     .returning({ id: inboundEmails.id });
   if (stored) await enqueue("classify-email", { inboundEmailId: stored.id }, `classify-${stored.id}`);

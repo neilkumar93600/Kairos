@@ -1,8 +1,8 @@
 import type { EmailKind } from "@auto-career/shared";
 
 /**
- * An `offer` tag pauses the user's Stripe subscription, so the rule must not fire on
- * "pleased to offer you an interview". It needs an offer of a job, not of a next step.
+ * The `offer` rule must not fire on "pleased to offer you an interview": it needs an offer of a job, not of a next step.
+ * The tag is informational only; it changes no billing state (see classify-email.ts).
  */
 const OFFER =
   /\b(offer letter|offer of employment|job offer|(?:pleased|happy|delighted|excited|thrilled) to (?:extend|offer) (?:you )?(?:an? |the |this )?(?:offer|position|role|job)(?! to interview)|extend (?:you )?an offer(?! (?:to|for) (?:an? )?interview))\b/i;

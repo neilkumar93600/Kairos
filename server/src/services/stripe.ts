@@ -39,14 +39,3 @@ export function planForPriceId(priceId: string): { plan: PlanId; interval: Billi
 
 // The grant math lives in shared so the landing calculator and billing cannot drift; re-exported for existing callers.
 export { creditsPerInvoice };
-
-/**
- * Pauses collection when an offer email arrives, so nobody is charged after landing the job.
- * The user resumes from the billing portal; the subscription webhook syncs the paused state.
- */
-export async function pauseForOffer(stripeSubscriptionId: string): Promise<void> {
-  await stripe().subscriptions.update(stripeSubscriptionId, {
-    pause_collection: { behavior: "void" },
-    metadata: { pausedBy: "offer-email" },
-  });
-}

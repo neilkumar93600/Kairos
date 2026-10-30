@@ -34,6 +34,17 @@ export async function processCloudApply(job: Job<JobData["cloud-apply"]>) {
     .innerJoin(jobs, eq(jobs.id, applications.jobId))
     .where(eq(applications.id, job.data.applicationId));
   if (!row || row.app.status !== "approved" || row.app.channel !== "cloud") return { skipped: true };
+  // Owner-only until WP-04 (CISO mustFix 1). Also catches rows approved before the gate and retries of old jobs.
+  // A failed report charges no credit; recordSubmission accepts a row that is still 'approved'.
+  if (!env().OWNER_USER_IDS.includes(row.app.userId)) {
+    await recordSubmission(
+      db(),
+      row.app.userId,
+      { applicationId: row.app.id, outcome: "failed", failureReason: "The cloud applier is not open yet", filledFields: [], submittedAt: new Date().toISOString() },
+      "cloud",
+    );
+    return { submitted: false };
+  }
   // The read above can be stale: a withdraw may land in between. Only the conditional claim decides.
   if (!(await claimForCloud(db(), row.app.id))) return { skipped: true };
 
