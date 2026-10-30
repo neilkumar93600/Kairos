@@ -1,7 +1,12 @@
+import { Writable } from "node:stream";
+import express from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
 import type { AuthGateway } from "../src/lib/auth";
+import { createLogger, httpLogger, requestId } from "../src/lib/logger";
+import { errorHandler } from "../src/middleware/error-handler";
+import { publicFormLimiter } from "../src/middleware/rate-limit";
 import { pollErrorCode } from "../src/jobs/poll-boards";
 import { BoardNotFoundError } from "../src/services/ats";
 
@@ -37,6 +42,45 @@ describe("x-request-id", () => {
     const bad = await request(app()).post("/api/me").set("content-type", "application/json").send("{nope");
     expect(bad.body.error.code).toBe("invalid_json");
     expect(bad.body.error.requestId).toBe(bad.headers["x-request-id"]);
+  });
+});
+
+describe("request id on a 500", () => {
+  it("matches the header, the envelope and the request log line", async () => {
+    let out = "";
+    const sink = new Writable({
+      write(chunk, _enc, done) {
+        out += chunk.toString();
+        done();
+      },
+    });
+    const a = express();
+    a.use(requestId);
+    a.use(httpLogger(createLogger(sink, "info")));
+    a.get("/boom", () => {
+      throw new Error("kaboom");
+    });
+    a.use(errorHandler);
+    const res = await request(a).get("/boom");
+    await new Promise((r) => setImmediate(r));
+    expect(res.status).toBe(500);
+    const id = res.headers["x-request-id"];
+    expect(res.body.error.requestId).toBe(id);
+    expect(out).toContain(`"id":"${id}"`);
+  });
+});
+
+describe("rate limit 429", () => {
+  it("answers with the error envelope and a request id", async () => {
+    const a = express();
+    a.use(requestId);
+    a.get("/x", publicFormLimiter, (_req, res) => res.json({ ok: true }));
+    a.use(errorHandler);
+    let res = await request(a).get("/x");
+    for (let i = 0; i < 5 && res.status === 200; i++) res = await request(a).get("/x");
+    expect(res.status).toBe(429);
+    expect(res.body.error.code).toBe("rate_limited");
+    expect(res.body.error.requestId).toBe(res.headers["x-request-id"]);
   });
 });
 

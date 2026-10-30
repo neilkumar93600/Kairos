@@ -1,4 +1,5 @@
 import { rateLimit } from "express-rate-limit";
+import { HttpError } from "../lib/errors";
 
 /**
  * In-memory limits are enough for a single api instance. When the api scales past one replica,
@@ -9,6 +10,7 @@ export const apiLimiter = rateLimit({
   limit: 120,
   standardHeaders: "draft-8",
   legacyHeaders: false,
+  handler: (_req, _res, next) => next(new HttpError(429, "rate_limited", "Too many requests. Try again in a minute.")),
 });
 
 export const publicFormLimiter = rateLimit({
@@ -16,4 +18,5 @@ export const publicFormLimiter = rateLimit({
   limit: 5,
   standardHeaders: "draft-8",
   legacyHeaders: false,
+  handler: (_req, _res, next) => next(new HttpError(429, "rate_limited", "Too many requests. Try again in a minute.")),
 });

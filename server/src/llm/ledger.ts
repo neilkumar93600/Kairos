@@ -109,7 +109,7 @@ export async function writeCallRow(row: CallRow, spend: SpendUpdate | null): Pro
       });
     } catch (err) {
       if (attempt === 3) {
-        logger.error({ agent: row.agentId, requestId: row.providerRequestId, err: (err as Error).message }, "llm_ledger_write_failed");
+        logger.error({ agent: row.agentId, requestId: row.providerRequestId, err }, "llm_ledger_write_failed");
         return null;
       }
       await new Promise((r) => setTimeout(r, attempt * 700));

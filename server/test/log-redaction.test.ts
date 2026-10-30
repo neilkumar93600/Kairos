@@ -4,6 +4,7 @@ import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { DrizzleQueryError } from "drizzle-orm";
 import { createLogger, httpLogger, logUserHash } from "../src/lib/logger";
+import { userHash } from "../src/llm/redact";
 
 // Drives the real request-logging middleware (same options as app.ts) into a captured stream, because testing
 // redactUrl alone missed that pino also logs req.query and res.headers.
@@ -24,11 +25,32 @@ describe("request logs never contain secrets", () => {
       res.json({ ok: true });
     });
 
-    await request(app).get("/x?token=INBOUNDSECRET&code=OAUTHCODE&x=1");
+    await request(app).get("/x?token=INBOUNDSECRET&code=OAUTHCODE&email=QUERYEMAIL&x=1");
     await new Promise((r) => setImmediate(r));
 
     expect(out).toContain("\"method\":\"GET\""); // the line was written and kept non-secret fields
-    for (const secret of ["INBOUNDSECRET", "OAUTHCODE", "SESSIONSECRET", "BEARERSECRET"]) expect(out).not.toContain(secret);
+    for (const secret of ["INBOUNDSECRET", "OAUTHCODE", "SESSIONSECRET", "BEARERSECRET", "QUERYEMAIL"]) expect(out).not.toContain(secret);
+    expect(out).not.toContain("\"query\""); // pino-http's parsed req.query is dropped whole, not just token and code
+  });
+
+  it("serializes req.log errors without row values (pino-http builds its own child logger)", async () => {
+    let out = "";
+    const sink = new Writable({
+      write(chunk, _enc, done) {
+        out += chunk.toString();
+        done();
+      },
+    });
+    const app = express();
+    app.use(httpLogger(createLogger(sink, "info")));
+    app.get("/x", (req, res) => {
+      req.log.error({ err: new DrizzleQueryError("insert into \"facts\" (\"text\") values ($1)", ["SECRETPARAM"], new Error("boom")) }, "write failed");
+      res.json({ ok: true });
+    });
+    await request(app).get("/x");
+    await new Promise((r) => setImmediate(r));
+    expect(out).toContain("write failed");
+    expect(out).not.toContain("SECRETPARAM");
   });
 });
 
@@ -65,6 +87,27 @@ describe("error logs never contain row values", () => {
     expect(line).toContain("DrizzleQueryError");
   });
 
+  it("drops the cause message unless it is a constraint violation: pg quotes input values in 22P02 and enum errors", () => {
+    const { log, text } = capture();
+    const cause = Object.assign(new Error('invalid input value for enum veteran_status: "PROTECTED-VET-STATUS"'), {
+      code: "22P02",
+      routine: "enum_in",
+    });
+    log.error({ err: new DrizzleQueryError("update \"x\" set \"v\" = $1", ["PROTECTED-VET-STATUS"], cause) }, "write failed");
+    const line = text();
+    expect(line).not.toContain("PROTECTED-VET-STATUS");
+    expect(line).toContain("22P02");
+    expect(line).toContain("enum_in");
+  });
+
+  it("rebuilds the stack even when the message changed after construction", () => {
+    const { log, text } = capture();
+    const err = new Error("first\nparams: SECRETLATE"); // V8 captured this in the stack header
+    err.message = "first";
+    log.error({ err }, "wrapped");
+    expect(text()).not.toContain("SECRETLATE");
+  });
+
   it("redacts free-text fields wherever they sit one level down", () => {
     const { log, text } = capture();
     log.info(
@@ -93,5 +136,6 @@ describe("error logs never contain row values", () => {
     expect(logUserHash("user-123")).toMatch(/^[0-9a-f]{32}$/);
     expect(logUserHash("user-123")).toBe(logUserHash("user-123"));
     expect(logUserHash("user-123")).not.toBe(logUserHash("user-124"));
+    expect(logUserHash("user-123")).toBe(userHash("user-123")); // joins to llm_calls.user_hash
   });
 });
