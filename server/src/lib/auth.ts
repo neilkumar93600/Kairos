@@ -6,7 +6,8 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "../db/client";
 import { cancelBillingForDeletedUser } from "../services/billing-events";
 import { INLINE_REQUEST, stripe } from "../services/stripe";
-import { env } from "./env";
+import type { AuthProvider } from "@auto-career/shared";
+import { env, type Env } from "./env";
 import { logger } from "./logger";
 import { sendEmail } from "./mailer";
 
@@ -20,6 +21,11 @@ const OTP_SUBJECTS = {
 function forwardingAddressFor(userId: string): string {
   const suffix = randomBytes(4).toString("hex");
   return `u-${userId.slice(0, 8).toLowerCase()}-${suffix}@${env().INBOUND_EMAIL_DOMAIN}`;
+}
+
+/** Sign-in methods this deployment can serve. The web shows only these (GET /api/auth-providers). */
+export function configuredProviders(e: Env): AuthProvider[] {
+  return e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET ? ["email", "google"] : ["email"];
 }
 
 function createAuth() {

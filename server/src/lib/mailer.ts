@@ -17,8 +17,7 @@ export interface Email {
 export async function sendEmail(email: Email): Promise<void> {
   const { POSTMARK_SERVER_TOKEN, EMAIL_FROM, MAIL_SINK_FILE } = env();
   if (MAIL_SINK_FILE) {
-    await appendFile(MAIL_SINK_FILE, `${JSON.stringify({ ...email, at: new Date().toISOString() })}
-`);
+    await appendFile(MAIL_SINK_FILE, `${JSON.stringify({ ...email, at: new Date().toISOString() })}\n`);
     return;
   }
   if (!POSTMARK_SERVER_TOKEN) {
