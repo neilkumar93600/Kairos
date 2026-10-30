@@ -17,9 +17,9 @@ function sourceFiles(dir: string): string[] {
 
 describe("INV-6: no mailbox access, no employer credentials", () => {
   const columns = Object.values(schema)
-    .filter((t): t is PgTable => is(t, PgTable))
+    .filter((t) => is(t, PgTable))
     .flatMap((t) => {
-      const cfg = getTableConfig(t);
+      const cfg = getTableConfig(t as PgTable);
       return cfg.columns.map((c) => ({ table: cfg.name, column: c.name }));
     });
 
