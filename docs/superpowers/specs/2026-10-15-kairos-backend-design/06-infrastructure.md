@@ -1,8 +1,8 @@
 # Kairos backend infrastructure and operations
 
-Revision 1, 2026-10-23. Status: Proposed, awaiting owner approval. This document implements the infrastructure, operations, security and privacy parts of ADR-001 (`01-architecture.md`, revision 2: postgres-durable on DBOS Transact 5.3.0, Anthropic-only agents) for the paid beta and for 10,000 users.
+Revision 2, 2026-10-25 (reconciled with the final `02-database.md` and `05-api.md`; revision 1 was written 2026-10-23 while they were still drafts). Status: Proposed, awaiting owner approval. This document implements the infrastructure, operations, security and privacy parts of ADR-001 (`01-architecture.md`, revision 2: postgres-durable on DBOS Transact 5.3.0, Anthropic-only agents) for the paid beta and for 10,000 users.
 
-Inputs read in full: `01-architecture.md`; the research files `anthropic-models.md`, `stack-options.md`, `integrations.md`, `cost-model.md`, `as-built.md`, `spike-s-d1-local.md` (its correction table overrides `01-architecture.md` wherever they differ); the sibling specifications `03-agent-runtime.md`, `04-matching.md`, `05-api.md` and `_db/platform.md` as far as they were written when this document was prepared; the skeleton's `server/Dockerfile`, `server/Dockerfile.applier`, `server/build.mjs`, `server/package.json`, `server/.env.example` and `server/src/lib/env.ts`. Railway behavior was checked against docs.railway.com on 2026-10-23 (replicas, pricing, point-in-time recovery, PgBouncer, healthchecks, deployment teardown, variables, Infrastructure as Code); Anthropic retention against the Anthropic privacy center; Postmark pricing against postmarkapp.com/pricing.
+Inputs read in full: `01-architecture.md`; the research files `anthropic-models.md`, `stack-options.md`, `integrations.md`, `cost-model.md`, `as-built.md`, `spike-s-d1-local.md` (its correction table overrides `01-architecture.md` wherever they differ); the sibling specifications `02-database.md` (final), `03-agent-runtime.md`, `04-matching.md`, `05-api.md` (final) and `_db/platform.md`; the skeleton's `server/Dockerfile`, `server/Dockerfile.applier`, `server/build.mjs`, `server/package.json`, `server/.env.example` and `server/src/lib/env.ts`. Railway behavior was checked against docs.railway.com on 2026-10-23 (replicas, pricing, point-in-time recovery, PgBouncer, healthchecks, deployment teardown, variables, Infrastructure as Code); Anthropic retention against the Anthropic privacy center; Postmark pricing against postmarkapp.com/pricing.
 
 Skills applied: `railway:use-railway` (resource model, preflight, environments, private networking, CLI and IaC routing), `observability-engineer` (SLIs and SLOs, error budgets and burn rates, alert noise control, cost of telemetry), `security-auditor` (trust boundaries, data-flow tracing, SSRF with IP pinning, least privilege, adversarial analysis of every feature). All three loaded. No skill failed to load.
 
@@ -40,7 +40,7 @@ The spike's correction table overrides `01-architecture.md`. Every place this do
 | 2 | No `partitionQueue` option; any `partition*` limit partitions the queue and every enqueue must pass a partition key | Capacity table of queues (9.4) and the scale signals use `globalConcurrency` and `partitionConcurrency` only; the runbook for changing a queue limit (R-DBOS-6) |
 | 3 | `concurrency` is a deprecated alias of `globalConcurrency` | Section 9.4 and the interface list (13) use `globalConcurrency` |
 | 4 | Queues are database-backed and registered after launch with `await DBOS.registerQueue(name, options)`, default `onConflict: update_if_latest_version`, so queue settings can change at runtime | Rolling deploys cannot revert a queue limit changed in an incident (4.6 and R-DBOS-6); the staging rehearsal of a queue change (3.8) |
-| 5 | There is no garbage-collection call; retention uses `listWorkflows` with `completedBefore` and `deleteWorkflows(ids, deleteChildren?)` | `dbos-retention` batch size 2,000 ids, one batch per 5 seconds, and the bloat monitor (1.7, 6.6) |
+| 5 | There is no garbage-collection call; retention uses `listWorkflows` with `completedBefore` and `deleteWorkflows(ids, deleteChildren?)` | `dbos-retention` daily at 03:30 UTC in batches of 500 ids with `deleteChildren = true` (the value of `02-database.md` section 12.2), one batch per 5 seconds, and the bloat monitor (1.7, 6.6) |
 | 6 | There is no public recover-for-other-executors call; cancel plus resume is proven | The orphan sweeper is the only recovery path for dead executors, so its metric `durable.orphans` and its alert are page-level (6.6), and runbook R-DBOS-1 |
 | 7 | `forkWorkflow` replays from step 0, so rule D1 (state-conditional workflows) is mandatory | The version-bump procedure (3.9), a CI check, and the staging rehearsal before any bump |
 | 8 | DBOS 5.3.0 packages are CommonJS: default import in ESM | Build: `server/build.mjs` keeps `@dbos-inc/*` external and the source uses `import dbosSdk from "@dbos-inc/dbos-sdk"` (3.3); the image installs them with `npm ci` |
@@ -62,11 +62,16 @@ Each delta has a reason. None changes an architectural decision; two (PgBouncer 
 | X6 | Egress $10 base and $25 growth | $31 and $39 (section 11.1) | The estimate now itemizes PITR archive uploads, dumps, Anthropic request bodies and API responses |
 | X7 | Email is Postmark, cost not itemized | Two outbound message streams (transactional, broadcast) plus inbound; about 35,000 and 95,000 emails a month; $48 and $120 (section 11.3) | Digests and Autopilot emails are volume; mixing them with one-time codes would risk OTP deliverability |
 | X8 | Applier egress guard: refuse private addresses and `.internal` names | Also launch Chromium with `--proxy-bypass-list=<-loopback>` so loopback is not exempt from the proxy, and WebRTC non-proxied UDP disabled (section 7.5) | Chromium bypasses a proxy for `localhost` and loopback by default; without the flag the guard is blind to loopback requests |
-| X9 | Applier role: one view and five functions | `_db/platform.md` adds a sixth function, `heartbeat_executor`. This document recommends replacing the view with a per-attempt function (section 7.9, H1) | Least privilege: a compromised browser process should not be able to read every queued application |
+| X9 | Applier role: one view and five functions | Final `02-database.md` section 4.3 gives the applier two views (`applier_payload_v`, `scan_target_v`) and six `SECURITY DEFINER` functions (`claim_cloud_attempt`, `mark_browser_launched`, `mark_attempt_phase`, `record_attempt_result`, `store_form_questions`, `heartbeat_executor`). This document adopts that surface and recommends replacing `applier_payload_v` with a per-attempt function (section 7.9, H1) | Least privilege: a compromised browser process should not be able to read every queued application |
 | X10 | Alerts "emailed or paged" without a mechanism | An `alert-evaluator` schedule in the worker, plus an external uptime monitor and a heartbeat that detects the evaluator's own death (section 6.7) | A solo operator needs an alert path that survives the failure of the system it watches |
 | X11 | Dashboards are "saved queries" | A Grafana service on Railway with a read-only role `kairos_metrics` that sees aggregate tables and views only (section 6.8) | One place to look; no database exposure |
 | X12 | `max_connections = 200` | Kept, plus the full parameter table for the 8 GB and 16 GB sizes (section 1.7) | Needed for implementation |
 | X13 | Backups: "Railway PITR range (about 4 weeks)" | Confirmed [V] with its limits: window starts at the first post-enable base backup, a 5 GiB WAL queue cap truncates the window during a sustained bucket outage, minor image tags cannot be pinned, restore creates a sibling service (section 5) | These shape the runbook and the alerts |
+| X14 | `02-database.md` section 4.4: connection budget 178 of 200 (PgBouncer server side 108 plus direct DBOS 60 plus 10 reserve) | 118 of 200 at base and 134 of 200 at growth worst case (section 9.2) | The 178 assumes the self-run PgBouncer of the architecture; delta X1 replaces it. `02-database.md` section 4.4 should quote this document's numbers |
+| X15 | `02-database.md` section 12.2: R2 tombstones expire after 60 days; weekly logical dumps only | Tombstones never expire (an opaque hash, a few bytes each); daily core dump, weekly full dump and the money journal (delta X2) | A tombstone must outlive every backup that could contain the user; keeping it forever removes the arithmetic. `02-database.md` section 12.2 should adopt both rows |
+| X16 | `02-database.md` section 4.1 defines five `kairos_*` roles | Adds `kairos_backup` and `kairos_metrics` (section 1.7), both created by a custom migration in P1 | The backup job and Grafana must not use `kairos_readonly`, whose grants are column-limited for support access |
+| X17 | `05-api.md` names the inbound Postmark credentials `POSTMARK_INBOUND_BASIC_USER` and `POSTMARK_INBOUND_BASIC_PASSWORD`, the pool size `DATABASE_POOL_MAX`, and serves `GET /health` only | This document uses those names (revision 1 had proposed `POSTMARK_INBOUND_USER`, `POSTMARK_INBOUND_PASSWORD` and `DB_POOL_MAX`) and asks `05-api.md` for one additive route, `GET /api/health`, an alias of `GET /health` with an identical body | The external check must travel through the Vercel rewrite (6.7). The alias is a new route, so no frozen contract changes |
+| X18 | `05-api.md` section 2.4: on `SIGTERM` the api waits up to 25 seconds; architecture D9: 30 seconds for steps in flight | api 25 seconds, worker 30 seconds, applier 170 seconds (section 1.6) | Revision 1 used 45 seconds, which exceeded both documents |
 
 ---
 
@@ -219,7 +224,7 @@ Start commands and ports:
 | `applier` | `node dist/applier.js` | `PORT` (internal only) | `GET /health`, internal: adds browser liveness (a context can be opened and closed within 5 seconds) |
 | `pgbackup` | `/app/run.sh` (cron) | none | exit code |
 
-Railway's healthcheck runs only at deploy time, from the host `healthcheck.railway.app`, and waits for any 2xx [V]; the `api` must accept that Host header. `GET /health` returns 200 `{status, role, version, checks}` when Postgres answers and DBOS reports launched, 503 `{status: "unhealthy", checks}` otherwise (the architecture: 503 only when Postgres fails; DBOS state is informational in `checks.durable` for the api, and a failure to launch DBOS fails the worker and applier health because they cannot do any work without it).
+Railway's healthcheck runs only at deploy time, from the host `healthcheck.railway.app`, and waits for any 2xx [V]; the `api` must accept that Host header. The api's `GET /health` is the route of `05-api.md` section 2.5: `{ status: "ok" | "degraded" | "draining", checks: { database, durable }, version }`; 503 only when the database is down or the process is draining, and a `durable` failure answers 200 `degraded` so that Railway does not restart a healthy api for an engine problem. The worker and applier answer their internal `GET /health` with `{ status, role, version, checks }`: 200 when Postgres answers and DBOS reports launched, 503 otherwise, because they can do no work without the engine. `GET /api/health` (alias, identical body) is the one additive route this document asks of `05-api.md` (delta X17).
 
 ### 1.6 Deployment settings per service
 
@@ -236,7 +241,7 @@ Railway's healthcheck runs only at deploy time, from the host `healthcheck.railw
 Process shutdown contract (architecture rule D9), implemented in `durable/shutdown.ts` and exercised by test T-INF-3:
 
 1. `SIGTERM`: stop dequeuing (`DBOS` queue listeners stop), stop accepting HTTP connections (api: `server.close()`), mark the executor `state = 'draining'` in `dbos_executors`.
-2. Wait for steps in flight: api and worker up to 45 seconds, applier up to 170 seconds (a submit that has already reached `submit_seen` is allowed to finish and report).
+2. Wait for steps in flight: api up to 25 seconds for requests in flight (`05-api.md` section 2.4), worker up to 30 seconds (architecture D9), applier up to 170 seconds (a submit that has already reached `submit_seen` is allowed to finish and report).
 3. Close pools, flush Sentry (2 seconds), exit 0. If the deadline passes, exit 1; DBOS recovery and the orphan sweeper settle whatever was in flight.
 4. Railway sends `SIGKILL` after the draining time; the draining time is always larger than the process deadline by at least 10 seconds.
 
@@ -248,7 +253,7 @@ Process shutdown contract (architecture rule D9), implemented in `durable/shutdo
 |---|---|---|---|
 | `max_connections` | 200 | 200 | Section 9.2 |
 | `shared_buffers` | 2 GB | 4 GB | 25% of RAM |
-| `effective_cache_size` | 5 GB | 11 GB | Planner hint |
+| `effective_cache_size` | 6 GB | 12 GB | Planner hint (12 GB is the value of `02-database.md` section 13.1) |
 | `work_mem` | 16 MB | 24 MB | About 60 active queries at peak |
 | `maintenance_work_mem` | 512 MB | 1 GB | Index builds, vacuum |
 | `wal_compression` | `lz4` | `lz4` | Full-page images after checkpoints dominate WAL; smaller archive, less egress |
@@ -257,17 +262,19 @@ Process shutdown contract (architecture rule D9), implemented in `durable/shutdo
 | `random_page_cost` / `effective_io_concurrency` | 1.1 / 200 | 1.1 / 200 | SSD volume [verify with fio in S-P1] |
 | `synchronous_commit` | `on` | `on` | Money rows are never acknowledged before they are durable |
 | `archive_timeout` | 60 s (set by the image [V]) | 60 s | RPO |
-| `autovacuum_max_workers` / `autovacuum_naptime` / `autovacuum_vacuum_cost_limit` | 4 / 15 s / 2000 | 4 / 15 s / 2000 | Hot small tables (`credit_balances`, `user_daily_usage`, `ai_usage`, DBOS status rows) |
+| `autovacuum_max_workers` / `autovacuum_naptime` / `autovacuum_vacuum_cost_limit` | 4 / 20 s / 2000 | 4 / 20 s / 2000 | Hot small tables (`credit_balances`, `user_daily_usage`, `ai_usage`, DBOS status rows) |
 | Per-table `autovacuum_vacuum_scale_factor` | 0.02 on `credit_balances`, `applications`, `matches`, `user_match_state`, `user_daily_usage`, `ai_usage`, `rate_limits`; 0.02 on the DBOS `workflow_status`, `operation_outputs` and `workflow_inputs` tables in `kairos_dbos` | same | The spike's 1.1 M checkpoint writes a day create churn; retention deletes create dead tuples |
 | `idle_in_transaction_session_timeout` | 30 s per runtime role | same | B.10.4 |
-| `statement_timeout` per role | `kairos_api` 10 s, `kairos_worker` 120 s, `kairos_applier` 5 s, `kairos_metrics` 10 s, `kairos_readonly` 30 s | same | B.10.4 |
-| `lock_timeout` | 5 s for the migrator | same | A migration never queues behind a long transaction |
+| `statement_timeout` per role | `kairos_api` 10 s, `kairos_worker` 120 s, `kairos_applier` 5 s, `kairos_metrics` 10 s, `kairos_readonly` 60 s (`02-database.md` section 4.1), `kairos_backup` none | same | B.10.4 |
+| `lock_timeout` | 5 s for the migrator and for runtime roles; 2 s inside the `llm_calls` partition detach | same | A migration never queues behind a long transaction; runtime statements fail fast instead of queueing behind DDL (`02-database.md` section 13.1) |
+| `default_toast_compression` | `lz4` | `lz4` | JSON and text columns compress 2.5 to 3 times [verify the image has lz4 in S-P1] |
+| `shared_preload_libraries` | `pg_stat_statements` | `pg_stat_statements` | Slow-query review; needs a restart (owner-run, see above) |
 | `log_min_duration_statement` | 500 ms | 500 ms | Slow query log to Railway logs |
 | `log_lock_waits` / `deadlock_timeout` | on / 1 s | on / 1 s | |
 | `track_io_timing`, `track_activity_query_size` | on, 2048 | on, 2048 | |
 | `ssl` | on (the `-ssl` image); every client uses `sslmode=require` | same | In-transit encryption even on the private network |
 
-Roles: the five roles of B.10.4 (`kairos_migrator`, `kairos_api`, `kairos_worker`, `kairos_applier`, `kairos_readonly`) plus two added by this document: `kairos_backup` (member of `pg_read_all_data`, used only by `pgbackup`, statement timeout 0) and `kairos_metrics` (SELECT on `metrics_minute`, `llm_cost_daily` and the dashboard views of 6.8 only). Both are created by a custom migration in P1. DBOS system-database credentials stay per process type (`dbos_api`, `dbos_worker`, `dbos_applier`).
+Roles: the five roles of `02-database.md` section 4.1 (`kairos_migrator`, `kairos_api`, `kairos_worker`, `kairos_applier`, `kairos_readonly`) plus two added by this document (delta X16): `kairos_backup` (member of `pg_read_all_data`, used only by `pgbackup`, statement timeout 0) and `kairos_metrics` (SELECT on `metrics_minute`, `llm_cost_daily` and the dashboard views of 6.8 only). Both are created by a custom migration in P1. DBOS system-database credentials stay per process type (`dbos_api`, `dbos_worker`, `dbos_applier`).
 
 ### 1.8 Infrastructure as Code
 
@@ -562,9 +569,9 @@ Names are exact. "Prod only" means `parseEnv` rejects it elsewhere; "Non-prod on
 | Runtime | `NODE_ENV`, `LOG_LEVEL`, `PORT`, `GIT_SHA` (`${{RAILWAY_GIT_COMMIT_SHA}}`), `SENTRY_DSN`, `NODE_OPTIONS` | api, worker, applier | Config |
 | Railway provided | `RAILWAY_SERVICE_NAME`, `RAILWAY_REPLICA_ID`, `RAILWAY_ENVIRONMENT_NAME`, `RAILWAY_PRIVATE_DOMAIN`, `RAILWAY_GIT_COMMIT_SHA` | all | Provided [V] |
 | Deployment | `RAILWAY_DOCKERFILE_PATH`, `RAILWAY_DEPLOYMENT_DRAINING_SECONDS`, `RAILWAY_DEPLOYMENT_OVERLAP_SECONDS`, `RAILWAY_HEALTHCHECK_TIMEOUT_SEC`, `RAILWAY_SHM_SIZE_BYTES` (applier) | per service | Config [V] |
-| Database | `DATABASE_URL` (pooled, per-role user), `DATABASE_UNPOOLED_URL` (api for the migration only, `pgbackup`), `DBOS_SYSTEM_DATABASE_URL` (direct, per-process-type user `dbos_api`, `dbos_worker`, `dbos_applier`), `DBOS_SYS_POOL_SIZE`, `DB_POOL_MAX`, `DB_POOLED_HOST`, `DB_DIRECT_HOST`, `DB_PORT` (shared, for cutover) | api, worker, applier | Secret (URLs, passwords) |
+| Database | `DATABASE_URL` (pooled, per-role user), `DATABASE_UNPOOLED_URL` (api for the migration only, `pgbackup`), `DBOS_SYSTEM_DATABASE_URL` (direct, per-process-type user `dbos_api`, `dbos_worker`, `dbos_applier`), `DBOS_SYS_POOL_SIZE`, `DATABASE_POOL_MAX`, `DB_POOLED_HOST`, `DB_DIRECT_HOST`, `DB_PORT` (shared, for cutover) | api, worker, applier | Secret (URLs, passwords) |
 | Auth | `BETTER_AUTH_SECRET` (sealed), `BETTER_AUTH_URL`, `API_PUBLIC_ORIGIN`, `WEB_ORIGIN`, `EXTENSION_ORIGIN`, `CSRF_ALLOWED_ORIGINS`, `TRUSTED_PROXY_HOPS_VERCEL`, `TRUSTED_PROXY_HOPS_DIRECT`, `FRESH_SESSION_MAX_AGE_SEC`, `ADMIN_USER_IDS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (sealed) | api (worker needs `BETTER_AUTH_SECRET` only if it signs links; it does not: links use `LINK_SIGNING_KEY`) | Secret and config. `BETTER_AUTH_URL` semantics are owned by 05-api (the skeleton used the web origin; 05-api section 5.1 uses the public API origin; the single value is fixed by spike S-B1) |
-| Email | `POSTMARK_SERVER_TOKEN` (transactional stream), `POSTMARK_BROADCAST_TOKEN`, `EMAIL_FROM`, `INBOUND_EMAIL_DOMAIN`, `INBOUND_WEBHOOK_SECRET` (legacy `?token=` route, removed one week after cut-over), `POSTMARK_INBOUND_PATH_SECRET`, `POSTMARK_INBOUND_USER`, `POSTMARK_INBOUND_PASSWORD` (sealed) | api (inbound secrets), worker (send tokens), api (OTP sends) | Secret. The three `POSTMARK_INBOUND_*` names are proposed here and must be matched in 05-api |
+| Email | `POSTMARK_SERVER_TOKEN` (transactional stream), `POSTMARK_BROADCAST_TOKEN`, `EMAIL_FROM`, `INBOUND_EMAIL_DOMAIN`, `INBOUND_WEBHOOK_SECRET` (legacy `?token=` route, removed one week after cut-over), `POSTMARK_INBOUND_PATH_SECRET`, `POSTMARK_INBOUND_PATH_SECRET_PREVIOUS` (during a rotation), `POSTMARK_INBOUND_BASIC_USER`, `POSTMARK_INBOUND_BASIC_PASSWORD` (sealed) | api (inbound secrets), worker (send tokens), api (OTP sends) | Secret. The names are those of `05-api.md` section 14.3 |
 | Payments | `STRIPE_SECRET_KEY` (sealed; `sk_live_` in production), `STRIPE_WEBHOOK_SECRET` (sealed), `STRIPE_PRICES` | api, worker | Secret |
 | LLM | `ANTHROPIC_KEY_INTERACTIVE` (api, worker), `ANTHROPIC_KEY_BATCH` (**worker only**), `ANTHROPIC_KEY_EVALS` (CI only), `ANTHROPIC_ADMIN_KEY` (worker, only if S-A1 finds a read-only usage credential), `ANTHROPIC_WORKSPACE_ID_INTERACTIVE`, `ANTHROPIC_WORKSPACE_ID_BATCH`, `ANTHROPIC_BASE_URL` (non-prod only), `LLM_GATEWAY`, `LLM_MAX_CONCURRENCY`, `LLM_RPM_HAIKU`, `LLM_RPM_SONNET`, `USER_HASH_KEY` (api, worker; sealed) | api, worker | Secret |
 | Cryptography | `DATA_KEKS` (api, worker; sealed; `v2:<base64>,v1:<base64>`), `LINK_SIGNING_KEY` (sealed), `LINK_SIGNING_KEY_PREVIOUS` (optional, accepted for verification only during a rotation) | api, worker | Secret |
@@ -586,7 +593,7 @@ Names are exact. "Prod only" means `parseEnv` rejects it elsewhere; "Non-prod on
 | `kairos-backups` | Dumps, manifests, the money journal | none | write (journal) | none | write | Core dumps 7 days, full dumps 28 days, journal 35 days; no public access; versioning on |
 | `kairos-tombstones` | Deletion tombstones | write | write, read | none | none | None (a tombstone is tiny and must outlive every backup); versioning on; retention lock [verify S-INF1] |
 
-Tokens are created per bucket and per permission class; the applier's two tokens are separate so a stolen read token cannot write a failure object and vice versa [verify S-INF1 that R2 tokens scope to a bucket and a permission level]. Every bucket has public access off and no custom domain. Presigned URLs for the extension are minted by the api for `kairos-renders` only and expire in 10 minutes.
+Tokens are created per bucket and per permission class; the applier's two tokens are separate so a stolen read token cannot write a failure object and vice versa [verify S-INF1 that R2 tokens scope to a bucket and a permission level]. Every bucket has public access off and no custom domain. No presigned URL is issued: the api streams a tailored PDF from `kairos-renders` through `GET /api/extension/applications/:id/resume.pdf?t=` (a 24-hour token tied to an application that is still `approved`, `05-api.md` A-15), so a withdrawn application stops serving its file at once and no storage URL ever reaches a browser or an ATS page.
 
 ### 4.4 Per-process environment schemas
 
@@ -697,7 +704,7 @@ pg_dump "$DATABASE_BACKUP_URL" --format=custom --compress=zstd:3 --no-owner --no
 
 | Item | Rule |
 |---|---|
-| Core dump contents | Whole schema; data of every table except the exclusions above. `jobs` (large, rebuilt by polling) is excluded from the core dump and included in the weekly full dump; `matches` is included because it holds user decisions. The three unlogged tables never leave the database (`--no-unlogged-table-data`, `_db/platform.md`) |
+| Core dump contents | Whole schema; data of every table except the exclusions above. `jobs` (large, rebuilt by polling) is excluded from the core dump and included in the weekly full dump; `matches` is included because it holds user decisions. The four unlogged tables (`verified_claims`, `tailor_cache`, `rate_limits`, `auth_rate_limit`) never leave the database (`--no-unlogged-table-data`); `llm_calls` partitions and `metrics_minute` data are excluded by name |
 | `kairos_dbos` | Not dumped: ids-only checkpoints that PITR covers and that the business reconcilers can re-derive. After a logical restore the reconcilers of B.5.8 re-create missing work |
 | Encryption | Streamed through `age` to the public keys in `BACKUP_AGE_RECIPIENTS` (two keys: the owner's and a recovery key); the private keys are offline (4.5). Columns already encrypted by `DATA_KEKS` stay encrypted inside the dump |
 | Size and duration [est] | Core about 3 GB compressed at growth, 25 to 40 minutes; full about 6 GB, 50 to 70 minutes; memory under 1 GB |
@@ -1087,12 +1094,12 @@ Data flow traced from entry to storage (the `security-auditor` method: follow ev
 | TB2 | Extension, API | Bearer session token, queue payloads, reports | Malware with the token; a second tab | Visibility lease, idempotent `recordOutcome`, bearer skips the CSRF check only because it is not ambient, token cleared on sign-out | B.6.6 |
 | TB3 | Stripe, API | Webhook events | Anyone who can POST to the URL | Raw-body signature with a 5-minute tolerance, store then process, refetch from Stripe | B.6.11 |
 | TB4 | Postmark, API | Inbound email JSON | Anyone who learns the URL; an email sender (untrusted content) | Path secret and Basic credentials compared in constant time, 403 on failure, 16 KB body cap, bodies encrypted, content fenced before any model sees it | B.6.12 |
-| TB5 | api, worker, applier, Postgres | SQL | A compromised process | Five roles, applier limited to one view and functions, append-only ledger and events, statement timeouts, separate DBOS credentials | B.10.4, 1.7 |
+| TB5 | api, worker, applier, Postgres | SQL | A compromised process | Five roles (plus two ops roles), applier limited to two views and six functions, append-only ledger and events, statement timeouts, separate DBOS credentials | B.10.4, 1.7 |
 | TB6 | api, worker, Anthropic | Prompts (minimized), structured responses | A malicious job description or resume (prompt injection); a compromised key | Fencing, schemas, `checkClaims`, verifier without job text, workspaces and spend limits, no tools | 03 |
 | TB7 | worker, api, ATS public APIs | Board JSON and HTML (untrusted) | A malicious or compromised board; a poisoned URL stored in a job | `safeFetch` (7.4), host allowlist, size and time caps, strict parsers, injection canary | 7.4 |
 | TB8 | applier, employer forms | A hostile page loaded in Chromium | A malicious or compromised employer page or third-party script | Sandbox, egress guard, host allowlist, fresh context per attempt, no secrets, role limits | 7.5 |
 | TB9 | applier, Postgres | Claim, payload, results | A compromised browser escaping to the container | Role `kairos_applier`, definer functions, `idle_in_transaction_session_timeout`, recommendations H1 and H2 | 7.5, 7.9 |
-| TB10 | Services, R2 | Files | Leaked token; a misrouted object | Bucket-scoped tokens, public access off, app-layer encryption for uploads, 10-minute presigned URLs | 4.3 |
+| TB10 | Services, R2 | Files | Leaked token; a misrouted object | Bucket-scoped tokens, public access off, app-layer encryption for uploads, no presigned URLs (the api streams files after an authorization check) | 4.3 |
 | TB11 | Operator, production | Console access, scripts | Stolen operator credentials; an operator error | Hardware keys, audited scripts (`ops_audit`), no standing database credentials on a laptop, IaC with reviewed plans | 4.5 |
 | TB12 | CI and supply chain | Dependencies, images, workflow secrets | A malicious package or action; a poisoned pull request | Exact pins, 14-day delay, `--ignore-scripts`, SBOM and signatures, pinned actions, no production secrets in CI | 3.10, 3.11 |
 
@@ -1232,7 +1239,7 @@ The guard does not change the egress IP and does no rotation, so it is not proxy
 
 | Resource | Reachable? | Detail |
 |---|---|---|
-| Postgres `kairos` | Yes, as `kairos_applier` | One view (`applier_payload_v`) and the definer functions; with H1 only the claimed attempt's payload |
+| Postgres `kairos` | Yes, as `kairos_applier` | Two views (`applier_payload_v`, `scan_target_v`), `SELECT` on `ops_flags` and six definer functions (`02-database.md` section 4.3); with H1 only the claimed attempt's payload |
 | Postgres `kairos_dbos` | Yes, as `dbos_applier` | Ids-only checkpoints; cannot reach `kairos` |
 | R2 | Read `kairos-renders`, write `kairos-failures` | H2 narrows the read to the claimed attempt's key |
 | Anthropic, Stripe, Postmark, `DATA_KEKS`, session secrets | No | Not present in the environment (`env.roles.test.ts`) |
@@ -1285,13 +1292,13 @@ These are recommendations from the infrastructure and security review. Each name
 
 | Id | Recommendation | Owner spec | Reason and cost |
 |---|---|---|---|
-| H1 | Replace the view `applier_payload_v` with a `SECURITY DEFINER` function `get_applier_payload(p_attempt_id uuid, p_worker text)` that returns the payload only for an open cloud attempt whose `worker_identity = p_worker`; the applier role then has no table or view access, only functions | `_db/applications.md` (B.10.4) | A compromised applier today can read every queued cloud application's answers, resume lines and cover letters; with the function it can read only the attempt it claimed. Cost: one function, one test |
+| H1 | Replace the view `applier_payload_v` (the second view, `scan_target_v`, exposes only public form URLs and stays) with a `SECURITY DEFINER` function `get_applier_payload(p_attempt_id uuid, p_worker text)` that returns the payload only for an open cloud attempt whose `worker_identity = p_worker`; the applier role then has no table or view access, only functions | `_db/applications.md` (B.10.4) | A compromised applier today can read every queued cloud application's answers, resume lines and cover letters; with the function it can read only the attempt it claimed. Cost: one function, one test |
 | H2 | Give the applier's R2 read token no list permission (Object Read only, if R2 offers that level without listing) so it can fetch only the key it received from H1; PDF keys are SHA-256 content hashes, unguessable. If R2 cannot separate list from read, the worker copies the PDF into a short-lived `kairos-apply` bucket at approval (7-day lifecycle) | 05-api and the workflow `applyCloud` | Narrows the same blast radius for PDFs [verify S-INF1] |
 | H3 | `kairos_readonly` and `kairos_metrics` get `statement_timeout`, a connection limit of 3, and the support runbook requires an `ops_audit` entry before any read of a user's rows; sensitive columns (`answers`, `resume_lines`, `cover_letter`, `sensitive_answers_enc`, `text_body_enc`, `source_text_enc`) are excluded from `kairos_readonly` grants by column | `_db/platform.md`, `_db/identity-profile.md` | Support access is the likeliest real-world leak; column grants cost nothing |
 | H4 | `safeFetch` is mandatory for every ATS adapter and for the applier precheck; the adapters' constructors take a `SafeFetcher` | `04-matching.md` (catalog adapters) | 7.4 |
 | H5 | Autopilot approvals and resends require a session that is "fresh" (already in 05-api for `PUT /api/autopilot`); additionally, turning Autopilot on emails the user a notification with an "off" link (a signed action token) | `05-api.md`, B.6.3 | An attacker with a stolen session could otherwise turn on hands-off sending silently |
 | H6 | The web renders `jobs.description_text`, form-question labels and any model output as text, never as HTML; the CSP forbids inline scripts | frontend plan | Closes stored XSS from ATS content |
-| H7 | A seventh definer function is not added for `heartbeat_executor` unless H1 is accepted (the platform spec already adds it as a sixth function); heartbeats from the applier use it | `_db/platform.md` | Consistency with `_db/platform.md` P13 |
+| H7 | `heartbeat_executor` is already the sixth applier function in `02-database.md` section 4.3, so accepting H1 adds a seventh (`get_applier_payload`) and removes the view; the applier's heartbeats keep using `heartbeat_executor` | `02-database.md` | Keeps one heartbeat path for every process type |
 
 ### 7.10 Security testing programme
 
@@ -1395,7 +1402,7 @@ The locked decision of 2026-10-15 (OpenRouter with zero-data-retention routing) 
 
 ### 8.6 Retention schedule
 
-One schedule for the whole platform. Database rows follow B.10.6; this table adds the infrastructure and processor stores. "Mechanism" names the enforcing schedule or rule.
+One schedule for the whole platform. Database rows follow `02-database.md` section 12.2, which is authoritative for every table (it also lists the index each rule uses); this table repeats the rows that hold personal data and adds the infrastructure and processor stores. "Mechanism" names the enforcing schedule or rule.
 
 | Store or data | Retention | Mechanism |
 |---|---|---|
@@ -1404,6 +1411,12 @@ One schedule for the whole platform. Database rows follow B.10.6; this table add
 | `matches` below bar | 30 days | `retention` |
 | `inbound_emails` bodies | 180 days (16 KB cap, encrypted); metadata with the account | `retention` |
 | `rehearsal_turns` | 30 days | `retention` |
+| `email_sends`, `notifications`, `reminders` | 120 days, 90 days, 90 days after sent or cancelled | `retention` |
+| `contact_messages` | 12 months (spam 30 days); by email address at erasure | `retention`, `erasure` |
+| `applications` with status `failed` | Withdrawn after 90 days; `submission_attempts.evidence` and `session_id` nulled 90 days after settlement | `failed-expiry`, `retention` |
+| `action_tokens` | 7 days after expiry | `retention` |
+| `session`, `verification`, unverified accounts | 7 days and 1 day after expiry; 14 days for an unverified account | `identity-nightly` |
+| `jobs` (public postings) | Closed and unreferenced: deleted after 180 days; referenced: description and raw text purged after 180 days; `form_questions` 30 days after close | `retention` |
 | `forwarding_verifications` | 3 days | `retention` |
 | `stripe_events` | 90 days | `retention` |
 | `credit_ledger`, `credit_ledger_archive` | Kept for audit; after deletion only under a one-way user hash | Trigger `user_archive_ledger` |
@@ -1421,7 +1434,7 @@ One schedule for the whole platform. Database rows follow B.10.6; this table add
 | R2 `kairos-renders` | 90 days after submission or withdrawal; renders 30 days unused | Lifecycle, `erasure` |
 | R2 `kairos-failures` | 14 days | Lifecycle |
 | R2 `kairos-backups` | Core dumps 7 days, full dumps 28 days, journal 35 days | Lifecycle |
-| R2 `kairos-tombstones` | Forever (an opaque hash, no personal data) | None |
+| R2 `kairos-tombstones` | Forever (an opaque hash, no personal data); `02-database.md` section 12.2 says 60 days, which is also longer than any backup, and delta X15 asks it to adopt "forever" | None |
 | Railway PITR archive | About 4 weeks (the last 4 full backups) | Railway |
 | Named volume backups | 7 days | `promote.yml` cleanup |
 | Postmark messages (outbound and inbound) | 45 days (default) | Postmark setting |
@@ -1641,7 +1654,7 @@ Each runbook is a file `docs/runbook/<id>.md` with the headings Symptoms, Impact
 | R-DBOS-2 | Stuck workflow | A-DUR-2 | `GET /api/admin/workflows`; read the business row (rule D1); cancel and resume, or fork from step 0 only if the workflow is state-conditional; never fork `applyCloud` | **Yes, P2** |
 | R-DBOS-3 | Executor loss | A-DUR-3 | Check Railway replica status; the orphan sweeper heals; confirm `dbos_executors` | P1 |
 | R-DBOS-4 | Checkpoint budget exceeded | A-DUR-4 | Compare writes per workflow type; coarsen steps; shorten retention; check the second-Postgres trigger | P4 |
-| R-DBOS-5 | System database size or retention lag | A-DUR-5 | Run `dbos-retention` manually in batches of 2,000 (`deleteWorkflows`); check autovacuum on the DBOS tables | P2 |
+| R-DBOS-5 | System database size or retention lag | A-DUR-5 | Run `dbos-retention` manually in batches of 500 (`deleteWorkflows`, `deleteChildren = true`); check autovacuum on the DBOS tables | P2 |
 | R-DBOS-6 | Change a queue limit at runtime | Incident | `DBOS.registerQueue(name, options)` with the new value from an admin script; record in `ops_audit`; commit the same value to `durable/queues.ts` within the day | P2 |
 | R-DBOS-7 | Bump `WORKFLOW_SET_VERSION` | Incompatible workflow rewrite | 3.9: staging rehearsal with 50 old-version workflows; deploy; `dbos-version-migrate`; verify no old-version `PENDING` remain | **Yes** |
 | R-DBOS-8 | Chaos rehearsal | Monthly on staging, per phase gate | Kill api, worker, applier processes during 1,000 scripted approvals; assert zero duplicates, zero double charges, all terminal in 10 minutes | **Yes, P2 exit** |
@@ -1874,15 +1887,15 @@ Railway project `kairos`; services `api`, `worker`, `applier`, `postgres`, `pgba
 
 ### 13.2 Environment variables (additions and fixed meanings; existing names from `server/src/lib/env.ts` are unchanged)
 
-`DATABASE_URL` (pooled), `DATABASE_UNPOOLED_URL`, `DBOS_SYSTEM_DATABASE_URL`, `DBOS_SYS_POOL_SIZE`, `DB_POOL_MAX`, `DB_POOLED_HOST`, `DB_DIRECT_HOST`, `DB_PORT`, `DATABASE_BACKUP_URL`, `BACKUP_AGE_RECIPIENTS`, `ANTHROPIC_KEY_INTERACTIVE`, `ANTHROPIC_KEY_BATCH`, `ANTHROPIC_KEY_EVALS`, `ANTHROPIC_ADMIN_KEY`, `ANTHROPIC_WORKSPACE_ID_INTERACTIVE`, `ANTHROPIC_WORKSPACE_ID_BATCH`, `ANTHROPIC_BASE_URL`, `LLM_GATEWAY`, `LLM_MAX_CONCURRENCY`, `LLM_RPM_HAIKU`, `LLM_RPM_SONNET`, `USER_HASH_KEY`, `DATA_KEKS`, `LINK_SIGNING_KEY`, `LINK_SIGNING_KEY_PREVIOUS`, `POSTMARK_SERVER_TOKEN`, `POSTMARK_BROADCAST_TOKEN`, `POSTMARK_INBOUND_PATH_SECRET`, `POSTMARK_INBOUND_USER`, `POSTMARK_INBOUND_PASSWORD`, `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_UPLOADS`, `R2_BUCKET_RENDERS`, `R2_BUCKET_FAILURES`, `R2_BUCKET_BACKUPS`, `R2_BUCKET_TOMBSTONES`, `WORKER_QUEUES`, `APPLIER_CONCURRENCY`, `APPLIER_ALLOWED_HOSTS`, `APPLIER_RECYCLE_AFTER`, `ALERT_PAGE_WEBHOOK_URL`, `ALERT_EMAIL_TO`, `HEARTBEAT_URL`, `HEARTBEAT_URL_BACKUP`, `ORIGIN_VERIFY_SECRET`, `SENTRY_DSN`, `SENTRY_TRACES_BUDGET_SCALE`, `GIT_SHA`, `TRUSTED_PROXY_HOPS_VERCEL`, `TRUSTED_PROXY_HOPS_DIRECT`, `RAILWAY_SHM_SIZE_BYTES`, `RAILWAY_DEPLOYMENT_DRAINING_SECONDS`, `RAILWAY_DEPLOYMENT_OVERLAP_SECONDS`, `RAILWAY_HEALTHCHECK_TIMEOUT_SEC`, `RAILWAY_DOCKERFILE_PATH`. Executor id: `${RAILWAY_SERVICE_NAME}:${RAILWAY_REPLICA_ID}`. Removed: `REDIS_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL_FAST`, `ANTHROPIC_MODEL_SMART`, `INBOUND_WEBHOOK_SECRET`; no `OPENROUTER_*` anywhere.
+`DATABASE_URL` (pooled), `DATABASE_UNPOOLED_URL`, `DBOS_SYSTEM_DATABASE_URL`, `DBOS_SYS_POOL_SIZE`, `DATABASE_POOL_MAX`, `DB_POOLED_HOST`, `DB_DIRECT_HOST`, `DB_PORT`, `DATABASE_BACKUP_URL`, `BACKUP_AGE_RECIPIENTS`, `ANTHROPIC_KEY_INTERACTIVE`, `ANTHROPIC_KEY_BATCH`, `ANTHROPIC_KEY_EVALS`, `ANTHROPIC_ADMIN_KEY`, `ANTHROPIC_WORKSPACE_ID_INTERACTIVE`, `ANTHROPIC_WORKSPACE_ID_BATCH`, `ANTHROPIC_BASE_URL`, `LLM_GATEWAY`, `LLM_MAX_CONCURRENCY`, `LLM_RPM_HAIKU`, `LLM_RPM_SONNET`, `USER_HASH_KEY`, `DATA_KEKS`, `LINK_SIGNING_KEY`, `LINK_SIGNING_KEY_PREVIOUS`, `POSTMARK_SERVER_TOKEN`, `POSTMARK_BROADCAST_TOKEN`, `POSTMARK_INBOUND_PATH_SECRET`, `POSTMARK_INBOUND_PATH_SECRET_PREVIOUS`, `POSTMARK_INBOUND_BASIC_USER`, `POSTMARK_INBOUND_BASIC_PASSWORD`, `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_UPLOADS`, `R2_BUCKET_RENDERS`, `R2_BUCKET_FAILURES`, `R2_BUCKET_BACKUPS`, `R2_BUCKET_TOMBSTONES`, `WORKER_QUEUES`, `APPLIER_CONCURRENCY`, `APPLIER_ALLOWED_HOSTS`, `APPLIER_RECYCLE_AFTER`, `ALERT_PAGE_WEBHOOK_URL`, `ALERT_EMAIL_TO`, `HEARTBEAT_URL`, `HEARTBEAT_URL_BACKUP`, `ORIGIN_VERIFY_SECRET`, `SENTRY_DSN`, `SENTRY_TRACES_BUDGET_SCALE`, `GIT_SHA`, `TRUSTED_PROXY_HOPS_VERCEL`, `TRUSTED_PROXY_HOPS_DIRECT`, `RAILWAY_SHM_SIZE_BYTES`, `RAILWAY_DEPLOYMENT_DRAINING_SECONDS`, `RAILWAY_DEPLOYMENT_OVERLAP_SECONDS`, `RAILWAY_HEALTHCHECK_TIMEOUT_SEC`, `RAILWAY_DOCKERFILE_PATH`. Executor id: `${RAILWAY_SERVICE_NAME}:${RAILWAY_REPLICA_ID}`. Removed: `REDIS_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL_FAST`, `ANTHROPIC_MODEL_SMART`, `INBOUND_WEBHOOK_SECRET`; no `OPENROUTER_*` anywhere.
 
 ### 13.3 Functions, modules and scripts
 
-`envFor(role)` (`server/src/lib/env.ts`), `safeFetchJson(url, { allowedHosts, timeoutMs, maxBytes, headers })` and `isBlockedAddress` (`server/src/lib/safe-fetch.ts`), `durable.queueStats()` (`server/src/durable/`), `ops_archive_status()` (SQL definer function), `ALERT_RULES` (`server/src/ops/alerts.ts`), `alert-evaluator`, `money-journal`, `dbos-version-migrate`, `dbos-retention`, `leaseSweeper` (existing names), `scripts/ship-gate.mjs`, `scripts/lint-migrations.mjs`, `scripts/journal-reconcile.mjs`, `scripts/replay-tombstones.mjs`, `scripts/export-user.mjs`, `scripts/smoke.mjs`; migration header `-- kairos:no-transaction`; advisory lock key `7281551` for migrations; routes `GET /health` and `GET /api/health` (identical body, the second reaches the api through the Vercel rewrite), internal `GET /health` on the worker and applier `PORT`.
+`envFor(role)` (`server/src/lib/env.ts`), `safeFetchJson(url, { allowedHosts, timeoutMs, maxBytes, headers })` and `isBlockedAddress` (`server/src/lib/safe-fetch.ts`), `durable.queueStats()` (`server/src/durable/`), `ops_archive_status()` (SQL definer function), `ALERT_RULES` (`server/src/ops/alerts.ts`), `alert-evaluator`, `money-journal`, `dbos-version-migrate`, `dbos-retention`, `leaseSweeper` (existing names), `scripts/ship-gate.mjs`, `scripts/lint-migrations.mjs`, `scripts/journal-reconcile.mjs`, `scripts/replay-tombstones.mjs`, `scripts/export-user.mjs`, `scripts/smoke.mjs`; migration header `-- kairos:no-transaction`; advisory lock key `7281551` for migrations; routes `GET /health` and `GET /api/health` (identical body; the second reaches the api through the Vercel rewrite and is the one additive route this document requests of `05-api.md`, delta X17), internal `GET /health` on the worker and applier `PORT`.
 
 ### 13.4 Database roles and objects added here
 
-Roles `kairos_backup` (`pg_read_all_data`, statement timeout 0) and `kairos_metrics` (SELECT on `metrics_minute`, `llm_cost_daily` and the views below); connection limit 3 on `kairos_readonly` and `kairos_metrics`; views `ops_submission_health_v`, `ops_billing_integrity_v`, `ops_funnel_v`, `ops_cost_per_submitted_v`; function `ops_archive_status()`; `ops_flags` key `alerts_muted` (with `expires_at`) to be added to the closed catalogue of `_db/platform.md`.
+Roles `kairos_backup` (`pg_read_all_data`, statement timeout 0) and `kairos_metrics` (SELECT on `metrics_minute`, `llm_cost_daily` and the views below); connection limit 3 on `kairos_readonly` and `kairos_metrics`; views `ops_submission_health_v`, `ops_billing_integrity_v`, `ops_funnel_v`, `ops_cost_per_submitted_v`; function `ops_archive_status()`; `ops_flags` keys `alerts_muted` (with `expires_at`) and `backfill:<name>` to be added to the closed catalogue of `02-database.md` section 7.6 (`_db/platform.md`); roles `kairos_backup` and `kairos_metrics` to be added to its section 4.1 and privilege matrix (delta X16).
 
 ### 13.5 Metrics (stored as `metrics_minute.name` plus `labels`)
 

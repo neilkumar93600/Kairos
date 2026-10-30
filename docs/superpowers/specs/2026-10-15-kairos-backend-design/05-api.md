@@ -1231,7 +1231,7 @@ sequenceDiagram
 
 **`POST /api/applications/:id/withdraw`** (frozen) runs one conditional update (arch B.6.10): owned, and `status IN ('draft','failed')` or `status = 'approved'` with no live lease. Zero rows is 404 `not_found` "Withdrawable application not found" (unchanged), except for one case: an owned `approved` application whose lease is still live answers 409 `conflict` (section 13.2). Success is `{ ok: true }`. A cloud workflow already enqueued finds the row no longer `approved` and ends as a no-op. Withdrawing an `approved` row returns its reserved credit through the `in_flight` trigger in the same transaction.
 
-**`POST /api/applications/:id/prepare`** re-runs preparation for a draft that is `failed`, `stale` or `needs_facts` (the last after the user adds a fact). A conditional update sets `draft_state = 'pending'`, clears `draft_issue` and increments `row_version`, then the seam starts `prepareApplication` with id `prepare:<id>:<newRowVersion>` without waiting. Status 202 `{ id, draftState: "pending" }`. A draft that is already `pending` or `ready`, an `expired` draft, or an application that is not `draft`: 409 `conflict` with `details { draftState }`. Limit class `prepare` (10 per minute).
+**`POST /api/applications/:id/prepare`** re-runs preparation for a draft that is `failed`, `stale` or `needs_facts` (the last after the user adds a fact). A conditional update sets `draft_state = 'pending'`, clears `draft_issue` and increments `revision` (the preparation generation of `02-database.md`; `row_version` moves too, through its trigger), then the seam starts `prepareApplication` with id `prepare:<id>:<newRevision>` without waiting. Status 202 `{ id, draftState: "pending" }`. A draft that is already `pending` or `ready`, an `expired` draft, or an application that is not `draft`: 409 `conflict` with `details { draftState }`. Limit class `prepare` (10 per minute).
 
 **`GET /api/applications/:id/pdf`** streams the tailored resume PDF the extension and applier will upload: `application/pdf`, `Content-Disposition: attachment; filename="<company>-<title>-resume.pdf"` (ASCII-folded, 80 characters), `Cache-Control: private, no-store`. 409 `not_ready` with `details { draftState }` while `resume_pdf_key` is empty. The bytes are read from R2 by key inside the handler, never redirected.
 
@@ -2274,6 +2274,7 @@ Nothing else in this file names a queue option, a queue constructor or a garbage
 | AR-11 | B.6.2 and B.11.1 | A `GET` never changes state | One documented exception, `GET /api/extension/queue`, which takes the visibility lease (3) |
 | AR-12 | B.4.2 connection budget | 108 of 200 | Unchanged by polling; 111 if the deferred SSE listener of 15.5 is built |
 | AR-13 | B.6.12, `_db/messaging.md` | The ingest transaction parses the Gmail confirmation | Same, but inside the route's plain transaction (14.3 step 3), not a workflow step |
+| AR-14 | `02-database.md` `applications.revision` | `prepare:<applicationId>:<revision>` | `POST /api/applications/:id/prepare` increments `revision` (not only `row_version`) so each retry gets a fresh deterministic workflow id (10.5) |
 
 ### 24.3 Open questions for the owner (API layer)
 
@@ -2310,4 +2311,4 @@ Nothing else in this file names a queue option, a queue constructor or a garbage
 
 **Metrics:** the `kairos_*` counters and histograms of 19.3, notably `kairos_api_requests_total`, `kairos_api_request_duration_ms`, `kairos_rate_limited_total`, `kairos_request_workflow_timeouts_total`, `kairos_extension_report_non2xx_total`, `kairos_legacy_inbound_calls_total`, `kairos_checkpoint_writes_per_submitted_application`.
 
-**Workflow ids used by this layer:** `queue:<matchId>:<epochMinute>`, `approve:<sha256(userId, sorted ids, channel)>:<epochMinute>` or `approve:<sha256(userId, key)>`, `resend:<applicationId>:<attemptNo + 1>:<epochMinute>`, `stripe-in:<eventId>`, `mail:<MessageID>`, `parse:<resumeProfileId>:<sourceHash8>`, `prepare:<applicationId>:<rowVersion>` (started by `POST /api/applications/:id/prepare`), `backfill:<userId>:<prefsVersion>`, `llm-reconcile:<from>:<to>`.
+**Workflow ids used by this layer:** `queue:<matchId>:<epochMinute>`, `approve:<sha256(userId, sorted ids, channel)>:<epochMinute>` or `approve:<sha256(userId, key)>`, `resend:<applicationId>:<attemptNo + 1>:<epochMinute>`, `stripe-in:<eventId>`, `mail:<MessageID>`, `parse:<resumeProfileId>:<sourceHash8>`, `prepare:<applicationId>:<revision>` (started by `POST /api/applications/:id/prepare`), `backfill:<userId>:<prefsVersion>`, `llm-reconcile:<from>:<to>`.
