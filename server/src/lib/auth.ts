@@ -35,7 +35,7 @@ function createAuth() {
     baseURL: e.BETTER_AUTH_URL,
     secret: e.BETTER_AUTH_SECRET,
     basePath: "/api/auth",
-    trustedOrigins: [e.WEB_ORIGIN, ...(e.EXTENSION_ORIGIN ? [e.EXTENSION_ORIGIN] : [])],
+    trustedOrigins: [e.WEB_ORIGIN, ...(e.EXTENSION_ORIGIN ? [e.EXTENSION_ORIGIN] : []), ...e.CSRF_ALLOWED_ORIGINS],
     database: drizzleAdapter(db(), {
       provider: "pg",
       schema: { user: schema.user, session: schema.session, account: schema.account, verification: schema.verification },
@@ -44,6 +44,15 @@ function createAuth() {
       enabled: true,
       requireEmailVerification: true,
       minPasswordLength: 10,
+      maxPasswordLength: 128,
+      // A reset by email code signs out every session, including one an attacker already holds.
+      revokeSessionsOnPasswordReset: true,
+    },
+    account: {
+      encryptOAuthTokens: true,
+      // Explicit, not the library default. Google is trusted to prove the email, but never links into a local
+      // account whose email is unverified: that row may be a squatter's pre-registration (pre-hijack).
+      accountLinking: { enabled: true, trustedProviders: ["google"], requireLocalEmailVerified: true },
     },
     socialProviders:
       e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET
