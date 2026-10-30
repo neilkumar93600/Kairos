@@ -22,7 +22,7 @@ export function apiRouter(gateway: AuthGateway) {
 
   router.use("/contact", contactRouter);
   router.get("/auth-providers", (_req, res) => {
-    res.json({ providers: configuredProviders(env()) });
+    res.set("cache-control", "public, max-age=300").json({ providers: configuredProviders(env()) });
   });
 
   const authed = requireAuth(gateway);
