@@ -1,4 +1,5 @@
-import type { FactKind, ResumeContact, ResumeEntry, ResumeInput, ResumeSection, ResumeSectionKind } from "@auto-career/shared";
+import type { FactKind, ResumeContact, ResumeEntry, ResumeInput, ResumeLine, ResumeSection, ResumeSectionKind } from "@auto-career/shared";
+import { checkClaims, type ClaimRule } from "../llm/claims";
 
 /** A profile fact as the API returns it (web/hooks/use-profile.ts `Fact`). */
 export interface ProfileFact {
@@ -67,6 +68,25 @@ export function truthLockViolations(doc: ResumeInput, confirmedOwnedFactIds: Rea
         if (!line.factIds.length || line.factIds.some((id) => !confirmedOwnedFactIds.has(id))) out.add(line.id);
     }
   return [...out];
+}
+
+/** Identity of a line's content: the same id, text and citations means unchanged, so it is not checked again. */
+export const lineKey = (l: ResumeLine): string => JSON.stringify([l.id, l.text, l.factIds]);
+
+/**
+ * checkClaims on every line that differs from `stored` and cites only facts in `confirmed` (id to text); lines citing
+ * anything else already fail truthLockViolations. Returns line id to the first rule it breaks (05-api 11.1 step 2).
+ */
+export function claimViolations(doc: ResumeInput, confirmed: ReadonlyMap<string, string>, stored: ResumeInput | null): Record<string, ClaimRule> {
+  const lines = (d: ResumeInput) => d.sections.flatMap((s) => s.entries.flatMap((e) => e.lines));
+  const before = new Set(stored ? lines(stored).map(lineKey) : []);
+  const out: Record<string, ClaimRule> = {};
+  for (const line of lines(doc)) {
+    if (before.has(lineKey(line)) || !line.factIds.every((id) => confirmed.has(id))) continue;
+    const [claim] = checkClaims(line.text, line.factIds.map((id) => confirmed.get(id)!));
+    if (claim) out[line.id] = claim.rule;
+  }
+  return out;
 }
 
 /**

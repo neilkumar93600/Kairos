@@ -155,6 +155,26 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
     });
   });
 
+  describe("PUT /api/resume checkClaims on changed lines", () => {
+    it("422s a changed line adding a detail its fact lacks, with lineIds and reasons, and stores nothing", async () => {
+      const f = await fact("Built billing", true);
+      const res = await request(app)
+        .put("/api/resume")
+        .send({ ...doc(f), sections: [{ ...doc(f).sections[0]!, entries: [{ ...doc(f).sections[0]!.entries[0]!, lines: [{ id: "l1", section: "Experience", text: "Built billing at Initech for 40 teams", factIds: [f] }] }] }] });
+      expect(res.status).toBe(422);
+      expect(res.body.error).toMatchObject({ code: "truth_lock", details: { lineIds: ["l1"], reasons: { l1: "number_not_in_facts" } } });
+      expect((await tdb.select({ n: count() }).from(schema.resumes))[0]!.n).toBe(0);
+    });
+
+    it("does not re-check a line that is unchanged from the stored document", async () => {
+      const f = await fact("Built billing", true);
+      const legacy = doc(f);
+      legacy.sections[0]!.entries[0]!.lines[0]!.text = "Built billing in 2019";
+      await tdb.insert(schema.resumes).values({ userId: me.id, document: legacy });
+      expect((await request(app).put("/api/resume").send({ ...legacy, name: "Renamed" })).status).toBe(200);
+    });
+  });
+
   describe("PATCH /api/applications/:id", () => {
     it("rejects a line citing an unconfirmed fact and accepts one citing a confirmed fact", async () => {
       const app1 = await draft();
@@ -171,6 +191,53 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       const ok = await request(app).patch(`/api/applications/${app1.id}`).send({ resumeLines: [line(confirmed)] });
       expect(ok.status).toBe(200);
       expect(ok.body.application.resumeLines).toEqual([line(confirmed)]);
+    });
+
+    it("422s a changed line adding a percentage, tool or employer its fact lacks, names the rule, and stores nothing", async () => {
+      const f = await fact("Built the billing service at Nordbeam", true);
+      const app1 = await draft();
+      for (const [text, rule] of [
+        ["Built the billing service at Nordbeam, cutting costs 40%", "number_not_in_facts"],
+        ["Built the billing service at Nordbeam on Kubernetes", "skill_not_in_facts"],
+        ["Built the billing service at Initech", "entity_not_in_facts"],
+      ] as const) {
+        const res = await request(app)
+          .patch(`/api/applications/${app1.id}`)
+          .send({ resumeLines: [{ id: "l1", section: "Experience", text, factIds: [f] }] });
+        expect(res.status, text).toBe(422);
+        expect(res.body.error.code).toBe("truth_lock");
+        expect(res.body.error.details).toEqual([expect.objectContaining({ line: expect.objectContaining({ id: "l1" }), rule })]);
+      }
+      const [unchanged] = await tdb.select().from(schema.applications).where(eq(schema.applications.id, app1.id));
+      expect(unchanged!.resumeLines).toEqual([]);
+    });
+
+    it("checks only lines that changed: a stored line resent as is passes, the same text under a new id does not", async () => {
+      const f = await fact("Built the billing service at Nordbeam", true);
+      const stored: ResumeLine = { id: "l1", section: "Experience", text: "Built the billing service at Nordbeam in 2019", factIds: [f] };
+      const app1 = await draft({ resumeLines: [stored] });
+      expect((await request(app).patch(`/api/applications/${app1.id}`).send({ resumeLines: [stored] })).status).toBe(200);
+      const moved = await request(app).patch(`/api/applications/${app1.id}`).send({ resumeLines: [{ ...stored, id: "l2" }] });
+      expect(moved.status).toBe(422);
+    });
+
+    it("checks a changed cover letter against confirmed facts, allowing the company and the user's name", async () => {
+      await fact("Built the billing service at Nordbeam", true);
+      const app1 = await draft();
+      const letter = "I built the billing service at Nordbeam and would bring that to Acme.\n\nTest User";
+      const ok = await request(app).patch(`/api/applications/${app1.id}`).send({ coverLetter: letter });
+      expect(ok.status).toBe(200);
+      expect(ok.body.application.coverLetter).toBe(letter);
+
+      const bad = await request(app)
+        .patch(`/api/applications/${app1.id}`)
+        .send({ coverLetter: `${letter}\n\nAt Initech I cut costs by 40%.` });
+      expect(bad.status).toBe(422);
+      expect(bad.body.error.code).toBe("truth_lock");
+      expect(bad.body.error.message).toContain("cover letter");
+      expect(bad.body.error.details).toEqual([expect.objectContaining({ coverLetter: true, rule: expect.any(String) })]);
+      const [row] = await tdb.select().from(schema.applications).where(eq(schema.applications.id, app1.id));
+      expect(row!.coverLetter).toBe(letter);
     });
   });
 
