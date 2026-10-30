@@ -15,6 +15,11 @@ import * as schema from "../../src/db/schema";
  */
 export const hasTestDb = Boolean(process.env.TEST_DATABASE_URL);
 
+// CI sets REQUIRE_TEST_DB so a missing database fails every *.int.test.ts instead of silently skipping it (tests-05).
+if (process.env.REQUIRE_TEST_DB && !hasTestDb) {
+  throw new Error("REQUIRE_TEST_DB is set but TEST_DATABASE_URL is empty: the integration tests would be skipped, not run");
+}
+
 const MIGRATIONS = fileURLToPath(new URL("../../drizzle", import.meta.url));
 const clients = new Map<string, { db: Db; client: postgres.Sql }>();
 
