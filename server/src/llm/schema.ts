@@ -22,40 +22,34 @@ const describe = (node: Record<string, unknown>, sentence: string): void => {
   node.description = `${base}${sentence}`;
 };
 
-/** Normalizes enum casing in a decoded reply: a case-insensitive match maps onto the schema literal. */
+/**
+ * Normalizes enum casing in a decoded reply: a string at an enum position of the schema that matches a literal
+ * case-insensitively becomes that literal. The reply is walked alongside the schema, so free text that happens to equal
+ * a literal ("Skill" in a fact's text) is never rewritten (llm-agents-10).
+ */
 export function normalizeEnumCase(json: unknown, schema: z.ZodType): unknown {
-  const literals = enumLiterals(z.toJSONSchema(schema, { target: "draft-2020-12", io: "output" }));
-  const walk = (value: unknown): unknown => {
-    if (typeof value === "string") {
-      const match = literals.find((l) => l.toLowerCase() === value.toLowerCase());
-      return match ?? value;
-    }
-    if (Array.isArray(value)) return value.map(walk);
-    if (value && typeof value === "object") {
-      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, walk(v)]));
-    }
-    return value;
-  };
-  return walk(json);
+  return normalizeAt(json, z.toJSONSchema(schema, { target: "draft-2020-12", io: "output" }) as SchemaNode);
 }
 
-function enumLiterals(schemaNode: unknown, acc: Set<string> = new Set()): string[] {
-  const visit = (node: unknown): void => {
-    if (!node || typeof node !== "object") return;
-    const n = node as Record<string, unknown>;
-    if (Array.isArray(n.enum)) for (const v of n.enum) if (typeof v === "string") acc.add(v);
-    for (const key of ["properties", "items", "additionalProperties", "$defs", "definitions"]) {
-      const child = n[key];
-      if (child && typeof child === "object") {
-        if (Array.isArray(child)) child.forEach(visit);
-        else Object.values(child).forEach(visit);
-      }
-    }
-    if (Array.isArray(n.anyOf)) n.anyOf.forEach(visit);
-    if (Array.isArray(n.prefixItems)) n.prefixItems.forEach(visit);
-  };
-  visit(schemaNode);
-  return [...acc];
+type SchemaNode = { enum?: unknown[]; anyOf?: SchemaNode[]; items?: SchemaNode; properties?: Record<string, SchemaNode> };
+
+// ponytail: agent schemas use no $ref; follow $defs here if one ever does.
+function normalizeAt(value: unknown, node: SchemaNode | undefined): unknown {
+  if (!node) return value;
+  const branches = node.anyOf ?? [node];
+  if (typeof value === "string") {
+    const literals = branches.flatMap((b) => (b.enum ?? []).filter((l): l is string => typeof l === "string"));
+    return literals.find((l) => l.toLowerCase() === value.toLowerCase()) ?? value;
+  }
+  if (Array.isArray(value)) {
+    const items = branches.find((b) => b.items)?.items;
+    return value.map((v) => normalizeAt(v, items));
+  }
+  if (value && typeof value === "object") {
+    const properties = branches.find((b) => b.properties)?.properties ?? {};
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, normalizeAt(v, properties[k])]));
+  }
+  return value;
 }
 
 /**
