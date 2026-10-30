@@ -1,3 +1,4 @@
+import { appendFile } from "node:fs/promises";
 import { ServerClient } from "postmark";
 import { env } from "./env";
 import { logger } from "./logger";
@@ -12,9 +13,14 @@ export interface Email {
   tag?: string;
 }
 
-/** Sends through Postmark. Without a token (local dev) it logs the email instead. */
+/** Sends through Postmark. With MAIL_SINK_FILE (dev and test only) it appends to that file; without a token it logs. */
 export async function sendEmail(email: Email): Promise<void> {
-  const { POSTMARK_SERVER_TOKEN, EMAIL_FROM } = env();
+  const { POSTMARK_SERVER_TOKEN, EMAIL_FROM, MAIL_SINK_FILE } = env();
+  if (MAIL_SINK_FILE) {
+    await appendFile(MAIL_SINK_FILE, `${JSON.stringify({ ...email, at: new Date().toISOString() })}
+`);
+    return;
+  }
   if (!POSTMARK_SERVER_TOKEN) {
     logger.info({ to: email.to, subject: email.subject, text: email.text }, "email (dev, not sent)");
     return;
