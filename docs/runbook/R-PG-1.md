@@ -26,7 +26,7 @@ The whole product. Webhooks retry. Credits cannot be lost: a failed write commit
 - Volume full: resize the volume on Railway (Postgres > Settings > Volume). Then find the growth (`select relname, pg_size_pretty(pg_total_relation_size(oid)) from pg_class order by pg_total_relation_size(oid) desc limit 10;`).
 - Crashed or out of memory: restart the Postgres service; resize it if it keeps running out of memory.
 - Wrong credentials after a rotation: set the services' `DATABASE_URL` again and redeploy them.
-- Volume lost or data damaged: stop the writers first (remove the `sd1-worker` and `sd1-applier` deployments) and restore from the latest backup (Railway volume backups). There is no tested restore until WP-13's drill. Escalate before doing anything destructive.
+- Volume lost or data damaged: stop the writers first (remove the `sd1-worker` and `sd1-applier` deployments), then restore: [R-DR-1](R-DR-1.md) from PITR while its archive is intact, otherwise [R-DR-2](R-DR-2.md) from the encrypted dump plus the money journal. Escalate before doing anything destructive.
 
 ## Verify
 

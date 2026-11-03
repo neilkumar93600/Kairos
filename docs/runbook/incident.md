@@ -101,6 +101,8 @@ Send it from the owner's address with the support address in reply-to. Keep it p
 | [R-HEALTH-2](R-HEALTH-2.md) | A worker or applier heartbeat is missing |
 | [R-PG-1](R-PG-1.md) | Database unreachable |
 | [R-PG-4](R-PG-4.md) | Connection exhaustion |
+| [R-DR-1](R-DR-1.md) | Restore to a point in time (PITR), then replay the money journal |
+| [R-DR-2](R-DR-2.md) | Restore from the encrypted dump, then replay the money journal; the monthly restore drill |
 | [R-DEPLOY-1](R-DEPLOY-1.md) | Roll back a deploy |
 | [R-DEPLOY-2](R-DEPLOY-2.md) | A migration failed |
 | [R-DEPLOY-3](R-DEPLOY-3.md) | Hotfix |
@@ -120,6 +122,11 @@ Railway cannot alert on log lines, so the processes count these and send Sentry 
 | `admin_adjustment_row` | 1 | A `credit_ledger` row with reason `admin_adjustment` was written, which no code does | If you did not write it, treat it as a database compromise: export the evidence, then rotate the database credentials first |
 | `submitting_swept` | 1 | A cloud send stayed in `submitting` over 10 minutes: the applier died mid-run. The worker settled it as failed with the "could not confirm" sentence; nothing is resent and no credit is used | Read the applier's logs and Sentry around the claim time (an OOM kill, a crash, a deploy). If several in a row, stop cloud sends (`CLOUD_APPLIER_OPEN=0`) and work R-HEALTH-2 |
 | `signup_repaired` | 1 | A user's sign-up hook failed (profile, free plan or free grant missing); the worker finished it | Find `sign-up bootstrap failed` in the api logs at that time. A database blip needs nothing more; a repeated error is a bug to fix |
+| `backup_stale` | 1 | The worker's hourly `backup-check` found no core dump in 26 hours, no full dump in 8 days, or no readable `latest.json` | Open the `pgbackup` service's last cron runs on Railway: the log line `backup failed` names the step (`pg_dump exited ...`, an R2 error, `Invalid environment`). Fix it and trigger a run (R-DR-1 step 6). Until a dump exists, R-DR-2 has nothing newer to restore |
+| `backup_warning` | 1 | The latest dump's manifest recorded a warning against the previous one: a table lost over 20% of its rows, the dump is under 60% of the last one, or it nears R2's 5 GiB upload limit | A shrink you did not cause (no retention job, no erasure batch) may be data loss: compare the live count with the manifest now, and do not let the older dumps expire (copy them out of `core/`) until you know. Near 5 GiB: ask for multipart uploads in `lib/storage.ts` |
+| `journal_stalled` | 1 | The money journal's cursor is over 10 minutes behind, or missing: ledger rows and sends are no longer copied to R2, so the 2-minute RPO of R-DR-2 does not hold | The `money-journal` job's own failures are Sentry issues on queue `maintenance` (usually an R2 error or a missing backups token on the worker). Once fixed, the job catches up an hour per minute and the hourly reconcile fills the rest |
+| `journal_late_rows` | 1 | Rows that committed more than 15 seconds after they began, found after their minute was journaled; the reconcile merged them | Nothing to repair. Frequent: a slow transaction on the ledger; look for long `submission` or webhook transactions |
+| `journal_gaps_filled` | 1 | The reconcile wrote journal minutes nobody had written | Expected once, the first hour after the journal is deployed. Otherwise the job missed minutes (a worker outage): the gap is now filled from the database |
 | `llm_calls_default_rows` | 1 | `llm_calls_default` holds rows: a week had no partition, so the worker's daily `llm-partitions` job (03:00 UTC) has been failing | Fix the job's error first (its failures are Sentry issues on the `maintenance` queue). Then move the rows, below |
 
 **Moving rows out of `llm_calls_default`.** As the owner, in one transaction (the gateway's inserts wait for it):
