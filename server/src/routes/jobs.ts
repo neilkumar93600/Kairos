@@ -1,8 +1,8 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { rateLimit } from "express-rate-limit";
 import { z } from "zod";
-import { importJobSchema } from "@auto-career/shared";
+import { importJobSchema, type ResumeInput } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, companies, jobs, matches, profiles } from "../db/schema";
 import { HttpError } from "../lib/errors";
@@ -18,6 +18,7 @@ import { gatewayCtx } from "../llm/wire";
 import { tailorResume, tailorSuggestions } from "../services/tailor";
 import { topFacts } from "../services/job-fit";
 import { loadResume, userFacts, visibleJob, writerLimiter } from "./resume";
+import { copyFor, createCopy, toDetail } from "../services/resume-library";
 
 /** Pasted-link job import. Mounted at /api/jobs. */
 export const jobsRouter = Router();
@@ -90,17 +91,39 @@ jobsRouter.post("/import", importLimiter, validateBody(importJobSchema), async (
   res.json(await metered(res, { userId: me.id, plan, feature: "jobImports" }, () => importJob(me.id, req.body.url, dbIo)));
 });
 
-/** The deterministic F1 fit of one visible job against the user's base resume and confirmed facts. */
-async function fitFor(user: SessionUser, jobId: string) {
+/** The deterministic F1 fit of one visible job against a resume (the default base unless given) and confirmed facts. */
+async function fitFor(user: SessionUser, jobId: string, resume?: ResumeInput) {
   const [job, factRows, preferences] = await Promise.all([visibleJob(user.id, jobId), userFacts(user.id), dbIo.loadPreferences(user.id)]);
-  const resume = await loadResume(user, factRows);
+  const doc = resume ?? (await loadResume(user, factRows));
   const fit = computeJobFit({
     job: { id: jobId, title: job.title, companyName: job.company, descriptionText: job.descriptionText },
     facts: factRows,
-    resumeText: renderResumeText(resume),
+    resumeText: renderResumeText(doc),
     preferences: preferences ? { roles: preferences.roles, seniority: preferences.seniority } : null,
   });
-  return { job, factRows, resume, fit };
+  return { job, factRows, fit };
+}
+
+/**
+ * The tailored copy of a job and resume-tailor's proposals against it (D2; resume-34): the copy is saved first (a
+ * fresh one, or with `reuse` the existing one), then the proposals are metered as jobTailor. Nothing in the copy
+ * changes until the user accepts a proposal. POST /api/resumes/tailor (409 exists) and the alias below share it.
+ */
+export async function tailorForJob(me: SessionUser, res: Response, jobId: string, opts: { baseResumeId?: string; reuse?: boolean }) {
+  const plan = await planFor(db(), me.id);
+  const visible = await visibleJob(me.id, jobId);
+  const existing = opts.reuse ? await copyFor(me.id, jobId) : undefined;
+  const copy = existing ?? (await createCopy(me, plan, { id: jobId, title: visible.title, company: visible.company }, opts.baseResumeId));
+  const { job, factRows, fit } = await fitFor(me, jobId, copy.document);
+  const confirmed = factRows.filter((f) => f.confirmed).map((f) => ({ id: f.id, kind: f.kind, text: f.text }));
+  const posting = { title: job.title, companyName: job.company, descriptionText: job.descriptionText };
+  // Interactive work (03-agent-runtime 3.3); the 60 facts the posting needs most go in.
+  const ctx = gatewayCtx({ userId: me.id, plan, jobId, feature: "jobTailor", budgetClass: "interactive" });
+  // No confirmed fact means nothing a line could cite: no model call and no unit taken.
+  const { kept } = confirmed.length
+    ? await metered(res, { userId: me.id, plan, feature: "jobTailor" }, () => tailorResume(topFacts(confirmed, `${job.title}\n${job.descriptionText}`, 60), posting, ctx))
+    : { kept: [] };
+  return { resume: await toDetail(copy), suggestions: tailorSuggestions(copy.document, kept, job.title), fit };
 }
 
 // visibleJob turns a malformed id into the contract's 404, so the param is only checked for being a string.
@@ -115,23 +138,7 @@ jobsRouter.get("/:jobId/fit", async (req, res) => {
   res.json(match ? { fit, matchId: match.id } : { fit });
 });
 
-/**
- * Tailoring proposals for one job, from resume-tailor on Haiku (resume-34) and the truth lock, mapped onto the base
- * resume. Nothing is saved: accepted lines go into the draft through PATCH /api/applications/:id.
- */
+/** Alias of POST /api/resumes/tailor for the frozen web (05-api 9.2a): the copy is saved, and a second call reuses it. */
 jobsRouter.post("/:jobId/tailor", writerLimiter, async (req, res) => {
-  const me = currentUser(req);
-  const jobId = jobIdParam(req.params.jobId);
-  const [{ job, factRows, resume, fit }, plan] = await Promise.all([fitFor(me, jobId), planFor(db(), me.id)]);
-  const confirmed = factRows.filter((f) => f.confirmed).map((f) => ({ id: f.id, kind: f.kind, text: f.text }));
-  const posting = { title: job.title, companyName: job.company, descriptionText: job.descriptionText };
-  // The tailor route is interactive work (03-agent-runtime 3.3); the 60 facts the posting needs most go in.
-  const ctx = gatewayCtx({ userId: me.id, plan, jobId, feature: "jobTailor", budgetClass: "interactive" });
-  // No confirmed fact means nothing a line could cite: no model call and no unit taken.
-  const { kept } = confirmed.length
-    ? await metered(res, { userId: me.id, plan, feature: "jobTailor" }, () =>
-        tailorResume(topFacts(confirmed, `${job.title}\n${job.descriptionText}`, 60), posting, ctx),
-      )
-    : { kept: [] };
-  res.json({ resume, suggestions: tailorSuggestions(resume, kept, job.title), fit });
+  res.json(await tailorForJob(currentUser(req), res, jobIdParam(req.params.jobId), { reuse: true }));
 });

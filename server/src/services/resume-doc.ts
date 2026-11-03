@@ -19,6 +19,16 @@ const DEFAULT_SECTIONS: [ResumeSectionKind, string, FactKind | null][] = [
   ["certifications", "Certifications", "certification"],
 ];
 
+/** An employment as the default document reads it (employments table, WP-17). */
+export interface ProfileEmployment {
+  id: string;
+  title: string;
+  company: string;
+  datesText: string | null;
+  confirmed: boolean;
+}
+const LINE_KINDS = new Set<FactKind>(["role", "metric", "project"]);
+
 const clip = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1).trimEnd()}…` : t);
 
 /**
@@ -27,11 +37,37 @@ const clip = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1).trim
  * skills become one entry with a line per skill fact. Summary starts empty, and metric facts are left for the
  * Resume Writer to cite: a fact does not say which role it belongs to. Empty sections stay (the web shows them).
  * ponytail: entries capped at 30 and skill lines at 40, the schema limits; facts past that are dropped from the default.
+ *
+ * Employment-aware (resume-02, WP-17): a confirmed employment with confirmed facts under it becomes one Experience
+ * entry, title, company and the dates as written, whose lines are its role, metric and project facts and whose heading
+ * cites its first one. Facts under an employment leave their own sections; the rest behave as above.
  */
-export function defaultResume(facts: readonly Pick<ProfileFact, "id" | "kind" | "text" | "confirmed">[], contact: ResumeContact): ResumeInput {
-  const confirmed = facts.filter((f) => f.confirmed);
+export function defaultResume(
+  facts: readonly (Pick<ProfileFact, "id" | "kind" | "text" | "confirmed"> & { employmentId?: string | null })[],
+  contact: ResumeContact,
+  employments: readonly ProfileEmployment[] = [],
+): ResumeInput {
+  const roles = employments
+    .filter((e) => e.confirmed)
+    .map((e) => ({ e, lines: facts.filter((f) => f.confirmed && f.employmentId === e.id && LINE_KINDS.has(f.kind)) }))
+    .filter((r) => r.lines.length > 0);
+  const placed = new Set(roles.flatMap((r) => r.lines.map((f) => f.id)));
+  const confirmed = facts.filter((f) => f.confirmed && !placed.has(f.id));
   const sections = DEFAULT_SECTIONS.map(([kind, title, factKind]): ResumeSection => {
     const mine = confirmed.filter((f) => f.kind === factKind);
+    if (kind === "experience" && roles.length) {
+      const fromRoles: ResumeEntry[] = roles.map(({ e, lines }) => ({
+        id: `entry-emp-${e.id}`,
+        heading: clip(e.title, 200),
+        subheading: clip(e.company, 200),
+        meta: e.datesText ? clip(e.datesText, 120) : null,
+        headingFactId: (lines.find((f) => f.kind === "role") ?? lines[0]!).id,
+        hidden: false,
+        lines: lines.slice(0, 40).map((f) => ({ id: `line-${f.id}`, section: title, text: clip(f.text, 400), factIds: [f.id] })),
+      }));
+      const rest = mine.map((f) => ({ id: `entry-${f.id}`, heading: clip(f.text, 200), subheading: null, meta: null, headingFactId: f.id, hidden: false, lines: [] }));
+      return { id: `section-${kind}`, kind, title, hidden: false, entries: [...fromRoles, ...rest].slice(0, 30) };
+    }
     const entries: ResumeEntry[] =
       kind !== "skills"
         ? mine.slice(0, 30).map((f) => ({ id: `entry-${f.id}`, heading: clip(f.text, 200), subheading: null, meta: null, headingFactId: f.id, hidden: false, lines: [] }))

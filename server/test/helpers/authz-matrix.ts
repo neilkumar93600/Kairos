@@ -16,6 +16,10 @@ export interface TenantIds {
   matchId: string;
   jobId: string;
   fileKey: string;
+  /** WP-17: the default base resume, one of its revisions and an import. */
+  resumeId: string;
+  revisionId: string;
+  importId: string;
 }
 
 /** Exempt from the two-user check, with the reason: no session user, or a credential of its own. */
@@ -109,6 +113,23 @@ export const MATRIX: Record<string, MatrixEntry> = {
   },
 
   "GET /api/files/*key": { request: (t) => ({ path: `/api/files/${t.fileKey}` }) },
+
+  // WP-17: imports, bulk confirm and the resume library.
+  "POST /api/profile/imports": own("/api/profile/imports", { text: `${"Built and ran billing services in TypeScript. ".repeat(6)}` }),
+  "GET /api/profile/imports/:id": { request: (t) => ({ path: `/api/profile/imports/${t.importId}` }) },
+  "POST /api/profile/facts/confirm": { request: (t) => ({ path: "/api/profile/facts/confirm", body: { ids: [t.factId] } }) },
+  "GET /api/resumes": own("/api/resumes"),
+  "POST /api/resumes": { request: (t) => ({ path: "/api/resumes", body: { from: "duplicate", sourceId: t.resumeId, name: "Copy" } }) },
+  "POST /api/resumes/tailor": { request: (t) => ({ path: "/api/resumes/tailor", body: { jobId: t.jobId } }) },
+  "GET /api/resumes/:id": { request: (t) => ({ path: `/api/resumes/${t.resumeId}` }) },
+  "PUT /api/resumes/:id": { request: (t) => ({ path: `/api/resumes/${t.resumeId}`, body: { name: "Base resume", density: "comfortable", contact: { name: "Test User", email: "user@test.local", phone: "", location: "", links: [] }, sections: [] } }) },
+  "PATCH /api/resumes/:id": { request: (t) => ({ path: `/api/resumes/${t.resumeId}`, body: { name: "Renamed" } }) },
+  "DELETE /api/resumes/:id": { request: (t) => ({ path: `/api/resumes/${t.resumeId}` }) },
+  "POST /api/resumes/:id/default": { request: (t) => ({ path: `/api/resumes/${t.resumeId}/default` }) },
+  "GET /api/resumes/:id/revisions": { request: (t) => ({ path: `/api/resumes/${t.resumeId}/revisions` }) },
+  "POST /api/resumes/:id/revisions": { request: (t) => ({ path: `/api/resumes/${t.resumeId}/revisions`, body: { name: "Before review" } }) },
+  "GET /api/resumes/:id/revisions/:revId": { request: (t) => ({ path: `/api/resumes/${t.resumeId}/revisions/${t.revisionId}` }) },
+  "POST /api/resumes/:id/revisions/:revId/restore": { request: (t) => ({ path: `/api/resumes/${t.resumeId}/revisions/${t.revisionId}/restore` }) },
 };
 
 type Layer = { route?: { path: string | string[]; methods: Record<string, boolean> }; handle: { stack?: Layer[] }; mountPath?: string | string[] };
