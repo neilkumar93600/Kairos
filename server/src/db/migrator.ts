@@ -101,8 +101,12 @@ export async function runMigrations(client: MigrationClient, migrations: Migrati
       const record = () => client.query("insert into drizzle.__drizzle_migrations (hash, created_at) values ($1, $2)", [m.hashes[0], m.when]);
       const retry = (n: number) => log(`lock timeout, retry ${n} of 3`, m.tag);
       if (m.noTransaction) {
-        // Idempotent statements only (IF NOT EXISTS), so a retry or a rerun after a partial run is safe.
+        // Idempotent statements only (IF NOT EXISTS), so a retry or a rerun after a partial run is safe. A concurrent
+        // build waits for every open transaction (a worker's may run 120 s) but blocks no reads or writes meanwhile, so it
+        // gets the pre-deploy budget instead of 5 s; a timed-out build would leave an invalid index behind.
+        await client.query("set lock_timeout = '240s'");
         for (const statement of m.statements) await withLockRetry(() => client.query(statement), retryDelayMs, retry);
+        await client.query("set lock_timeout = '5s'");
         // A failed concurrent build leaves an invalid index that IF NOT EXISTS would then skip for good.
         const invalid = await client.query(
           "select i.indexrelid::regclass::text as name from pg_index i join pg_class c on c.oid = i.indexrelid where not i.indisvalid and c.relnamespace = 'public'::regnamespace",

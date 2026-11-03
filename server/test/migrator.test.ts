@@ -89,11 +89,13 @@ describe("runMigrations", () => {
     expect(client.log.at(-1)).toBe(`select pg_advisory_unlock($1) [${MIGRATION_LOCK}]`);
   });
 
-  it("runs a -- kairos:no-transaction file statement by statement", async () => {
+  it("runs a -- kairos:no-transaction file statement by statement, with the long lock wait a concurrent build needs", async () => {
     const client = fakeClient();
     await runMigrations(client, [migration("0002_idx", 3, ["create index concurrently if not exists x on a(id)"], true)]);
     expect(client.log).not.toContain("begin");
-    expect(client.log).toContain("create index concurrently if not exists x on a(id)");
+    const at = client.log.indexOf("create index concurrently if not exists x on a(id)");
+    expect(client.log[at - 1]).toBe("set lock_timeout = '240s'");
+    expect(client.log[at + 1]).toBe("set lock_timeout = '5s'");
   });
 
   it("refuses to record a no-transaction file that left an invalid index", async () => {
