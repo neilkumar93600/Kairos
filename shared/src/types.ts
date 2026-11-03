@@ -6,6 +6,10 @@
 export const ATS_PROVIDERS = ["greenhouse", "lever", "ashby"] as const;
 export type AtsProvider = (typeof ATS_PROVIDERS)[number];
 
+/** Sign-in methods; GET /api/auth-providers returns the configured subset as `{ providers }`. */
+export const AUTH_PROVIDERS = ["email", "google"] as const;
+export type AuthProvider = (typeof AUTH_PROVIDERS)[number];
+
 export const MATCH_STATUSES = ["new", "queued", "skipped", "expired"] as const;
 export type MatchStatus = (typeof MATCH_STATUSES)[number];
 

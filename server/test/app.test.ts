@@ -1,7 +1,17 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
-import type { AuthGateway } from "../src/lib/auth";
+import { auth, configuredProviders, type AuthGateway } from "../src/lib/auth";
+import { parseEnv } from "../src/lib/env";
+
+const envBase = {
+  DATABASE_URL: "postgres://u:p@localhost:5432/db",
+  REDIS_URL: "redis://localhost:6379",
+  BETTER_AUTH_SECRET: "x".repeat(32),
+  BETTER_AUTH_URL: "http://localhost:3000",
+  WEB_ORIGIN: "http://localhost:3000",
+  INBOUND_WEBHOOK_SECRET: "y".repeat(16),
+};
 
 const signedOut: AuthGateway = {
   handler: async () => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } }),
@@ -45,5 +55,39 @@ describe("createApp", () => {
     const res = await request(app).get("/nope");
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe("route_not_found");
+  });
+});
+
+describe("GET /api/auth-providers", () => {
+  it("lists only the sign-in methods the API has configured", async () => {
+    const app = createApp({ auth: signedOut, corsOrigins: [], healthChecks: {} });
+    const res = await request(app).get("/api/auth-providers");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ providers: ["email"] });
+  });
+
+  // Static per deploy and fetched on every login page view; the shared API limiter keys on the Vercel egress IP.
+  it("is cacheable, so login page views do not spend the shared API budget", async () => {
+    const app = createApp({ auth: signedOut, corsOrigins: [], healthChecks: {} });
+    const res = await request(app).get("/api/auth-providers");
+    expect(res.headers["cache-control"]).toBe("public, max-age=300");
+  });
+
+  it("adds google only when both Google credentials are set", () => {
+    expect(configuredProviders(parseEnv({ ...envBase, GOOGLE_CLIENT_ID: "id" }))).toEqual(["email"]);
+    expect(configuredProviders(parseEnv({ ...envBase, GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "secret" }))).toEqual(["email", "google"]);
+  });
+});
+
+// Regression guards: these match Better Auth 1.7.7 defaults today, so the int tests alone would not notice
+// the explicit settings being dropped and a later default changing.
+describe("Better Auth options", () => {
+  it("pins password length, reset revocation, token encryption and the account linking policy", () => {
+    const { emailAndPassword, account } = auth().options;
+    expect(emailAndPassword).toMatchObject({ maxPasswordLength: 128, revokeSessionsOnPasswordReset: true, requireEmailVerification: true });
+    expect(account).toMatchObject({
+      encryptOAuthTokens: true,
+      accountLinking: { enabled: true, trustedProviders: ["google"], requireLocalEmailVerified: true },
+    });
   });
 });
