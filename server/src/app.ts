@@ -7,6 +7,7 @@ import { HttpError } from "./lib/errors";
 import { httpLogger, requestId } from "./lib/logger";
 import { signal, type Signal } from "./lib/sentry";
 import { clientIpResolver } from "./middleware/client-ip";
+import { requestMetrics } from "./middleware/metrics";
 import { originGuard } from "./middleware/origin-guard";
 import { createLimiters } from "./middleware/rate-limit";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
@@ -58,6 +59,7 @@ export function createApp(deps: AppDeps) {
   app.disable("x-powered-by");
 
   app.use(requestId);
+  app.use(requestMetrics());
   // Before the logger, so the edge secret never reaches a log line; req.ip is not used for limits (05-api 5.5).
   app.use(clientIpResolver(deps.edgeSecret, deps.proxyHops));
   app.use(helmet());

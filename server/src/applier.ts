@@ -4,6 +4,7 @@ import { closeDb, db, sizeDbPool } from "./db/client";
 import { applierEnv, setProcessRole } from "./lib/env";
 import { closeServer, deadline, onShutdown, serveHealth, startHeartbeat } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
+import { startMetricsFlush } from "./lib/metrics";
 import { assertNoEviction, redis } from "./lib/redis";
 import { captureJobFailure, initSentry } from "./lib/sentry";
 import { applierPool, closeBrowser, warmBrowser, watchMemory } from "./jobs/browser-pool";
@@ -49,4 +50,8 @@ const health = serveHealth(e.PORT, checks);
 startHeartbeat(e.HEARTBEAT_URL, checks);
 
 // 170 s: a submit that already reached the employer is allowed to finish and report (06-infrastructure 1.6).
-onShutdown("applier", 170_000, () => worker.close(), () => Promise.allSettled([closeServer(health), closeBrowser(), closeDb(), redis().quit()]));
+const stopMetrics = startMetricsFlush();
+onShutdown("applier", 170_000, () => worker.close(), async () => {
+  await stopMetrics();
+  await Promise.allSettled([closeServer(health), closeBrowser(), closeDb(), redis().quit()]);
+});

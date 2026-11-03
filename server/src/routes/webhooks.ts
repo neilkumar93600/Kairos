@@ -1,3 +1,4 @@
+import { slo } from "../lib/metrics";
 import express, { Router, type NextFunction, type Request, type Response } from "express";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
@@ -57,6 +58,7 @@ webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1
       grantCredits: async (grant) => void (await grantPlanCredits(tx, grant)),
     }),
   );
+  slo("s7", true); // S7: processed on receipt; a throw above is a 500 and Stripe's retry counts again
   logger.info({ eventId: event.id, type: event.type, outcome }, "stripe event");
   res.json(outcome === "duplicate" ? { received: true, duplicate: true } : { received: true });
 });

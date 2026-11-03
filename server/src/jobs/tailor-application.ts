@@ -1,3 +1,4 @@
+import { slo } from "../lib/metrics";
 import type { Job } from "bullmq";
 import { and, eq, sql } from "drizzle-orm";
 import type { ApplicationAnswer, ResumeLine } from "@auto-career/shared";
@@ -64,5 +65,7 @@ export async function processTailorApplication(job: Job<JobData["tailor-applicat
     .update(applications)
     .set({ resumeLines: ifEmpty(applications.resumeLines, kept), answers: ifEmpty(applications.answers, answers), updatedAt: new Date() })
     .where(and(eq(applications.id, row.app.id), eq(applications.status, "draft")));
+  // S3: 95% of drafts ready within 60 s of the request.
+  slo("s3", Date.now() - row.app.createdAt.getTime() <= 60_000);
   return { lines: kept.length, answers: answers.length };
 }

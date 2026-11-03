@@ -5,6 +5,7 @@ import { authGateway } from "./lib/auth";
 import { env } from "./lib/env";
 import { closeServer, deadline, isDraining, onShutdown } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
+import { startMetricsFlush } from "./lib/metrics";
 import { assertNoEviction, redis } from "./lib/redis";
 import { initSentry } from "./lib/sentry";
 import { closeQueues } from "./jobs/queues";
@@ -42,4 +43,8 @@ server.headersTimeout = 66_000;
 server.requestTimeout = 120_000;
 
 // 25 s for requests in flight (05-api 2.4); Railway's drainingSeconds is 60 (.railway/railway.ts).
-onShutdown("api", 25_000, () => closeServer(server), () => Promise.allSettled([closeQueues().then(() => redis().quit()), closeDb()]));
+const stopMetrics = startMetricsFlush();
+onShutdown("api", 25_000, () => closeServer(server), async () => {
+  await stopMetrics();
+  await Promise.allSettled([closeQueues().then(() => redis().quit()), closeDb()]);
+});
