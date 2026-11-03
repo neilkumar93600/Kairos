@@ -1114,7 +1114,7 @@ export interface EvalCase<I = unknown, E = unknown> {
 
 | Agent | `expect` shape | Minimum cases |
 |---|---|---|
-| `resume-parser` | `{ facts: { kind, text, employmentRef }[], employments: {...}[] }` with matching rules (token Jaccard at least 0.8) | 60 resumes, 15 LinkedIn PDFs |
+| `resume-parser` | *[Amended 2026-11-03, WP-49]* `{ documentKind, employments: {...}[], facts: { kind, text, employmentRef, fromLine, toLine }[], windowCount, mustNotAppear: string[] }` with matching rules (token Jaccard at least 0.8); `agents/01-resume-parser.md` 9.1 | 60 resumes, 15 LinkedIn PDFs |
 | `jd-analyst` | `{ requirements: { text, required }[], seniority, sponsorship, salary, keywords: string[] }` | 200, 20 injection |
 | `fit-scorer` | `{ label: number (0..100, human), fitAt75: boolean }` | 500, 30 injection |
 | `resume-tailor` | `{ mustNotClaim: string[], coverRequirementIds: string[] }` | 200, 40 adversarial |

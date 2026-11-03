@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { AGENTS } from "../../src/agents/registry";
+import { AGENTS, PLANNED_AGENTS } from "../../src/agents/registry";
 import { promptAsset } from "../../src/agents/prompt-asset";
 import { estimateCallUsd } from "../../src/llm/estimate";
 import type { ClaudeModel } from "../../src/agents/types";
@@ -25,6 +25,19 @@ describe("agent registry", () => {
     expect(Object.keys(AGENTS).sort()).toEqual(
       ["answer-drafter", "cover-letter-writer", "fit-scorer", "resume-parser", "resume-tailor", "resume-writer"].sort(),
     );
+  });
+
+  it("every agent id is registered or planned, never both, and each planned agent has its spec on disk", () => {
+    const allIds = [
+      "resume-parser", "jd-analyst", "fit-scorer", "resume-tailor", "resume-writer", "answer-drafter",
+      "cover-letter-writer", "claim-verifier", "claim-verifier-escalation", "reply-classifier", "outcome-analyst", "interview-coach",
+    ];
+    expect([...Object.keys(AGENTS), ...Object.keys(PLANNED_AGENTS)].sort()).toEqual([...allIds].sort());
+    const specDir = join(here, "..", "..", "..", "docs", "superpowers", "specs", "2026-10-15-kairos-backend-design");
+    for (const [id, planned] of Object.entries(PLANNED_AGENTS)) {
+      expect(existsSync(join(specDir, planned.spec)), `${id} spec ${planned.spec}`).toBe(true);
+      expect(id in AGENTS, `${id} is planned, so it must not be callable`).toBe(false);
+    }
   });
 
   for (const [id, spec] of Object.entries(AGENTS)) {

@@ -36,7 +36,7 @@ Non-negotiable invariants, unchanged: the truth lock (every AI-written resume li
 1. The invariants (`01` B.16, `_research/requirements.md` INV-n) and the owner decisions of section 1. No document overrides them.
 2. A dated amendment (`[Amended 2026-10-30, ...]`) wins over the text it names. Amendments carry the decision they implement.
 3. For the resume library, versions, imports, templates, tracker, `application_events` and sent-resume timing, the PRD wins; for the truth rules and the web contract of the workspace, the workspace spec wins; elsewhere in the web contract, the frozen code wins.
-4. `02-database.md` wins over `01` B.10 and over the `_db/` domain drafts for the schema; `05-api.md` wins for HTTP; `06-infrastructure.md` wins for infrastructure, and its S-D1-corrected tables win over `01` where they differ; a worker spec wins for flow detail in its own domain.
+4. `02-database.md` wins over `01` B.10 and over the `_db/` domain drafts for the schema; `05-api.md` wins for HTTP; `06-infrastructure.md` wins for infrastructure, and its S-D1-corrected tables win over `01` where they differ; a worker spec wins for flow detail in its own domain; an agent spec under `agents/` wins over `01` B.9.2 and `03` 3.3 and 13.2 for its own agent's input, output, prompt, checks and eval format (*added 2026-11-03, WP-49*), while the worker or route spec that calls the agent keeps the flow around the call.
 5. Where the plan and a specification disagree about **order or scope**, the plan wins; about **shape**, the specification (or the PRD where rule 3 applies) wins.
 
 **Name map** (old name in files that were not edited, current name):
@@ -64,7 +64,7 @@ Non-negotiable invariants, unchanged: the truth lock (every AI-written resume li
 | `04-matching.md` | Baseline, unamended | Matching v2 (prefilter, F1, pacing, caps, scoring). Built on BullMQ (WP-23, WP-34) |
 | `05-api.md` | Revision 1, **amended 2026-10-30** | The HTTP layer. 5.1 and 5.5 corrected; the PRD routes added in 9.2a |
 | `06-infrastructure.md` | Revision 2 baseline, three env names amended | Railway, secrets, observability, DR, security, capacity plan. Its 9.2 and 9.3 are the corrected capacity sources |
-| `agents/01-resume-parser.md` | Baseline | The only agent spec written; the other eight are WP-49 |
+| `agents/01` to `agents/12` | Baseline; `01` amended 2026-11-03 (WP-49); `11` and `12` are deferred stubs | One spec per agent id: strict schema, prompt outline, `postValidate` rules, eval case format, envelope. Index below |
 | `_db/*.md` (6 files) | Domain drafts, subordinate to `02` | Per-domain table designs. For resumes, revisions, events and imports `02` and the PRD supersede `_db/identity-profile.md` and `_db/applications.md` |
 | `_options/*.md` (4 files) | Historical | The four candidate architectures that A.4 compares |
 | `_research/*.md` (9 files) | Inputs | `as-built.md` (the skeleton as of 2026-10-15, defects D-nn, S-nn, P-nn), `requirements.md` (FR, NFR, INV, AC, OQ), `anthropic-models.md` (binding for models and prices), `cost-model.md` (volumes only; prices superseded), `openrouter.md` (superseded by decision A of 2026-10-23), `stack-options.md`, `integrations.md`, `huntr-tsenta-teardown.md` (F1 to F11), `spike-s-d1-local.md` (DBOS 5.3.0 local results, folded into `01` B.5) |
@@ -87,6 +87,23 @@ Non-negotiable invariants, unchanged: the truth lock (every AI-written resume li
 | `14-durable-ops` | WP-09 (reconcilers), WP-22, WP-45 | Reconcilers are the primary liveness path |
 | `15-ops-monitors` | WP-11, WP-27 | |
 | `16-housekeeping` | WP-09, WP-25 | Retention and erasure |
+
+| Agent spec | Version specified | Built by | State in code (2026-11-03) |
+|---|---|---|---|
+| `agents/01-resume-parser.md` | v2 (line ranges, windows, employments) | WP-07 (interim redaction on v1), WP-17 | v1 registered |
+| `agents/02-jd-analyst.md` | v1 (`JobCard`) | WP-41; reused by WP-34 | Planned, disabled |
+| `agents/03-fit-scorer.md` | v2 (card input, `mustHaveHits`, reason grounding) | WP-34 (v1 stays through WP-06, WP-23) | v1 registered |
+| `agents/04-resume-tailor.md` | v2 (suggestion mode only) | WP-41, WP-17 tailor route | v1 registered |
+| `agents/05-resume-writer.md` | v2 (level, tag, priority, headline) | WP-31 | v1 registered |
+| `agents/06-answer-drafter.md` | v2 (`answers[]` with abstain) | WP-41 | v1 registered |
+| `agents/07-cover-letter-writer.md` | v2 (card input, 4 paragraphs, 250 words) | WP-41; WP-07 caps v1 | v1 registered |
+| `agents/08-claim-verifier.md` | v1 (claim and verdict wire format, shadow storage) | WP-26, WP-41 | Planned, disabled |
+| `agents/09-claim-verifier-escalation.md` | v1 | WP-26 | Planned, disabled |
+| `agents/10-reply-classifier.md` | v1 (rules-first contract) | WP-24 (rules, disabled hook); model deferred to WP-40 | Planned, disabled |
+| `agents/11-outcome-analyst.md` | Stub | Deferred (WP-40) | Planned, disabled |
+| `agents/12-interview-coach.md` | Stub | Deferred (WP-40) | Planned, disabled |
+
+"Planned, disabled" is `PLANNED_AGENTS` in `server/src/agents/registry.ts`: no `AgentSpec`, so `getAgent` cannot return it. A v2 that changes its agent's input is a second spec object until cut-over, and its rollback is the caller's flag, not `prompt_pin` (`agents/03-fit-scorer.md` 9).
 
 ## 4. Phase calendar mapped to work packages
 
@@ -163,7 +180,7 @@ Each item gets its own ADR and package when its trigger fires (WP-40). The first
 | Read replica, HA and a second Postgres | 25,000 users, primary CPU above 60% for 7 days, or read p95 above 300 ms with CPU above 70% for a week (`01` A.7) |
 | Plans beyond 50,000 users | Owner decision |
 
-## 9. Amendment log (WP-43, 2026-10-30)
+## 9. Amendment log (WP-43 2026-10-30, WP-49 2026-11-03)
 
 | File | Section | Amendment | Decision |
 |---|---|---|---|
@@ -176,6 +193,10 @@ Each item gets its own ADR and package when its trigger fires (WP-40). The first
 | `_research/cost-model.md` | banner | Superseded for prices | |
 | `../2026-10-29-resume-suite/README.md` | 11, 14 | 402 changed to 429 `daily_allowance`; divergence resolved | 429 daily_allowance |
 | `../2026-10-23-resume-workspace/README.md` | note on F11 | 402 wording replaced | 429 daily_allowance |
+| `README.md` (2026-11-03, WP-49) | 2 rule 4, 3 | An agent spec wins on its own agent's shape; agent spec index | WP-49 |
+| `01-architecture.md` (2026-11-03, WP-49) | B.9.2 `resume-parser` row | Line ranges, not character offsets | WP-49 |
+| `03-agent-runtime.md` (2026-11-03, WP-49) | 13.2 `resume-parser` row | Expectation format with line ranges | WP-49 |
+| `agents/01-resume-parser.md` (2026-11-03, WP-49) | Amendments table | Shape settled; BullMQ runner; per-import write contract; `services/import` paths | Path (c); PRD authoritative |
 
 ## 10. Id index
 
@@ -191,5 +212,6 @@ Each item gets its own ADR and package when its trigger fires (WP-40). The first
 | `A-PREP-n`, `A-WS-n`, `A-AUTO-n`, `A-SUB-n` | Alerts of the worker specs | `workers/04`, `05`, `06`, `08` |
 | `F1` to `F11` | The freehire items (deterministic score, ghost signal, provenance, revisions, events, digests, URL intake, adapters, rehearsal, Typst, allowances) | `_research/huntr-tsenta-teardown.md` section 5; landed in `01` A.10 |
 | `D1` to `D10` (PRD), `R1` to `R4` (PRD releases) | Resume-suite decisions and releases | `../2026-10-29-resume-suite/README.md` |
+| `V1` to `V12` (parser), `JA-n`, `FS-n`, `RT-n`, `RW-n`, `AD-n`, `CL-n`, `CV-n` (checks), `RC-n` (reply rules) | Deterministic pre- and post-checks of each agent | `agents/01` to `agents/10` |
 | `<domain>-nn`, `<domain>-vnn` | Verified gap-map items (spec versus code, with path and line evidence) | `docs/superpowers/plans/2026-10-30-backend-completion/gap-map.md` |
 | `WP-nn` | Work packages, waves A to I | `docs/superpowers/plans/2026-10-30-backend-completion/work-packages.md` |
