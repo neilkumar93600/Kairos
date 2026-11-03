@@ -1,8 +1,9 @@
 import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import type { ApplicationAnswer, ResumeLine } from "@auto-career/shared";
 import { user } from "./auth";
-import { applicationStatus, emailKind, submitChannel } from "./enums";
-import { jobs, matches } from "./jobs";
+import { jobs } from "./catalog";
+import { applicationStatus, submitChannel } from "./enums";
+import { matches } from "./matching";
 import { resumeProfiles } from "./profile";
 
 export interface Receipt {
@@ -40,23 +41,4 @@ export const applications = pgTable(
     uniqueIndex("applications_user_job_uq").on(t.userId, t.jobId),
     index("applications_user_status_idx").on(t.userId, t.status),
   ],
-);
-
-/** Replies forwarded to the user's address, tagged to an application when we can match them. */
-export const inboundEmails = pgTable(
-  "inbound_emails",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    applicationId: uuid("application_id").references(() => applications.id, { onDelete: "set null" }),
-    providerMessageId: text("provider_message_id").notNull().unique(),
-    sender: text("sender").notNull(),
-    subject: text("subject").notNull(),
-    textBody: text("text_body").notNull(),
-    kind: emailKind("kind"),
-    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index("inbound_emails_user_idx").on(t.userId, t.receivedAt)],
 );
