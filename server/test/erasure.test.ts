@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { userHash } from "../src/llm/redact";
-import { emailHash, erasureUserHash, normalizeEmail, parseTombstone, tombstoneKey, tombstoneOf } from "../src/services/erasure";
+import { emailHash, erasureUserHash, normalizeEmail, parseTombstone, pseudonym, tombstoneKey, tombstoneOf } from "../src/services/erasure";
 
 describe("erasure hashes (WP-25)", () => {
   it("keys the user hash with USER_HASH_KEY, and its first 32 hex characters are llm_calls' userHash", () => {
@@ -23,6 +23,14 @@ describe("erasure hashes (WP-25)", () => {
     expect(emailHash("Ann.Lee+x@gmail.com")).toBe(emailHash("annlee@gmail.com"));
     expect(emailHash("a@example.com")).toMatch(/^[0-9a-f]{64}$/);
     expect(emailHash("a@example.com")).not.toBe(erasureUserHash("a@example.com"));
+  });
+});
+
+describe("pseudonym", () => {
+  it("replaces an audit column's user id with a value that joins the task but names nobody", () => {
+    const h = erasureUserHash("u1");
+    expect(pseudonym(h)).toBe(`erased:${h.slice(0, 32)}`);
+    expect(pseudonym(h)).not.toContain("u1");
   });
 });
 

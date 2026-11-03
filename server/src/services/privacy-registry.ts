@@ -17,6 +17,8 @@ export type EraseHow =
   | "delete"
   /** `column` (a pseudonymous hash) is nulled by the erasure worker (jobs/erasure.ts). */
   | "scrub"
+  /** Kept, with `column` (a user id) rewritten to `erased:<user hash>` in that transaction: audit rows outlive the account. */
+  | "pseudonymise"
   /** Kept: it holds only keyed hashes, no user id; `why` says why. */
   | "keep";
 
@@ -86,6 +88,11 @@ export const AT_MERGE: Record<string, readonly PrivacyEntry[]> = {
       export: false,
       why: "the user's objection to mail (GDPR Art. 21, CAN-SPAM), honoured even if the address signs up again; holds a hash, no address or user id",
     },
+  ],
+  // DB-reviewer on WP-27: an admin's id in the audit trail and on the flags they set. metrics_minute and feature_flags hold none.
+  "WP-27": [
+    { table: "ops_audit", column: "actor", erase: "pseudonymise", export: ALL },
+    { table: "ops_flags", column: "updated_by", erase: "pseudonymise", export: ALL },
   ],
 };
 

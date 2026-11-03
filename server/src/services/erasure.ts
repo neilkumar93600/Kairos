@@ -6,6 +6,7 @@ import { contactMessages, creditLedger, creditLedgerArchive, deletionTasks, eras
 import { env } from "../lib/env";
 import { logger } from "../lib/logger";
 import { storage, storageConfig, type Storage } from "../lib/storage";
+import { PRIVACY_REGISTRY } from "./privacy-registry";
 
 /**
  * Account erasure (WP-25; 02-database 16.2, 06-infrastructure 8.7; CISO should-fix deletion). eraseUser runs every
@@ -66,6 +67,9 @@ export function tombstoneStore(): Storage | null {
   return storageConfig(env()).buckets.tombstones ? storage() : null;
 }
 
+/** What an audit column holds instead of an erased user's id: joins the deletion task, names nobody. */
+export const pseudonym = (userHash: string) => `erased:${userHash.slice(0, 32)}`;
+
 /** Copies the users' ledger rows to credit_ledger_archive under each user's hash. Archiving a row twice adds nothing. */
 export async function archiveLedger(tx: Tx, userIds: string[]): Promise<void> {
   if (userIds.length === 0) return;
@@ -96,6 +100,10 @@ export async function eraseUser(db: Db, userId: string, requestedBy: RequestedBy
     await tx.insert(deletionTasks).values(task).onConflictDoUpdate({ target: deletionTasks.userHash, set: { ...task, ...fresh } });
     await tx.insert(erasedEmails).values({ emailHash: task.emailHash }).onConflictDoNothing();
     await archiveLedger(tx, [u.id]);
+    // Audit columns that name the user keep their rows under a pseudonym (registry "pseudonymise").
+    for (const e of PRIVACY_REGISTRY.filter((x) => x.erase === "pseudonymise")) {
+      await tx.execute(sql`update ${sql.identifier(e.table)} set ${sql.identifier(e.column)} = ${pseudonym(task.userHash)} where ${sql.identifier(e.column)} = ${u.id}`);
+    }
     // Contact messages carry no user id, only the address they were sent from (R-22).
     await tx.delete(contactMessages).where(sql`lower(${contactMessages.email}) = lower(${u.email})`);
     await tx.delete(user).where(eq(user.id, u.id));
