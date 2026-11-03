@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import { configuredProviders, type AuthGateway } from "../lib/auth";
 import { env } from "../lib/env";
 import { requireAuth } from "../middleware/require-auth";
@@ -26,7 +26,12 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
     res.set("cache-control", "public, max-age=300").json({ providers: configuredProviders(env()) });
   });
 
-  const authed = [requireAuth(gateway), limits.user];
+  // A signed-in answer is never kept by a browser or shared cache, errors included (CISO should-fix "no-store").
+  const noStore: RequestHandler = (_req, res, next) => {
+    res.set("cache-control", "private, no-store");
+    next();
+  };
+  const authed = [requireAuth(gateway), limits.user, noStore];
   router.use("/me", authed, meRouter);
   router.use("/profile", authed, profileRouter);
   router.use("/matches", authed, matchesRouter);
