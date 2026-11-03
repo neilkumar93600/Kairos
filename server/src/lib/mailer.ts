@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { appendFile } from "node:fs/promises";
 import { Errors, Models, ServerClient } from "postmark";
 import { env } from "./env";
@@ -95,3 +96,6 @@ export function mailErrorCode(err: unknown): "postmark_406" | "postmark_422" | n
   if (err.code === 406) return "postmark_406";
   return err.statusCode === 422 ? "postmark_422" : null;
 }
+
+/** email_suppressions' key: SHA-256 of the trimmed, lower-cased address, so the list never holds an address. */
+export const addressHash = (address: string) => createHash("sha256").update(address.trim().toLowerCase()).digest();

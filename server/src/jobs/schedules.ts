@@ -1,6 +1,7 @@
 import type { Job, RepeatOptions } from "bullmq";
 import { processBackupCheck } from "./backup-check";
 import { processJournalReconcile, processMoneyJournal } from "./money-journal";
+import { processMailRetention, processNotifyReconcile } from "./notify";
 import { processPartitions } from "./partitions";
 import type { QueueName } from "./queues";
 import {
@@ -52,6 +53,10 @@ export const SCHEDULES: Schedule[] = [
   { queue: "maintenance", id: "journal-reconcile", repeat: { pattern: "40 * * * *", tz: "UTC" }, run: () => processJournalReconcile() },
   // The backup-age alert and the manifest warnings of the pgbackup cron service's dumps (WP-13, ops-65).
   { queue: "maintenance", id: "backup-check", repeat: { pattern: "20 * * * *", tz: "UTC" }, run: () => processBackupCheck() },
+  // Stuck email claims, emails whose enqueue was lost, and the owner alert for given-up sends (WP-44, messaging-46).
+  { queue: "maintenance", id: "notify-reconcile", repeat: { every: 5 * MINUTE }, run: processNotifyReconcile },
+  // email_sends after 120 days, notifications after 90, signed links 7 days past expiry (WP-44).
+  { queue: "maintenance", id: "mail-retention", repeat: { pattern: "50 3 * * *", tz: "UTC" }, run: processMailRetention },
 ];
 
 /** The maintenance queue's processor: the scheduler id is the job name. */
