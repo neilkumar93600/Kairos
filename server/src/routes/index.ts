@@ -33,6 +33,11 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
     next();
   };
   const authed = [requireAuth(gateway), limits.user, noStore];
+  // Money and security-posture routes (05-api 5.2): a session created in the last day, read without the cookie cache.
+  // Add a route here with its own line; the route stays in its router and meets requireAuth again below.
+  const fresh = requireAuth(gateway, "session-fresh");
+  router.post("/applications/approve", fresh);
+  router.use("/billing", fresh);
   router.use("/me", authed, meRouter);
   router.use("/profile", authed, profileRouter);
   router.use("/matches", authed, matchesRouter);

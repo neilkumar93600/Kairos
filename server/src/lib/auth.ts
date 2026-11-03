@@ -4,8 +4,8 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { bearer, emailOTP, oneTimeToken } from "better-auth/plugins";
 import { createHash } from "node:crypto";
-import { eq } from "drizzle-orm";
-import { db, schema } from "../db/client";
+import { eq, sql } from "drizzle-orm";
+import { db, schema, type Db } from "../db/client";
 import { CLIENT_IP_HEADER } from "../middleware/client-ip";
 import { hit } from "../middleware/rate-limit";
 import { cancelBillingForDeletedUser } from "../services/billing-events";
@@ -54,6 +54,17 @@ export async function limitByEmail(path: string, body: unknown): Promise<void> {
 /** Sign-in methods this deployment can serve. The web shows only these (GET /api/auth-providers). */
 export function configuredProviders(e: Env): AuthProvider[] {
   return e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET ? ["email", "google"] : ["email"];
+}
+
+/** The sessions a user may hold at once (api-auth-security-v07): repeated extension reconnects must not grow the table. */
+export const SESSIONS_KEPT = 20;
+
+/** Removes all but the user's `keep` most recently used sessions. Returns how many went. */
+export async function pruneOldSessions(database: Db, userId: string, keep = SESSIONS_KEPT): Promise<number> {
+  const { rowCount } = await database.execute(sql`
+    delete from session where user_id = ${userId} and id not in (
+      select id from session where user_id = ${userId} order by updated_at desc, id desc limit ${keep})`);
+  return rowCount ?? 0;
 }
 
 function createAuth() {
@@ -157,6 +168,15 @@ function createAuth() {
         create: { before: async (account) => ({ data: { ...account, idToken: null } }) },
         update: { before: async (account) => ({ data: { ...account, idToken: null } }) },
       },
+      session: {
+        // After the new session is stored, so the one just created is always among the newest. A failure is logged only:
+        // the sign-in must not fail over housekeeping.
+        create: {
+          after: async (created) => {
+            await pruneOldSessions(db(), created.userId).catch((err: unknown) => logger.warn({ err, userHash: logUserHash(created.userId) }, "session pruning failed"));
+          },
+        },
+      },
       user: {
         create: {
           // Every new user gets a profile, a free plan row and the free credit grant in one transaction. The user row is
@@ -193,18 +213,20 @@ export interface SessionUser {
 /** The narrow surface the Express app needs, so tests can pass a fake. */
 export interface AuthGateway {
   handler: (request: Request) => Promise<Response>;
-  getSession: (headers: Headers) => Promise<{ user: SessionUser; sessionId: string } | null>;
+  /** `fresh`: bypass Better Auth's cookie cache, so a revoked session is refused at once. `createdAt` ages out "session-fresh" routes. */
+  getSession: (headers: Headers, opts?: { fresh?: boolean }) => Promise<{ user: SessionUser; sessionId: string; createdAt?: Date } | null>;
 }
 
 export function authGateway(): AuthGateway {
   const a = auth();
   return {
     handler: (request) => a.handler(request),
-    getSession: async (headers) => {
-      const result = await a.api.getSession({ headers });
+    getSession: async (headers, opts) => {
+      const result = await a.api.getSession({ headers, query: opts?.fresh ? { disableCookieCache: true } : undefined });
       if (!result) return null;
       return {
         sessionId: result.session.id,
+        createdAt: result.session.createdAt,
         user: {
           id: result.user.id,
           email: result.user.email,
