@@ -1,12 +1,12 @@
 import { Router } from "express";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client";
 import { applications, companies, jobs, matches } from "../db/schema";
 import { notFound } from "../lib/errors";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam } from "../middleware/validate";
-import { enqueue } from "../jobs/queues";
+import { enqueue, fairPriority } from "../jobs/queues";
 
 /** The fit-gated feed. Mounted at /api/matches. */
 export const matchesRouter = Router();
@@ -56,6 +56,21 @@ matchesRouter.post("/:id/queue", async (req, res) => {
     .returning({ id: applications.id });
   await db().update(matches).set({ status: "queued" }).where(eq(matches.id, match.id));
 
-  if (created) await enqueue("tailor-application", { applicationId: created.id }, `tailor-${created.id}`);
+  if (created) {
+    // The user's drafts from the last day still waiting for their lines, this one included: a user who queues 50 at
+    // once waits behind other users' first drafts instead of in front of them.
+    const [waiting] = await db()
+      .select({ n: sql<number>`count(*)::int` })
+      .from(applications)
+      .where(
+        and(
+          eq(applications.userId, me.id),
+          eq(applications.status, "draft"),
+          sql`jsonb_array_length(${applications.resumeLines}) = 0`,
+          gte(applications.createdAt, sql`now() - interval '1 day'`),
+        ),
+      );
+    await enqueue("tailor-application", { applicationId: created.id }, `tailor-${created.id}`, undefined, fairPriority(waiting?.n ?? 1));
+  }
   res.status(created ? 201 : 200).json({ applicationId: created?.id ?? null });
 });
