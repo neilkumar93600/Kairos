@@ -6,6 +6,7 @@ import { aiUsage } from "../db/schema/platform";
 import { forbidden, HttpError, nextUtcMidnight } from "../lib/errors";
 import { logger, logUserHash } from "../lib/logger";
 import { AgentError } from "../llm/errors";
+import { LlmError } from "./llm";
 
 /**
  * Per-feature daily AI allowances (F11, 01-architecture B.8.10, 05-api 11.5). Limits come only from plans.ts; counters
@@ -79,11 +80,12 @@ const BILLED: ReadonlySet<string> = new Set(["refusal", "schema_invalid", "max_t
  * Whether a failed request gives its units back (B.8.10: "fails before any model call"). Validation and lookups refund;
  * so do gateway failures that never got a reply (budget, breaker, limiter, transport). A reply the model wrote and we
  * then refused (truth_lock, a refusal, an invalid reply) does not: refunding it would make a crafted request free.
- * ponytail: the legacy client's LlmError is not refunded either; it cannot tell a transport error from a bad reply.
+ * The legacy client marks a send that never got a reply "LLM request failed"; its other errors follow a billed reply.
  */
 export function refundable(err: unknown): boolean {
   if (err instanceof HttpError) return err.code !== "truth_lock";
   if (err instanceof AgentError) return !BILLED.has(err.code);
+  if (err instanceof LlmError) return err.message.startsWith("LLM request failed");
   return false;
 }
 

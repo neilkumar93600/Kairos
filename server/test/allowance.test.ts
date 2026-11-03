@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { allowanceHeader, consumeAllowance, refundable } from "../src/services/allowance";
 import { HttpError, nextUtcMidnight } from "../src/lib/errors";
 import { AgentError } from "../src/llm/errors";
+import { LlmError } from "../src/services/llm";
 
 /** The pure parts of the F11 allowance (05-api 11.5); consume and refund against Postgres are in allowance.int.test.ts. */
 describe("allowance", () => {
@@ -30,5 +31,11 @@ describe("allowance", () => {
       expect(refundable(new AgentError(code, "x", false)), code).toBe(false);
     }
     expect(refundable(new Error("database down"))).toBe(false);
+  });
+
+  it("on the legacy client, refunds a failed request but not a reply that failed validation", () => {
+    expect(refundable(new LlmError("LLM request failed: 529 overloaded"))).toBe(true);
+    expect(refundable(new LlmError("LLM JSON failed validation: score"))).toBe(false);
+    expect(refundable(new LlmError("LLM returned invalid JSON"))).toBe(false);
   });
 });
