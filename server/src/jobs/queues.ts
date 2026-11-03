@@ -12,6 +12,7 @@ export const QUEUES = {
   cloudApply: "cloud-apply",
   costRollup: "cost-rollup",
   ledgerWatch: "ledger-watch",
+  maintenance: "maintenance",
 } as const;
 
 export interface JobData {
@@ -24,6 +25,8 @@ export interface JobData {
   "cloud-apply": { applicationId: string };
   "cost-rollup": { schedule: true };
   "ledger-watch": { schedule: true };
+  /** The job name picks the task (jobs/schedules.ts). */
+  maintenance: { schedule: true };
 }
 
 export type QueueName = keyof JobData;
