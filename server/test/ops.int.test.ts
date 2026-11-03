@@ -197,6 +197,13 @@ describe.skipIf(!hasTestDb)("ops flags, admin routes and invariants against Post
       await setFlag("pause_scoring", true, owner);
       await expect(db.update(schema.opsAudit).set({ actor: "x" })).rejects.toThrow();
       await expect(db.delete(schema.opsAudit)).rejects.toThrow();
+      // Erasure's one allowed change: actor to erased:<32 hex>, once, and nothing else in the row.
+      const erased = `erased:${"ab".repeat(16)}`;
+      await expect(db.update(schema.opsAudit).set({ actor: erased, target: "x" })).rejects.toThrow();
+      await expect(db.update(schema.opsAudit).set({ actor: "erased:short" })).rejects.toThrow();
+      await db.update(schema.opsAudit).set({ actor: erased }).where(eq(schema.opsAudit.actor, owner));
+      expect((await audit())[0]?.actor).toBe(erased);
+      await expect(db.update(schema.opsAudit).set({ actor: `erased:${"cd".repeat(16)}` })).rejects.toThrow();
     });
 
     it("a page-only breach (a negative balance, an unconfirmed citation) does not freeze approvals", async () => {

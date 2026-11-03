@@ -191,6 +191,8 @@ GRANT SELECT ON llm_cost_daily TO kairos_metrics;
 GRANT SELECT, INSERT, UPDATE ON ops_flags TO kairos_api, kairos_worker;
 GRANT SELECT ON feature_flags TO kairos_api, kairos_worker, kairos_applier;
 GRANT SELECT, INSERT ON ops_audit TO kairos_api, kairos_worker;
+-- Erasure (WP-25, worker) pseudonymises the actor column only; the trigger allows nothing else.
+GRANT UPDATE (actor) ON ops_audit TO kairos_worker;
 GRANT SELECT, INSERT, UPDATE ON metrics_minute TO kairos_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON metrics_minute TO kairos_worker;
 GRANT SELECT ON ops_flags TO kairos_applier;
