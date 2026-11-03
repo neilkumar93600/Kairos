@@ -1,8 +1,10 @@
 import { Router, type RequestHandler } from "express";
 import { configuredProviders, type AuthGateway } from "../lib/auth";
 import { env } from "../lib/env";
+import { requireAdmin } from "../middleware/require-admin";
 import { requireAuth } from "../middleware/require-auth";
 import { countFailedSignIn, type Limiters } from "../middleware/rate-limit";
+import { adminRouter } from "./admin";
 import { applicationsRouter } from "./applications";
 import { billingRouter } from "./billing";
 import { contactRouter } from "./contact";
@@ -43,6 +45,7 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   router.use("/billing", authed, limits.billing, billingRouter);
   router.use("/extension", authed, extensionRouter);
   router.use("/files", authed, filesRouter);
+  router.use("/admin", authed, requireAdmin(), adminRouter);
   router.use(countFailedSignIn(limits));
   return router;
 }

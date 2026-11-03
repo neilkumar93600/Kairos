@@ -109,6 +109,15 @@ export const MATRIX: Record<string, MatrixEntry> = {
   },
 
   "GET /api/files/*key": { request: (t) => ({ path: `/api/files/${t.fileKey}` }) },
+
+  // WP-27: ADMIN_USER_IDS is empty in the matrix run, so every signed-in caller is a non-admin and gets the 404 of a route
+  // that does not exist. The admin behaviour itself (fresh session, audit rows) is test/admin.int.test.ts.
+  "GET /api/admin/flags": own("/api/admin/flags"),
+  "PUT /api/admin/flags/:key": own("/api/admin/flags/approvals_frozen", { value: true }),
+  "GET /api/admin/info": own("/api/admin/info"),
+  "GET /api/admin/companies": own("/api/admin/companies"),
+  "POST /api/admin/companies/:id/activate": own("/api/admin/companies/00000000-0000-4000-8000-000000000001/activate"),
+  "POST /api/admin/companies/:id/deactivate": own("/api/admin/companies/00000000-0000-4000-8000-000000000001/deactivate"),
 };
 
 type Layer = { route?: { path: string | string[]; methods: Record<string, boolean> }; handle: { stack?: Layer[] }; mountPath?: string | string[] };
