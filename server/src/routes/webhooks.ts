@@ -1,7 +1,6 @@
 import express, { Router, type NextFunction, type Request, type Response } from "express";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { and, eq, isNull, or } from "drizzle-orm";
-import type Stripe from "stripe";
 import { z } from "zod";
 import { db } from "../db/client";
 import { creditLedger, inboundEmails, profiles, stripeEvents, subscriptions } from "../db/schema";
@@ -9,7 +8,7 @@ import { env } from "../lib/env";
 import { HttpError } from "../lib/errors";
 import { enqueue } from "../jobs/queues";
 import { processStripeEvent } from "../services/billing-events";
-import { INLINE_REQUEST, stripe } from "../services/stripe";
+import { INLINE_REQUEST, stripe, verifyStripeEvent } from "../services/stripe";
 
 /** Provider webhooks. Mounted at /api/webhooks BEFORE express.json(), because Stripe signs the raw body. */
 export const webhooksRouter = Router();
@@ -20,17 +19,11 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(digest(a), digest(b));
 }
 
-webhooksRouter.post("/stripe", express.raw({ type: "application/json" }), async (req, res) => {
-  const secret = env().STRIPE_WEBHOOK_SECRET;
-  const signature = req.header("stripe-signature");
-  if (!secret || !signature) throw new HttpError(400, "bad_signature", "Missing Stripe signature");
-
-  let event: Stripe.Event;
-  try {
-    event = stripe().webhooks.constructEvent(req.body as Buffer, signature, secret);
-  } catch {
-    throw new HttpError(400, "bad_signature", "Invalid Stripe signature");
-  }
+// 1 MB: a real event is under 100 KB, but an invoice with many lines can pass Express's 100 KB default.
+webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
+  const { STRIPE_WEBHOOK_SECRET, STRIPE_WEBHOOK_SECRET_PREVIOUS } = env();
+  const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  const event = verifyStripeEvent(body, req.header("stripe-signature"), [STRIPE_WEBHOOK_SECRET, STRIPE_WEBHOOK_SECRET_PREVIOUS]);
 
   // One transaction: if any effect fails, the event row rolls back too and Stripe's retry processes it again.
   // ponytail: the Stripe re-fetch runs inside the transaction (bounded by INLINE_REQUEST); move it before the transaction if webhook volume grows.

@@ -19,6 +19,25 @@ export function stripe(): Stripe {
   return client;
 }
 
+/** Stripe's default, stated so a library change can never widen or disable the replay window. */
+const SIGNATURE_TOLERANCE_S = 300;
+
+/**
+ * Verifies a webhook's raw body against each configured secret in turn (current, then the previous one during a
+ * roll). Anything that does not verify, including a missing header or no secret at all, is 400 bad_signature.
+ */
+export function verifyStripeEvent(body: Buffer, signature: string | undefined, secrets: (string | undefined)[]): Stripe.Event {
+  for (const secret of secrets) {
+    if (!secret || !signature) continue;
+    try {
+      return stripe().webhooks.constructEvent(body, signature, secret, SIGNATURE_TOLERANCE_S);
+    } catch {
+      // try the next secret
+    }
+  }
+  throw new HttpError(400, "bad_signature", "Invalid Stripe signature");
+}
+
 export function priceIdFor(plan: PlanId, interval: BillingInterval): string {
   const id = env().STRIPE_PRICES[`${plan}:${interval}`];
   if (!id) throw new HttpError(400, "price_unavailable", `No ${interval} price for the ${plan} plan`);
