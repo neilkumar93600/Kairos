@@ -7,6 +7,7 @@ import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from ".
 process.env.DATABASE_URL = testDbUrl("webhooks");
 process.env.STRIPE_SECRET_KEY = "sk_test_webhooks";
 process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_webhooks";
+process.env.STRIPE_GRANT_COUPONS = "BETA100";
 
 type App = ReturnType<typeof import("../src/app").createApp>;
 
@@ -80,7 +81,7 @@ describe.skipIf(!hasTestDb)("POST /api/webhooks/stripe against Postgres", () => 
     expect(retrieve).toHaveBeenCalledTimes(2);
   });
 
-  it("re-fetches with a short timeout and no retries, because the call runs inside a transaction", async () => {
+  it("re-fetches with a short timeout and no retries, because Stripe redelivers a failed webhook anyway", async () => {
     const userId = await seedUser(db);
     const retrieve = vi.spyOn(stripeClient.subscriptions, "retrieve").mockResolvedValue(subscription("sub_1", "active", userId) as never);
     expect((await send("evt_opts", "customer.subscription.updated", { id: "sub_1" })).status).toBe(200);
@@ -134,15 +135,99 @@ describe.skipIf(!hasTestDb)("POST /api/webhooks/stripe against Postgres", () => 
 
   it("grants credits once per invoice even when two different events carry it", async () => {
     const userId = await seedUser(db);
-    const invoice = {
-      id: "in_once",
-      lines: { data: [{ pricing: { price_details: { price: "price_pro_week" } }, parent: { subscription_item_details: { proration: false } } }] },
-      parent: { subscription_details: { metadata: { userId } } },
-    };
+    const invoice = paidInvoice("in_once", { userId });
     expect((await send("evt_paid_1", "invoice.paid", invoice)).status).toBe(200);
     expect((await send("evt_paid_2", "invoice.paid", invoice)).status).toBe(200);
+    expect(await grantsFor("in_once")).toHaveLength(1);
+  });
+
+  /** A paid invoice.paid body; amount in cents, metadata userId omitted when null. */
+  const paidInvoice = (id: string, opts: { userId: string | null; amountPaid?: number; price?: string; customer?: string; hasMore?: boolean }) => ({
+    id,
+    amount_paid: opts.amountPaid ?? 1200,
+    customer: opts.customer ?? "cus_1",
+    discounts: [],
+    lines: {
+      data: [{ pricing: { price_details: { price: opts.price ?? "price_pro_week" } }, parent: { subscription_item_details: { proration: false } } }],
+      has_more: opts.hasMore ?? false,
+    },
+    parent: { subscription_details: { metadata: opts.userId ? { userId: opts.userId } : {}, subscription: "sub_1" } },
+  });
+
+  async function grantsFor(invoiceId: string) {
     const { eq } = await import("drizzle-orm");
-    const grants = await db.select().from(schema.creditLedger).where(eq(schema.creditLedger.stripeInvoiceId, "in_once"));
-    expect(grants).toHaveLength(1);
+    return db.select().from(schema.creditLedger).where(eq(schema.creditLedger.stripeInvoiceId, invoiceId));
+  }
+
+  it("a $0 invoice (100% promotion code or trial) grants nothing, and the event is recorded", async () => {
+    const userId = await seedUser(db);
+    vi.spyOn(stripeClient.invoices, "retrieve").mockResolvedValue({ discounts: [{ source: { coupon: "NOT_LISTED" } }] } as never);
+    expect((await send("evt_zero", "invoice.paid", paidInvoice("in_zero", { userId, amountPaid: 0 }))).status).toBe(200);
+    expect(await grantsFor("in_zero")).toHaveLength(0);
+    expect(await db.select().from(schema.stripeEvents)).toHaveLength(1);
+  });
+
+  it("a $0 invoice grants when its coupon is in STRIPE_GRANT_COUPONS", async () => {
+    const userId = await seedUser(db);
+    const retrieve = vi.spyOn(stripeClient.invoices, "retrieve").mockResolvedValue({ discounts: [{ source: { coupon: "BETA100" } }] } as never);
+    expect((await send("evt_beta", "invoice.paid", paidInvoice("in_beta", { userId, amountPaid: 0 }))).status).toBe(200);
+    expect(retrieve).toHaveBeenCalledWith("in_beta", { expand: ["discounts"] }, { timeout: 10_000, maxNetworkRetries: 0 });
+    expect(await grantsFor("in_beta")).toHaveLength(1);
+  });
+
+  it("an unknown price answers 500 and stores nothing, so Stripe retries instead of the grant being lost", async () => {
+    const userId = await seedUser(db);
+    expect((await send("evt_unmapped", "invoice.paid", paidInvoice("in_unmapped", { userId, price: "price_retired" }))).status).toBe(500);
+    expect(await db.select().from(schema.stripeEvents)).toHaveLength(0);
+    expect(await grantsFor("in_unmapped")).toHaveLength(0);
+  });
+
+  it("an invoice without metadata grants to the user who owns the Stripe customer", async () => {
+    const userId = await seedUser(db);
+    const { eq } = await import("drizzle-orm");
+    await db.update(schema.subscriptions).set({ stripeCustomerId: "cus_fallback" }).where(eq(schema.subscriptions.userId, userId));
+    expect((await send("evt_fallback", "invoice.paid", paidInvoice("in_fallback", { userId: null, customer: "cus_fallback" }))).status).toBe(200);
+    expect((await grantsFor("in_fallback"))[0]?.userId).toBe(userId);
+  });
+
+  it("an invoice nobody can be matched to answers 500 and is retried", async () => {
+    expect((await send("evt_nobody", "invoice.paid", paidInvoice("in_nobody", { userId: null, customer: "cus_unknown" }))).status).toBe(500);
+    expect(await db.select().from(schema.stripeEvents)).toHaveLength(0);
+  });
+
+  it("an invoice for an erased user is recorded and ignored, not a 3-day 500 loop on the ledger foreign key", async () => {
+    expect((await send("evt_erased", "invoice.paid", paidInvoice("in_erased", { userId: "erased-user-id" }))).status).toBe(200);
+    expect(await db.select().from(schema.stripeEvents)).toHaveLength(1);
+    expect(await grantsFor("in_erased")).toHaveLength(0);
+  });
+
+  it("decides a truncated invoice from all of its lines", async () => {
+    const userId = await seedUser(db);
+    const line = { pricing: { price_details: { price: "price_starter_month" } }, parent: { subscription_item_details: { proration: false } } };
+    const list = vi.spyOn(stripeClient.invoices, "listLineItems").mockReturnValue({ autoPagingToArray: async () => [line] } as never);
+    const invoice = { ...paidInvoice("in_long", { userId, hasMore: true }), lines: { data: [], has_more: true } };
+    expect((await send("evt_long", "invoice.paid", invoice)).status).toBe(200);
+    expect(list).toHaveBeenCalledWith("in_long", { limit: 100 }, { timeout: 10_000, maxNetworkRetries: 0 });
+    expect((await grantsFor("in_long"))[0]?.delta).toBe(1000);
+  });
+
+  it("a failed payment syncs the subscription to past_due and starts the grace", async () => {
+    const userId = await seedUser(db);
+    const retrieve = vi.spyOn(stripeClient.subscriptions, "retrieve").mockResolvedValue(subscription("sub_1", "past_due", userId) as never);
+    expect((await send("evt_failed", "invoice.payment_failed", paidInvoice("in_failed", { userId, amountPaid: 0 }))).status).toBe(200);
+    expect(retrieve).toHaveBeenCalledWith("sub_1", {}, { timeout: 10_000, maxNetworkRetries: 0 });
+    const row = await subscriptionRowFor(userId);
+    expect(row?.status).toBe("past_due");
+    expect(row?.pastDueSince).toBeInstanceOf(Date);
+    expect(await grantsFor("in_failed")).toHaveLength(0);
+  });
+
+  it("refunds and disputes are recorded and change no credits", async () => {
+    const userId = await seedUser(db, { credits: 25 });
+    expect((await send("evt_refund", "charge.refunded", { id: "ch_1", amount: 1900, customer: "cus_1" })).status).toBe(200);
+    expect((await send("evt_dispute", "charge.dispute.created", { id: "dp_1", amount: 1900, charge: "ch_1" })).status).toBe(200);
+    expect(await db.select().from(schema.stripeEvents)).toHaveLength(2);
+    const { eq } = await import("drizzle-orm");
+    expect(await db.select().from(schema.creditLedger).where(eq(schema.creditLedger.userId, userId))).toHaveLength(1);
   });
 });

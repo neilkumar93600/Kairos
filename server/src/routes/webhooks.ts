@@ -3,11 +3,13 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client";
-import { creditLedger, inboundEmails, profiles, stripeEvents, subscriptions } from "../db/schema";
+import { inboundEmails, profiles, stripeEvents, subscriptions, user } from "../db/schema";
 import { env } from "../lib/env";
 import { HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
 import { enqueue } from "../jobs/queues";
-import { processStripeEvent } from "../services/billing-events";
+import { couponIdsOf, fetchStripeState, processStripeEvent } from "../services/billing-events";
+import { grantPlanCredits } from "../services/credits";
 import { INLINE_REQUEST, stripe, verifyStripeEvent } from "../services/stripe";
 
 /** Provider webhooks. Mounted at /api/webhooks BEFORE express.json(), because Stripe signs the raw body. */
@@ -25,12 +27,22 @@ webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1
   const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
   const event = verifyStripeEvent(body, req.header("stripe-signature"), [STRIPE_WEBHOOK_SECRET, STRIPE_WEBHOOK_SECRET_PREVIOUS]);
 
+  // Stripe first, outside the transaction, so a slow Stripe never pins a pooled connection; a failure is a 500 Stripe retries.
+  const fetched = await fetchStripeState(event, {
+    retrieveSubscription: (id) => stripe().subscriptions.retrieve(id, {}, INLINE_REQUEST),
+    listInvoiceLines: (id) => stripe().invoices.listLineItems(id, { limit: 100 }, INLINE_REQUEST).autoPagingToArray({ limit: 1000 }),
+    invoiceCouponIds: async (id) => couponIdsOf(await stripe().invoices.retrieve(id, { expand: ["discounts"] }, INLINE_REQUEST)),
+  });
+
   // One transaction: if any effect fails, the event row rolls back too and Stripe's retry processes it again.
-  // ponytail: the Stripe re-fetch runs inside the transaction (bounded by INLINE_REQUEST); move it before the transaction if webhook volume grows.
+  // ponytail: no per-customer ordering, so two events for one customer can commit their snapshots out of order; the
+  // stripe_event_created guard and the customer-partitioned queue come with store-then-process (billing-12, billing-19).
   const outcome = await db().transaction((tx) =>
-    processStripeEvent(event, {
+    processStripeEvent(event, fetched, {
       recordEvent: async (id, type) => (await tx.insert(stripeEvents).values({ id, type }).onConflictDoNothing().returning()).length > 0,
-      retrieveSubscription: (id) => stripe().subscriptions.retrieve(id, {}, INLINE_REQUEST),
+      userExists: async (id) => (await tx.select({ id: user.id }).from(user).where(eq(user.id, id))).length > 0,
+      userForCustomer: async (customerId) =>
+        (await tx.select({ userId: subscriptions.userId }).from(subscriptions).where(eq(subscriptions.stripeCustomerId, customerId)))[0]?.userId ?? null,
       saveSubscription: async ({ userId, values }) => {
         // An unpaid state only overwrites the row when it is about the subscription the row tracks (or none yet),
         // so a late event for an old, cancelled subscription cannot drop a user who has since subscribed again.
@@ -42,11 +54,10 @@ webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1
           .set({ ...values, pastDueSince, updatedAt: new Date() })
           .where(and(eq(subscriptions.userId, userId), values.plan === "free" ? tracksThis : undefined));
       },
-      grantCredits: async ({ userId, delta, stripeInvoiceId }) => {
-        await tx.insert(creditLedger).values({ userId, delta, reason: "plan_grant", stripeInvoiceId }).onConflictDoNothing();
-      },
+      grantCredits: async (grant) => void (await grantPlanCredits(tx, grant)),
     }),
   );
+  logger.info({ eventId: event.id, type: event.type, outcome }, "stripe event");
   res.json(outcome === "duplicate" ? { received: true, duplicate: true } : { received: true });
 });
 
