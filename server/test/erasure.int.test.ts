@@ -5,7 +5,9 @@ import type { Db } from "../src/db/client";
 import * as schema from "../src/db/schema";
 import { llmCalls } from "../src/db/schema/platform";
 import { userHashBytes } from "../src/llm/redact";
+import { userKey } from "../src/lib/storage";
 import { userKeyed } from "../src/services/privacy-registry";
+import { fakeR2 } from "./helpers/fake-r2";
 import { closeTestDbs, hasTestDb, resetDb, testDb, testDbUrl } from "./helpers/test-db";
 
 // The erasure drill (T-DB-5, WP-25) against Postgres: a user with rows in every user-owned table is erased, and no
@@ -115,6 +117,58 @@ describe.skipIf(!hasTestDb)("erasure against Postgres (WP-25)", () => {
     expect(await columnsHolding(db, a.id)).toEqual(["deletion_tasks.storage_id"]);
     expect(await columnsHolding(db, "ann.lee@example.com")).toEqual([]);
     expect(await columnsHolding(db, MARK)).toEqual([]);
+  });
+
+  it("the worker finishes every store, after which nothing in the schema names the user (T-DB-5)", async () => {
+    const r2 = fakeR2();
+    const a = await seedEverything(db, "ann@example.com");
+    const b = await seedEverything(db, "bob@example.com", "bobmarker");
+    for (const id of [a.id, b.id]) await r2.storage.put(userKey("uploads", id, "cv.pdf"), "pdf", "application/pdf");
+    await db.update(schema.subscriptions).set({ stripeCustomerId: "cus_ann" }).where(eq(schema.subscriptions.userId, a.id));
+    const deleted: string[] = [];
+    const { processErasure, defaultErasureDeps } = await import("../src/jobs/erasure");
+    const deps = { ...defaultErasureDeps(), production: true, tombstones: r2.storage, files: r2.storage, deleteCustomer: async (id: string) => void deleted.push(id) };
+
+    const hash = await erasure.eraseUser(db, a.id, "user"); // no tombstone store at the request: the worker writes it
+    expect(await processErasure(deps)).toMatchObject({ claimed: 1, done: 1, failed: 0 });
+    const [task] = await db.select().from(schema.deletionTasks);
+    expect(task).toMatchObject({ storageId: null, stripeCustomerId: null, lastErrorCode: null });
+    expect(task!.completedAt).not.toBeNull();
+    expect(deleted).toEqual(["cus_ann"]);
+    expect([...r2.objects.keys()].sort()).toEqual([`kairos-tombstones|users/${hash}.json`, `kairos-uploads|${b.id}/cv.pdf`]);
+
+    expect(await columnsHolding(db, a.id)).toEqual([]);
+    expect(await columnsHolding(db, "ann@example.com")).toEqual([]);
+    expect(await columnsHolding(db, MARK)).toEqual([]);
+    const llm = await db.select({ h: llmCalls.userHash }).from(llmCalls);
+    expect(llm.map((r) => r.h?.toString("hex") ?? null).sort()).toEqual([null, userHashBytes(b.id).toString("hex")].sort());
+    // A second tick finds nothing to do.
+    expect(await processErasure(deps)).toMatchObject({ claimed: 0 });
+  });
+
+  it("a store that keeps failing is retried with back-off and pages once after 24 hours", async () => {
+    const a = await seedEverything(db, "ann@example.com");
+    await erasure.eraseUser(db, a.id, "user");
+    const { processErasure, defaultErasureDeps } = await import("../src/jobs/erasure");
+    const deps = { ...defaultErasureDeps(), production: true, tombstones: null };
+    expect(await processErasure(deps)).toMatchObject({ claimed: 1, failed: 1 });
+    const [task] = await db.select().from(schema.deletionTasks);
+    expect(task).toMatchObject({ lastErrorCode: "tombstones_unconfigured", attempts: 1, completedAt: null });
+    expect(task!.nextAttemptAt.getTime()).toBeGreaterThan(Date.now());
+    await db.update(schema.deletionTasks).set({ requestedAt: new Date(Date.now() - 25 * 3600_000) });
+    expect(await processErasure(deps)).toMatchObject({ claimed: 0, overdue: 1 });
+    expect(await processErasure(deps)).toMatchObject({ overdue: 0 });
+  });
+
+  it("the orphan-upload reconciler deletes prefixes of no live user and no open task", async () => {
+    const r2 = fakeR2();
+    const live = await seedEverything(db, "live@example.com");
+    const pending = await seedEverything(db, "pending@example.com");
+    await erasure.eraseUser(db, pending.id, "user");
+    for (const id of [live.id, pending.id, "gone-user"]) await r2.storage.put(userKey("renders", id, "a.pdf"), "x", "application/pdf");
+    const { processOrphanUploads } = await import("../src/jobs/erasure");
+    expect(await processOrphanUploads(r2.storage)).toEqual({ owners: 3, orphans: 1, objects: 1 });
+    expect([...r2.objects.keys()].sort()).toEqual([`kairos-renders|${live.id}/a.pdf`, `kairos-renders|${pending.id}/a.pdf`].sort());
   });
 
   it("is a no-op for a user already gone, and a ledger written in a racing transaction is archived or refused", async () => {

@@ -112,6 +112,12 @@ const SIGNALS = {
   backup_stale: 1,
   /** The latest dump's manifest has a warning: a table shrank, the dump shrank, or it nears R2's 5 GiB put (WP-13). */
   backup_warning: 1,
+  /** An account erasure still open 24 hours after the request; deletion_tasks.last_error_code says which store (WP-25). */
+  erasure_overdue: 1,
+  /** An erasure found rows still keyed to the deleted user id: a table the cascade does not reach (WP-25). */
+  erasure_rows_remain: 1,
+  /** R2 prefixes of no live user, deleted by the orphan-upload reconciler (WP-25). */
+  orphan_uploads: 1,
 } as const;
 export type Signal = keyof typeof SIGNALS;
 

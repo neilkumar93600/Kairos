@@ -1,5 +1,6 @@
 import type { Job, RepeatOptions } from "bullmq";
 import { processBackupCheck } from "./backup-check";
+import { processErasure, processOrphanUploads } from "./erasure";
 import { processJournalReconcile, processMoneyJournal } from "./money-journal";
 import { processPartitions } from "./partitions";
 import type { QueueName } from "./queues";
@@ -52,6 +53,9 @@ export const SCHEDULES: Schedule[] = [
   { queue: "maintenance", id: "journal-reconcile", repeat: { pattern: "40 * * * *", tz: "UTC" }, run: () => processJournalReconcile() },
   // The backup-age alert and the manifest warnings of the pgbackup cron service's dumps (WP-13, ops-65).
   { queue: "maintenance", id: "backup-check", repeat: { pattern: "20 * * * *", tz: "UTC" }, run: () => processBackupCheck() },
+  // Account erasure's stores outside Postgres, and the page for a task open 24 hours (WP-25, 02-database 16.2).
+  { queue: "maintenance", id: "erasure", repeat: { every: MINUTE }, run: () => processErasure() },
+  { queue: "maintenance", id: "orphan-uploads", repeat: { pattern: "50 3 * * *", tz: "UTC" }, run: () => processOrphanUploads() },
 ];
 
 /** The maintenance queue's processor: the scheduler id is the job name. */
