@@ -68,8 +68,8 @@ describe("GET /api/auth-providers", () => {
     expect(res.body).toEqual({ providers: ["email"] });
   });
 
-  // Static per deploy and fetched on every login page view; the shared API limiter keys on the Vercel egress IP.
-  it("is cacheable, so login page views do not spend the shared API budget", async () => {
+  // Static per deploy and fetched on every login page view, which would otherwise spend the anonymous per-address limit.
+  it("is cacheable, so login page views do not spend the anonymous budget", async () => {
     const app = createApp({ auth: signedOut, corsOrigins: [], healthChecks: {} });
     const res = await request(app).get("/api/auth-providers");
     expect(res.headers["cache-control"]).toBe("public, max-age=300");
