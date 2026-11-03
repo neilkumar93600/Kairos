@@ -8,6 +8,7 @@ import request from "supertest";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
 import type { SessionUser } from "../src/lib/auth";
+import { fakeBrowser } from "./helpers/fake-browser";
 import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from "./helpers/test-db";
 
 /**
@@ -158,27 +159,6 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
     afterEach(async () => {
       await closeBrowser();
     });
-
-    /**
-     * A stand-in for Chromium: CI has Postgres but no browser. The real page behaviour is covered by
-     * cloud-apply.browser.test.ts; this checks what reaches the database for a given page outcome.
-     */
-    function fakeBrowser(opts: { frames?: string[]; fill?: () => Promise<unknown> }) {
-      const fill = vi.fn(opts.fill ?? (async () => ({})));
-      const page = {
-        on: () => {},
-        url: () => "https://job-boards.greenhouse.io/x/jobs/1",
-        title: async () => "Apply",
-        $: async () => null,
-        goto: async () => ({ status: () => 200 }),
-        waitForLoadState: async () => {},
-        frames: () => (opts.frames ?? []).map((u) => ({ url: () => u, frameElement: async () => ({ evaluate: async () => true }) })),
-        evaluate: async (fn: unknown) => (typeof fn === "string" ? undefined : fill()),
-      };
-      const context = { route: async () => {}, on: () => {}, newPage: async () => page, close: async () => {} };
-      vi.spyOn(chromium, "launch").mockResolvedValue({ newContext: async () => context, on: () => {}, close: async () => {} } as never);
-      return fill;
-    }
 
     async function approvedCloudRow() {
       const userId = await signIn(OWNER);
