@@ -7,6 +7,8 @@
  *   SMOKE_BASE_URL=http://localhost:4000 SMOKE_WEB_ORIGIN=http://localhost:3000 SMOKE_MAIL_SINK=<path> node scripts/smoke.mjs
  * Staging through the Vercel domain (real mail: type the code when asked; +smoke-<time> is added to the address):
  *   SMOKE_BASE_URL=https://<vercel domain> SMOKE_EMAIL=<an inbox you can read> node scripts/smoke.mjs
+ * Staging gate (.github/workflows/staging-gate.yml): SMOKE_POSTMARK_TOKEN=<staging Postmark server token> reads the code
+ * from Postmark's record of the sent message instead; SMOKE_VERCEL_BYPASS passes Vercel's deployment protection.
  *
  * Every request carries x-kairos-probe: <id>. Search the api logs for that id to read the real proxy header chain (spike S-B1).
  */
@@ -18,6 +20,8 @@ const BASE = (process.env.SMOKE_BASE_URL ?? "http://localhost:4000").replace(/\/
 /** The origin the browser would send; Better Auth checks it against WEB_ORIGIN. Through Vercel it equals BASE. */
 const WEB = process.env.SMOKE_WEB_ORIGIN ?? new URL(BASE).origin;
 const SINK = process.env.SMOKE_MAIL_SINK;
+const POSTMARK = process.env.SMOKE_POSTMARK_TOKEN;
+const BYPASS = process.env.SMOKE_VERCEL_BYPASS;
 const stamp = Date.now().toString(36);
 const EMAIL = process.env.SMOKE_EMAIL ? process.env.SMOKE_EMAIL.replace("@", `+smoke-${stamp}@`) : `smoke-${stamp}@example.com`;
 const PASSWORD = randomBytes(18).toString("base64url");
@@ -27,6 +31,7 @@ const jar = new Map();
 
 async function call(method, path, body) {
   const headers = { origin: WEB, "x-kairos-probe": PROBE };
+  if (BYPASS) headers["x-vercel-protection-bypass"] = BYPASS;
   if (body) headers["content-type"] = "application/json";
   if (jar.size) headers.cookie = [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
   const res = await fetch(`${BASE}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined, redirect: "manual" });
@@ -64,7 +69,26 @@ async function cleanup() {
   }
 }
 
+/** The code from Postmark's outbound record (a sandbox server records the message without delivering it). */
+async function postmarkCode() {
+  const pm = async (path) => {
+    const res = await fetch(`https://api.postmarkapp.com${path}`, { headers: { accept: "application/json", "x-postmark-server-token": POSTMARK } });
+    if (!res.ok) throw new Error(`Postmark ${path.split("?")[0]}: ${res.status}`);
+    return res.json();
+  };
+  for (let i = 0; i < 30; i++) {
+    const { Messages = [] } = await pm(`/messages/outbound?count=1&offset=0&tag=otp-email-verification&recipient=${encodeURIComponent(EMAIL)}`);
+    if (Messages[0]) {
+      const code = (await pm(`/messages/outbound/${Messages[0].MessageID}/details`)).TextBody?.match(/\b(\d{6})\b/)?.[1];
+      if (code) return code;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  throw new Error(`no verification code for ${EMAIL} in Postmark`);
+}
+
 async function verificationCode() {
+  if (!SINK && POSTMARK) return postmarkCode();
   if (!SINK) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const code = (await rl.question(`Code sent to ${EMAIL}: `)).trim();
