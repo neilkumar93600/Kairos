@@ -27,6 +27,7 @@ import { AI_FEATURES } from "./plans";
 import {
   SUGGESTION_SCOPES,
   accentSchema,
+  httpUrl,
   jobFitSchema,
   resumeDetailSchema,
   resumeInputSchema,
@@ -261,13 +262,13 @@ export const listTrackerResponseSchema = z.object({ items: z.array(trackerItemSc
 
 export const createTrackerItemRequestSchema = z.union([
   z.object({ matchId: id }),
-  z.object({ url: z.url().max(500) }),
+  z.object({ url: httpUrl(500) }),
   z.object({
     manual: z.object({
       title: z.string().trim().min(1).max(200),
       company: z.string().trim().min(1).max(200),
       location: z.string().trim().max(200).optional(),
-      url: z.url().max(500).optional(),
+      url: httpUrl(500).optional(),
     }),
   }),
 ]);
@@ -346,7 +347,7 @@ export const contactInputSchema = z.object({
   company: z.string().trim().max(200).optional(),
   email: z.email().max(200).nullable().optional(),
   phone: z.string().trim().max(40).nullable().optional(),
-  linkedinUrl: z.url().max(300).nullable().optional(),
+  linkedinUrl: httpUrl(300).nullable().optional(),
   /** Private (rule 12): no agent reads it, nothing sends it. */
   notes: z.string().max(5000).optional(),
   jobIds: z.array(id).max(100).optional(),

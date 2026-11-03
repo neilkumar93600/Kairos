@@ -11,6 +11,9 @@ import {
   WORK_AUTHORIZATIONS,
 } from "./types";
 
+/** A web address a person typed: http(s) only, so a javascript: or data: URL is never stored (api-auth-security-33). */
+export const httpUrl = (max: number) => z.url({ protocol: /^https?$/ }).max(max);
+
 /** Search settings the fit gate enforces before any model call. */
 export const preferencesSchema = z.object({
   roles: z.array(z.string().trim().min(2).max(80)).min(1).max(10),
@@ -113,12 +116,24 @@ export const resumeSectionSchema = z.object({
 });
 export type ResumeSection = z.infer<typeof resumeSectionSchema>;
 
+/**
+ * A resume link: a bare host ("github.com/ada") or http(s). Any other scheme (javascript:, data:, mailto:) is refused,
+ * read as a browser would read it, with spaces and control characters removed. "host:port" has a dot, so it passes.
+ */
+const resumeLinkSchema = z
+  .string()
+  .max(300)
+  .refine((link) => {
+    const scheme = link.replace(/[^\x21-\x7e]/g, "").match(/^([a-z][a-z0-9+.-]*):/i)?.[1];
+    return !scheme || scheme.includes(".") || /^https?$/i.test(scheme);
+  }, "Links must be web addresses (http or https)");
+
 export const resumeContactSchema = z.object({
   name: z.string().max(120),
   email: z.string().max(200),
   phone: z.string().max(40),
   location: z.string().max(120),
-  links: z.array(z.string().max(300)).max(6),
+  links: z.array(resumeLinkSchema).max(6),
 });
 export type ResumeContact = z.infer<typeof resumeContactSchema>;
 
@@ -234,7 +249,7 @@ export const jobFitSchema = z.object({
 });
 export type JobFit = z.infer<typeof jobFitSchema>;
 
-export const importJobSchema = z.object({ url: z.url().max(500) });
+export const importJobSchema = z.object({ url: httpUrl(500) });
 export type ImportJobInput = z.infer<typeof importJobSchema>;
 
 export const draftRequestSchema = z.discriminatedUnion("kind", [

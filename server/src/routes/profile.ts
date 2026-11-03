@@ -2,7 +2,7 @@ import { Router } from "express";
 import { and, eq, exists, not, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { z } from "zod";
-import { FACT_KINDS, getPlan, preferencesSchema } from "@auto-career/shared";
+import { FACT_KINDS, getPlan, httpUrl, preferencesSchema } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, facts, profiles, resumeProfiles, resumes, savedAnswers } from "../db/schema";
 import { asActor } from "../lib/actor";
@@ -17,7 +17,7 @@ import { planFor } from "../services/submissions";
 export const profileRouter = Router();
 
 /** Links are printed on resumes and rendered as hrefs: http(s) only, as profiles_urls_ck also insists. */
-const link = z.url({ protocol: /^https?$/ }).max(300).nullable();
+const link = httpUrl(300).nullable();
 const contactSchema = z.object({
   phone: z.string().max(40).nullable(),
   city: z.string().max(120).nullable(),
