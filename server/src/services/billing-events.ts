@@ -9,6 +9,19 @@ import { creditsPerInvoice, planForPriceId } from "./stripe";
  */
 export const PAID_STATUSES: readonly string[] = ["active", "trialing", "past_due"];
 
+/** How long a failed renewal keeps the paid plan (D-17), counted from subscriptions.past_due_since. */
+export const PAST_DUE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * The plan a user may use right now. The stored plan stays the subscribed one while past_due, so a card fixed on
+ * day 8 restores it at once; the gates read this instead. No anchor counts as expired, like SQL effective_plan().
+ */
+export function effectivePlan(row: { plan: PlanId; status: string; pastDueSince?: Date | null }, now = new Date()): PlanId {
+  if (row.status === "active" || row.status === "trialing") return row.plan;
+  if (row.status === "past_due" && row.pastDueSince && now.getTime() < row.pastDueSince.getTime() + PAST_DUE_GRACE_MS) return row.plan;
+  return "free";
+}
+
 export interface SubscriptionRow {
   userId: string;
   values: {

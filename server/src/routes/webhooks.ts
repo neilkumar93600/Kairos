@@ -1,6 +1,6 @@
 import express, { Router, type NextFunction, type Request, type Response } from "express";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client";
 import { creditLedger, inboundEmails, profiles, stripeEvents, subscriptions } from "../db/schema";
@@ -35,9 +35,11 @@ webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1
         // An unpaid state only overwrites the row when it is about the subscription the row tracks (or none yet),
         // so a late event for an old, cancelled subscription cannot drop a user who has since subscribed again.
         const tracksThis = or(isNull(subscriptions.stripeSubscriptionId), eq(subscriptions.stripeSubscriptionId, values.stripeSubscriptionId));
+        // The grace anchor is set on entering past_due and kept while it lasts, so repeated events never extend it.
+        const pastDueSince = values.status === "past_due" ? sql`coalesce(${subscriptions.pastDueSince}, now())` : null;
         await tx
           .update(subscriptions)
-          .set({ ...values, updatedAt: new Date() })
+          .set({ ...values, pastDueSince, updatedAt: new Date() })
           .where(and(eq(subscriptions.userId, userId), values.plan === "free" ? tracksThis : undefined));
       },
       grantCredits: async ({ userId, delta, stripeInvoiceId }) => {

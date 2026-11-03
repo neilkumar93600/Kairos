@@ -115,6 +115,23 @@ describe.skipIf(!hasTestDb)("POST /api/webhooks/stripe against Postgres", () => 
     expect((await subscriptionRowFor(userId))?.plan).toBe("free");
   });
 
+  it("anchors the past_due grace on entry, keeps the anchor while past_due and clears it on recovery", async () => {
+    const userId = await seedUser(db);
+    const retrieve = vi.spyOn(stripeClient.subscriptions, "retrieve");
+    retrieve.mockResolvedValueOnce(subscription("sub_1", "past_due", userId) as never);
+    expect((await send("evt_pd_1", "customer.subscription.updated", { id: "sub_1" })).status).toBe(200);
+    const anchor = (await subscriptionRowFor(userId))?.pastDueSince;
+    expect(anchor).toBeInstanceOf(Date);
+
+    retrieve.mockResolvedValueOnce(subscription("sub_1", "past_due", userId) as never);
+    expect((await send("evt_pd_2", "customer.subscription.updated", { id: "sub_1" })).status).toBe(200);
+    expect((await subscriptionRowFor(userId))?.pastDueSince).toEqual(anchor);
+
+    retrieve.mockResolvedValueOnce(subscription("sub_1", "active", userId) as never);
+    expect((await send("evt_pd_3", "customer.subscription.updated", { id: "sub_1" })).status).toBe(200);
+    expect((await subscriptionRowFor(userId))?.pastDueSince).toBeNull();
+  });
+
   it("grants credits once per invoice even when two different events carry it", async () => {
     const userId = await seedUser(db);
     const invoice = {

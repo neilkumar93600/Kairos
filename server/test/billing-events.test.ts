@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type Stripe from "stripe";
+import { getPlan } from "@auto-career/shared";
 import type { Db } from "../src/db/client";
 import {
   cancelBillingForDeletedUser,
+  effectivePlan,
   invoiceGrant,
   processStripeEvent,
   subscriptionRow,
@@ -103,15 +105,47 @@ describe("processStripeEvent", () => {
 });
 
 describe("planFor", () => {
-  const dbWith = (row: { plan: string; status: string }) =>
+  const dbWith = (row: { plan: string; status: string; pastDueSince?: Date | null }) =>
     ({ select: () => ({ from: () => ({ where: async () => [row] }) }) }) as unknown as Db;
+  const DAY = 86_400_000;
 
   it("keeps the paid plan while past_due", async () => {
-    await expect(planFor(dbWith({ plan: "pro", status: "past_due" }), "u1")).resolves.toBe("pro");
+    await expect(planFor(dbWith({ plan: "pro", status: "past_due", pastDueSince: new Date(Date.now() - DAY) }), "u1")).resolves.toBe("pro");
+  });
+
+  it("drops to free once past_due has lasted 7 days", async () => {
+    await expect(planFor(dbWith({ plan: "pro", status: "past_due", pastDueSince: new Date(Date.now() - 8 * DAY) }), "u1")).resolves.toBe("free");
   });
 
   it("falls back to free when canceled", async () => {
     await expect(planFor(dbWith({ plan: "pro", status: "canceled" }), "u1")).resolves.toBe("free");
+  });
+});
+
+// Shared vectors with the SQL effective_plan() of _db/billing.md 3.1 (T-9) when that function lands.
+describe("effectivePlan", () => {
+  const now = new Date("2026-11-10T00:00:00Z");
+  const daysAgo = (d: number) => new Date(now.getTime() - d * 86_400_000);
+
+  it.each([
+    ["active", null, "pro"],
+    ["trialing", null, "pro"],
+    ["past_due", 0, "pro"],
+    ["past_due", 6, "pro"],
+    ["past_due", 8, "free"],
+    ["past_due", null, "free"],
+    ["unpaid", null, "free"],
+    ["canceled", null, "free"],
+    ["incomplete", null, "free"],
+    ["incomplete_expired", null, "free"],
+    ["paused", null, "free"],
+  ] as const)("%s, past due for %s days, is %s", (status, days, expected) => {
+    expect(effectivePlan({ plan: "pro", status, pastDueSince: days === null ? null : daysAgo(days) }, now)).toBe(expected);
+  });
+
+  it("a past_due user loses the cloud applier after 7 days", () => {
+    expect(getPlan(effectivePlan({ plan: "pro", status: "past_due", pastDueSince: daysAgo(6) }, now)).cloudApplier).toBe(true);
+    expect(getPlan(effectivePlan({ plan: "pro", status: "past_due", pastDueSince: daysAgo(8) }, now)).cloudApplier).toBe(false);
   });
 });
 
