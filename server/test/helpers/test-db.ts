@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
-import postgres from "postgres";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
+import pg from "pg";
 import type { Db } from "../../src/db/client";
 import * as schema from "../../src/db/schema";
 
@@ -21,7 +21,7 @@ if (process.env.REQUIRE_TEST_DB && !hasTestDb) {
 }
 
 const MIGRATIONS = fileURLToPath(new URL("../../drizzle", import.meta.url));
-const clients = new Map<string, { db: Db; client: postgres.Sql }>();
+const clients = new Map<string, { db: Db; pool: pg.Pool }>();
 
 /**
  * URL of one test file's own database, derived from the database named in TEST_DATABASE_URL
@@ -39,26 +39,27 @@ export async function testDb(name: string): Promise<Db> {
   const cached = clients.get(name);
   if (cached) return cached.db;
   const dbName = new URL(testDbUrl(name)).pathname.slice(1);
-  const admin = postgres(process.env.TEST_DATABASE_URL ?? "", { max: 1, onnotice: () => {} });
+  const admin = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
+  await admin.connect();
   try {
-    const found = await admin`select 1 from pg_database where datname = ${dbName}`;
+    const found = await admin.query("select 1 from pg_database where datname = $1", [dbName]);
     // 42P04 duplicate_database: another process created it between the check and the create.
-    if (found.length === 0) await admin.unsafe(`create database "${dbName}"`).catch((err: { code?: string }) => {
+    if (found.rowCount === 0) await admin.query(`create database "${dbName}"`).catch((err: { code?: string }) => {
       if (err.code !== "42P04") throw err;
     });
   } finally {
     await admin.end();
   }
-  const client = postgres(testDbUrl(name), { max: 5, onnotice: () => {} });
-  const db = drizzle(client, { schema, casing: "snake_case" });
+  const pool = new pg.Pool({ connectionString: testDbUrl(name), max: 5 });
+  const db = drizzle(pool, { schema, casing: "snake_case" });
   await migrate(db, { migrationsFolder: MIGRATIONS });
-  clients.set(name, { db, client });
+  clients.set(name, { db, pool });
   return db;
 }
 
 /** Empties every table in the public schema. Drizzle's migration bookkeeping lives in the drizzle schema and is kept. */
 export async function resetDb(db: Db): Promise<void> {
-  const rows = (await db.execute(sql`select tablename from pg_tables where schemaname = 'public'`)) as unknown as { tablename: string }[];
+  const { rows } = await db.execute<{ tablename: string }>(sql`select tablename from pg_tables where schemaname = 'public'`);
   if (rows.length === 0) return;
   await db.execute(sql.raw(`truncate ${rows.map((r) => `"${r.tablename}"`).join(", ")} restart identity cascade`));
 }
@@ -73,6 +74,6 @@ export async function seedUser(db: Db, opts: { id?: string; credits?: number } =
 }
 
 export async function closeTestDbs(): Promise<void> {
-  await Promise.all([...clients.values()].map(({ client }) => client.end({ timeout: 5 })));
+  await Promise.all([...clients.values()].map(({ pool }) => pool.end()));
   clients.clear();
 }

@@ -18,12 +18,12 @@ export async function hit(key: string, windowMs: number): Promise<{ count: numbe
   // ponytail: expired rows are swept on about one hit in a thousand; move to rate_limits_purge() on the worker's
   // housekeeping schedule once that exists (02-database 0004).
   if (Math.random() < 0.001) void db().execute(sql`delete from rate_limits where expire <= ${now}::bigint`).catch(() => {});
-  const rows = (await db().execute(sql`
+  const { rows } = await db().execute<{ points: number; expire: string }>(sql`
     insert into rate_limits (key, points, expire) values (${key}, 1, ${now + windowMs}::bigint)
     on conflict (key) do update set
       points = case when rate_limits.expire <= ${now}::bigint then 1 else rate_limits.points + 1 end,
       expire = case when rate_limits.expire <= ${now}::bigint then excluded.expire else rate_limits.expire end
-    returning points, expire`)) as unknown as { points: number; expire: string }[];
+    returning points, expire`);
   return { count: rows[0]!.points, resetAt: new Date(Number(rows[0]!.expire)) };
 }
 

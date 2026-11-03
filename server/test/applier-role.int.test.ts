@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq, sql } from "drizzle-orm";
-import postgres from "postgres";
+import pg from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "../src/db/client";
 import { fakeBrowser } from "./helpers/fake-browser";
@@ -32,29 +32,34 @@ const { closeBrowser, processCloudApply } = await import("../src/jobs/cloud-appl
 
 describe.skipIf(!hasTestDb)("kairos_applier (ops/provision-roles.sql)", () => {
   let admin: Db;
-  let raw: postgres.Sql;
+  let raw: pg.Client;
 
   beforeAll(async () => {
     admin = await testDb("applier_role");
-    raw = postgres(testDbUrl("applier_role"), { max: 1, onnotice: () => {} });
+    raw = new pg.Client({ connectionString: testDbUrl("applier_role") });
+    await raw.connect();
     const ddl = readFileSync(new URL("../../ops/provision-roles.sql", import.meta.url), "utf8").replace(":'applier_password'", `'${PASSWORD}'`);
-    await raw.unsafe(ddl).simple();
+    await raw.query(ddl); // no parameters: the simple protocol, which takes the whole script
   });
   afterEach(async () => {
     await closeBrowser();
   });
   afterAll(async () => {
     await closeDb();
-    await raw?.end({ timeout: 5 });
+    await raw?.end();
     await closeTestDbs();
   });
 
-  /** One statement in its own transaction as the role; a denied one rejects with 42501 insufficient_privilege. */
-  const asApplier = (query: string) =>
-    raw.begin(async (tx) => {
-      await tx`set local role kairos_applier`;
-      return tx.unsafe(query);
-    });
+  /** One statement in its own transaction as the role, rolled back; a denied one rejects with 42501 insufficient_privilege. */
+  const asApplier = async (query: string) => {
+    await raw.query("begin");
+    try {
+      await raw.query("set local role kairos_applier");
+      return await raw.query(query);
+    } finally {
+      await raw.query("rollback");
+    }
+  };
 
   it.each([
     'select id from "user"',
@@ -109,7 +114,7 @@ describe.skipIf(!hasTestDb)("kairos_applier (ops/provision-roles.sql)", () => {
     (await admin.select().from(schema.creditLedger).where(eq(schema.creditLedger.userId, userId))).filter((l) => l.reason === "submission");
 
   it("runs the applier's whole path as kairos_applier: read, claim, plan check, submit, one ledger debit", async () => {
-    const [who] = (await db().execute(sql`select current_user as name`)) as unknown as { name: string }[];
+    const { rows: [who] } = await db().execute<{ name: string }>(sql`select current_user as name`);
     expect(who?.name).toBe("kairos_applier");
     const { userId, id } = await approvedCloudRow("pro");
     fakeBrowser({ fill: async () => ({ outcome: "submitted", filledFields: [{ fieldKey: "first_name", label: "x", value: "y" }] }) });
