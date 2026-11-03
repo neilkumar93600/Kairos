@@ -1,26 +1,78 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import type { Preferences, ResumeInput } from "@auto-career/shared";
 import { user } from "./auth";
 import { factKind } from "./enums";
+import { bytea } from "./platform";
 
-/** One row per user: contact details, search preferences and their reply-forwarding address. */
-export const profiles = pgTable("profiles", {
-  userId: text("user_id")
-    .primaryKey()
-    .references(() => user.id, { onDelete: "cascade" }),
-  phone: text("phone"),
-  city: text("city"),
-  country: text("country"),
-  linkedinUrl: text("linkedin_url"),
-  githubUrl: text("github_url"),
-  portfolioUrl: text("portfolio_url"),
-  preferences: jsonb("preferences").$type<Preferences>(),
-  onboardingStep: text("onboarding_step").notNull().default("resume"),
-  forwardingAddress: text("forwarding_address").notNull().unique(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-}, () => [check("profiles_onboarding_step_ck", sql`onboarding_step IN ('resume','confirm-facts','done')`)]);
+export const FORWARDING_STATES = ["not_started", "awaiting_verification", "verified_pending_first_mail", "active", "stale"] as const;
+export const MAIL_OPT_OUTS = ["digest", "outcome_report", "autopilot_summary", "reminders"] as const;
+
+/**
+ * One row per user: contact details, search preferences, their reply-forwarding address, the offer pause, opt-outs
+ * and version counters (02-database 7.1.2). profiles_guard (migration 0007) owns preferences_version, keeps
+ * onboarding forward-only and the forwarding address fixed. sensitive_answers_enc and normalized_email_hash never
+ * leave the server: routes select the columns they return.
+ */
+export const profiles = pgTable(
+  "profiles",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => user.id, { onDelete: "cascade" }),
+    phone: text("phone"),
+    city: text("city"),
+    country: text("country"),
+    linkedinUrl: text("linkedin_url"),
+    githubUrl: text("github_url"),
+    portfolioUrl: text("portfolio_url"),
+    preferences: jsonb("preferences").$type<Preferences>(),
+    onboardingStep: text("onboarding_step").notNull().default("resume"),
+    forwardingAddress: text("forwarding_address").notNull().unique(),
+    /** Reply-forwarding setup, owned by messaging (16.x). */
+    forwardingState: text("forwarding_state").$type<(typeof FORWARDING_STATES)[number]>().notNull().default("not_started"),
+    /** Set while an offer pause holds this user's sends (approveCore skips them). */
+    applicationsPausedAt: timestamp("applications_paused_at", { withTimezone: true }),
+    /** HMAC of the normalized sign-up address, for the free-grant abuse rule. */
+    normalizedEmailHash: text("normalized_email_hash"),
+    /** EEO, disability, veteran, visa and salary answers, AES-256-GCM (lib/crypto.ts); never sent to a model. */
+    sensitiveAnswersEnc: bytea("sensitive_answers_enc"),
+    timezone: text("timezone").notNull().default("UTC"),
+    preferencesVersion: integer("preferences_version").notNull().default(0),
+    factsVersion: integer("facts_version").notNull().default(0),
+    /** Non-transactional mail kinds the user stopped. */
+    mailOptOut: text("mail_opt_out").array().$type<(typeof MAIL_OPT_OUTS)[number][]>().notNull().default(sql`'{}'::text[]`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("profiles_normalized_email_idx").on(t.normalizedEmailHash).where(sql`${t.normalizedEmailHash} is not null`),
+    check("profiles_onboarding_step_ck", sql`onboarding_step IN ('resume','confirm-facts','done')`),
+    check(
+      "profiles_forwarding_address_ck",
+      sql`forwarding_address = lower(forwarding_address) AND forwarding_address ~ '^[a-z0-9._+-]+@[a-z0-9.-]+\\.[a-z]{2,}$'`,
+    ),
+    check(
+      "profiles_forwarding_state_ck",
+      sql`forwarding_state IN ('not_started','awaiting_verification','verified_pending_first_mail','active','stale')`,
+    ),
+    check("profiles_lengths_ck", sql`char_length(phone) <= 40 AND char_length(city) <= 120 AND char_length(country) <= 120`),
+    check(
+      "profiles_urls_ck",
+      sql`linkedin_url ~* '^https?://[^[:space:]]+$' AND char_length(linkedin_url) <= 300
+        AND github_url ~* '^https?://[^[:space:]]+$' AND char_length(github_url) <= 300
+        AND portfolio_url ~* '^https?://[^[:space:]]+$' AND char_length(portfolio_url) <= 300`,
+    ),
+    check("profiles_email_hash_ck", sql`normalized_email_hash ~ '^[0-9a-f]{64}$'`),
+    check("profiles_sensitive_enc_ck", sql`octet_length(sensitive_answers_enc) BETWEEN 29 AND 16384`),
+    check("profiles_preferences_ck", sql`preferences IS NULL OR preferences_valid(preferences)`),
+    check("profiles_versions_ck", sql`preferences_version >= 0 AND facts_version >= 0`),
+    check(
+      "profiles_mail_opt_out_ck",
+      sql`mail_opt_out <@ ARRAY['digest','outcome_report','autopilot_summary','reminders']::text[] AND cardinality(mail_opt_out) <= 4`,
+    ),
+  ],
+);
 
 /** A base resume. Plans allow 1, 3 or 10 of these. */
 export const resumeProfiles = pgTable(

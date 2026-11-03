@@ -50,6 +50,13 @@
       "when": 1793686780140,
       "tag": "0006_backstops",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793687147393,
+      "tag": "0007_profiles",
+      "breakpoints": true
     }
   ]
 }

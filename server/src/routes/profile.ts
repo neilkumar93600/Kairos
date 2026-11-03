@@ -15,17 +15,35 @@ import { planFor } from "../services/submissions";
 /** Profile, preferences, resumes, facts and saved answers. Mounted at /api/profile. */
 export const profileRouter = Router();
 
+/** Links are printed on resumes and rendered as hrefs: http(s) only, as profiles_urls_ck also insists. */
+const link = z.url({ protocol: /^https?$/ }).max(300).nullable();
 const contactSchema = z.object({
   phone: z.string().max(40).nullable(),
   city: z.string().max(120).nullable(),
   country: z.string().max(120).nullable(),
-  linkedinUrl: z.url().nullable(),
-  githubUrl: z.url().nullable(),
-  portfolioUrl: z.url().nullable(),
+  linkedinUrl: link,
+  githubUrl: link,
+  portfolioUrl: link,
 });
 
+/** The columns a profile response carries (the frozen shape); sensitive_answers_enc and normalized_email_hash never leave. */
+const PROFILE_COLUMNS = {
+  userId: profiles.userId,
+  phone: profiles.phone,
+  city: profiles.city,
+  country: profiles.country,
+  linkedinUrl: profiles.linkedinUrl,
+  githubUrl: profiles.githubUrl,
+  portfolioUrl: profiles.portfolioUrl,
+  preferences: profiles.preferences,
+  onboardingStep: profiles.onboardingStep,
+  forwardingAddress: profiles.forwardingAddress,
+  createdAt: profiles.createdAt,
+  updatedAt: profiles.updatedAt,
+};
+
 profileRouter.get("/", async (req, res) => {
-  const [profile] = await db().select().from(profiles).where(eq(profiles.userId, currentUser(req).id));
+  const [profile] = await db().select(PROFILE_COLUMNS).from(profiles).where(eq(profiles.userId, currentUser(req).id));
   if (!profile) throw notFound("Profile");
   res.json({ profile });
 });
@@ -35,7 +53,7 @@ profileRouter.put("/contact", validateBody(contactSchema), async (req, res) => {
     .update(profiles)
     .set({ ...req.body, updatedAt: new Date() })
     .where(eq(profiles.userId, currentUser(req).id))
-    .returning();
+    .returning(PROFILE_COLUMNS);
   res.json({ profile });
 });
 
@@ -44,7 +62,7 @@ profileRouter.put("/preferences", validateBody(preferencesSchema), async (req, r
     .update(profiles)
     .set({ preferences: req.body, onboardingStep: "done", updatedAt: new Date() })
     .where(eq(profiles.userId, currentUser(req).id))
-    .returning();
+    .returning({ preferences: profiles.preferences });
   res.json({ preferences: profile?.preferences ?? null });
 });
 

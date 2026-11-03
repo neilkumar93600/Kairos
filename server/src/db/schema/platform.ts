@@ -25,8 +25,8 @@ import { planId } from "./enums";
  * Indexes, checks and partitions are owned by the SQL migration.
  */
 
-/** bytea column; values are digests and hashes, never text. */
-const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+/** bytea column; values are digests, hashes or ciphertext, never text. */
+export const bytea = customType<{ data: Buffer; driverData: Buffer }>({
   dataType() {
     return "bytea";
   },

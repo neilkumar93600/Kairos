@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { Preferences } from "@auto-career/shared";
 import type { Db } from "../src/db/client";
 import * as schema from "../src/db/schema";
 import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb } from "./helpers/test-db";
@@ -126,15 +127,16 @@ describe.skipIf(!hasTestDb)("database backstops", () => {
     });
   });
 
+  /** One write as `actor` ('' is a worker: no actor); the test pool itself writes as 'ops'. */
+  const as = (actor: string, run: (tx: Parameters<Parameters<Db["transaction"]>[0]>[0]) => Promise<unknown>) =>
+    failure(() =>
+      db.transaction(async (tx) => {
+        await tx.execute(sql`select set_config('kairos.actor', ${actor}, true)`);
+        await run(tx);
+      }),
+    );
+
   describe("facts_guard and kairos.actor (INV-2)", () => {
-    /** One write as `actor` ('' is a worker: no actor); the test pool itself writes as 'ops'. */
-    const as = (actor: string, run: (tx: Parameters<Parameters<Db["transaction"]>[0]>[0]) => Promise<unknown>) =>
-      failure(() =>
-        db.transaction(async (tx) => {
-          await tx.execute(sql`select set_config('kairos.actor', ${actor}, true)`);
-          await run(tx);
-        }),
-      );
     const factOf = async (id: string) => (await db.select().from(schema.facts).where(sql`${schema.facts.id} = ${id}`))[0]!;
 
     it("refuses a worker UPDATE that confirms a fact or edits its text, and lets the user do both", async () => {
@@ -169,10 +171,98 @@ describe.skipIf(!hasTestDb)("database backstops", () => {
     ["subscriptions.status", sql`update subscriptions set status = 'bogus'`],
     ["subscriptions past_due without its anchor", sql`update subscriptions set status = 'past_due', past_due_since = null`],
     ["profiles.onboarding_step", sql`update profiles set onboarding_step = 'skipped'`],
+    ["profiles.forwarding_state", sql`update profiles set forwarding_state = 'broken'`],
+    ["profiles.mail_opt_out", sql`update profiles set mail_opt_out = '{marketing}'`],
   ])("names a CHECK on the closed set %s (database-98)", async (_, statement) => {
     const userId = await seedUser(db);
     await application(userId);
     await db.insert(schema.profiles).values({ userId, forwardingAddress: `${userId}@inbound.test` });
     expect(await failure(() => db.execute(statement))).toBe("23514");
+  });
+
+  describe("profiles: column checks and profiles_guard (database-31, 32)", () => {
+    async function profile() {
+      const userId = await seedUser(db);
+      await db.insert(schema.profiles).values({ userId, forwardingAddress: `u-${userId.slice(0, 8)}-0a1b2c3d@replies.kairos.app` });
+      return userId;
+    }
+    const profileOf = async (userId: string) => (await db.select().from(schema.profiles).where(sql`${schema.profiles.userId} = ${userId}`))[0]!;
+    const update = (userId: string, set: Partial<typeof schema.profiles.$inferInsert>) =>
+      failure(() => db.update(schema.profiles).set(set).where(sql`${schema.profiles.userId} = ${userId}`));
+    const prefs: Preferences = {
+      roles: ["Backend engineer"],
+      seniority: ["mid"],
+      locations: [],
+      remoteOk: true,
+      workAuthorization: "citizen_or_pr",
+      salaryFloorUsd: null,
+      excludedCompanies: [],
+      excludedKeywords: [],
+      fitThreshold: 75,
+      maxApplicationsPerCompanyPer30Days: 2,
+    };
+
+    it("defaults the new columns", async () => {
+      const userId = await profile();
+      expect(await profileOf(userId)).toMatchObject({
+        forwardingState: "not_started",
+        timezone: "UTC",
+        preferencesVersion: 0,
+        factsVersion: 0,
+        mailOptOut: [],
+        applicationsPausedAt: null,
+      });
+    });
+
+    it("bumps preferences_version on a real change only, and keeps onboarding forward-only", async () => {
+      const userId = await profile();
+      expect(await update(userId, { preferences: prefs, onboardingStep: "done" })).toBe("ok");
+      expect(await update(userId, { preferences: prefs })).toBe("ok");
+      expect(await update(userId, { onboardingStep: "confirm-facts" })).toBe("ok");
+      expect(await profileOf(userId)).toMatchObject({ preferencesVersion: 1, onboardingStep: "done" });
+    });
+
+    it("refuses preferences the fit gate cannot honour, a non-http link and an unknown time zone", async () => {
+      const userId = await profile();
+      expect(await update(userId, { preferences: { ...prefs, fitThreshold: 10 } })).toBe("23514");
+      expect(await update(userId, { preferences: { ...prefs, roles: [] } })).toBe("23514");
+      expect(await update(userId, { linkedinUrl: "javascript:alert(1)" })).toBe("23514");
+      expect(await update(userId, { linkedinUrl: "https://www.linkedin.com/in/someone" })).toBe("ok");
+      expect(await update(userId, { timezone: "Mars/Olympus" })).toBe("22023");
+      expect(await update(userId, { timezone: "Asia/Kolkata" })).toBe("ok");
+      expect(await update(userId, { sensitiveAnswersEnc: Buffer.alloc(10) })).toBe("23514");
+    });
+
+    it("keeps the forwarding address fixed unless an operator changes it", async () => {
+      const userId = await profile();
+      const change = (tx: Parameters<Parameters<Db["transaction"]>[0]>[0]) =>
+        tx.update(schema.profiles).set({ forwardingAddress: "other@replies.kairos.app" }).where(sql`${schema.profiles.userId} = ${userId}`);
+      expect(await as("user", change)).toBe("23514");
+      expect(await as("ops", change)).toBe("ok");
+    });
+  });
+
+  describe("same-owner triggers (database-40)", () => {
+    it("refuses a fact or a resume that points at another user's resume profile", async () => {
+      const mine = await seedUser(db);
+      const theirs = await seedUser(db);
+      const [slot] = await db.insert(schema.resumeProfiles).values({ userId: theirs, name: "Theirs", sourceText: "x" }).returning();
+      expect(await failure(() => db.insert(schema.facts).values({ userId: mine, resumeProfileId: slot!.id, kind: "skill", text: "Stolen" }))).toBe(
+        "23514",
+      );
+      expect(await failure(() => db.insert(schema.resumes).values({ userId: mine, resumeProfileId: slot!.id, document: {} as never }))).toBe("23514");
+      expect(await failure(() => db.insert(schema.facts).values({ userId: theirs, resumeProfileId: slot!.id, kind: "skill", text: "Theirs" }))).toBe("ok");
+    });
+
+    it("refuses an application on another user's match", async () => {
+      const mine = await seedUser(db);
+      const theirs = await seedUser(db);
+      const appId = await application(theirs);
+      const [row] = await db.select({ jobId: schema.applications.jobId }).from(schema.applications).where(sql`${schema.applications.id} = ${appId}`);
+      const jobId = row!.jobId;
+      const [match] = await db.insert(schema.matches).values({ userId: theirs, jobId, passedFilters: true }).returning();
+      expect(await failure(() => db.insert(schema.applications).values({ userId: mine, jobId, matchId: match!.id }))).toBe("23514");
+      expect(await failure(() => db.update(schema.applications).set({ matchId: match!.id }).where(sql`${schema.applications.id} = ${appId}`))).toBe("ok");
+    });
   });
 });
