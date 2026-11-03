@@ -48,6 +48,13 @@ describe("job schedules", () => {
     expect(byId["backup-check"]).toMatchObject({ queue: "maintenance", repeat: { pattern: "20 * * * *", tz: "UTC" } });
   });
 
+  it("queue gauges every minute, alerts every 5, invariants hourly and nightly (WP-27)", () => {
+    expect(byId["metrics-sample"]).toMatchObject({ queue: "maintenance", repeat: { every: 60_000 } });
+    expect(byId["alerts"]).toMatchObject({ queue: "maintenance", repeat: { pattern: "*/5 * * * *", tz: "UTC" } });
+    expect(byId["invariants-hourly"]).toMatchObject({ queue: "maintenance", repeat: { pattern: "5 * * * *", tz: "UTC" } });
+    expect(byId["invariants-nightly"]).toMatchObject({ queue: "maintenance", repeat: { pattern: "45 3 * * *", tz: "UTC" } });
+  });
+
   it("an unknown maintenance job fails instead of passing silently", async () => {
     await expect(processMaintenance({ name: "nope" } as never)).rejects.toThrow(/nope/);
   });

@@ -18,7 +18,7 @@ vi.mock("../src/services/job-import", async (orig) => ({ ...(await orig<typeof i
 const { createApp } = await import("../src/app");
 const { closeDb } = await import("../src/db/client");
 const { aiUsage } = await import("../src/db/schema/platform");
-const { consumeAllowance, refundAllowance } = await import("../src/services/allowance");
+const { consumeAllowance, refundAllowance, metered } = await import("../src/services/allowance");
 
 const posting = {
   externalId: "4012345",
@@ -54,6 +54,20 @@ describe.skipIf(!hasTestDb)("daily AI allowance against Postgres", () => {
   const used = async (feature: string) =>
     (await tdb.select({ used: aiUsage.used }).from(aiUsage).where(and(eq(aiUsage.userId, userId), eq(aiUsage.feature, feature))))[0]?.used ?? 0;
 
+  it("gives the unit back when the deadline already answered 503, and does not throw on the late header", async () => {
+    const res = { headersSent: true, locals: {}, setHeader: () => { throw new Error("ERR_HTTP_HEADERS_SENT"); } } as never;
+    await metered(res, { userId, plan: "free", feature: "resumeSuggestions" }, async () => "late output");
+    expect(await used("resumeSuggestions")).toBe(0);
+  });
+
+  it("refunds a failure that follows an aborted deadline even when the error is not refundable", async () => {
+    const aborted = new AbortController();
+    aborted.abort();
+    const res = { headersSent: false, locals: { deadline: aborted.signal }, setHeader: () => {} } as never;
+    await expect(metered(res, { userId, plan: "free", feature: "resumeSuggestions" }, async () => { throw new Error("model reply refused after abort"); })).rejects.toThrow();
+    expect(await used("resumeSuggestions")).toBe(0);
+  });
+
   it("takes units up to the plan limit, then answers 429 daily_allowance without moving the counter", async () => {
     for (let i = 0; i < 10; i++) await consumeAllowance({ userId, plan: "free", feature: "resumeSuggestions" });
     const err = await consumeAllowance({ userId, plan: "free", feature: "resumeSuggestions" }).catch((e: unknown) => e);
@@ -88,7 +102,7 @@ describe.skipIf(!hasTestDb)("daily AI allowance against Postgres", () => {
   describe("a scripted Free account through two api instances", () => {
     const app = () => {
       const user = { id: userId, email: `${userId}@test.local`, name: "Test User", emailVerified: true };
-      return createApp({ auth: { handler: async () => new Response(null, { status: 404 }), getSession: async () => ({ user, sessionId: "s" }) }, corsOrigins: [], healthChecks: {} });
+      return createApp({ auth: { handler: async () => new Response(null, { status: 404 }), getSession: async () => ({ user, sessionId: "s", createdAt: new Date() }) }, corsOrigins: [], healthChecks: {} });
     };
 
     it("stops at the jobImports allowance with 429 daily_allowance, and every success carries Kairos-Allowance", async () => {

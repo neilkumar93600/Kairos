@@ -9,7 +9,7 @@ A PITR restore never touches the source service: Railway creates a sibling `post
 A restored database can show an application as `approved` that the employer already received. On it, the worker's `reconcile-apply` re-queues every approved cloud application within 2 minutes and the extension can claim it again. So nothing may run against the restored database until step 5 is done.
 
 1. Declare the incident ([incident.md](incident.md), SEV1 when money or sends are involved). Write times down in UTC as you go.
-2. If the database still answers: set `CLOUD_APPLIER_OPEN=0` and `PAUSE_SCORING=1` on the api and worker and redeploy, so the old database stops changing while you work. (The `ops_flags` switches of 06-infrastructure 5.6 arrive with WP-27.)
+2. If the database still answers: set the admin flags `pause_cloud_apply`, `pause_scoring` and `approvals_frozen` (they take effect within 10 s), and also `CLOUD_APPLIER_OPEN=0` and `PAUSE_SCORING=1` on the api and worker with a redeploy, so the old database stops changing while you work.
 3. Do not point any service at the sibling before step 5.
 
 ## 2. Choose the restore point (10 minutes)
@@ -62,6 +62,18 @@ npx tsx scripts/journal-replay.ts --since 2026-11-03T14:02:00Z --apply
 
 **If the damage itself wrote ledger rows** (a bad grant loop), add `--until <restore point>`: the journal would otherwise put the bad rows back.
 
+## 5b. Replay the tombstones (5 minutes, before any traffic)
+
+A restore to a point before an account deletion brings that account back, sign-in included. Erase it again before the sibling serves anyone, with the tombstones bucket and token exported like the backups ones:
+
+```bash
+export RESTORE_DATABASE_URL="$RESTORED_URL"
+npx tsx scripts/replay-tombstones.ts            # dry run: counts only
+npx tsx scripts/replay-tombstones.ts --apply
+```
+
+`usersErasedAgain`: accounts the restore resurrected, erased again; their deletion tasks are recreated and the worker finishes Stripe, R2 and llm_calls after the cut-over (already-done stores are no-ops). `erasedEmailsRestored`: erased addresses put back, so none of them gets a second free grant. It is idempotent: a second run reports zeros.
+
 ## 6. Protect the sibling (5 minutes)
 
 ```bash
@@ -79,7 +91,7 @@ Until its first base backup completes there is no PITR, so start an extra dump a
 
 ## 8. After the cut-over (30 minutes, then 1 hour of watching)
 
-1. Tombstones: replay deleted users (`scripts/replay-tombstones.mjs`, WP-25; until it exists, check the deletion log by hand: a user deleted after the restore point is back and must be deleted again).
+1. Tombstones were replayed in step 5b. Watch Sentry for `erasure_overdue` over the next day: a recreated deletion task that cannot finish pages.
 2. Resend the Stripe events from step 5. Compare each paying user's plan with Stripe for users with events after the restore point.
 3. Watch Sentry and the worker log for an hour; `journal_gaps_filled` is expected once.
 4. Lift the switches one by one: scoring, then cloud sends (`CLOUD_APPLIER_OPEN`), checking the dashboards between each.
@@ -87,7 +99,7 @@ Until its first base backup completes there is no PITR, so start an extra dump a
 
 ## Drill (before launch, then monthly for 3 months, then quarterly)
 
-On staging: restore to a point 30 minutes ago into a sibling, do steps 4 and 5 against it with `--apply`, time the whole run from step 3, then delete the sibling. Pass: under 2 hours in total and under 60 minutes for step 3; the replay closes every application you sent after the restore point. Record it below.
+On staging: restore to a point 30 minutes ago into a sibling, do steps 4, 5 and 5b against it with `--apply`, time the whole run from step 3, then delete the sibling. Delete a test account between the restore point and the restore, so 5b has one to erase (the WP-25 erasure drill). Pass: under 2 hours in total and under 60 minutes for step 3; the replay closes every application you sent after the restore point; the deleted test account cannot sign in on the sibling and its address gets no free grant. Record it below.
 
 | Date | Environment | Restore point | Step 3 | Total | Problems | By |
 |---|---|---|---|---|---|---|

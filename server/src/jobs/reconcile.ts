@@ -1,9 +1,10 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { applications, creditLedger, inboundEmails, profiles, session, subscriptions, user, verification } from "../db/schema";
+import { applications, creditLedger, erasedEmails, inboundEmails, profiles, session, subscriptions, user, verification } from "../db/schema";
 import { logger } from "../lib/logger";
 import { signal } from "../lib/sentry";
 import { bootstrapUser } from "../services/bootstrap";
+import { archiveLedger } from "../services/erasure";
 import { sweepStuckSubmitting } from "../services/submissions";
 import { redrive } from "./queues";
 
@@ -112,7 +113,9 @@ export async function processBootstrapUsers(): Promise<{ repaired: number }> {
         sql`${user.createdAt} between now() - interval '2 days' and now() - interval '1 minute'`,
         sql`(not exists (select 1 from ${profiles} where ${profiles.userId} = ${user.id})
           or not exists (select 1 from ${subscriptions} where ${subscriptions.userId} = ${user.id})
-          or not exists (select 1 from ${creditLedger} where ${creditLedger.userId} = ${user.id} and ${creditLedger.reason} = 'free_grant'))`,
+          or (not exists (select 1 from ${creditLedger} where ${creditLedger.userId} = ${user.id} and ${creditLedger.reason} = 'free_grant')
+            and not exists (select 1 from ${profiles} join ${erasedEmails} on ${erasedEmails.emailHash} = ${profiles.normalizedEmailHash}
+                             where ${profiles.userId} = ${user.id})))`,
       ),
     )
     .limit(200);
@@ -127,21 +130,28 @@ export async function processBootstrapUsers(): Promise<{ repaired: number }> {
 /**
  * Daily at 03:30 UTC (R-1, R-2). Accounts left unverified for 14 days are deleted with everything that cascades from
  * them, oldest first in batches of 500 until none is left: verification comes before any session (FR-3), so they hold
- * no upload, subscription or Stripe customer, only the sign-up rows and the free grant. Sessions go 7 days after they
- * expire and verification codes after 1. Plain deletes, so two workers delete each row once.
+ * no upload, subscription or Stripe customer, only the sign-up rows and the free grant, which is archived under the
+ * user hash first like any erased ledger (WP-25). Sessions go 7 days after they expire and verification codes after 1.
+ * Locked rows are skipped and deletes are plain, so two workers delete each row once.
  */
 export async function processAuthSweep(): Promise<{ users: number; sessions: number; verifications: number }> {
   let users = 0;
   for (;;) {
-    const oldest = db()
-      .select({ id: user.id })
-      .from(user)
-      .where(and(eq(user.emailVerified, false), sql`${user.createdAt} < now() - interval '14 days'`))
-      .orderBy(asc(user.createdAt))
-      .limit(500);
-    const purged = await db().delete(user).where(inArray(user.id, oldest)).returning({ id: user.id });
-    users += purged.length;
-    if (purged.length < 500) break;
+    const purged = await db().transaction(async (tx) => {
+      const ids = (
+        await tx
+          .select({ id: user.id })
+          .from(user)
+          .where(and(eq(user.emailVerified, false), sql`${user.createdAt} < now() - interval '14 days'`))
+          .orderBy(asc(user.createdAt))
+          .limit(500)
+          .for("update", { skipLocked: true })
+      ).map((r) => r.id);
+      await archiveLedger(tx, ids);
+      return ids.length ? (await tx.delete(user).where(inArray(user.id, ids)).returning({ id: user.id })).length : 0;
+    });
+    users += purged;
+    if (purged < 500) break;
   }
   const sessions = await db().delete(session).where(sql`${session.expiresAt} < now() - interval '7 days'`).returning({ id: session.id });
   const codes = await db().delete(verification).where(sql`${verification.expiresAt} < now() - interval '1 day'`).returning({ id: verification.id });

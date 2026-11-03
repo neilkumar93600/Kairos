@@ -135,7 +135,7 @@ describe.skipIf(!hasTestDb)("P0 invariants against Postgres", () => {
       const app = createApp({
         auth: {
           handler: async () => new Response("{}"),
-          getSession: async () => ({ user: { id: userId, email: "p@test.local", name: "P", emailVerified: true }, sessionId: "s" }),
+          getSession: async () => ({ user: { id: userId, email: "p@test.local", name: "P", emailVerified: true }, sessionId: "s", createdAt: new Date() }),
         },
         corsOrigins: [],
         healthChecks: {},
@@ -171,7 +171,7 @@ describe.skipIf(!hasTestDb)("P0 invariants against Postgres", () => {
     const app = createApp({
       auth: {
         handler: async () => new Response("{}"),
-        getSession: async () => ({ user: { id: userId, email: "q@test.local", name: "Q", emailVerified: true }, sessionId: "s" }),
+        getSession: async () => ({ user: { id: userId, email: "q@test.local", name: "Q", emailVerified: true }, sessionId: "s", createdAt: new Date() }),
       },
       corsOrigins: [],
       healthChecks: {},

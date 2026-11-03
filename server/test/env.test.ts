@@ -22,6 +22,7 @@ describe("parseEnv", () => {
   const prod = {
     ...base, NODE_ENV: "production", POSTMARK_SERVER_TOKEN: "pm-token", BETTER_AUTH_URL: "https://kairos.app", WEB_ORIGIN: "https://kairos.app",
     DATA_KEKS: "v1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+    USER_HASH_KEY: Buffer.alloc(32, 9).toString("base64"),
   };
 
   it("refuses production without DATA_KEKS: resume imports store their source encrypted (WP-17)", () => {
@@ -32,6 +33,16 @@ describe("parseEnv", () => {
     expect(parseEnv(base)).toMatchObject({ IMPORT_MAX_PAGES: 10, IMPORT_MAX_CHARS: 40_000, IMPORT_DAILY_LIMIT: 20, IMPORT_OVER_SLOT_LIMIT: "refuse" });
     expect(() => parseEnv({ ...base, IMPORT_MAX_PAGES: "0" })).toThrow(/IMPORT_MAX_PAGES/);
     expect(() => parseEnv({ ...base, IMPORT_OVER_SLOT_LIMIT: "maybe" })).toThrow(/IMPORT_OVER_SLOT_LIMIT/);
+  });
+
+  it("refuses production without USER_HASH_KEY, which keys the erasure hashes (WP-25)", () => {
+    expect(() => parseEnv({ ...prod, USER_HASH_KEY: "" })).toThrow(/USER_HASH_KEY: required in production \(erasure hashes\)/);
+  });
+
+  it("reads retention overrides and refuses a malformed one (WP-25)", () => {
+    expect(parseEnv({ ...base, RETENTION_DAYS: "inbound_body=90, contact_messages=400" }).RETENTION_DAYS).toEqual({ inbound_body: 90, contact_messages: 400 });
+    expect(parseEnv(base).RETENTION_DAYS).toEqual({});
+    expect(() => parseEnv({ ...base, RETENTION_DAYS: "inbound_body=0" })).toThrow(/rule_name=days/);
   });
 
   it("accepts production with an email token", () => {
@@ -142,5 +153,28 @@ describe("parseEnv", () => {
   it("refuses a plain http R2_ENDPOINT in production (a local MinIO is fine elsewhere)", () => {
     expect(() => parseEnv({ ...prod, ...r2, R2_ENDPOINT: "http://minio.internal:9000" })).toThrow(/R2_ENDPOINT: must be https in production/);
     expect(parseEnv({ ...base, ...r2, R2_ENDPOINT: "http://localhost:9000" }).R2_ENDPOINT).toBe("http://localhost:9000");
+  });
+
+  // WP-44: outbound mail and signed links.
+  const key = (seed: number) => Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 7 + seed) % 256)).toString("base64");
+
+  it("parses LINK_SIGNING_KEY as a versioned key ring and refuses a malformed one or a DATA_KEKS key", () => {
+    const ring = parseEnv({ ...base, LINK_SIGNING_KEY: `v2:${key(1)},v1:${key(2)}` }).LINK_SIGNING_KEY!;
+    expect(ring.current).toBe(2);
+    expect([...ring.byVersion.keys()]).toEqual([2, 1]);
+    expect(() => parseEnv({ ...base, LINK_SIGNING_KEY: "v1:short" })).toThrow(/LINK_SIGNING_KEY: entry 1/);
+    expect(() => parseEnv({ ...base, DATA_KEKS: `v1:${key(3)}`, LINK_SIGNING_KEY: `v1:${key(3)}` })).toThrow(/must not reuse a DATA_KEKS key/);
+  });
+
+  it("takes API_PUBLIC_ORIGIN as a bare origin, https in production", () => {
+    expect(parseEnv({ ...base, API_PUBLIC_ORIGIN: "http://localhost:4000" }).API_PUBLIC_ORIGIN).toBe("http://localhost:4000");
+    expect(() => parseEnv({ ...base, API_PUBLIC_ORIGIN: "https://api.kairos.app/x" })).toThrow(/API_PUBLIC_ORIGIN/);
+    expect(() => parseEnv({ ...prod, API_PUBLIC_ORIGIN: "http://api.kairos.app" })).toThrow(/API_PUBLIC_ORIGIN: must be https in production/);
+  });
+
+  it("defaults the broadcast stream and the contact address; the owner alert address is optional", () => {
+    const e = parseEnv(base);
+    expect([e.POSTMARK_BROADCAST_STREAM, e.CONTACT_ALERT_TO, e.ALERT_EMAIL_TO]).toEqual(["broadcast", "hello@kairos.app", undefined]);
+    expect(() => parseEnv({ ...base, ALERT_EMAIL_TO: "not-an-address" })).toThrow(/ALERT_EMAIL_TO/);
   });
 });

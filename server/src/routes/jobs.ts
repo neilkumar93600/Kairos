@@ -1,6 +1,5 @@
 import { Router, type Response } from "express";
 import { and, eq, gte, sql } from "drizzle-orm";
-import { rateLimit } from "express-rate-limit";
 import { z } from "zod";
 import { importJobSchema, type ResumeInput } from "@auto-career/shared";
 import { db } from "../db/client";
@@ -31,7 +30,7 @@ const dbIo: ImportIo = {
     // ponytail: an unpolled board never learns that this posting closed; add a close-only poll (CISO mustFix 3) when imports matter.
     const [created] = await db()
       .insert(companies)
-      .values({ ats, boardToken, name, active: false })
+      .values({ ats, boardToken, name, active: false, inactiveReason: "import_pending", discoveredBy: "import" })
       .onConflictDoNothing({ target: [companies.ats, companies.boardToken] })
       .returning({ id: companies.id, name: companies.name });
     if (created) return created;
@@ -65,7 +64,7 @@ const dbIo: ImportIo = {
   async ensureMatch({ userId, jobId, passed, reasons }) {
     const [created] = await db()
       .insert(matches)
-      .values({ userId, jobId, passedFilters: passed, reasons, status: passed ? "new" : "skipped" })
+      .values({ userId, jobId, passedFilters: passed, reasons, status: passed ? "new" : "skipped", source: "manual_url", selection: "import" })
       .onConflictDoNothing({ target: [matches.userId, matches.jobId] })
       .returning({ id: matches.id });
     if (created) return created.id;
@@ -74,18 +73,8 @@ const dbIo: ImportIo = {
   },
 };
 
-// ponytail: in-memory per api instance, like writerLimiter. Each import fetches a third-party board, so 10 a minute per user.
-const importLimiter = rateLimit({
-  windowMs: 60_000,
-  limit: 10,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  keyGenerator: (req) => currentUser(req).id,
-  handler: (_req, _res, next) => next(new HttpError(429, "rate_limited", "Too many job imports. Try again in a minute.")),
-});
-
 /** Metered by the jobImports allowance (CISO mustFix 3): each import fetches a third-party board and stores a posting. */
-jobsRouter.post("/import", importLimiter, validateBody(importJobSchema), async (req, res) => {
+jobsRouter.post("/import", writerLimiter, validateBody(importJobSchema), async (req, res) => {
   const me = currentUser(req);
   const plan = await planFor(db(), me.id);
   res.json(await metered(res, { userId: me.id, plan, feature: "jobImports" }, () => importJob(me.id, req.body.url, dbIo)));
@@ -125,7 +114,7 @@ export async function tailorForJob(me: SessionUser, res: Response, jobId: string
   const confirmed = factRows.filter((f) => f.confirmed).map((f) => ({ id: f.id, kind: f.kind, text: f.text }));
   const posting = { title: job.title, companyName: job.company, descriptionText: job.descriptionText };
   // Interactive work (03-agent-runtime 3.3); the 60 facts the posting needs most go in.
-  const ctx = gatewayCtx({ userId: me.id, plan, jobId, feature: "jobTailor", budgetClass: "interactive" });
+  const ctx = gatewayCtx({ userId: me.id, plan, jobId, feature: "jobTailor", budgetClass: "interactive", signal: res.locals.deadline });
   // No confirmed fact means nothing a line could cite: no model call and no unit taken.
   const { kept } = confirmed.length
     ? await metered(res, { userId: me.id, plan, feature: "jobTailor" }, () => tailorResume(topFacts(confirmed, `${job.title}\n${job.descriptionText}`, 60), posting, ctx))

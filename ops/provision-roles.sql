@@ -172,15 +172,16 @@ BEGIN
            (c.table_name = 'profiles' AND c.column_name IN ('user_id', 'onboarding_step', 'timezone', 'applications_paused_at', 'forwarding_state', 'created_at'))
         OR (c.table_name = 'resume_profiles' AND c.column_name IN ('id', 'user_id', 'name', 'is_default', 'source_kind', 'parse_status', 'created_at'))
         OR (c.table_name = 'subscriptions' AND c.column_name IN ('user_id', 'plan', 'interval', 'status', 'current_period_end', 'cancel_at_period_end', 'collection_paused', 'created_at'))
+        -- A new applications column holding the user's content (resume text, answers, verdict details) joins this list.
         OR (c.table_name = 'applications' AND c.column_name NOT IN ('resume_lines', 'answers', 'cover_letter', 'receipt', 'questions',
-                                                                    'resume_line_entries', 'failure_reason', 'lease_session_id')))
+                                                                    'resume_line_entries', 'failure_reason', 'lease_session_id',
+                                                                    'resume_snapshot', 'verification')))
   LOOP
     EXECUTE format('GRANT SELECT (%I) ON %I TO kairos_readonly', g.column_name, g.table_name);
   END LOOP;
 END $$;
 
--- kairos_metrics (Grafana): aggregates only, never a user id or free text. metrics_minute and the ops_*_v views join
--- it when they exist (WP-27).
+-- kairos_metrics (Grafana): aggregates only, never a user id or free text. metrics_minute joins it below (WP-27).
 GRANT SELECT ON llm_cost_daily TO kairos_metrics;
 
 -- WP-17: resume imports, employments and the revision writer. The parse job (worker) writes imports, employments and
@@ -192,3 +193,60 @@ GRANT SELECT, INSERT, UPDATE ON resume_imports TO kairos_worker;
 GRANT SELECT, INSERT, UPDATE, DELETE ON employments TO kairos_worker;
 REVOKE INSERT, UPDATE, DELETE ON resume_revisions FROM kairos_api, kairos_worker;
 GRANT EXECUTE ON FUNCTION snapshot_resume(uuid, text, text, text, text) TO kairos_api, kairos_worker;
+-- Operator flags, audit and metrics (WP-27, 0009). ops_audit is insert-only for every runtime role (and a trigger blocks
+-- the owner). Nothing writes feature_flags yet, so it is read-only. The applier reads the flags and writes no table of
+-- its own metrics: it counts into Redis and the worker folds the counts into metrics_minute (jobs/alerts.ts), so the
+-- internet-facing process cannot overwrite invariant_violations or an slo counter.
+-- Deviation from the 02-database 4.2 matrix: the api holds SELECT, INSERT, UPDATE on metrics_minute for its own request
+-- counters (lib/metrics.ts); it still cannot delete, and only the worker prunes.
+GRANT SELECT, INSERT, UPDATE ON ops_flags TO kairos_api, kairos_worker;
+GRANT SELECT ON feature_flags TO kairos_api, kairos_worker, kairos_applier;
+GRANT SELECT, INSERT ON ops_audit TO kairos_api, kairos_worker;
+-- Erasure (WP-25) pseudonymises the actor column only, as a worker step after the user row is deleted; the trigger allows
+-- nothing else and only rows whose actor is no longer a user. The api holds no UPDATE here.
+GRANT UPDATE (actor) ON ops_audit TO kairos_worker;
+GRANT SELECT, INSERT, UPDATE ON metrics_minute TO kairos_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON metrics_minute TO kairos_worker;
+GRANT SELECT ON ops_flags TO kairos_applier;
+GRANT SELECT ON metrics_minute TO kairos_metrics;
+-- WP-42: the lifecycle tables (_db/applications.md 2.3, 02-database 7.7). No runtime role updates or deletes
+-- application_events (its trigger stops the owner too) or deletes submission_attempts. The worker holds INSERT and
+-- UPDATE of the link and stage columns on tracker_items, not 7.7's SELECT: recordEvent creates or links an
+-- application's item when a worker records its first event, and WP-21's projector moves stages. Never the user's notes,
+-- salary text or saved posting. The applier gets nothing here; WP-29's attempt functions give it its rows.
+GRANT SELECT, INSERT, UPDATE, DELETE ON tracker_items TO kairos_api;
+GRANT SELECT, INSERT ON tracker_items TO kairos_worker;
+GRANT UPDATE (application_id, stage, stage_set_by, closed_reason, updated_at) ON tracker_items TO kairos_worker;
+GRANT SELECT, INSERT ON application_events TO kairos_api, kairos_worker;
+GRANT SELECT, INSERT, UPDATE ON submission_attempts TO kairos_api, kairos_worker;
+GRANT SELECT ON application_events TO kairos_readonly;
+GRANT SELECT (id, application_id, user_id, attempt_no, channel, ats, approved_by, phase, state, failure_code, lease_conflict,
+  duplicate_reports, late_confirmation, worker_identity, browser_launched_at, submit_seen_at, heartbeat_at, started_at,
+  finished_at, settled_at) ON submission_attempts TO kairos_readonly;
+
+-- Outbound mail and signed links (WP-44, 02-database 4.2). The api reads and marks notifications read, verifies and
+-- consumes signed links and records Postmark's bounce and complaint events; the worker claims and sends mail, mints
+-- links, writes notifications and runs the retention deletes. The api can change only read_at on a notification.
+-- The api sends no notify mail (the worker does), so it has no email_sends grant; on action_tokens it can mint a link
+-- and mark one used, nothing else.
+GRANT SELECT, INSERT ON action_tokens TO kairos_api;
+GRANT UPDATE (used_at) ON action_tokens TO kairos_api;
+GRANT SELECT, INSERT ON notifications TO kairos_api;
+GRANT UPDATE (read_at) ON notifications TO kairos_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON email_suppressions TO kairos_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON email_sends, notifications, action_tokens TO kairos_worker;
+GRANT SELECT, INSERT ON email_suppressions TO kairos_worker;
+
+-- Privacy (WP-25, migration 0015). The api runs the erasure transaction of Settings > Delete account
+-- (services/erasure.ts): it writes the task, the ledger archive and the erased-address hash, deletes the user's contact
+-- messages and the user row; it reads erased_emails and writes consent at sign-up. The worker finishes each task
+-- (jobs/erasure.ts), archives the ledger of unverified accounts it purges, and runs the operator scripts. Neither
+-- may rewrite or delete the archive or the erased-address list; kairos_readonly reads none of the four tables.
+GRANT SELECT, INSERT, UPDATE ON deletion_tasks, consent_records TO kairos_api, kairos_worker;
+GRANT SELECT, INSERT ON credit_ledger_archive, erased_emails TO kairos_api, kairos_worker;
+-- A deviation from 02-database 4.2 (the api never deletes contact rows): only the erasure transaction holds the account's
+-- address, so it deletes that address's messages by contact_messages.email_hash, and by the address for older rows. No
+-- other api path deletes them.
+GRANT DELETE ON contact_messages TO kairos_api;
+-- The erasure worker pseudonymises an erased admin's id in feature_flags.updated_by too (WP-25); nothing else changes.
+GRANT UPDATE (updated_by) ON feature_flags TO kairos_worker;

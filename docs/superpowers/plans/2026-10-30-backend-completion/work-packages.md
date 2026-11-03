@@ -343,6 +343,8 @@ ops_flags, feature_flags and ops_audit with a 10 s cache: pause_cloud_apply, pau
 
 Keyset cursors on lists. Per-route deadlines and a large-body permit. A /api/health alias with draining. X-Kairos-Client and contract headers allowed in CORS. A fresh session required for approve, billing and Autopilot. Session pruning. The AI-route limiter (ai_burst) moved to the shared Postgres store. Contract suite level 2 (recorded statuses, shapes and error codes) and a client-call extractor that fails on drift. Files: list routes (cursor clauses), middleware/deadline.ts, middleware/require-auth.ts kinds, routes/resume.ts limiter import (after WP-06), test/contract*.ts, scripts/extract-client-calls.mjs.
 
+**Deviation (recorded by WP-30-builder):** the 05-api 2.2 route registry was not built; `test/helpers/authz-matrix.ts` keeps its `Router.prototype.use` patch, because Express 5 keeps no readable mount path and a declarative wrapper would touch every router file other builders edit. The "every mounted route has an entry" guarantee stands. Credits entries and the inbox `applicationId` filter are not paginated or added here.
+
 **Acceptance:** Rows beyond 200 are reachable by cursor. A shape change on a frozen route fails CI. The ai_burst limit holds across 2 replicas.
 
 ## WP-38: Additional sign-in providers (optional)

@@ -1,6 +1,6 @@
 -- kairos:no-transaction
 -- facts import indexes and validations (WP-17; 02-database 7.1.5): facts and resume_revisions may pass 100,000 rows, so
--- the indexes are built CONCURRENTLY and the constraints 0009 added NOT VALID are validated here, out of 0009's
+-- the indexes are built CONCURRENTLY and the constraints 0016 added NOT VALID are validated here, out of 0016's
 -- transaction (VALIDATE takes SHARE UPDATE EXCLUSIVE, so writes go on). Hand-written (drizzle-kit generate --custom);
 -- the schema in src/db/schema/profile.ts declares the same indexes and constraints.
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS "facts_import_identity_uq" ON "facts" USING btree ("resume_profile_id","source_span_hash");--> statement-breakpoint

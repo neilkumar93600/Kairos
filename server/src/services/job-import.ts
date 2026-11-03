@@ -2,6 +2,7 @@ import type { AtsProvider, Preferences } from "@auto-career/shared";
 import { HttpError } from "../lib/errors";
 import { atsAdapters, type NormalizedJob } from "./ats";
 import { passesHardFilters } from "./fit";
+import { normalizePosting } from "./normalize-posting";
 import { parseJobUrl } from "./job-url";
 
 export interface ImportResult {
@@ -34,21 +35,16 @@ export function companyNameFromToken(token: string): string {
     .join(" ");
 }
 
-/** Column values for the job upsert. `source` is in the insert values only, so polling never loses it and an import never overwrites it. */
+/**
+ * Column values for the job upsert, through normalizePosting. `source` is in the insert values only, so polling never
+ * loses it and an import never overwrites it. A reopen clears closed_by with closed_at (jobs_closed_coherent_ck).
+ */
 export function jobUpsertValues(companyId: string, job: NormalizedJob) {
-  const content = {
-    title: job.title,
-    location: job.location,
-    remote: job.remote,
-    department: job.department,
-    descriptionText: job.descriptionText,
-    applyUrl: job.applyUrl,
-    salaryMinUsd: job.salaryMinUsd,
-    salaryMaxUsd: job.salaryMaxUsd,
-    postedAt: job.postedAt,
-    raw: job.raw,
+  const { externalId, ...content } = normalizePosting(job);
+  return {
+    insert: { companyId, externalId, source: "manual_url" as const, ...content },
+    update: { ...content, closedAt: null, closedBy: null },
   };
-  return { insert: { companyId, externalId: job.externalId, source: "manual_url" as const, ...content }, update: { ...content, closedAt: null } };
 }
 
 /**

@@ -9,7 +9,7 @@ import type { AuthGateway } from "../src/lib/auth";
 function appFor(userId: string) {
   const auth: AuthGateway = {
     handler: async () => new Response(null, { status: 404 }),
-    getSession: async () => ({ sessionId: "s", user: { id: userId, email: "a@b.c", name: "A", emailVerified: true } }),
+    getSession: async () => ({ sessionId: "s", createdAt: new Date(), user: { id: userId, email: "a@b.c", name: "A", emailVerified: true } }),
   };
   return createApp({ auth, corsOrigins: [], healthChecks: {} });
 }
@@ -46,7 +46,7 @@ describe("limit classes", () => {
     handler: async () => new Response(null, { status: 404 }),
     getSession: async (headers) => {
       const id = headers.get("authorization")?.replace(/^Bearer /, "");
-      return id && id !== "bad" ? { sessionId: "s", user: { id, email: `${id}@test.local`, name: "U", emailVerified: true } } : null;
+      return id && id !== "bad" ? { sessionId: "s", createdAt: new Date(), user: { id, email: `${id}@test.local`, name: "U", emailVerified: true } } : null;
     },
   };
 

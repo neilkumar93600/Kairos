@@ -3,13 +3,16 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client";
-import { inboundEmails, profiles, stripeEvents, subscriptions, user } from "../db/schema";
+import { deletionTasks, emailSuppressions, inboundEmails, profiles, stripeEvents, subscriptions, user } from "../db/schema";
 import { env } from "../lib/env";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
+import { slo } from "../lib/metrics";
+import { addressHash } from "../lib/mailer";
 import { enqueue } from "../jobs/queues";
 import { couponIdsOf, fetchStripeState, processStripeEvent } from "../services/billing-events";
 import { grantPlanCredits } from "../services/credits";
+import { stripeCustomerHash } from "../services/erasure";
 import { INLINE_REQUEST, stripe, verifyStripeEvent } from "../services/stripe";
 
 /** Provider webhooks. Mounted at /api/webhooks BEFORE express.json(), because Stripe signs the raw body. */
@@ -22,7 +25,7 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 // 1 MB: a real event is under 100 KB, but an invoice with many lines can pass Express's 100 KB default.
-webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
+async function stripeWebhook(req: Request, res: Response) {
   const { STRIPE_WEBHOOK_SECRET, STRIPE_WEBHOOK_SECRET_PREVIOUS } = env();
   const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
   const event = verifyStripeEvent(body, req.header("stripe-signature"), [STRIPE_WEBHOOK_SECRET, STRIPE_WEBHOOK_SECRET_PREVIOUS]);
@@ -43,6 +46,8 @@ webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1
       userExists: async (id) => (await tx.select({ id: user.id }).from(user).where(eq(user.id, id))).length > 0,
       userForCustomer: async (customerId) =>
         (await tx.select({ userId: subscriptions.userId }).from(subscriptions).where(eq(subscriptions.stripeCustomerId, customerId)))[0]?.userId ?? null,
+      customerErased: async (customerId) =>
+        (await tx.select({ h: deletionTasks.userHash }).from(deletionTasks).where(eq(deletionTasks.stripeCustomerHash, stripeCustomerHash(customerId)))).length > 0,
       saveSubscription: async ({ userId, values }) => {
         // An unpaid state only overwrites the row when it is about the subscription the row tracks (or none yet),
         // so a late event for an old, cancelled subscription cannot drop a user who has since subscribed again.
@@ -57,8 +62,19 @@ webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1
       grantCredits: async (grant) => void (await grantPlanCredits(tx, grant)),
     }),
   );
+  slo("s7", true);
   logger.info({ eventId: event.id, type: event.type, outcome }, "stripe event");
   res.json(outcome === "duplicate" ? { received: true, duplicate: true } : { received: true });
+}
+
+// S7 counts the events we tried to process: a bad signature (a 4xx) is not one, anything that throws is a miss.
+webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
+  try {
+    await stripeWebhook(req, res);
+  } catch (err) {
+    if (!(err instanceof HttpError && err.status < 500)) slo("s7", false);
+    throw err;
+  }
 });
 
 const postmarkInbound = z.object({
@@ -107,4 +123,57 @@ webhooksRouter.post("/inbound-email", requireInboundToken, express.json({ limit:
     : await db().select({ id: inboundEmails.id }).from(inboundEmails).where(and(eq(inboundEmails.providerMessageId, mail.MessageID), isNull(inboundEmails.kind)));
   if (pending) await enqueue("classify-email", { inboundEmailId: pending.id }, `classify-${pending.id}`);
   res.json({ stored: Boolean(stored) });
+});
+
+/**
+ * Postmark's delivery events (messaging-59, WP-44): a spam complaint, a hard bounce that made the address inactive, or a
+ * suppression change. Each lands on email_suppressions by address hash, which the notify job checks before every send.
+ * A complaint is permanent in Kairos even if Postmark later reactivates the address; any other reactivation lifts it.
+ * Configure it on both streams' webhooks as `<API_PUBLIC_ORIGIN>/api/webhooks/postmark-events?token=<POSTMARK_EVENTS_SECRET>`.
+ */
+const postmarkEvent = z.discriminatedUnion("RecordType", [
+  z.object({ RecordType: z.literal("SpamComplaint"), Email: z.string().min(3).max(320) }),
+  z.object({ RecordType: z.literal("Bounce"), Email: z.string().min(3).max(320), Inactive: z.boolean().default(false) }),
+  z.object({
+    RecordType: z.literal("SubscriptionChange"),
+    Recipient: z.string().min(3).max(320),
+    SuppressSending: z.boolean(),
+    SuppressionReason: z.string().nullish(),
+  }),
+]);
+
+const HANDLED = new Set<unknown>(["SpamComplaint", "Bounce", "SubscriptionChange"]);
+
+function requireEventsToken(req: Request, _res: Response, next: NextFunction) {
+  const secret = env().POSTMARK_EVENTS_SECRET;
+  const token = typeof req.query.token === "string" ? req.query.token : "";
+  // Unset secret: the route refuses everything rather than accepting an empty token.
+  if (!secret || !safeEqual(token, secret)) throw new HttpError(403, "forbidden", "Bad events token");
+  next();
+}
+
+webhooksRouter.post("/postmark-events", requireEventsToken, express.json({ limit: "256kb", inflate: false }), async (req, res) => {
+  // Delivery, open and click events (and anything new) are acknowledged and ignored, so Postmark stops retrying them.
+  const recordType = (req.body as { RecordType?: unknown } | undefined)?.RecordType;
+  if (!HANDLED.has(recordType)) return void res.json({ recorded: false });
+  // A type we act on but cannot read is a format change or a forged call: never a silent 200 that drops a complaint.
+  const parsed = postmarkEvent.safeParse(req.body);
+  if (!parsed.success) {
+    logger.warn({ recordType, issues: parsed.error.issues.map((i) => i.path.join(".")) }, "postmark delivery event of a handled type failed its shape check");
+    throw new HttpError(422, "invalid_body", "Unreadable delivery event");
+  }
+  const e = parsed.data;
+  const hash = addressHash(e.RecordType === "SubscriptionChange" ? e.Recipient : e.Email);
+  if (e.RecordType === "SpamComplaint" || (e.RecordType === "SubscriptionChange" && e.SuppressSending && e.SuppressionReason === "SpamComplaint")) {
+    await db().insert(emailSuppressions).values({ addressHash: hash, reason: "spam_complaint" }).onConflictDoUpdate({ target: emailSuppressions.addressHash, set: { reason: "spam_complaint" } });
+  } else if (e.RecordType === "Bounce" ? e.Inactive : e.SuppressSending) {
+    const reason = e.RecordType === "Bounce" || e.SuppressionReason === "HardBounce" ? "hard_bounce" : "manual";
+    await db().insert(emailSuppressions).values({ addressHash: hash, reason }).onConflictDoNothing();
+  } else if (e.RecordType === "SubscriptionChange") {
+    await db().delete(emailSuppressions).where(and(eq(emailSuppressions.addressHash, hash), sql`${emailSuppressions.reason} <> 'spam_complaint'`));
+  } else {
+    return void res.json({ recorded: false });
+  }
+  logger.info({ recordType: e.RecordType }, "postmark delivery event");
+  res.json({ recorded: true });
 });

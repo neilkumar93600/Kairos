@@ -1,3 +1,7 @@
+import type { ApplicationAnswer } from "@auto-career/shared";
+import type { Receipt } from "../db/schema";
+import { redactContact } from "../llm/redact";
+
 export type SensitiveKind = "eeo" | "work_authorization" | "sponsorship" | "salary" | "personal";
 
 // ponytail: order matters. Sponsorship and visa go first so "authorized to work without sponsorship" asks the sponsorship question.
@@ -34,3 +38,14 @@ const PROFILE_QUESTION = /\b(?:name|e-?mail|phone|mobile|telephone|linkedin|gith
 
 /** Profile questions are filled from the profile, never drafted by a model. */
 export const isProfileQuestion = (label: string): boolean => PROFILE_QUESTION.test(label);
+
+/** The answers and receipt with every sensitive question's value blanked; labels and keys stay, so the receipt still reads. */
+export function scrubContent(answers: ApplicationAnswer[], receipt: Receipt | null) {
+  const blank = <T extends { label: string; value: string }>(x: T): T => (classifySensitive(x.label) ? { ...x, value: "" } : x);
+  return { answers: answers.map(blank), receipt: receipt && { ...receipt, filledFields: receipt.filledFields.map(blank) } };
+}
+
+/** The employer's confirmation text as stored on a receipt: no addresses, phone numbers or links, at most 4 KB. */
+export function redactConfirmation(text: string | undefined): string | undefined {
+  return text === undefined ? undefined : redactContact(text).slice(0, 4096);
+}

@@ -76,6 +76,14 @@ describe("Budget.checkBudget", () => {
     expect(await b.checkBudget(resumeWriter, SONNET, { userId: "u", plan: "free" })).toEqual({ ok: true });
   });
 
+  it("llm_paused (WP-27) refuses every agent, drafting and tailoring included, and a shed level can come from a promise", async () => {
+    const paused = new Budget(store().s, () => 0, async () => true);
+    expect(await paused.checkBudget(answerDrafter, { usd: 0.001, model: "claude-sonnet-5-5" }, { plan: "max" })).toMatchObject({ ok: false, scope: "shed" });
+    expect(await paused.checkBudget(resumeTailor, { usd: 0.001, model: "claude-sonnet-5-5" }, { plan: "max" })).toMatchObject({ ok: false, scope: "shed" });
+    const shed = new Budget(store().s, async () => 3 as const);
+    expect(await shed.checkBudget(fitScorer, HAIKU, { plan: "max" })).toMatchObject({ scope: "shed" });
+  });
+
   it("shed level 3 from env stops all scoring and builder suggestions, never drafting or tailoring (9.5)", async () => {
     const b = new Budget(store().s, () => 3);
     expect(await b.checkBudget(fitScorer, HAIKU, { plan: "max" })).toMatchObject({ scope: "shed" });

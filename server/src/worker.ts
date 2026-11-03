@@ -4,11 +4,13 @@ import { closeDb, db, sizeDbPool } from "./db/client";
 import { env, setProcessRole } from "./lib/env";
 import { closeServer, deadline, onShutdown, serveHealth, startHeartbeat } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
+import { startMetricsFlush } from "./lib/metrics";
 import { assertNoEviction, redis } from "./lib/redis";
 import { captureJobFailure, initSentry } from "./lib/sentry";
 import { processClassifyEmail } from "./jobs/classify-email";
 import { processCostRollup } from "./jobs/cost-rollup";
 import { processLedgerWatch } from "./jobs/ledger-watch";
+import { processNotify } from "./jobs/notify";
 import { processParseResume } from "./jobs/parse-resume";
 import { processPollBoards } from "./jobs/poll-boards";
 import { closeQueues, queue, QUEUES, workerConcurrency, workerOptions, type QueueName } from "./jobs/queues";
@@ -30,6 +32,7 @@ const handlers: Partial<Record<QueueName, (job: Job) => Promise<unknown>>> = {
   [QUEUES.costRollup]: processCostRollup,
   [QUEUES.ledgerWatch]: processLedgerWatch,
   [QUEUES.maintenance]: processMaintenance,
+  [QUEUES.notify]: processNotify,
 };
 
 // A Redis that evicts loses jobs silently: refuse to start (platform-68). 10 s, so a Redis that is down fails the boot too.
@@ -65,4 +68,8 @@ const health = serveHealth(env().PORT, checks);
 startHeartbeat(env().HEARTBEAT_URL, checks);
 
 // 30 s for jobs in flight (architecture D9); a job still running then is retried by BullMQ as stalled.
-onShutdown("worker", 30_000, () => Promise.all(workers.map((w) => w.close())), () => Promise.allSettled([closeServer(health), closeQueues().then(() => redis().quit()), closeDb()]));
+const stopMetrics = startMetricsFlush();
+onShutdown("worker", 30_000, () => Promise.all(workers.map((w) => w.close())), async () => {
+  await stopMetrics();
+  await Promise.allSettled([closeServer(health), closeQueues().then(() => redis().quit()), closeDb()]);
+});

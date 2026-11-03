@@ -30,7 +30,7 @@ describe.skipIf(!hasTestDb)("known defects (expected failures)", () => {
     app = createApp({
       auth: {
         handler: async () => new Response("{}"),
-        getSession: async () => ({ user: { id: signedInAs, email: "d@test.local", name: "D", emailVerified: true }, sessionId: "s" }),
+        getSession: async () => ({ user: { id: signedInAs, email: "d@test.local", name: "D", emailVerified: true }, sessionId: "s", createdAt: new Date() }),
       },
       corsOrigins: [],
       healthChecks: {},

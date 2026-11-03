@@ -113,11 +113,13 @@ describe(".railway/railway.ts", () => {
     const applier = Object.keys(vars(all.applier!));
     expect(applier.filter((k) => (APPLIER_FORBIDDEN as readonly string[]).includes(k))).toEqual([]);
     expect(applier.filter((k) => !ENV_KEYS.applier.includes(k) && !LITERALS.includes(k))).toEqual([]);
-    for (const key of ["DATABASE_UNPOOLED_URL", "KAIROS_EDGE_SECRET", "GOOGLE_CLIENT_SECRET"]) expect(holders(key), key).toEqual(["api"]);
+    for (const key of ["DATABASE_UNPOOLED_URL", "KAIROS_EDGE_SECRET", "GOOGLE_CLIENT_SECRET", "POSTMARK_EVENTS_SECRET"]) expect(holders(key), key).toEqual(["api"]);
     expect(holders("ANTHROPIC_KEY_BATCH")).toEqual(["worker"]);
     // Backups (WP-13): every user's data. The worker writes the journal; pgbackup reads every row and writes the dumps.
     for (const key of ["R2_BUCKET_BACKUPS", "R2_BACKUPS_ACCESS_KEY_ID", "R2_BACKUPS_SECRET_ACCESS_KEY"]) expect(holders(key), key).toEqual(["worker", "pgbackup"]);
     for (const key of ["DATABASE_BACKUP_URL", "BACKUP_AGE_RECIPIENTS", "HEARTBEAT_URL_BACKUP"]) expect(holders(key), key).toEqual(["pgbackup"]);
+    // Tombstones (WP-25): the api writes one at an account deletion, the worker fills any it missed and replay reads them.
+    for (const key of ["R2_BUCKET_TOMBSTONES", "R2_TOMBSTONES_ACCESS_KEY_ID"]) expect(holders(key), key).toEqual(["api", "worker"]);
   });
 
   it("refuses any other environment or project, since an apply deletes what the file leaves out", async () => {

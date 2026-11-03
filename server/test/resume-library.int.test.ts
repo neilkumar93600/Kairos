@@ -53,7 +53,7 @@ describe.skipIf(!hasTestDb)("resume library and imports (R1)", () => {
     me = { id, email: `${id}@test.local`, name: "Sample Applicant", emailVerified: true };
     await tdb.insert(schema.profiles).values({ userId: id, forwardingAddress: `u-${id}@replies.test` });
     const user = me;
-    app = createApp({ auth: { handler: async () => new Response(null), getSession: async () => ({ user, sessionId: "s" }) }, corsOrigins: [], healthChecks: {} });
+    app = createApp({ auth: { handler: async () => new Response(null), getSession: async () => ({ user, sessionId: "s", createdAt: new Date() }) }, corsOrigins: [], healthChecks: {} });
   });
 
   const parseQueued = async () => {
