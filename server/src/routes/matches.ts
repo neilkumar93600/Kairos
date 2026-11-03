@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "../db/client";
 import { applications, companies, jobs, matches } from "../db/schema";
 import { notFound } from "../lib/errors";
+import { pageParams, slicePage } from "../lib/pagination";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam } from "../middleware/validate";
 import { enqueue, fairPriority } from "../jobs/queues";
@@ -12,6 +13,7 @@ import { enqueue, fairPriority } from "../jobs/queues";
 export const matchesRouter = Router();
 
 matchesRouter.get("/", async (req, res) => {
+  const { limit, after } = pageParams(req.query, 100, 2);
   const rows = await db()
     .select({
       id: matches.id,
@@ -25,10 +27,19 @@ matchesRouter.get("/", async (req, res) => {
     .from(matches)
     .innerJoin(jobs, eq(jobs.id, matches.jobId))
     .innerJoin(companies, eq(companies.id, jobs.companyId))
-    .where(and(eq(matches.userId, currentUser(req).id), eq(matches.status, "new"), isNull(jobs.closedAt)))
-    .orderBy(desc(matches.score), desc(jobs.firstSeenAt))
-    .limit(100);
-  res.json({ matches: rows });
+    .where(
+      and(
+        eq(matches.userId, currentUser(req).id),
+        eq(matches.status, "new"),
+        isNull(jobs.closedAt),
+        // ponytail: a new match always has a score; a null one would drop out of a cursor page.
+        after && sql`(${matches.score}, ${jobs.firstSeenAt}, ${matches.id}) < (${after.k[0]}::int, ${after.k[1]}::timestamptz, ${after.id}::uuid)`,
+      ),
+    )
+    .orderBy(desc(matches.score), desc(jobs.firstSeenAt), desc(matches.id))
+    .limit(limit + 1);
+  const page = slicePage(rows, limit, (r) => [r.score ?? 0, r.job.firstSeenAt], (r) => r.id);
+  res.json({ matches: page.rows, nextCursor: page.nextCursor });
 });
 
 matchesRouter.post("/:id/skip", async (req, res) => {

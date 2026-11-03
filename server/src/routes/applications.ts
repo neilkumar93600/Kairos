@@ -1,10 +1,11 @@
 import { Router } from "express";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { APPLICATION_STATUSES, approveApplicationsSchema, draftRequestSchema, getPlan, updateApplicationSchema } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, companies, facts, jobs, savedAnswers } from "../db/schema";
 import { HttpError, notFound } from "../lib/errors";
+import { pageParams, slicePage } from "../lib/pagination";
 import { APPLICATION_COLUMNS, JOB_COLUMNS } from "../lib/serializers";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
@@ -27,6 +28,7 @@ const listQuery = z.object({ status: z.enum(APPLICATION_STATUSES).optional() });
 
 applicationsRouter.get("/", async (req, res) => {
   const { status } = parseParam(listQuery, req.query);
+  const { limit, after } = pageParams(req.query, 200, 1);
   const me = currentUser(req);
   const rows = await db()
     .select({
@@ -36,16 +38,25 @@ applicationsRouter.get("/", async (req, res) => {
       approvedAt: applications.approvedAt,
       submittedAt: applications.submittedAt,
       failureReason: applications.failureReason,
+      updatedAt: applications.updatedAt,
       job: { id: jobs.id, title: jobs.title, location: jobs.location, applyUrl: jobs.applyUrl },
       company: { name: companies.name, ats: companies.ats },
     })
     .from(applications)
     .innerJoin(jobs, eq(jobs.id, applications.jobId))
     .innerJoin(companies, eq(companies.id, jobs.companyId))
-    .where(status ? and(eq(applications.userId, me.id), eq(applications.status, status)) : eq(applications.userId, me.id))
-    .orderBy(desc(applications.updatedAt))
-    .limit(200);
-  res.json({ applications: rows });
+    .where(
+      and(
+        eq(applications.userId, me.id),
+        status ? eq(applications.status, status) : undefined,
+        // ponytail: a Date holds milliseconds, so rows within one millisecond of a page edge may repeat or skip; widen the cursor key to text if that ever shows.
+        after && sql`(${applications.updatedAt}, ${applications.id}) < (${after.k[0]}::timestamptz, ${after.id}::uuid)`,
+      ),
+    )
+    .orderBy(desc(applications.updatedAt), desc(applications.id))
+    .limit(limit + 1);
+  const page = slicePage(rows, limit, (r) => [r.updatedAt], (r) => r.id);
+  res.json({ applications: page.rows, nextCursor: page.nextCursor });
 });
 
 applicationsRouter.get("/:id", async (req, res) => {
