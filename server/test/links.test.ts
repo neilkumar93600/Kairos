@@ -52,4 +52,16 @@ describe("signed-link pages (routes/links.ts)", () => {
     expect(statuses.slice(0, 20).every((s) => s === 410)).toBe(true);
     expect(statuses[20]).toBe(429);
   });
+
+  it("without LINK_SIGNING_KEY every link gets the same 410 page, not a 500", async () => {
+    const { env } = await import("../src/lib/env");
+    const saved = env().LINK_SIGNING_KEY;
+    Object.assign(env(), { LINK_SIGNING_KEY: undefined });
+    try {
+      expect((await request(app).get("/api/link?t=a.b")).status).toBe(410);
+      expect((await request(app).post("/api/link").type("form").send({ t: "a.b" })).status).toBe(410);
+    } finally {
+      Object.assign(env(), { LINK_SIGNING_KEY: saved });
+    }
+  });
 });

@@ -1,5 +1,7 @@
 import express, { Router, type Request, type Response } from "express";
 import { db } from "../db/client";
+import { env } from "../lib/env";
+import { logger } from "../lib/logger";
 import { consumeActionToken, peekActionToken, verifyLink, type LinkTarget, type StoredPurpose } from "../lib/action-tokens";
 
 type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
@@ -19,6 +21,12 @@ export interface LinkPage {
  */
 export interface LinkAction {
   purpose: StoredPurpose;
+  /**
+   * RFC 8058 one-click (unsubscribe only): the POST may carry the token in the query string, as a mail client's
+   * List-Unsubscribe-Post does. Off for everything else, so a scanner replaying the emailed GET URL as a POST cannot
+   * resend an application or undo an offer pause; those need the form's own field.
+   */
+  oneClick?: true;
   show(target: LinkTarget, req: Request): Promise<LinkPage | null>;
   act(tx: Tx, target: LinkTarget, req: Request): Promise<LinkPage | null>;
 }
@@ -52,30 +60,41 @@ function render(res: Response, status: number, page: LinkPage, token?: string) {
 }
 
 const tokenOf = (v: unknown) => (typeof v === "string" ? v : "");
+/** No key: every link is refused with the same page, logged once per request, never a 500 that says why. */
+const keyMissing = () => {
+  if (env().LINK_SIGNING_KEY) return false;
+  logger.error("LINK_SIGNING_KEY is not set: signed links answer 410");
+  return true;
+};
 const REFUSED = new Error("signed link refused");
 
 /**
  * The GET page and the POST action of one signed link. A malformed, forged, used, expired or unknown token gets the
  * same 410 page (link_expired), and so does a target the action refuses (`show`/`act` returning null).
  *
- * Mount it outside the session chain and before the anonymous limiter, behind the `link` class (05-api 6.2), e.g. in
- * routes/index.ts: `router.use("/unsubscribe", limits.link, signedLinkRouter(unsubscribeAction))`; a path under a
- * session-guarded prefix (`/applications/:id/resend-link`) must be mounted before that prefix.
+ * Mounting (WP-29, WP-35): in routes/index.ts, after WP-30's request deadline and before `router.use(limits.anon)`, outside
+ * the session chain, behind the `link` class (05-api 6.2):
+ *   router.use("/unsubscribe", limits.link, signedLinkRouter(unsubscribeAction));
+ *   router.use("/applications/:id/resend-link", limits.link, signedLinkRouter(resendAction)); // before "/applications"
+ * Each mounted path needs a `public` entry in test/helpers/authz-matrix.ts ("the signed token is the credential; GET only
+ * reads"). `limits.link` is created but deliberately mounted nowhere until the first such route exists.
  */
 export function signedLinkRouter(action: LinkAction): Router {
   const router = Router({ mergeParams: true });
 
   router.get("/", async (req, res) => {
     const token = tokenOf(req.query.t);
+    if (keyMissing()) return render(res, 410, EXPIRED);
     const target = await peekActionToken(db(), token, action.purpose);
     const page = target && (await action.show(target, req));
     if (!page) return render(res, 410, EXPIRED);
     render(res, 200, page, token);
   });
 
-  // The form posts `t` as a field; a mail client's RFC 8058 one-click POST leaves it in the query string.
+  // The form posts `t` as a field; only a one-click action also reads it from the query string.
   router.post("/", express.urlencoded({ extended: false, limit: "2kb", parameterLimit: 10 }), async (req, res) => {
-    const token = tokenOf(req.body?.t) || tokenOf(req.query.t);
+    const token = tokenOf(req.body?.t) || (action.oneClick ? tokenOf(req.query.t) : "");
+    if (keyMissing()) return render(res, 410, EXPIRED);
     // A forged token never opens a transaction or touches the database.
     if (!verifyLink(token, action.purpose)) return render(res, 410, EXPIRED);
     const page = await db()

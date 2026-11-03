@@ -66,9 +66,16 @@ describe.skipIf(!hasTestDb)("signed-link pages against Postgres", () => {
     expect(await effects()).toHaveLength(1);
   });
 
+  it("a POST to the emailed URL (a scanner replay) is refused unless the action is one-click", async () => {
+    const t = await issue();
+    expect((await request(app).post(`/link?t=${t}`)).status).toBe(410);
+    expect(await used()).toBeNull();
+    expect(await effects()).toEqual([]);
+  });
+
   it("ten parallel POSTs act once", async () => {
     const t = await issue();
-    const statuses = await Promise.all(Array.from({ length: 10 }, () => request(app).post(`/link?t=${t}`).then((r) => r.status)));
+    const statuses = await Promise.all(Array.from({ length: 10 }, () => request(app).post("/link").type("form").send({ t }).then((r) => r.status)));
     expect(statuses.filter((s) => s === 200)).toHaveLength(1);
     expect(await effects()).toHaveLength(1);
   });
