@@ -178,7 +178,52 @@ describe("runAgent", () => {
     expect(out.model).toBe("claude-sonnet-5-5");
     expect(rows.map((r) => r.model)).toEqual(["claude-haiku-5-5", "claude-sonnet-5-5"]);
     expect(rows.map((r) => r.tieredUp)).toEqual([false, true]);
+    expect(rows.map((r) => r.callKind)).toEqual(["primary", "tier_up"]); // 2.6: the first Sonnet send is a tier_up row
     expect(out.data.lines).toHaveLength(1);
+  });
+
+  it("tiers up after overload retries are spent (2.6)", async () => {
+    const tailored = JSON.stringify({ lines: [{ id: "l1", section: "Experience", text: "Built the billing service at Nordbeam", factIds: ["f1"] }] });
+    const fake = fakeAnthropic([
+      { status: 529, type: "overloaded_error" },
+      { status: 529, type: "overloaded_error" },
+      { status: 529, type: "overloaded_error" },
+      { content: [{ type: "text", text: tailored }], stop_reason: "end_turn", usage: { input_tokens: 900, output_tokens: 60 } },
+    ]);
+    configureGateway({ ...deps, client: () => fake });
+    const out = await runAgent(resumeTailor, tailoringInput, { userId: "user-123" });
+    expect(out.model).toBe("claude-sonnet-5-5");
+    expect(rows.map((r) => r.status)).toEqual(["error", "error", "error", "ok"]);
+  });
+
+  it("never tiers up on an auth, billing or invalid request failure (llm-agents-12)", async () => {
+    for (const [status, type, code] of [
+      [401, "authentication_error", "auth"],
+      [402, "billing_error", "billing"],
+      [400, "invalid_request_error", "invalid_request"],
+    ] as const) {
+      rows = [];
+      const fake = fakeAnthropic([{ status, type }]);
+      configureGateway({ ...deps, client: () => fake });
+      await expect(runAgent(resumeTailor, tailoringInput, { userId: "user-123" })).rejects.toMatchObject({ code });
+      expect(rows.map((r) => r.model)).toEqual(["claude-haiku-5-5"]);
+      expect(fake.requests).toHaveLength(1);
+    }
+  });
+
+  it("a budget refusal never tiers up and writes one budget_stopped row with its error code (llm-agents-22)", async () => {
+    const spent = new Budget({
+      snapshotToday: async () => ({ globalUsd: 999, agentUsd: {}, tierUpCallsToday: {}, callsYesterday: {} }),
+      userSpend: async () => ({ pipelineUsd: 0, interactiveUsd: 0 }),
+    });
+    const fake = fakeAnthropic(okFit());
+    configureGateway({ ...deps, budget: spent, client: () => fake });
+    await expect(runAgent(resumeTailor, tailoringInput, { userId: "user-123" })).rejects.toMatchObject({
+      code: "budget_stopped",
+      budget: { scope: "global", retryAfter: "now" },
+    });
+    expect(fake.requests).toHaveLength(0);
+    expect(rows.map((r) => [r.status, r.errorCode, r.model])).toEqual([["budget_stopped", "budget_stopped", "claude-haiku-5-5"]]);
   });
 
   it("refuses a send whose estimate exceeds the per-call cap (9.2, checked in the budget)", async () => {

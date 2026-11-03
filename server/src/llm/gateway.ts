@@ -23,6 +23,13 @@ import { canonicalJson, normalizeEnumCase } from "./schema";
 
 const sha256 = (s: string): Buffer => createHash("sha256").update(s, "utf8").digest();
 
+/**
+ * The failures a tier-up may follow (2.6, llm-agents-12): a reply that failed validation, ran out of tokens or was
+ * refused, or a model that is overloaded. A budget refusal, auth, billing, bad request or injection echo never tiers up:
+ * a cheaper model is never substituted for a spent budget and a pricier one never buys past it.
+ */
+const TIER_UP_ON: ReadonlySet<LlmErrorCode> = new Set(["schema_invalid", "max_tokens", "refusal", "overloaded", "circuit_open"]);
+
 /** Fence labels of user-authored data (11.1 T2), the only text that exempts an echo-canary pattern. */
 const USER_LABELS: ReadonlySet<DataLabel> = new Set(["facts", "profile", "resume_text", "resume_lines", "user_note", "user_answer", "saved_answers"]);
 
@@ -120,7 +127,7 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
   // the share cap permits. Defer throws retryable; fail-closed throws non-retryable.
   for (let chain = 0; chain < 2; chain++) {
     const perCallCap = chain === 0 ? spec.maxCostPerCallUsd : (spec.tierUp?.maxCostPerCallUsd ?? spec.maxCostPerCallUsd);
-    const result = await runOnModel(model, perCallCap);
+    const result = await runOnModel(model, perCallCap, chain === 0 ? callKind : "tier_up");
     if (result.ok) {
       return {
         data: result.data,
@@ -134,17 +141,17 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
       };
     }
     lastError = result.error;
-    if (chain === 0 && spec.tierUp && model !== "claude-sonnet-5-5" && (await d.budget.tierUpAllowed(spec))) {
+    if (chain === 0 && spec.tierUp && model !== "claude-sonnet-5-5" && TIER_UP_ON.has(lastError.code) && (await d.budget.tierUpAllowed(spec))) {
       model = "claude-sonnet-5-5";
       tieredUp = true;
       continue;
     }
     const retryable = spec.onFailure === "defer" || spec.onFailure === "tier_up_then_defer";
-    throw new AgentError(lastError.code, `${spec.id}: ${lastError.message}`, retryable, lastError.violations);
+    throw new AgentError(lastError.code, `${spec.id}: ${lastError.message}`, retryable, lastError.violations, lastError.budget);
   }
   throw lastError ?? new AgentError("server_error", `${spec.id}: exhausted`, false);
 
-  async function runOnModel(modelNow: ClaudeModel, maxCostPerCallUsd: number): Promise<{ ok: true; data: O; usage: AgentResult<O>["usage"]; llmCallId: string } | { ok: false; error: AgentError }> {
+  async function runOnModel(modelNow: ClaudeModel, maxCostPerCallUsd: number, firstKind: CallKind): Promise<{ ok: true; data: O; usage: AgentResult<O>["usage"]; llmCallId: string } | { ok: false; error: AgentError }> {
     // Budget check before every send (9.3); a refusal writes a budget_stopped row. The tier-up
     // model is judged against the tier-up cap, not the primary cap (2.6).
     const estUsd = estimateCallUsd(inputTokensEstimate, maxTokens, modelNow);
@@ -153,18 +160,18 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
       await record({
         model: modelNow,
         status: "budget_stopped",
-        errorCode: null,
+        errorCode: "budget_stopped", // llm_calls_error_code_ck: every row that is not ok names its code
         stopReason: null,
         usage: { input_tokens: 0, output_tokens: 0 },
         costUsd: 0,
         latencyMs: 0,
-        callKind,
+        callKind: firstKind,
         attempts: attempts + 1,
         tieredUp,
         requestId: null,
         retryAfterSeconds: null,
       });
-      return { ok: false, error: new AgentError("budget_stopped", `${spec.id} refused by budget scope ${decision.scope}`, false) };
+      return { ok: false, error: new AgentError("budget_stopped", `${spec.id} refused by budget scope ${decision.scope}`, false, undefined, { scope: decision.scope, retryAfter: decision.retryAfter }) };
     }
 
     // Breaker, then limiter (5.3, 6.3).
@@ -181,7 +188,7 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
     try {
       for (let attempt = 1; attempt <= 3; attempt++) {
         attempts += 1;
-        const sent = await sendOnce(modelNow, { attempt, kind: attempt === 1 ? callKind : "retry", repairTurns: [] });
+        const sent = await sendOnce(modelNow, { attempt, kind: attempt === 1 ? firstKind : "retry", repairTurns: [] });
         if (sent.outcome === "ok") {
           breaker.recordSuccess(workspace, modelNow);
           return { ok: true, data: sent.data, usage: sent.usage, llmCallId: sent.llmCallId };

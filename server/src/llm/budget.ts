@@ -1,6 +1,7 @@
 import type { AgentCallContext, ClaudeModel } from "../agents/types";
 import type { AgentSpec } from "../agents/types";
 import { PLANS, type PlanId } from "@auto-career/shared";
+import type { BudgetRefusal } from "./errors";
 
 /**
  * The five budget scopes (03-agent-runtime.md 9). Reads use a 10-second in-process cache of
@@ -9,9 +10,7 @@ import { PLANS, type PlanId } from "@auto-career/shared";
  * replicas, well under the provider caps.
  */
 
-export type BudgetDecision =
-  | { ok: true }
-  | { ok: false; scope: "call" | "user_pipeline" | "user_interactive" | "agent" | "global" | "shed"; retryAfter: "next_utc_day" | "now" };
+export type BudgetDecision = { ok: true } | ({ ok: false } & BudgetRefusal);
 
 /** Global daily thresholds: warn, then shed levels 1..3 (9.5). */
 export const GLOBAL_WARN_USD = 165;
