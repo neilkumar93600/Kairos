@@ -1,5 +1,5 @@
 {
-  "id": "b6c87096-c0a0-4a0c-bde1-6729bbec8775",
+  "id": "eacc0d27-e9a3-4193-b44f-acbf3d6c0e66",
   "prevId": "16e15a30-272e-4cd0-a28b-2290eff839be",
   "version": "7",
   "dialect": "postgresql",
@@ -1723,16 +1723,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": 1
-        },
-        "document_hash": {
-          "name": "document_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "generated": {
-            "as": "md5(document::text)",
-            "type": "stored"
-          }
         },
         "document": {
           "name": "document",

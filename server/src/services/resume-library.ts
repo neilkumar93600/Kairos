@@ -18,7 +18,11 @@ import { claimViolations, defaultResume, profileContactFrom, truthLockViolations
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Row = typeof resumes.$inferSelect;
 
-/** Sent or on its way: the tailored copy is frozen (PRD 6.1). */
+/**
+ * Sent or on its way: the tailored copy is frozen (PRD 6.1). Coordinator ruling (WP-17 review): this is UI protection
+ * only. What was sent is applications.resume_snapshot (WP-42, written by WP-29 in the approving transaction): the
+ * receipt, the render and the applier attach read that, and nothing treats this resumes row as the sent document.
+ */
 const SENT = ["approved", "submitting", "submitted"] as const;
 const DEFAULTS = { templateId: "kairos-single-v1", accent: null, pageSize: "letter", level: "mid", headline: null } as const;
 
@@ -30,10 +34,19 @@ export async function ownResume(userId: string, id: string, tx: Db | Tx = db()):
   return row;
 }
 
-async function isReadOnly(row: Row): Promise<boolean> {
+/** With `tx`, the application row is read FOR SHARE, so an approval cannot land between this check and the write. */
+async function isReadOnly(row: Row, tx?: Tx): Promise<boolean> {
   if (row.kind !== "tailored" || !row.applicationId) return false;
-  const [app] = await db().select({ status: applications.status }).from(applications).where(eq(applications.id, row.applicationId));
+  const q = (tx ?? db()).select({ status: applications.status }).from(applications).where(eq(applications.id, row.applicationId));
+  const [app] = tx ? await q.for("share") : await q;
   return Boolean(app && (SENT as readonly string[]).includes(app.status));
+}
+
+/** The caller's resume inside a write transaction, refused when it is frozen. */
+async function writable(tx: Tx, userId: string, id: string): Promise<Row> {
+  const row = await ownResume(userId, id, tx);
+  if (await isReadOnly(row, tx)) throw readOnlyError();
+  return row;
 }
 
 /** What every /resumes route returns (resumeDetailSchema): the document with its design defaults and the library fields. */
@@ -171,6 +184,23 @@ export async function defaultBase(userId: string, plan: PlanId): Promise<Row> {
   return stored;
 }
 
+/**
+ * resumes_user_uq (one resume per user) is dropped by 0011, a contract migration that ships one release after this
+ * code (WP-17 review): until it runs, a second resume of a user is refused here as 503, never a 500.
+ * ponytail: delete this and its callers once 0011 has run everywhere.
+ */
+export const ONE_RESUME_UNTIL_0011 = () =>
+  new HttpError(503, "service_unavailable", "A second resume opens with the next Kairos update. Your current resume is unchanged.", { reason: "resumes_user_uq" });
+async function interim<T>(insert: () => Promise<T>): Promise<T> {
+  try {
+    return await insert();
+  } catch (err) {
+    const e = err as { code?: string; constraint?: string; cause?: { code?: string; constraint?: string } };
+    if ((e.cause ?? e).code === "23505" && (e.cause ?? e).constraint === "resumes_user_uq") throw ONE_RESUME_UNTIL_0011();
+    throw err;
+  }
+}
+
 const limitReached = () =>
   new HttpError(409, "limit_reached", `You can keep ${MAX_BASE_RESUMES_PER_PROFILE} base resumes per profile. Delete one first.`, { limit: MAX_BASE_RESUMES_PER_PROFILE });
 
@@ -222,10 +252,9 @@ export async function createFromFacts(userId: string, plan: PlanId, input: Creat
     }
     const n = await assertRoom(tx, profileId);
     const document = await documentFromFacts(tx, userId, profileId, input.importId, duplicates);
-    const [row] = await tx
-      .insert(resumes)
-      .values({ userId, resumeProfileId: profileId, kind: "base", name: input.name, targetRoles: input.targetRoles ?? [], isDefault: n === 0, document })
-      .returning();
+    const [row] = await interim(() =>
+      tx.insert(resumes).values({ userId, resumeProfileId: profileId, kind: "base", name: input.name, targetRoles: input.targetRoles ?? [], isDefault: n === 0, document }).returning(),
+    );
     return row!;
   });
 }
@@ -237,10 +266,9 @@ export async function duplicate(userId: string, sourceId: string, name: string, 
     const profileId = src.resumeProfileId ?? (await profileFor(tx, userId, "free"));
     await assertTruthLock(tx, userId, profileId, src.document, null);
     const n = await assertRoom(tx, profileId);
-    const [row] = await tx
-      .insert(resumes)
-      .values({ userId, resumeProfileId: profileId, kind: "base", name, targetRoles: targetRoles ?? src.targetRoles, isDefault: n === 0, document: src.document })
-      .returning();
+    const [row] = await interim(() =>
+      tx.insert(resumes).values({ userId, resumeProfileId: profileId, kind: "base", name, targetRoles: targetRoles ?? src.targetRoles, isDefault: n === 0, document: src.document }).returning(),
+    );
     return row!;
   });
 }
@@ -253,11 +281,10 @@ const readOnlyError = () => new HttpError(409, "read_only", "This resume was sen
  * since application forms are filled from it (B.8.3).
  */
 export async function saveDocument(userId: string, id: string, doc: ResumeInput): Promise<Row> {
-  const row = await ownResume(userId, id);
-  if (await isReadOnly(row)) throw readOnlyError();
-  await assertTruthLock(db(), userId, row.resumeProfileId, doc, row.document);
   return db().transaction(async (tx) => {
-    await tx.execute(sql`select snapshot_resume(${id}::uuid, 'edit', null, 'user')`);
+    const row = await writable(tx, userId, id);
+    await assertTruthLock(tx, userId, row.resumeProfileId, doc, row.document);
+    await tx.execute(sql`select snapshot_resume(${id}::uuid, ${userId}, 'edit', null, 'user')`);
     const [saved] = await tx.update(resumes).set({ document: doc, updatedAt: new Date() }).where(and(eq(resumes.id, id), eq(resumes.userId, userId))).returning();
     if (row.isDefault) {
       const [profile] = await tx.select({ country: profiles.country }).from(profiles).where(eq(profiles.userId, userId));
@@ -268,14 +295,15 @@ export async function saveDocument(userId: string, id: string, doc: ResumeInput)
 }
 
 export async function rename(userId: string, id: string, patch: { name?: string; targetRoles?: string[] }): Promise<Row> {
-  const row = await ownResume(userId, id);
-  if (await isReadOnly(row)) throw readOnlyError();
-  const [saved] = await db()
-    .update(resumes)
-    .set({ ...(patch.name !== undefined ? { name: patch.name } : {}), ...(patch.targetRoles !== undefined ? { targetRoles: patch.targetRoles } : {}), updatedAt: new Date() })
-    .where(eq(resumes.id, row.id))
-    .returning();
-  return saved!;
+  return db().transaction(async (tx) => {
+    const row = await writable(tx, userId, id);
+    const [saved] = await tx
+      .update(resumes)
+      .set({ ...(patch.name !== undefined ? { name: patch.name } : {}), ...(patch.targetRoles !== undefined ? { targetRoles: patch.targetRoles } : {}), updatedAt: new Date() })
+      .where(eq(resumes.id, row.id))
+      .returning();
+    return saved!;
+  });
 }
 
 /** DELETE /resumes/:id: the default base waits until another is default, and a profile keeps at least one base (PRD 6.6). */
@@ -335,7 +363,7 @@ export async function getRevision(userId: string, id: string, revId: string) {
 /** POST /resumes/:id/revisions: names the current document. */
 export async function nameRevision(userId: string, id: string, name: string) {
   await ownResume(userId, id);
-  const { rows } = await db().execute<{ id: string }>(sql`select snapshot_resume(${id}::uuid, 'named', ${name}, 'user') as id`);
+  const { rows } = await db().execute<{ id: string }>(sql`select snapshot_resume(${id}::uuid, ${userId}, 'named', ${name}, 'user') as id`);
   const [rev] = await db()
     .select({ id: resumeRevisions.id, name: resumeRevisions.name, reason: resumeRevisions.reason, createdAt: resumeRevisions.createdAt })
     .from(resumeRevisions)
@@ -346,11 +374,10 @@ export async function nameRevision(userId: string, id: string, name: string) {
 /** Restore re-runs the truth lock (a fact cited then may be unconfirmed now) and keeps the current document as a revision. */
 export async function restore(userId: string, id: string, revId: string): Promise<Row> {
   const rev = await ownRevision(userId, id, revId);
-  const row = await ownResume(userId, id);
-  if (await isReadOnly(row)) throw readOnlyError();
-  await assertTruthLock(db(), userId, row.resumeProfileId, rev.document, null);
   return db().transaction(async (tx) => {
-    await tx.execute(sql`select snapshot_resume(${id}::uuid, 'restore', null, 'user')`);
+    const row = await writable(tx, userId, id);
+    await assertTruthLock(tx, userId, row.resumeProfileId, rev.document, null);
+    await tx.execute(sql`select snapshot_resume(${id}::uuid, ${userId}, 'restore', null, 'user')`);
     const [saved] = await tx.update(resumes).set({ document: rev.document, updatedAt: new Date() }).where(eq(resumes.id, id)).returning();
     return saved!;
   });
@@ -418,8 +445,12 @@ export async function createCopy(user: Pick<SessionUser, "id">, plan: PlanId, jo
     })
     .onConflictDoNothing()
     .returning();
-  if (!row) throw exists((await copyFor(user.id, job.id))!.id);
-  await db().execute(sql`select snapshot_resume(${row.id}::uuid, 'before_tailor', ${`Before tailoring for ${job.company}`.slice(0, 80)}, 'system')`);
+  if (!row) {
+    // A lost race on resumes_user_job_uq is a copy that exists; anything else is resumes_user_uq before 0011.
+    const raced = await copyFor(user.id, job.id);
+    throw raced ? exists(raced.id) : ONE_RESUME_UNTIL_0011();
+  }
+  await db().execute(sql`select snapshot_resume(${row.id}::uuid, ${user.id}, 'before_tailor', ${`Before tailoring for ${job.company}`.slice(0, 80)}, 'system')`);
   return row;
 }
 

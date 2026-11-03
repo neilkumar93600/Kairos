@@ -160,7 +160,10 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       facts: ["SIUD", "SIUD", ""],
       saved_answers: ["SIUD", "SIU", ""],
       resumes: ["SIUD", "SIU", ""],
-      resume_revisions: ["SIUD", "SIU", ""],
+      // WP-17: snapshot_resume() is the only writer of revisions; imports and roles are the parse job's.
+      resume_revisions: ["S", "S", ""],
+      resume_imports: ["SIUD", "SIU", ""],
+      employments: ["SIUD", "SIUD", ""],
       companies: ["SIU", "SIUD", "S"],
       jobs: ["SIU", "SIUD", "S"],
       matches: ["SIU", "SIUD", "S"],
@@ -224,6 +227,10 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       ["kairos_api", "delete from inbound_emails", false],
       ["kairos_api", "select llm_calls_drop_old_partitions(9999)", false],
       ["kairos_readonly", "insert into companies (name, ats, board_token) values ('x', 'greenhouse', 'x')", false],
+      ["kairos_api", "insert into resume_revisions (resume_id, document) values (gen_random_uuid(), '{}')", false],
+      ["kairos_worker", "delete from resume_imports where false", false],
+      ["kairos_api", "select snapshot_resume(gen_random_uuid(), 'nobody', 'named', 'x', 'user')", true],
+      ["kairos_readonly", "select snapshot_resume(gen_random_uuid(), 'nobody', 'named', 'x', 'user')", false],
     ] as const)("%s: %s -> allowed %s", async (role, query, allowed) => {
       if (allowed) await expect(asRole(role, query)).resolves.toBeDefined();
       else await expect(asRole(role, query)).rejects.toMatchObject({ code: expect.stringMatching(/^(42501|25006)$/) });

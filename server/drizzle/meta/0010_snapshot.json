@@ -1,6 +1,6 @@
 {
-  "id": "2fd014ab-ccae-4206-8f2f-100f8b733e23",
-  "prevId": "b6c87096-c0a0-4a0c-bde1-6729bbec8775",
+  "id": "eadd0de6-1f27-4d21-bcfe-66af3f22e55a",
+  "prevId": "eacc0d27-e9a3-4193-b44f-acbf3d6c0e66",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1723,16 +1723,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": 1
-        },
-        "document_hash": {
-          "name": "document_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "generated": {
-            "type": "stored",
-            "as": "md5(document::text)"
-          }
         },
         "document": {
           "name": "document",

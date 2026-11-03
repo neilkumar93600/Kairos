@@ -138,6 +138,29 @@ describe.skipIf(!hasTestDb)("resume library and imports (R1)", () => {
     expect((await request(app).post("/api/profile/imports").send({ text, resumeProfileId: extra!.id })).status).toBe(403);
   });
 
+  it("database backstops: provenance of a confirmed fact, user-created roles, and the revision writer's owner check", async () => {
+    const { db } = await import("../src/db/client");
+    const { asActor } = await import("../src/lib/actor");
+    const { sql } = await import("drizzle-orm");
+    const [p] = await tdb.insert(schema.resumeProfiles).values({ userId: me.id, name: "Main", isDefault: true, sourceText: "" }).returning();
+    const hash = "a".repeat(64);
+    const [f] = await tdb.insert(schema.facts).values({ userId: me.id, resumeProfileId: p!.id, kind: "role", text: "Led a team", confirmed: true, sourceSpanHash: hash }).returning();
+    // A worker (no actor) cannot rewrite the identity of a confirmed fact; an operator can.
+    await expect(db().update(schema.facts).set({ sourceSpanHash: "b".repeat(64) }).where(eq(schema.facts.id, f!.id))).rejects.toMatchObject({ cause: { code: "23514" } });
+    await tdb.update(schema.facts).set({ sourceSpanHash: "c".repeat(64) }).where(eq(schema.facts.id, f!.id));
+    // A user action creates only user-asserted roles.
+    await expect(
+      db().transaction(async (tx) => {
+        await asActor(tx, "user");
+        await tx.insert(schema.employments).values({ userId: me.id, resumeProfileId: p!.id, title: "Analyst", company: "Sample Co", assertedBy: "import" });
+      }),
+    ).rejects.toMatchObject({ cause: { code: "23514" } });
+    // snapshot_resume checks the owner itself: another user's id snapshots nothing.
+    const base = (await request(app).get("/api/resumes")).body.resumes[0];
+    const { rows } = await db().execute<{ id: string | null }>(sql`select snapshot_resume(${base.id}::uuid, ${"someone-else"}, 'named', 'x', 'user') as id`);
+    expect(rows[0]!.id).toBeNull();
+  });
+
   it("answers 415 for a macro DOCX and 422 no_text_layer for a scan, storing nothing", async () => {
     const macro = docx(RESUME_LINES, [{ name: "word/vbaProject.bin", data: "x" }]);
     expect((await request(app).post("/api/profile/imports").attach("file", macro, "cv.docx")).body.error).toMatchObject({ code: "unsupported_type" });

@@ -58,8 +58,20 @@ const IDEMPOTENT = [
   /^analyze\b/,
 ];
 
-/** Problems in one migration file; an empty list means it passes. */
-export function lintMigration(tag, text) {
+/** Names of unique indexes created anywhere in the migration texts: dropping one is a contract change. */
+export function uniqueIndexNames(texts) {
+  const names = new Set();
+  for (const text of texts) {
+    for (const m of stripSql(text).replace(/"/g, "").matchAll(/create unique index (?:concurrently )?(?:if not exists )?(\w+)/gi)) names.add(m[1].toLowerCase());
+  }
+  return names;
+}
+
+/**
+ * Problems in one migration file; an empty list means it passes. `uniqueIndexes` (uniqueIndexNames of every file) makes
+ * dropping a unique index a contract change: old code may upsert on it with ON CONFLICT (WP-17 review).
+ */
+export function lintMigration(tag, text, uniqueIndexes = new Set()) {
   const header = text.replace(/\r\n/g, "\n").split("\n");
   const noTransaction = /^-- kairos:no-transaction\b/.test(header[0] ?? "");
   const contract = header.slice(0, 5).some((l) => /^-- kairos:contract \S/.test(l));
@@ -87,6 +99,12 @@ export function lintMigration(tag, text) {
           contractOnly("ADD COLUMN ... NOT NULL without a DEFAULT");
         }
       }
+    }
+    const dropped = s.match(/^drop index (?:concurrently )?(?:if exists )?(?:public\.)?(\w+)/);
+    // A file that builds a replacement unique index in the same run (0005: invoice -> invoice and reason) is a widening.
+    const replaces = statements.some((x) => /^create unique index\b/.test(x));
+    if (dropped && !replaces && (uniqueIndexes.has(dropped[1]) || /_(uq|key|pkey)$/.test(dropped[1]))) {
+      contractOnly("DROP INDEX on a unique index with no replacement in the file");
     }
     const index = /^create (unique )?index (concurrently )?(?:if not exists )?\S+ on (?:only )?(?:public\.)?(\w+)/.exec(s);
     if (index && !index[2] && LARGE_TABLES.has(index[3]) && !created.has(index[3])) {
@@ -125,7 +143,9 @@ export function lintAgainstBase(base, cwd) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const journal = JSON.parse(readFileSync(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8"));
-  const problems = journal.entries.flatMap(({ tag }) => lintMigration(tag, readFileSync(new URL(`../drizzle/${tag}.sql`, import.meta.url), "utf8")));
+  const texts = journal.entries.map(({ tag }) => [tag, readFileSync(new URL(`../drizzle/${tag}.sql`, import.meta.url), "utf8")]);
+  const uniques = uniqueIndexNames(texts.map(([, text]) => text));
+  const problems = texts.flatMap(([tag, text]) => lintMigration(tag, text, uniques));
   const at = process.argv.indexOf("--base");
   if (at > 0 && process.argv[at + 1]) problems.push(...lintAgainstBase(process.argv[at + 1], root));
   for (const p of problems) console.error(p);

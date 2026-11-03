@@ -97,7 +97,8 @@ export const resumeProfiles = pgTable(
  * Base resumes and tailored copies (PRD 6.1, 12; 02-database 7.1.7 as amended): up to 10 bases per resume profile, one
  * default base per profile, at most one active tailored copy per job. Design settings (template, accent, page size,
  * level, headline) live in `document` (ResumeInput), not in columns. resumes_guard (migration) bumps `version` when the
- * document changes; `document_hash` is change detection only.
+ * document changes. ponytail: no stored document_hash (a generated column would rewrite resumes under an exclusive lock);
+ * `version` is the change marker, and md5(document::text) is computed at read time if a caller ever needs content identity.
  */
 export const resumes = pgTable(
   "resumes",
@@ -118,10 +119,13 @@ export const resumes = pgTable(
     /** The base's version when the copy was made: baseChanged is base.version > this (PRD 6.3). */
     baseVersion: integer("base_version"),
     jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+    /**
+     * A soft link for the library UI ("tailored for this application"). Never the sent document: what was sent is
+     * applications.resume_snapshot (WP-42, written by WP-29 when approving), which the receipt, render and applier read.
+     */
     applicationId: uuid("application_id").references((): AnyPgColumn => applications.id, { onDelete: "set null" }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     version: integer("version").notNull().default(1),
-    documentHash: text("document_hash").generatedAlwaysAs(sql`md5(document::text)`),
     document: jsonb("document").$type<ResumeInput>().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

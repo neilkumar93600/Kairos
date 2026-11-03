@@ -85,7 +85,10 @@ async function ensureTailoredCopy(userId: string, applicationId: string, job: { 
   try {
     await createCopy({ id: userId }, await planFor(db(), userId), job);
   } catch (err) {
-    // A concurrent copy won the unique index: that copy is the job's, which is what was wanted.
-    if (!(err instanceof HttpError && err.code === "exists")) throw err;
+    // A concurrent copy won the unique index: that copy is the job's, which is what was wanted. Before migration 0011
+    // (resumes_user_uq still there) the draft simply has no copy yet; the draft itself is already written.
+    if (!(err instanceof HttpError && (err.code === "exists" || err.code === "service_unavailable"))) throw err;
   }
+  // ponytail: WP-42's recordEvent(tx, { kind: "resume_linked", ... }) is not on this base; the coordinator calls it here
+  // (and where an existing copy is linked above) at merge, so the tracker card shows the version chip's event.
 }

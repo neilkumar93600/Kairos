@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 /** scripts/lint-migrations.mjs, the expand-only rules of 06-infrastructure 3.7. */
-const { lintMigration } = (await import(new URL("../scripts/lint-migrations.mjs", import.meta.url).href)) as {
-  lintMigration: (tag: string, text: string) => string[];
+const { lintMigration, uniqueIndexNames } = (await import(new URL("../scripts/lint-migrations.mjs", import.meta.url).href)) as {
+  lintMigration: (tag: string, text: string, uniqueIndexes?: Set<string>) => string[];
+  uniqueIndexNames: (texts: string[]) => Set<string>;
 };
 const lint = (text: string) => lintMigration("0099_x", text);
 
@@ -39,6 +40,17 @@ describe("lint-migrations", () => {
   it("allows a contract change only under a '-- kairos:contract <reason>' header", () => {
     expect(lint("-- kairos:contract source_text unused since release 12\nALTER TABLE resume_profiles DROP COLUMN source_text;")).toEqual([]);
     expect(lint("-- kairos:contract\nALTER TABLE resume_profiles DROP COLUMN source_text;")).toHaveLength(1);
+  });
+
+  it("makes dropping a unique index a contract change unless the file builds a replacement (WP-17 review)", () => {
+    const uniques = uniqueIndexNames(['CREATE UNIQUE INDEX "resumes_one" ON "resumes" USING btree ("user_id");']);
+    expect([...uniques]).toEqual(["resumes_one"]);
+    const drop = '-- kairos:no-transaction\nDROP INDEX CONCURRENTLY IF EXISTS "resumes_one";';
+    expect(lintMigration("0099_x", drop, uniques)).toEqual([expect.stringMatching(/DROP INDEX on a unique index/)]);
+    expect(lintMigration("0099_x", drop.replace("resumes_one", "x_uq"))).toEqual([expect.stringMatching(/DROP INDEX on a unique index/)]);
+    expect(lintMigration("0099_x", `-- kairos:no-transaction\n-- kairos:contract one resume per user ends\n${drop.split("\n")[1]}`, uniques)).toEqual([]);
+    expect(lintMigration("0099_x", '-- kairos:no-transaction\nCREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS "y_uq" ON t (a, b);\nDROP INDEX CONCURRENTLY IF EXISTS "x_uq";')).toEqual([]);
+    expect(lint('DROP INDEX "plain_idx";')).toEqual([]);
   });
 
   it("keeps a no-transaction file to idempotent statements", () => {
