@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pg from "pg";
 import type { Db } from "../../src/db/client";
+import { readMigrations, runMigrations } from "../../src/db/migrator";
 import * as schema from "../../src/db/schema";
 
 /**
@@ -34,7 +34,7 @@ export function testDbUrl(name: string): string {
   return url.toString();
 }
 
-/** Creates the named database when missing, applies every migration, and returns a cached client. */
+/** Creates the named database when missing, applies every migration with the deploy's runner, and returns a cached client. */
 export async function testDb(name: string): Promise<Db> {
   const cached = clients.get(name);
   if (cached) return cached.db;
@@ -50,9 +50,15 @@ export async function testDb(name: string): Promise<Db> {
   } finally {
     await admin.end();
   }
+  const migrator = new pg.Client({ connectionString: testDbUrl(name) });
+  await migrator.connect();
+  try {
+    await runMigrations(migrator, readMigrations(MIGRATIONS));
+  } finally {
+    await migrator.end();
+  }
   const pool = new pg.Pool({ connectionString: testDbUrl(name), max: 5 });
   const db = drizzle(pool, { schema, casing: "snake_case" });
-  await migrate(db, { migrationsFolder: MIGRATIONS });
   clients.set(name, { db, pool });
   return db;
 }
