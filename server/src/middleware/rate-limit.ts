@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { ipKeyGenerator, rateLimit, type Options, type Store } from "express-rate-limit";
+import { ipKeyGenerator, MemoryStore, rateLimit, type Options, type Store } from "express-rate-limit";
 import { getSessionCookie } from "better-auth/cookies";
 import { fromNodeHeaders } from "better-auth/node";
 import { sql } from "drizzle-orm";
@@ -52,6 +52,54 @@ const storeLog = {
   warn: (err: unknown, message?: string) => logger.warn({ err }, message ?? "rate limiter"),
 };
 
+/** Set by createLimiters: whether the AI-route limiters count in Postgres (05-api 6.2) or in memory (tests). */
+let aiShared = false;
+
+/** Picks Postgres or memory per call, because the AI routers are built at import time, before createLimiters runs. */
+class SwitchStore implements Store {
+  private readonly memory = new MemoryStore();
+  private readonly shared: PostgresStore;
+  constructor(prefix: string) {
+    this.shared = new PostgresStore(prefix);
+  }
+  private get store(): Store {
+    return aiShared ? this.shared : this.memory;
+  }
+  init(options: Options) {
+    this.memory.init(options);
+    this.shared.init(options);
+  }
+  increment(key: string) {
+    return this.store.increment(key);
+  }
+  decrement(key: string) {
+    return this.store.decrement(key);
+  }
+  resetKey(key: string) {
+    return this.store.resetKey(key);
+  }
+}
+
+/**
+ * A model-backed route's per-minute cap, by user (class `ai_burst`, 10 a minute, 05-api 6.2). Each `bucket` counts
+ * apart (the import route has its own); in production every replica shares the count.
+ */
+export function aiLimiter(bucket: string, limit = 10) {
+  return rateLimit({
+    limit,
+    windowMs: 60_000,
+    identifier: bucket,
+    keyGenerator: byUser,
+    store: new SwitchStore(`${bucket}:`),
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    passOnStoreError: true,
+    logger: storeLog,
+    handler: (_req, res, next) =>
+      next(new HttpError(429, "rate_limited", "Too many AI requests. Try again in a minute.", { reason: "user_limit", bucket, retryAfterSec: Number(res.getHeader("retry-after")) })),
+  });
+}
+
 /** A session cookie or a bearer token, valid or not. */
 export const hasCredentials = (req: Request) => Boolean(req.headers.authorization || getSessionCookie(fromNodeHeaders(req.headers)));
 
@@ -62,9 +110,10 @@ const byUser = (req: Request) => currentUser(req).id;
 /**
  * The Express limit classes of 05-api 6.2. `shared`: counters in Postgres (production); otherwise in memory per app
  * (tests). Every class fails open on a store error: a database blip must not take the api down with it. The AI-route
- * limiters (writerLimiter, importLimiter) stay in memory until WP-30; auth routes are limited by Better Auth (lib/auth.ts).
+ * limiters (aiLimiter below) follow the same switch; auth routes are limited by Better Auth (lib/auth.ts).
  */
 export function createLimiters(shared: boolean) {
+  aiShared = shared;
   const limiter = (bucket: string, limit: number, windowMs: number, byUserId: boolean, skip?: (req: Request, res: Response) => boolean) =>
     rateLimit({
       limit,

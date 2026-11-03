@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { and, eq, gte, sql } from "drizzle-orm";
-import { rateLimit } from "express-rate-limit";
 import { z } from "zod";
 import { importJobSchema } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, companies, jobs, matches, profiles } from "../db/schema";
 import { HttpError } from "../lib/errors";
+import { aiLimiter } from "../middleware/rate-limit";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
 import type { SessionUser } from "../lib/auth";
@@ -73,15 +73,8 @@ const dbIo: ImportIo = {
   },
 };
 
-// ponytail: in-memory per api instance, like writerLimiter. Each import fetches a third-party board, so 10 a minute per user.
-const importLimiter = rateLimit({
-  windowMs: 60_000,
-  limit: 10,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  keyGenerator: (req) => currentUser(req).id,
-  handler: (_req, _res, next) => next(new HttpError(429, "rate_limited", "Too many job imports. Try again in a minute.")),
-});
+/** Each import fetches a third-party board: 10 a minute per user, in Postgres like writerLimiter. */
+const importLimiter = aiLimiter("ai_import");
 
 /** Metered by the jobImports allowance (CISO mustFix 3): each import fetches a third-party board and stores a posting. */
 jobsRouter.post("/import", importLimiter, validateBody(importJobSchema), async (req, res) => {
