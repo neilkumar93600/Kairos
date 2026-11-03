@@ -5,6 +5,7 @@ import { fromNodeHeaders } from "better-auth/node";
 import { sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
 import { clientIp } from "./client-ip";
 import { currentUser } from "./require-auth";
 
@@ -45,6 +46,12 @@ class PostgresStore implements Store {
   }
 }
 
+/** Store errors go to pino, whose err serializer drops drizzle's params: the key is a client address or a user id. */
+const storeLog = {
+  error: (err: unknown, message?: string) => logger.error({ err }, message ?? "rate limiter"),
+  warn: (err: unknown, message?: string) => logger.warn({ err }, message ?? "rate limiter"),
+};
+
 /** A session cookie or a bearer token, valid or not. */
 export const hasCredentials = (req: Request) => Boolean(req.headers.authorization || getSessionCookie(fromNodeHeaders(req.headers)));
 
@@ -69,6 +76,7 @@ export function createLimiters(shared: boolean) {
       standardHeaders: "draft-8",
       legacyHeaders: false,
       passOnStoreError: true,
+      logger: storeLog,
       handler: (_req, res, next) => {
         const details = { reason: byUserId ? "user_limit" : "ip_limit", bucket, retryAfterSec: Number(res.getHeader("retry-after")) };
         next(new HttpError(429, "rate_limited", "Too many requests. Try again later.", details));
