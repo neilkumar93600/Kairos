@@ -1,10 +1,9 @@
 import { Router } from "express";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { notificationsQuerySchema, notificationsReadSchema, type Notification, type NotificationsRead } from "@auto-career/shared";
-import { z } from "zod";
 import { db } from "../db/client";
 import { notifications } from "../db/schema";
-import { HttpError } from "../lib/errors";
+import { keysetBefore, pageParams, slicePage, tsKey } from "../lib/pagination";
 import { validateBody, parseParam } from "../middleware/validate";
 import { currentUser } from "../middleware/require-auth";
 
@@ -20,31 +19,8 @@ const TITLES: Record<Notification["kind"], string> = {
   forwarding_code: "Your Gmail forwarding code arrived",
 };
 
-/**
- * Keyset cursor in WP-30's format (lib/pagination.ts): base64url(JSON { v: 1, t: "notifications", k: [created_at], id }),
- * created_at as UTC text with microseconds (`YYYY-MM-DDTHH:MI:SS.ffffffZ`), never a JS Date (milliseconds), so rows
- * tied to the millisecond are not skipped. The key is checked to be a real instant before it reaches SQL, so a crafted
- * cursor is 400, never a 22007/22008 from Postgres.
- * ponytail: local codec; the coordinator swaps in WP-30's helpers at merge.
- */
-const UTC_US = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.\d{6}Z$/;
-const realInstant = (k: string) => {
-  const m = UTC_US.exec(k);
-  if (!m) return false;
-  const [, y, mo, d, h, mi, sec] = m.map(Number) as number[];
-  const t = new Date(Date.UTC(y!, mo! - 1, d!, h!, mi!, sec!));
-  return y! >= 1970 && t.getUTCFullYear() === y && t.getUTCMonth() === mo! - 1 && t.getUTCDate() === d && t.getUTCHours() === h && t.getUTCMinutes() === mi && t.getUTCSeconds() === sec;
-};
-const cursorShape = z.strictObject({ v: z.literal(1), t: z.literal("notifications"), k: z.tuple([z.string().refine(realInstant)]), id: z.uuid() });
-const encodeCursor = (createdKey: string, id: string) => Buffer.from(JSON.stringify({ v: 1, t: "notifications", k: [createdKey], id })).toString("base64url");
-function decodeCursor(raw: string | undefined) {
-  if (raw === undefined) return undefined;
-  try {
-    return cursorShape.parse(JSON.parse(Buffer.from(raw, "base64url").toString("utf8")));
-  } catch {
-    throw new HttpError(400, "invalid_param", "Invalid cursor");
-  }
-}
+/** Keyset pages through WP-30's lib/pagination.ts: list "notifications", one timestamptz key (created_at) and the id. */
+const LIST = "notifications";
 const UUID_RE = sql.raw(`'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`);
 
 type Row = {
@@ -62,23 +38,24 @@ type Row = {
 notificationsRouter.get("/", async (req, res) => {
   const me = currentUser(req);
   const q = parseParam(notificationsQuerySchema, req.query);
-  const cursor = decodeCursor(q.cursor);
+  const { limit, after } = pageParams(req.query, 50, LIST, ["ts"]);
   // The title is joined at read time, from the caller's own rows only: an application id for the application kinds, the
   // inbound email's linked application for the reply kinds. The uuid regex guards the casts against a malformed entity.
   const { rows } = await db().execute<Row>(sql`
     WITH page AS (
-      SELECT n.id, n.kind, n.created_at, n.read_at, n.detail,
-             CASE n.kind WHEN 'autopilot_sent' THEN n.entity_id
-                         WHEN 'resend_available' THEN split_part(n.entity_id, ':', 1) END AS app_key,
-             CASE WHEN n.kind IN ('reply_important', 'offer_pause_notice') THEN n.entity_id END AS mail_key
-        FROM ${notifications} n
-       WHERE n.user_id = ${me.id}
-         ${q.unread ? sql`AND n.read_at IS NULL` : sql``}
-         ${cursor ? sql`AND (n.created_at, n.id) < (${cursor.k[0]}::timestamptz, ${cursor.id}::uuid)` : sql``}
-       ORDER BY n.created_at DESC, n.id DESC
-       LIMIT ${q.limit + 1}
+      SELECT ${notifications.id} AS id, ${notifications.kind} AS kind, ${notifications.createdAt} AS created_at,
+             ${notifications.readAt} AS read_at, ${notifications.detail} AS detail, ${tsKey(notifications.createdAt)} AS created_key,
+             CASE ${notifications.kind} WHEN 'autopilot_sent' THEN ${notifications.entityId}
+                         WHEN 'resend_available' THEN split_part(${notifications.entityId}, ':', 1) END AS app_key,
+             CASE WHEN ${notifications.kind} IN ('reply_important', 'offer_pause_notice') THEN ${notifications.entityId} END AS mail_key
+        FROM ${notifications}
+       WHERE ${notifications.userId} = ${me.id}
+         ${q.unread ? sql`AND ${notifications.readAt} IS NULL` : sql``}
+         ${after ? sql`AND ${keysetBefore([notifications.createdAt], ["timestamptz"], notifications.id, after)}` : sql``}
+       ORDER BY ${notifications.createdAt} DESC, ${notifications.id} DESC
+       LIMIT ${limit + 1}
     )
-    SELECT p.id, p.kind, to_char(p.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_key,
+    SELECT p.id, p.kind, p.created_key,
            to_char(p.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
            to_char(p.read_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS read_at,
            p.detail, a.id AS application_id, j.title AS job_title, c.name AS company
@@ -91,11 +68,10 @@ notificationsRouter.get("/", async (req, res) => {
       LEFT JOIN jobs j ON j.id = a.job_id
       LEFT JOIN companies c ON c.id = j.company_id
      ORDER BY p.created_at DESC, p.id DESC`);
-  const page = rows.slice(0, q.limit);
+  const page = slicePage(rows, limit, LIST, (r) => [r.created_key], (r) => r.id);
   const unread = await unreadCount(me.id);
-  const last = page.at(-1);
   res.json({
-    notifications: page.map((r) => ({
+    notifications: page.rows.map((r) => ({
       id: r.id,
       kind: r.kind,
       createdAt: r.created_at,
@@ -105,7 +81,7 @@ notificationsRouter.get("/", async (req, res) => {
       detail: r.detail,
     })),
     unread,
-    ...(rows.length > q.limit && last ? { nextCursor: encodeCursor(last.created_key, last.id) } : {}),
+    ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
   });
 });
 

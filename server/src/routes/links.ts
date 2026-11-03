@@ -72,10 +72,11 @@ const REFUSED = new Error("signed link refused");
  * The GET page and the POST action of one signed link. A malformed, forged, used, expired or unknown token gets the
  * same 410 page (link_expired), and so does a target the action refuses (`show`/`act` returning null).
  *
- * Mounting (WP-29, WP-35): in routes/index.ts, after WP-30's request deadline and before `router.use(limits.anon)`, outside
- * the session chain, behind the `link` class (05-api 6.2):
- *   router.use("/unsubscribe", limits.link, signedLinkRouter(unsubscribeAction));
- *   router.use("/applications/:id/resend-link", limits.link, signedLinkRouter(resendAction)); // before "/applications"
+ * Mounting (WP-29, WP-35): in routes/index.ts, above `router.use(routeDeadline, limits.anon)`, so the anonymous class never
+ * counts link traffic, with the deadline repeated on the mount, outside the session chain and behind the `link` class
+ * (05-api 6.2). The default 10 s deadline fits both pages, so ROUTE_DEADLINES needs no row:
+ *   router.use("/unsubscribe", routeDeadline, limits.link, signedLinkRouter(unsubscribeAction));
+ *   router.use("/applications/:id/resend-link", routeDeadline, limits.link, signedLinkRouter(resendAction));
  * Each mounted path needs a `public` entry in test/helpers/authz-matrix.ts ("the signed token is the credential; GET only
  * reads"). `limits.link` is created but deliberately mounted nowhere until the first such route exists.
  */
