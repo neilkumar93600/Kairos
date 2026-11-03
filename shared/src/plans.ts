@@ -41,6 +41,16 @@ export interface Plan {
   interactiveSpendBackstopUsd: number;
 }
 
+/**
+ * The plan keys a client sees in GET /api/me (05-api 12.1). The cost controls (spend caps, scoring cap, cadence) and the
+ * allowance table stay on the server.
+ */
+export const PUBLIC_PLAN_KEYS = [
+  "id", "name", "tagline", "priceUsd", "applicationsPerCycle", "resumeProfiles", "cloudApplier", "priorityPolling",
+  "outcomeReport", "coverLetters", "answerMemory", "highlighted", "features", "autopilotDailySendCap",
+] as const satisfies readonly (keyof Plan)[];
+export type PublicPlan = Pick<Plan, (typeof PUBLIC_PLAN_KEYS)[number]>;
+
 /** The five metered AI features (F11); the ai_usage.feature check constraint names the same set. */
 export const AI_FEATURES = ["resumeSuggestions", "jobTailor", "applicationDrafts", "jobImports", "rehearsalTurns"] as const;
 export type AiFeature = (typeof AI_FEATURES)[number];

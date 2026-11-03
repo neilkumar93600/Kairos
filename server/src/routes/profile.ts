@@ -7,6 +7,7 @@ import { db } from "../db/client";
 import { applications, facts, profiles, resumeProfiles, resumes, savedAnswers } from "../db/schema";
 import { asActor } from "../lib/actor";
 import { HttpError, forbidden, notFound } from "../lib/errors";
+import { FACT_COLUMNS, PROFILE_COLUMNS, RESUME_PROFILE_COLUMNS } from "../lib/serializers";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
 import { enqueue } from "../jobs/queues";
@@ -25,22 +26,6 @@ const contactSchema = z.object({
   githubUrl: link,
   portfolioUrl: link,
 });
-
-/** The columns a profile response carries (the frozen shape); sensitive_answers_enc and normalized_email_hash never leave. */
-const PROFILE_COLUMNS = {
-  userId: profiles.userId,
-  phone: profiles.phone,
-  city: profiles.city,
-  country: profiles.country,
-  linkedinUrl: profiles.linkedinUrl,
-  githubUrl: profiles.githubUrl,
-  portfolioUrl: profiles.portfolioUrl,
-  preferences: profiles.preferences,
-  onboardingStep: profiles.onboardingStep,
-  forwardingAddress: profiles.forwardingAddress,
-  createdAt: profiles.createdAt,
-  updatedAt: profiles.updatedAt,
-};
 
 profileRouter.get("/", async (req, res) => {
   const [profile] = await db().select(PROFILE_COLUMNS).from(profiles).where(eq(profiles.userId, currentUser(req).id));
@@ -77,14 +62,14 @@ profileRouter.post("/resumes", validateBody(resumeSchema), async (req, res) => {
   const [resume] = await db()
     .insert(resumeProfiles)
     .values({ userId: me.id, name: req.body.name, sourceText: req.body.text, isDefault: existing.length === 0 })
-    .returning();
+    .returning(RESUME_PROFILE_COLUMNS);
   if (!resume) throw new Error("Resume insert returned no row");
   await enqueue("parse-resume", { resumeProfileId: resume.id }, `parse-${resume.id}`);
   res.status(202).json({ resume });
 });
 
 profileRouter.get("/facts", async (req, res) => {
-  const rows = await db().select().from(facts).where(eq(facts.userId, currentUser(req).id)).orderBy(facts.createdAt);
+  const rows = await db().select(FACT_COLUMNS).from(facts).where(eq(facts.userId, currentUser(req).id)).orderBy(facts.createdAt);
   res.json({ facts: rows });
 });
 
@@ -94,7 +79,7 @@ const factSchema = z.object({ kind: z.enum(FACT_KINDS), text: z.string().trim().
 profileRouter.post("/facts", validateBody(factSchema), async (req, res) => {
   const [fact] = await db().transaction(async (tx) => {
     await asActor(tx, "user");
-    return tx.insert(facts).values({ ...req.body, assertedBy: "user", userId: currentUser(req).id }).returning();
+    return tx.insert(facts).values({ ...req.body, assertedBy: "user", userId: currentUser(req).id }).returning(FACT_COLUMNS);
   });
   res.status(201).json({ fact });
 });
@@ -113,7 +98,7 @@ profileRouter.patch("/facts/:id", validateBody(factPatchSchema), async (req, res
       .update(facts)
       .set(req.body)
       .where(and(eq(facts.id, id), eq(facts.userId, currentUser(req).id)))
-      .returning();
+      .returning(FACT_COLUMNS);
   });
   if (!fact) throw notFound("Fact");
   res.json({ fact });

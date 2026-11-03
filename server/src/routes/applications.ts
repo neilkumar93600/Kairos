@@ -5,6 +5,7 @@ import { APPLICATION_STATUSES, approveApplicationsSchema, draftRequestSchema, ge
 import { db } from "../db/client";
 import { applications, companies, facts, jobs, savedAnswers } from "../db/schema";
 import { HttpError, notFound } from "../lib/errors";
+import { APPLICATION_COLUMNS, JOB_COLUMNS } from "../lib/serializers";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
 import { enqueue } from "../jobs/queues";
@@ -50,7 +51,7 @@ applicationsRouter.get("/", async (req, res) => {
 applicationsRouter.get("/:id", async (req, res) => {
   const id = parseParam(z.uuid(), req.params.id);
   const [row] = await db()
-    .select({ application: applications, job: jobs, companyName: companies.name })
+    .select({ application: APPLICATION_COLUMNS, job: JOB_COLUMNS, companyName: companies.name })
     .from(applications)
     .innerJoin(jobs, eq(jobs.id, applications.jobId))
     .innerJoin(companies, eq(companies.id, jobs.companyId))
@@ -118,7 +119,7 @@ applicationsRouter.patch("/:id", validateBody(updateApplicationSchema), async (r
       updatedAt: new Date(),
     })
     .where(and(eq(applications.id, id), eq(applications.userId, me.id), eq(applications.status, "draft")))
-    .returning();
+    .returning(APPLICATION_COLUMNS);
   if (!updated) throw notFound("Draft application");
   res.json({ application: updated });
 });
