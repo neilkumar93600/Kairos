@@ -14,6 +14,8 @@
     "start:applier": "node dist/applier.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file=.env src/migrate.ts",
+    "db:check": "drizzle-kit check",
+    "db:lint": "node scripts/lint-migrations.mjs",
     "db:studio": "drizzle-kit studio",
     "agents:snap": "node --import tsx --import ./scripts/md-register.mjs scripts/agents-snap.ts",
     "agents:lock": "node --import tsx --import ./scripts/md-register.mjs scripts/agents-lock.ts",
