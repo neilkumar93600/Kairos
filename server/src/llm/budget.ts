@@ -65,7 +65,7 @@ const BUILDER = new Set<string>(["resume-writer"]);
  */
 function shedRefuses(level: number, spec: AnyAgentSpec, plan: PlanId | undefined, budgetClass: string, workspace: string): boolean {
   if (level >= 1 && budgetClass === "pipeline" && workspace === "batch" && spec.stakes === "low") return true;
-  if (level >= 2 && SCORING.has(spec.id) && (plan ?? "free") !== "pro" && plan !== "max") return true;
+  if (level >= 2 && SCORING.has(spec.id) && plan !== "pro" && plan !== "max") return true;
   return level >= 3 && (SCORING.has(spec.id) || BUILDER.has(spec.id));
 }
 
