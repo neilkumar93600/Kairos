@@ -7,6 +7,7 @@ import { db } from "../db/client";
 import { applications, jobs } from "../db/schema";
 import { applierEnv } from "../lib/env";
 import { logger } from "../lib/logger";
+import { signal } from "../lib/sentry";
 import { claimForCloud, cloudAllowed, FAILURE_MESSAGES, recordSubmission, type FailureCode } from "../services/submissions";
 import type { JobData } from "./queues";
 
@@ -139,9 +140,12 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
         frame = req.frame();
       } catch {} // a popup's first navigation is issued before its frame exists
       const topLevel = req.isNavigationRequest() && (!frame || frame.parentFrame() === null);
-      if (isInternalTarget(req.url()) || (topLevel && !isAllowedApplyUrl(req.url()))) {
+      const internal = isInternalTarget(req.url());
+      if (internal || (topLevel && !isAllowedApplyUrl(req.url()))) {
         navBlocked ||= topLevel && !!frame && frame === page?.mainFrame(); // a popup's navigation is blocked, not fatal
         logger.warn({ applicationId: input.applicationId, host: req.url().split("/")[2], topLevel }, "applier request blocked");
+        // A count only: the host stays in the log (CISO mustFix 10).
+        signal(internal ? "applier_internal_blocked" : "applier_nav_blocked");
         return route.abort("blockedbyclient").catch(() => {});
       }
       return route.fallback().catch(() => {});

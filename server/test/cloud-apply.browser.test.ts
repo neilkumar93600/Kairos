@@ -1,8 +1,11 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { chromium, type Browser, type BrowserContextOptions } from "playwright-core";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { fillInBrowser, type FillInput } from "../src/jobs/cloud-apply";
+import { signal } from "../src/lib/sentry";
+
+vi.mock(import("../src/lib/sentry"), async (original) => ({ ...(await original()), signal: vi.fn() }));
 
 /**
  * fillInBrowser against fixture pages in a real headless Chromium. Every request is answered by a test route
@@ -78,6 +81,9 @@ describe.skipIf(!hasChromium)("fillInBrowser in Chromium", () => {
     expect(outcome).toEqual({ submitted: false, code: "applier_error", detail: "nav_host_not_allowed" });
     expect(reached.some((u) => u.startsWith("https://evil.example"))).toBe(false);
     expect(reached.some((u) => u.includes("169.254.169.254"))).toBe(false);
+    // Counted for the Sentry alert rules (WP-11), with no host or URL.
+    expect(signal).toHaveBeenCalledWith("applier_internal_blocked");
+    expect(signal).toHaveBeenCalledWith("applier_nav_blocked");
   });
 
   it("blocks a popup's navigation to another host without failing the run", async () => {
