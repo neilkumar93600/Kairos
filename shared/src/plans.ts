@@ -29,8 +29,14 @@ export interface Plan {
   features: string[];
   /** Per-feature daily AI allowance (F11). Enforced by the workspace routes from P3. */
   aiDailyAllowance: AiFeatureAllowance;
-  /** Per-user pipeline model-spend cap per UTC day (03-agent-runtime.md 9.1). [est] pending owner. */
+  /** Per-user pipeline model-spend cap per UTC day, USD (01-architecture B.7.4, 03-agent-runtime 9.1). */
   dailyModelSpendCapUsd: number;
+  /** Maximum fit-scoring model calls per user per UTC day, including backfill, re-scores and imports. */
+  dailyScoringCap: number;
+  /** Minutes between candidate-generation runs for this plan. */
+  matchCadenceMinutes: number;
+  /** Autopilot approvals per user per UTC day; 0 means Autopilot is not available on the plan. */
+  autopilotDailySendCap: number;
   /** Interactive backstop per UTC day: 1.5 x sum(allowance x unit max cost) (9.1). */
   interactiveSpendBackstopUsd: number;
 }
@@ -63,7 +69,10 @@ export const PLANS: readonly Plan[] = [
       "Reply tracking by forwarding",
     ],
     aiDailyAllowance: { resumeSuggestions: 10, jobTailor: 5, applicationDrafts: 10, jobImports: 3, rehearsalTurns: 0 },
-    dailyModelSpendCapUsd: 0.5,
+    dailyModelSpendCapUsd: 0.05,
+    dailyScoringCap: 20,
+    matchCadenceMinutes: 60,
+    autopilotDailySendCap: 0,
     interactiveSpendBackstopUsd: 0.62,
   },
   {
@@ -87,7 +96,10 @@ export const PLANS: readonly Plan[] = [
       "Failed submits cost nothing",
     ],
     aiDailyAllowance: { resumeSuggestions: 60, jobTailor: 30, applicationDrafts: 60, jobImports: 20, rehearsalTurns: 0 },
-    dailyModelSpendCapUsd: 2,
+    dailyModelSpendCapUsd: 0.2,
+    dailyScoringCap: 120,
+    matchCadenceMinutes: 60,
+    autopilotDailySendCap: 35,
     interactiveSpendBackstopUsd: 1.31,
   },
   {
@@ -111,7 +123,10 @@ export const PLANS: readonly Plan[] = [
       "3 resume profiles",
     ],
     aiDailyAllowance: { resumeSuggestions: 120, jobTailor: 60, applicationDrafts: 120, jobImports: 40, rehearsalTurns: 20 },
-    dailyModelSpendCapUsd: 5,
+    dailyModelSpendCapUsd: 0.25,
+    dailyScoringCap: 140,
+    matchCadenceMinutes: 15,
+    autopilotDailySendCap: 45,
     interactiveSpendBackstopUsd: 2.7,
   },
   {
@@ -135,7 +150,10 @@ export const PLANS: readonly Plan[] = [
       "Priority support",
     ],
     aiDailyAllowance: { resumeSuggestions: 240, jobTailor: 120, applicationDrafts: 240, jobImports: 80, rehearsalTurns: 40 },
-    dailyModelSpendCapUsd: 8,
+    dailyModelSpendCapUsd: 0.5,
+    dailyScoringCap: 350,
+    matchCadenceMinutes: 5,
+    autopilotDailySendCap: 110,
     interactiveSpendBackstopUsd: 4.53,
   },
 ];

@@ -13,7 +13,30 @@ const envSchema = z.object({
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().url(),
   WEB_ORIGIN: z.string().url(),
+  /** Comma-separated user ids that may use the cloud channel until the applier is contained (WP-04). Empty: nobody. */
+  OWNER_USER_IDS: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .default("")
+      .transform((raw) => raw.split(",").map((id) => id.trim()).filter(Boolean)),
+  ),
   EXTENSION_ORIGIN: z.preprocess(emptyToUndefined, z.string().startsWith("chrome-extension://").optional()),
+  /** Extra web origins Better Auth trusts (a Vercel preview alias, a second domain). Exact origins only, never a wildcard. */
+  CSRF_ALLOWED_ORIGINS: z
+    .string()
+    .default("")
+    .transform((raw, ctx) => {
+      const list = raw.split(",").map((s) => s.trim()).filter(Boolean);
+      for (const entry of list) {
+        let exact = false;
+        try {
+          exact = !entry.includes("*") && new URL(entry).origin === entry;
+        } catch {}
+        if (!exact) ctx.addIssue({ code: "custom", message: `"${entry}" is not an exact origin like https://host` });
+      }
+      return list;
+    }),
   GOOGLE_CLIENT_ID: z.preprocess(emptyToUndefined, z.string().optional()),
   GOOGLE_CLIENT_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
 
@@ -21,6 +44,8 @@ const envSchema = z.object({
   EMAIL_FROM: z.string().default("Kairos <hello@kairos.app>"),
   INBOUND_EMAIL_DOMAIN: z.string().default("replies.kairos.app"),
   INBOUND_WEBHOOK_SECRET: z.string().min(16),
+  /** Dev and test only: the mailer appends each email as a JSON line here instead of sending it (scripts/smoke.mjs reads the code). */
+  MAIL_SINK_FILE: z.preprocess(emptyToUndefined, z.string().optional()),
 
   STRIPE_SECRET_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
   STRIPE_WEBHOOK_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
@@ -68,6 +93,30 @@ const envSchema = z.object({
   // that would put sign-up and reset codes in the logs, so refuse to boot.
   if (e.NODE_ENV === "production" && !e.POSTMARK_SERVER_TOKEN) {
     ctx.addIssue({ code: "custom", path: ["POSTMARK_SERVER_TOKEN"], message: "required in production" });
+  }
+  if (e.NODE_ENV === "production" && e.MAIL_SINK_FILE) {
+    ctx.addIssue({ code: "custom", path: ["MAIL_SINK_FILE"], message: "not allowed in production" });
+  }
+  // The browser reaches Better Auth through the web app's /api rewrite, so the session cookie and the OAuth
+  // state cookie live on the web host, and Google must redirect there (05-api 5.1).
+  if (e.NODE_ENV === "production") {
+    for (const key of ["BETTER_AUTH_URL", "WEB_ORIGIN"] as const) {
+      if (!e[key].startsWith("https://")) ctx.addIssue({ code: "custom", path: [key], message: "must be https in production" });
+    }
+    const authUrl = new URL(e.BETTER_AUTH_URL);
+    if (authUrl.origin !== new URL(e.WEB_ORIGIN).origin) {
+      ctx.addIssue({ code: "custom", path: ["BETTER_AUTH_URL"], message: "must equal WEB_ORIGIN in production (the Vercel origin)" });
+    }
+    // A path here would move every auth route off /api/auth and break the Google redirect_uri.
+    if (authUrl.href !== `${authUrl.origin}/`) {
+      ctx.addIssue({ code: "custom", path: ["BETTER_AUTH_URL"], message: "must be a bare origin like https://host (no path) in production" });
+    }
+    // Each entry is a trusted request origin and redirect target, so production takes https only.
+    for (const origin of e.CSRF_ALLOWED_ORIGINS) {
+      if (!origin.startsWith("https://")) {
+        ctx.addIssue({ code: "custom", path: ["CSRF_ALLOWED_ORIGINS"], message: `"${origin}" must be https in production` });
+      }
+    }
   }
   // Gateway rules (03-agent-runtime.md 15.1, 16.1): the stub URL and the user-hash key.
   if (e.NODE_ENV === "production" && e.ANTHROPIC_BASE_URL && e.ANTHROPIC_BASE_URL !== "https://api.anthropic.com") {

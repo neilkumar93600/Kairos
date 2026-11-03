@@ -3,7 +3,7 @@ import cors from "cors";
 import helmet from "helmet";
 import { toNodeHandler } from "better-auth/node";
 import type { AuthGateway } from "./lib/auth";
-import { httpLogger } from "./lib/logger";
+import { httpLogger, requestId } from "./lib/logger";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
 import { healthRouter, type HealthCheck } from "./routes/health";
 import { apiRouter } from "./routes";
@@ -22,9 +22,10 @@ export function createApp(deps: AppDeps) {
   app.set("trust proxy", 1);
   app.disable("x-powered-by");
 
+  app.use(requestId);
   app.use(helmet());
   app.use(httpLogger());
-  app.use(cors({ origin: deps.corsOrigins, credentials: true, allowedHeaders: ["content-type", "authorization"] }));
+  app.use(cors({ origin: deps.corsOrigins, credentials: true, allowedHeaders: ["content-type", "authorization", "x-request-id"], exposedHeaders: ["x-request-id"] }));
 
   app.use(healthRouter(deps.healthChecks));
   app.all("/api/auth/*splat", toNodeHandler(deps.auth.handler));

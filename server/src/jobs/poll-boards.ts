@@ -46,6 +46,18 @@ export async function closeMissingJobs(database: Db, companyId: string, openIds:
   return closed.length;
 }
 
+/** Short code stored in companies.last_poll_error: raw exception text can carry URLs, tokens and payload fragments. */
+export function pollErrorCode(err: unknown): string {
+  if (err instanceof BoardNotFoundError) return "board_not_found";
+  if (err instanceof Error) {
+    if (err.name === "TimeoutError" || err.name === "AbortError") return "timeout";
+    if (err instanceof SyntaxError || err.name === "ZodError") return "bad_payload";
+    const status = /failed with (\d{3})$/.exec(err.message);
+    if (status) return `http_${status[1]}`;
+  }
+  return "poll_failed";
+}
+
 async function pollCompany(companyId: string): Promise<{ added: number; closed: number }> {
   const [company] = await db().select().from(companies).where(eq(companies.id, companyId));
   if (!company || !company.active) return { added: 0, closed: 0 };
@@ -66,10 +78,9 @@ async function pollCompany(companyId: string): Promise<{ added: number; closed: 
     await Promise.all(inserted.map((j) => enqueue("score-matches", { jobId: j.id }, `score-${j.id}`)));
     return { added: inserted.length, closed };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
     await db()
       .update(companies)
-      .set({ lastPolledAt: new Date(), lastPollError: message, active: !(err instanceof BoardNotFoundError) })
+      .set({ lastPolledAt: new Date(), lastPollError: pollErrorCode(err), active: !(err instanceof BoardNotFoundError) })
       .where(eq(companies.id, companyId));
     if (err instanceof BoardNotFoundError) return { added: 0, closed: 0 };
     throw err;

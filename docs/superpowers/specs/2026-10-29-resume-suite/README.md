@@ -329,7 +329,7 @@ Update the claims that change: the FAQ answer to "Can I upload my resume?" (now 
 
 ## 11. API contract (additive; zod in `shared/src/schemas.ts`)
 
-Same error shape as today (`{ error: { code, message, details } }`) and the F11 402 for a spent daily AI allowance.
+Same error shape as today (`{ error: { code, message, details } }`). A spent daily AI allowance (F11) answers **429 `rate_limited`** with `details.reason = "daily_allowance"` and `details.resetsAt` (the next UTC midnight). 402 stays reserved for "not enough credits", which the frozen extension and web already read that way. *[Amended 2026-10-30, WP-43, decision "How are per-feature daily AI limits answered": 429 daily_allowance plus spec caps; this replaces the earlier 402 wording.]*
 
 | Method and path | Request | Response | Errors |
 |---|---|---|---|
@@ -344,7 +344,7 @@ Same error shape as today (`{ error: { code, message, details } }`) and the F11 
 | `POST /resumes/:id/revisions/:revId/restore` | | `{ resume: Resume }` | |
 | `GET /resumes/:id/export` | `?format=pdf\|docx\|txt` | file | 503 `service_unavailable` (PDF falls back to print) |
 | `POST /resumes/tailor` | `{ jobId, baseResumeId? }` | `{ resume: Resume, suggestions: ResumeSuggestion[], fit: JobFit }` (the copy is saved, D2) | 404, 409 `exists` with its id |
-| `POST /resumes/suggestions` | today's `SuggestionRequest` plus `resumeId`, `level?`, scope `headline` | `{ suggestions, factCreated }`; suggestions gain `tag` and `priority` | 429, 402 |
+| `POST /resumes/suggestions` | today's `SuggestionRequest` plus `resumeId`, `level?`, scope `headline` | `{ suggestions, factCreated }`; suggestions gain `tag` and `priority` | 429 (`rate_limited`, `details.reason = "daily_allowance"`; amended 2026-10-30, WP-43) |
 | `GET /templates` | | `{ templates: { id, name, atsSafe, accents: string[] }[] }` | |
 | `POST /profile/imports` | multipart file or `{ text }`, `resumeProfileId?` (default: the current profile, D8) | 202 `{ importId, parseStatus }` | 413, 415, 422 `no_text_layer` |
 | `GET /profile/imports/:id` | | `{ parseStatus, facts: Fact[], duplicates: string[] }` | 404 |
@@ -362,6 +362,8 @@ Same error shape as today (`{ error: { code, message, details } }`) and the F11 
 `GET /resume`, `PUT /resume` and `POST /jobs/:jobId/tailor` stay as aliases (the default base resume; tailor now saves the copy) until the web stops calling them.
 
 Schema changes: `resumeSchema` gains `kind`, `isDefault`, `targetRoles`, `baseResumeId`, `jobId`, `applicationId`, `templateId`, `accent`, `pageSize`, `level`, `headline` (`{ text, factIds } | null`), `readOnly`; `resumeSuggestionSchema` gains `tag` and `priority`; `SUGGESTION_SCOPES` gains `headline`; new `trackerItemSchema`, `applicationEventSchema`, `contactSchema`, `interviewSchema`, `resumeSummarySchema`, `revisionSummarySchema`, `templateSchema`.
+
+**Additions made while writing the contract (WP-16, `shared/src/schemas-suite.ts`, additive):** `PATCH /resumes/:id` `{ name?, targetRoles? }` (rename and target roles, 6.6); `GET /resumes/:id/revisions/:revId` returns the revision's document (Compare, 6.6); `GET /tracker/:id` returns the item with its private notes, saved posting text and contact ids (the `/tracker/[itemId]` page, 9.3); `POST /resumes/suggestions` requires `resumeId`; a spent daily AI allowance is `429 rate_limited` with `details { reason: "daily_allowance", feature, limit, used, resetsAt }` (decision on D-allowance; 402 stays "no credits"); `409 stage_owned_by_pipeline` carries `details.reason` (`approve_in_review_queue`, `withdraw_first`, `pipeline_stage`); `422 truth_lock` carries `details.lineIds` as on today's `PUT /resume`; `resumeSchema` keeps the new fields optional (the legacy `/resume` routes do not send them) and `resumeDetailSchema` makes them required for every `/resumes` route; the library name is `libraryName` on the detail and `name` on the summary and in request bodies, because the document's own `name` stays the person's name; `SUGGESTION_SCOPES` is unchanged (the Resume Writer agent reads it) and the new `RESUME_SUGGESTION_SCOPES` adds `headline`.
 
 ## 12. Data (backend)
 
@@ -402,6 +404,8 @@ Order: **R1, then R2, then R3, then R4**, with the web layout update landing in 
 How each release is built (D7): first the web screens against the QA mock (`web/scripts/qa/mock-api.mjs`, contract zod first in `shared/src/schemas.ts`), then the server side on today's Express server with new migrations (0003 and up), as phase A was. Infrastructure approved by D7: a storage bucket (R2) for rendered files and imports, and Typst plus the DOCX library in the server image.
 
 Known divergence: section 12 differs from the re-architecture's `02-database.md` revision 2 (several `resumes` rows per profile instead of one per slot; `tracker_items`, contacts and interviews are new; `application_events` here is keyed by tracker item with a `payload`). When the re-architecture is approved, its `02-database.md` and `05-api.md` are amended to match this PRD; until then this PRD governs these tables on today's server.
+
+*Resolved 2026-10-30 (WP-43): ADR-001 Revision 3 is accepted (path c, hybrid) and the owner decision "PRD authoritative, one numbering lane" is in force. `02-database.md` (7.1.7, 7.1.8, 7.3.1, 7.3.4, 7.7, 14.3), `05-api.md` (11), `workers/04` and `workers/05` carry dated amendments to this PRD's shapes; this PRD governs the resume, revision, import, tracker and application_events tables, and the sent snapshot is frozen and rendered at approval (7.6). Migration files take the next free number in merge order, allocated by the data lane only, and use Postgres 17-compatible DDL until PG18 is confirmed. See `../2026-10-15-kairos-backend-design/README.md` for the full map.*
 
 Shared files: other sessions own parts of the server (at the time of writing `routes/profile.ts`, `services/submissions.ts` and `lib/auth.ts`). Before editing a server file, check that no other session is changing it; prefer new route and service files over edits to shared ones.
 

@@ -1,5 +1,15 @@
 import { z } from "zod";
-import { FACT_KINDS, SENIORITY_LEVELS, WORK_AUTHORIZATIONS } from "./types";
+import {
+  FACT_KINDS,
+  PAGE_SIZES,
+  RESUME_KINDS,
+  RESUME_LEVELS,
+  SENIORITY_LEVELS,
+  SUGGESTION_PRIORITIES,
+  SUGGESTION_TAGS,
+  TEMPLATE_IDS,
+  WORK_AUTHORIZATIONS,
+} from "./types";
 
 /** Search settings the fit gate enforces before any model call. */
 export const preferencesSchema = z.object({
@@ -112,16 +122,62 @@ export const resumeContactSchema = z.object({
 });
 export type ResumeContact = z.infer<typeof resumeContactSchema>;
 
-/** The structured base resume. Every line keeps the truth lock: resumeLineSchema needs at least one fact id. */
+/** A swatch colour, `#rrggbb`. Used on the name, headings and rules only (PRD 7.2). */
+export const accentSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Use a #rrggbb colour");
+
+/**
+ * Optional headline under the name (PRD 8.4). Truth rule 10: it cites the facts it came from, and a year count
+ * in it is computed in code from confirmed role dates, never stated by a model.
+ */
+export const resumeHeadlineSchema = z.object({
+  text: z.string().trim().min(1).max(160),
+  factIds: z.array(z.string()).min(1, "A headline must point to at least one profile fact"),
+});
+export type ResumeHeadline = z.infer<typeof resumeHeadlineSchema>;
+
+/**
+ * The structured resume as the user edits it. Every line keeps the truth lock: resumeLineSchema needs at least one
+ * fact id. The design fields (PRD 7.2, 8.1, 8.4) are optional so the frozen clients and old rows still parse.
+ */
 export const resumeInputSchema = z.object({
   name: z.string().min(1).max(120),
   density: z.enum(["comfortable", "compact"]),
   contact: resumeContactSchema,
   sections: z.array(resumeSectionSchema).max(12),
+  templateId: z.enum(TEMPLATE_IDS).optional(),
+  accent: accentSchema.nullable().optional(),
+  pageSize: z.enum(PAGE_SIZES).optional(),
+  /** Experience level the AI review calibrates to, stored per resume (PRD 8.1). */
+  level: z.enum(RESUME_LEVELS).optional(),
+  headline: resumeHeadlineSchema.nullable().optional(),
 });
 export type ResumeInput = z.infer<typeof resumeInputSchema>;
-export const resumeSchema = resumeInputSchema.extend({ id: z.string(), updatedAt: z.iso.datetime() });
+
+/** Server-managed fields (PRD 11, schema changes). All optional here: the legacy /resume route does not send them. */
+export const resumeMetaShape = {
+  kind: z.enum(RESUME_KINDS),
+  /** The library name ("Frontend"). The document's own `name` stays the person's name. */
+  libraryName: z.string().min(1).max(80),
+  isDefault: z.boolean(),
+  targetRoles: z.array(z.string().trim().min(1).max(80)).max(10),
+  /** Null once the base is deleted (PRD 6.1). */
+  baseResumeId: z.string().nullable(),
+  /** Name of the base a copy started from, for "Started from {name}". */
+  baseName: z.string().nullable(),
+  /** True when the base changed after this copy was made (PRD 6.3). */
+  baseChanged: z.boolean(),
+  jobId: z.string().nullable(),
+  applicationId: z.string().nullable(),
+  /** True once the application is sent: the sent snapshot is frozen (PRD 6.1). */
+  readOnly: z.boolean(),
+};
+export const resumeSchema = resumeInputSchema
+  .extend({ id: z.string(), updatedAt: z.iso.datetime() })
+  .extend(z.object(resumeMetaShape).partial().shape);
 export type Resume = z.infer<typeof resumeSchema>;
+/** What every /resumes route returns: all server-managed and design fields present. */
+export const resumeDetailSchema = resumeSchema.required();
+export type ResumeDetail = z.infer<typeof resumeDetailSchema>;
 
 /** A proposal from the Resume Writer. needsFact set means there is no text to accept, only a question. */
 export const resumeSuggestionSchema = z.object({
@@ -135,6 +191,11 @@ export const resumeSuggestionSchema = z.object({
   why: z.string().max(300),
   factIds: z.array(z.string()),
   needsFact: z.object({ kind: z.enum(FACT_KINDS), question: z.string().max(200) }).nullable(),
+  /** PRD 8.3. Optional so suggestions from before R3 still parse. */
+  tag: z.enum(SUGGESTION_TAGS).optional(),
+  priority: z.enum(SUGGESTION_PRIORITIES).optional(),
+  /** Values computed in code from confirmed facts (rule 10), for example years of experience in a headline. */
+  derived: z.array(z.object({ label: z.string().max(60), value: z.union([z.number(), z.string()]), factIds: z.array(z.string()).min(1) })).optional(),
 });
 export type ResumeSuggestion = z.infer<typeof resumeSuggestionSchema>;
 

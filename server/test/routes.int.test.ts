@@ -271,7 +271,7 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       expect(fetchPostingFromBoard).not.toHaveBeenCalled();
     });
 
-    it("creates the company active, so the poller learns when the posting closes", async () => {
+    it("creates the company inactive, so a pasted board is never polled or scored", async () => {
       fetchPostingFromBoard.mockResolvedValue({
         externalId: "4012345",
         title: "Software Engineer",
@@ -289,7 +289,7 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       expect(res.status).toBe(200);
       expect(fetchPostingFromBoard).toHaveBeenCalledWith("greenhouse", "newco", "4012345");
       const [company] = await tdb.select().from(schema.companies).where(and(eq(schema.companies.ats, "greenhouse"), eq(schema.companies.boardToken, "newco")));
-      expect(company!.active).toBe(true);
+      expect(company!.active).toBe(false);
     });
   });
 

@@ -1,7 +1,8 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { getPlan, type PlanId, type SubmissionReport, type SubmitChannel } from "@auto-career/shared";
+import { type PlanId, type SubmissionReport, type SubmitChannel } from "@auto-career/shared";
 import type { Db } from "../db/client";
 import { applications, subscriptions } from "../db/schema";
+import { env } from "../lib/env";
 import { conflict, forbidden, notFound, paymentRequired } from "../lib/errors";
 import { PAID_STATUSES } from "./billing-events";
 import { availableCreditsNow, chargeSubmission } from "./credits";
@@ -13,14 +14,15 @@ export async function planFor(db: Db, userId: string): Promise<PlanId> {
 }
 
 /**
- * Moves ready drafts to approved and blocks the cloud channel on plans without the cloud applier. A draft is ready
+ * Moves ready drafts to approved and blocks the cloud channel for everyone but the owners. A draft is ready
  * when tailoring has written resume lines AND answers (the profile fields), so an empty or nameless application
  * can never reach an employer. Credits are checked against the drafts that actually moved; a shortfall throws,
  * which rolls the whole approval back.
  */
 export async function approveApplications(db: Db, userId: string, ids: string[], channel: SubmitChannel): Promise<string[]> {
-  const plan = getPlan(await planFor(db, userId));
-  if (channel === "cloud" && !plan.cloudApplier) throw forbidden("The cloud applier is on Pro and Max");
+  // The cloud applier is owner-only until WP-04 contains it (CISO mustFix 1); the owner tests it on any plan.
+  // When the gate lifts, restore: getPlan(await planFor(db, userId)).cloudApplier, else forbidden("The cloud applier is on Pro and Max").
+  if (channel === "cloud" && !env().OWNER_USER_IDS.includes(userId)) throw forbidden("The cloud applier is not open yet");
 
   return db.transaction(async (tx) => {
     // One approval at a time per user: two tabs reading the same balance would otherwise both commit.

@@ -1,3 +1,4 @@
+import type { AuthProvider } from "@auto-career/shared";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { bearer, emailOTP, oneTimeToken } from "better-auth/plugins";
@@ -6,8 +7,8 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "../db/client";
 import { cancelBillingForDeletedUser } from "../services/billing-events";
 import { INLINE_REQUEST, stripe } from "../services/stripe";
-import { env } from "./env";
-import { logger } from "./logger";
+import { env, type Env } from "./env";
+import { logger, logUserHash } from "./logger";
 import { sendEmail } from "./mailer";
 
 const OTP_SUBJECTS = {
@@ -22,6 +23,11 @@ function forwardingAddressFor(userId: string): string {
   return `u-${userId.slice(0, 8).toLowerCase()}-${suffix}@${env().INBOUND_EMAIL_DOMAIN}`;
 }
 
+/** Sign-in methods this deployment can serve. The web shows only these (GET /api/auth-providers). */
+export function configuredProviders(e: Env): AuthProvider[] {
+  return e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET ? ["email", "google"] : ["email"];
+}
+
 function createAuth() {
   const e = env();
   return betterAuth({
@@ -29,7 +35,7 @@ function createAuth() {
     baseURL: e.BETTER_AUTH_URL,
     secret: e.BETTER_AUTH_SECRET,
     basePath: "/api/auth",
-    trustedOrigins: [e.WEB_ORIGIN, ...(e.EXTENSION_ORIGIN ? [e.EXTENSION_ORIGIN] : [])],
+    trustedOrigins: [e.WEB_ORIGIN, ...(e.EXTENSION_ORIGIN ? [e.EXTENSION_ORIGIN] : []), ...e.CSRF_ALLOWED_ORIGINS],
     database: drizzleAdapter(db(), {
       provider: "pg",
       schema: { user: schema.user, session: schema.session, account: schema.account, verification: schema.verification },
@@ -38,11 +44,19 @@ function createAuth() {
       enabled: true,
       requireEmailVerification: true,
       minPasswordLength: 10,
+      maxPasswordLength: 128,
+      // A reset by email code signs out every session, including one an attacker already holds.
+      revokeSessionsOnPasswordReset: true,
     },
-    socialProviders:
-      e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET
-        ? { google: { clientId: e.GOOGLE_CLIENT_ID, clientSecret: e.GOOGLE_CLIENT_SECRET } }
-        : {},
+    account: {
+      encryptOAuthTokens: true,
+      // Explicit, not the library default. Google is trusted to prove the email, but never links into a local
+      // account whose email is unverified: that row may be a squatter's pre-registration (pre-hijack).
+      accountLinking: { enabled: true, trustedProviders: ["google"], requireLocalEmailVerified: true },
+    },
+    socialProviders: configuredProviders(e).includes("google")
+      ? { google: { clientId: e.GOOGLE_CLIENT_ID!, clientSecret: e.GOOGLE_CLIENT_SECRET! } }
+      : {},
     user: {
       // Settings > Delete account. Stripe is cancelled first, then cascades remove the profile, applications, ledger and replies.
       deleteUser: {
@@ -58,7 +72,7 @@ function createAuth() {
             list: async (customer) => (await stripe().subscriptions.list({ customer, status: "all", limit: 100 }, INLINE_REQUEST)).data,
             cancel: (id) => stripe().subscriptions.cancel(id, {}, INLINE_REQUEST),
           });
-          if (cancelled) logger.info({ userId: deleted.id, cancelled }, "subscriptions cancelled before account deletion");
+          if (cancelled) logger.info({ userHash: logUserHash(deleted.id), cancelled }, "subscriptions cancelled before account deletion");
         },
       },
     },
@@ -92,6 +106,12 @@ function createAuth() {
       bearer(),
     ],
     databaseHooks: {
+      // Google's id token is a signed JWT with the email and sub. Better Auth does not encrypt it and nothing reads it
+      // after the callback, so it is never stored.
+      account: {
+        create: { before: async (account) => ({ data: { ...account, idToken: null } }) },
+        update: { before: async (account) => ({ data: { ...account, idToken: null } }) },
+      },
       user: {
         create: {
           // Every new user gets a profile, a free plan row and the free credit grant in one transaction.
@@ -105,7 +125,7 @@ function createAuth() {
               await tx.insert(schema.subscriptions).values({ userId: created.id, plan: "free" });
               await tx.insert(schema.creditLedger).values({ userId: created.id, delta: 25, reason: "free_grant" });
             });
-            logger.info({ userId: created.id }, "user onboarded");
+            logger.info({ userHash: logUserHash(created.id) }, "user onboarded");
           },
         },
       },
