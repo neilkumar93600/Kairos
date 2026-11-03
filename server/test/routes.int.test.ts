@@ -283,6 +283,29 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
     });
   });
 
+  describe("POST and PATCH /api/profile/facts run as the user (facts_guard, WP-12)", () => {
+    it("creates a confirmed fact in the user's words, and edits and unconfirms it", async () => {
+      const created = await request(app).post("/api/profile/facts").send({ kind: "skill", text: "TypeScript services" });
+      expect(created.status).toBe(201);
+      expect(created.body.fact).toMatchObject({ confirmed: true, assertedBy: "user" });
+      expect(created.body.fact.confirmedAt).toBeTruthy();
+
+      const id = created.body.fact.id as string;
+      const edited = await request(app).patch(`/api/profile/facts/${id}`).send({ text: "TypeScript and Go services" });
+      expect(edited.status).toBe(200);
+      expect(edited.body.fact).toMatchObject({ text: "TypeScript and Go services", confirmed: true });
+
+      const unconfirmed = await request(app).patch(`/api/profile/facts/${id}`).send({ confirmed: false });
+      expect(unconfirmed.body.fact).toMatchObject({ confirmed: false, confirmedAt: null });
+    });
+
+    it("confirms an imported fact, which keeps its import provenance until the user edits it", async () => {
+      const id = await fact("A parsed fact", false);
+      const res = await request(app).patch(`/api/profile/facts/${id}`).send({ confirmed: true });
+      expect(res.body.fact).toMatchObject({ confirmed: true, assertedBy: "import" });
+    });
+  });
+
   describe("DELETE /api/profile/facts/:id (database-v09)", () => {
     const remaining = async (id: string) => (await tdb.select().from(schema.facts).where(eq(schema.facts.id, id))).length;
 

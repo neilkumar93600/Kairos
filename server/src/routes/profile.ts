@@ -5,6 +5,7 @@ import { z } from "zod";
 import { FACT_KINDS, getPlan, preferencesSchema } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, facts, profiles, resumeProfiles, resumes, savedAnswers } from "../db/schema";
+import { asActor } from "../lib/actor";
 import { HttpError, forbidden, notFound } from "../lib/errors";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
@@ -71,8 +72,12 @@ profileRouter.get("/facts", async (req, res) => {
 
 const factSchema = z.object({ kind: z.enum(FACT_KINDS), text: z.string().trim().min(3).max(400), confirmed: z.boolean().default(true) });
 
+// Fact writes run as the user (asActor): facts_guard refuses a confirm or an edit from anyone else (INV-2).
 profileRouter.post("/facts", validateBody(factSchema), async (req, res) => {
-  const [fact] = await db().insert(facts).values({ ...req.body, userId: currentUser(req).id }).returning();
+  const [fact] = await db().transaction(async (tx) => {
+    await asActor(tx, "user");
+    return tx.insert(facts).values({ ...req.body, assertedBy: "user", userId: currentUser(req).id }).returning();
+  });
   res.status(201).json({ fact });
 });
 
@@ -84,11 +89,14 @@ export const factPatchSchema = factSchema
 
 profileRouter.patch("/facts/:id", validateBody(factPatchSchema), async (req, res) => {
   const id = parseParam(z.uuid(), req.params.id);
-  const [fact] = await db()
-    .update(facts)
-    .set(req.body)
-    .where(and(eq(facts.id, id), eq(facts.userId, currentUser(req).id)))
-    .returning();
+  const [fact] = await db().transaction(async (tx) => {
+    await asActor(tx, "user");
+    return tx
+      .update(facts)
+      .set(req.body)
+      .where(and(eq(facts.id, id), eq(facts.userId, currentUser(req).id)))
+      .returning();
+  });
   if (!fact) throw notFound("Fact");
   res.json({ fact });
 });

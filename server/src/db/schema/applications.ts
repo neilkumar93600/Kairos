@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import type { ApplicationAnswer, ResumeLine } from "@auto-career/shared";
 import { user } from "./auth";
 import { jobs } from "./catalog";
@@ -44,5 +44,11 @@ export const applications = pgTable(
     index("applications_job_idx").on(t.jobId),
     index("applications_match_idx").on(t.matchId).where(sql`${t.matchId} is not null`),
     index("applications_resume_profile_idx").on(t.resumeProfileId).where(sql`${t.resumeProfileId} is not null`),
+    // INV-3: nothing past draft without an approval time and a channel (02-database 7.3.1, before approved_by exists).
+    check(
+      "applications_approval_shape_ck",
+      sql`(status IN ('approved','submitting','submitted','failed') AND approved_at IS NOT NULL AND channel IS NOT NULL)
+        OR (status = 'draft' AND approved_at IS NULL AND channel IS NULL) OR status IN ('withdrawn','refunded')`,
+    ),
   ],
 );

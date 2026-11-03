@@ -13,6 +13,7 @@ import {
 import { db } from "../db/client";
 import { applications, companies, facts, jobs, matches, profiles, resumeRevisions, resumes } from "../db/schema";
 import type { SessionUser } from "../lib/auth";
+import { asActor } from "../lib/actor";
 import { HttpError, notFound } from "../lib/errors";
 import { currentUser } from "../middleware/require-auth";
 import { validateBody } from "../middleware/validate";
@@ -155,7 +156,11 @@ resumeRouter.post("/suggestions", writerLimiter, validateBody(suggestionRequestS
       { resume, facts: factRows, job },
       {
         createFact: async ({ kind, text }) => {
-          const [fact] = await db().insert(facts).values({ userId: me.id, kind, text, confirmed: false }).returning(FACT_COLUMNS);
+          // The user's own note, unconfirmed: their words (asserted_by 'user'), so it is written as the user.
+          const [fact] = await db().transaction(async (tx) => {
+            await asActor(tx, "user");
+            return tx.insert(facts).values({ userId: me.id, kind, text, confirmed: false, assertedBy: "user" }).returning(FACT_COLUMNS);
+          });
           if (!fact) throw new Error("Fact insert returned no row");
           return fact;
         },

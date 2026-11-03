@@ -1,4 +1,5 @@
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { atsProvider } from "./enums";
 
 /** Employers we poll. boardToken is the slug in the public board URL. */
@@ -45,5 +46,6 @@ export const jobs = pgTable(
   (t) => [
     uniqueIndex("jobs_company_external_uq").on(t.companyId, t.externalId),
     index("jobs_first_seen_idx").on(t.firstSeenAt),
+    check("jobs_source_ck", sql`source IN ('board','manual_url')`),
   ],
 );

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import type { Preferences, ResumeInput } from "@auto-career/shared";
 import { user } from "./auth";
 import { factKind } from "./enums";
@@ -20,7 +20,7 @@ export const profiles = pgTable("profiles", {
   forwardingAddress: text("forwarding_address").notNull().unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, () => [check("profiles_onboarding_step_ck", sql`onboarding_step IN ('resume','confirm-facts','done')`)]);
 
 /** A base resume. Plans allow 1, 3 or 10 of these. */
 export const resumeProfiles = pgTable(
@@ -88,10 +88,18 @@ export const facts = pgTable(
     text: text("text").notNull(),
     sourceSpan: text("source_span"),
     confirmed: boolean("confirmed").notNull().default(false),
+    /** Whose words these are (database-37): the user's own, a resume import, or a model proposal. facts_guard sets 'user' on an edit. */
+    assertedBy: text("asserted_by").$type<"user" | "import" | "model">().notNull().default("import"),
+    /** Owned by facts_guard: set when the user confirms, cleared when they unconfirm. */
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Owned by facts_guard. */
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("facts_user_idx").on(t.userId),
+    check("facts_asserted_by_ck", sql`asserted_by IN ('user','import','model')`),
+    check("facts_confirmed_at_ck", sql`confirmed = (confirmed_at IS NOT NULL)`),
     index("facts_resume_profile_idx").on(t.resumeProfileId).where(sql`${t.resumeProfileId} is not null`),
   ],
 );

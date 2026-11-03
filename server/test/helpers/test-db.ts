@@ -57,7 +57,8 @@ export async function testDb(name: string): Promise<Db> {
   } finally {
     await migrator.end();
   }
-  const pool = new pg.Pool({ connectionString: testDbUrl(name), max: 5 });
+  // Fixtures write as an operator ('ops'), so a test can seed a confirmed fact; the app's own pool sets no actor.
+  const pool = new pg.Pool({ connectionString: testDbUrl(name), max: 5, options: "-c kairos.actor=ops" });
   const db = drizzle(pool, { schema, casing: "snake_case" });
   clients.set(name, { db, pool });
   return db;
