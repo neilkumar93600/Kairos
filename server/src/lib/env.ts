@@ -85,6 +85,8 @@ export const APPLIER_FORBIDDEN = [
   "R2_SNAPSHOTS_SECRET_ACCESS_KEY",
   "R2_BACKUPS_ACCESS_KEY_ID",
   "R2_BACKUPS_SECRET_ACCESS_KEY",
+  "R2_TOMBSTONES_ACCESS_KEY_ID",
+  "R2_TOMBSTONES_SECRET_ACCESS_KEY",
   /** The migrator's direct URL (src/migrate.ts): kairos_migrator owns every table. */
   "DATABASE_UNPOOLED_URL",
   /** pgbackup's URL (WP-13): kairos_backup reads every row of every table. Only the pgbackup service holds it. */
@@ -220,6 +222,10 @@ const envSchema = z.object({
   R2_BUCKET_BACKUPS: z.preprocess(emptyToUndefined, z.string().optional()),
   R2_BACKUPS_ACCESS_KEY_ID: z.preprocess(emptyToUndefined, z.string().optional()),
   R2_BACKUPS_SECRET_ACCESS_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** WP-25: one opaque object per erased user, kept forever; a restore replays them (scripts/replay-tombstones.ts). */
+  R2_BUCKET_TOMBSTONES: z.preprocess(emptyToUndefined, z.string().optional()),
+  R2_TOMBSTONES_ACCESS_KEY_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+  R2_TOMBSTONES_SECRET_ACCESS_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
 
   /**
    * worker only (WP-45). Per-queue job concurrency of one worker process over jobs/queues.ts QUEUE_CONFIG, as
@@ -234,6 +240,26 @@ const envSchema = z.object({
         const m = pair.match(/^([a-z-]+)=(\d{1,3})$/);
         if (!m || Number(m[2]) < 1) {
           ctx.addIssue({ code: "custom", message: `"${pair}" is not queue-name=n with n at least 1` });
+          return z.NEVER;
+        }
+        out[m[1]!] = Number(m[2]);
+      }
+      return out;
+    }),
+
+  // Privacy (WP-25). Defaults are the spec's; counsel signs off the values (owner-actions/WP-25.md).
+  /** The terms and privacy notice version a sign-up agrees to, stored in consent_records. Bump it with each new notice. */
+  PRIVACY_NOTICE_VERSION: z.string().regex(/^[A-Za-z0-9._-]{1,40}$/).default("2026-10-30"),
+  /** Retention overrides in days, as "inbound_body=180,contact_messages=365" (rule names: jobs/retention.ts RETENTION_RULES). */
+  RETENTION_DAYS: z
+    .string()
+    .default("")
+    .transform((raw, ctx) => {
+      const out: Record<string, number> = {};
+      for (const pair of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
+        const m = pair.match(/^([a-z_]+)=(\d{1,5})$/);
+        if (!m || Number(m[2]) < 1) {
+          ctx.addIssue({ code: "custom", message: `"${pair}" is not rule_name=days with days at least 1` });
           return z.NEVER;
         }
         out[m[1]!] = Number(m[2]);
@@ -285,7 +311,7 @@ const envSchema = z.object({
 }).superRefine((e, ctx) => {
   // R2 (WP-14): half a bucket is a deploy mistake, caught at boot instead of at the first upload.
   let anyBucket = false;
-  for (const b of ["UPLOADS", "RENDERS", "SNAPSHOTS", "BACKUPS"] as const) {
+  for (const b of ["UPLOADS", "RENDERS", "SNAPSHOTS", "BACKUPS", "TOMBSTONES"] as const) {
     const keys = [`R2_BUCKET_${b}`, `R2_${b}_ACCESS_KEY_ID`, `R2_${b}_SECRET_ACCESS_KEY`] as const;
     const first = keys.find((k) => e[k]);
     if (!first) continue;
@@ -295,6 +321,10 @@ const envSchema = z.object({
   if (anyBucket && !e.R2_ENDPOINT) ctx.addIssue({ code: "custom", path: ["R2_ENDPOINT"], message: "required with an R2 bucket" });
   if (e.NODE_ENV === "production" && e.R2_ENDPOINT && !e.R2_ENDPOINT.startsWith("https://")) {
     ctx.addIssue({ code: "custom", path: ["R2_ENDPOINT"], message: "must be https in production" });
+  }
+  // Erasure (WP-25) keys the deletion task, the ledger archive and the erased-address tombstones with it.
+  if (e.NODE_ENV === "production" && !e.USER_HASH_KEY) {
+    ctx.addIssue({ code: "custom", path: ["USER_HASH_KEY"], message: "required in production (erasure hashes)" });
   }
 });
 

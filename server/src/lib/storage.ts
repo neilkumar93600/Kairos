@@ -5,12 +5,12 @@ import { env, type Env } from "./env";
 import { HttpError } from "./errors";
 
 /**
- * Object storage on Cloudflare R2 (WP-14, 06-infrastructure 4.3). Four private buckets, each reached with its own
+ * Object storage on Cloudflare R2 (WP-14, 06-infrastructure 4.3). Five private buckets (tombstones: WP-25), each reached with its own
  * token, so a leaked key opens one bucket. Every key is `<bucket>/<owner>/<name>`: the first segment picks the bucket
  * and, in the user buckets, the second is the user id. A stored key alone therefore says where an object lives and
  * whose it is. Inside its bucket the object drops the first segment (kairos-snapshots holds `<userId>/<hash>.pdf`).
  */
-export const BUCKETS = ["uploads", "renders", "snapshots", "backups"] as const;
+export const BUCKETS = ["uploads", "renders", "snapshots", "backups", "tombstones"] as const;
 export type Bucket = (typeof BUCKETS)[number];
 /** Keyed by user id: the buckets the download route serves and erasure empties. Backups hold no per-user prefix. */
 export const USER_BUCKETS = ["uploads", "renders", "snapshots"] as const satisfies readonly Bucket[];
@@ -138,6 +138,33 @@ export function createStorage(config: StorageConfig, makeClient: (endpoint: stri
       if (!PRESIGNABLE.includes(bucket)) throw new Error("presigned URLs are for renders and snapshots only");
       if (!(expiresInSec >= 1 && expiresInSec <= PRESIGN_MAX_SEC)) throw new Error(`presigned URLs live at most ${PRESIGN_MAX_SEC} s`);
       return getSignedUrl(client, new GetObjectCommand({ Bucket, Key }), { expiresIn: expiresInSec });
+    },
+
+    /** The names under one owner in one bucket, every page (the access export, tombstone replay). */
+    async list(bucket: Bucket, owner: string): Promise<string[]> {
+      if (!OWNER.test(owner)) throw new Error("unsafe owner");
+      const { client, Bucket } = open(bucket);
+      const names: string[] = [];
+      let token: string | undefined;
+      do {
+        const page = await client.send(new ListObjectsV2Command({ Bucket, Prefix: `${owner}/`, ContinuationToken: token }));
+        for (const o of page.Contents ?? []) if (o.Key) names.push(o.Key.slice(owner.length + 1));
+        token = page.IsTruncated ? page.NextContinuationToken : undefined;
+      } while (token);
+      return names;
+    },
+
+    /** Every owner (first key segment) in a bucket: the orphan-upload reconciler's user ids. */
+    async owners(bucket: Bucket): Promise<string[]> {
+      const { client, Bucket } = open(bucket);
+      const owners: string[] = [];
+      let token: string | undefined;
+      do {
+        const page = await client.send(new ListObjectsV2Command({ Bucket, Delimiter: "/", ContinuationToken: token }));
+        for (const p of page.CommonPrefixes ?? []) if (p.Prefix) owners.push(p.Prefix.slice(0, -1));
+        token = page.IsTruncated ? page.NextContinuationToken : undefined;
+      } while (token);
+      return owners;
     },
 
     /**
