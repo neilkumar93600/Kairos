@@ -54,6 +54,14 @@ export const redisSink: Sink = async (c) => {
 };
 
 /**
+ * The applier is the process that opens hostile pages, so what it hands over through Redis is checked before it reaches a
+ * table the alerts read: only its own series, a short code for a label, and a finite number (NaN would blind a burn rate).
+ */
+const APPLIER_SERIES = /^(cloud\.|slo\.s4\.|slo\.s5\.|lat\.)/;
+export const applierSeriesOk = (name: string, label: string, value: number): boolean =>
+  APPLIER_SERIES.test(name) && name.length <= 40 && /^[a-z0-9_:.-]{0,40}$/.test(label) && Number.isFinite(value) && value >= 0;
+
+/**
  * Worker side: moves the applier's counters from Redis into this process's buffer (the next flush writes them). The hash is
  * renamed first, so counts that arrive during the fold land in a fresh hash; a leftover from a crashed fold is folded too.
  * ponytail: a worker that dies between the rename and its flush loses up to a minute of applier counts.
@@ -65,7 +73,8 @@ export async function foldApplierMetrics(): Promise<void> {
     const h = await redis().hgetall(tmp);
     for (const [k, v] of Object.entries(h)) {
       const [name, label] = split(k);
-      count(name, Number(v), label);
+      const n = Number(v);
+      if (applierSeriesOk(name, label, n)) count(name, n, label);
     }
     await redis().del(tmp);
   }

@@ -8,8 +8,10 @@ import { signal } from "./sentry";
 
 /**
  * Operator flags (WP-27), stored in ops_flags and read with a 10 s cache, so a flip takes effect on every replica within
- * 10 s without a deploy. The env values of WP-04 and WP-06 stay as the fallback and, for the pause switches, as an
- * override that can only pause: PAUSE_SCORING=1 pauses whatever the table says; an unset env leaves the table in charge.
+ * 10 s without a deploy. The env values of WP-04 and WP-06 stay and only ever make things stricter: PAUSE_SCORING=1
+ * pauses whatever the table says, LLM_SHED_LEVEL is a floor, and CLOUD_APPLIER_OPEN=0 closes the cloud channel whatever
+ * the table says (the table can close it too, never open it past the env). pause_cloud_apply, llm_paused and
+ * approvals_frozen have no env form.
  */
 
 /** key -> value schema. `extension_only:<ats>` is a family handled below. */
@@ -43,7 +45,7 @@ export interface Flags {
   /** ATS names whose cloud runs are off; those applications go through the extension. */
   extensionOnly: ReadonlySet<string>;
   features: ReadonlyMap<string, boolean>;
-  /** False when the table has never been read in this process: these are the env's values alone. */
+  /** False while the latest attempt to read the table failed: these are the last answer (or the env's alone), possibly stale. */
   loaded: boolean;
 }
 
@@ -63,8 +65,9 @@ export function resolveFlags(
     pauseScoring: e.PAUSE_SCORING === true || bool("pause_scoring"),
     llmPaused: bool("llm_paused"),
     approvalsFrozen: bool("approvals_frozen"),
-    // A row decides when there is one (the owner can close a channel the env opened); the env is the default.
-    cloudApplierOpen: open.success ? open.data : e.CLOUD_APPLIER_OPEN,
+    // The env opens the channel and a row can only close it, like PAUSE_SCORING: no runtime role deletes a row, so a row that
+    // won over the env would make CLOUD_APPLIER_OPEN=0 plus a redeploy (the hard stop) a no-op.
+    cloudApplierOpen: e.CLOUD_APPLIER_OPEN && (open.success ? open.data : true),
     llmShedLevel: Math.max(shed, e.LLM_SHED_LEVEL ?? 0) as 0 | 1 | 2 | 3,
     extensionOnly: new Set([...rows].filter(([k, v]) => k.startsWith(EXTENSION_ONLY_PREFIX) && v === true).map(([k]) => k.slice(EXTENSION_ONLY_PREFIX.length))),
     features,
@@ -89,11 +92,12 @@ export async function getFlags(from: Db = db()): Promise<Flags> {
       return flags;
     })
     .catch((err: unknown) => {
-      // Fail open on the last answer, but loudly: every kill switch is blind until the next successful load.
+      // The last answer stands, marked not loaded: approvals and cloud claims refuse on it, and every kill switch is blind
+      // until a load succeeds again (retry in 2 s).
       logger.warn({ err }, "flags not loaded; using the last answer");
       signal("flags_unreadable");
-      const flags = cache?.flags ?? { ...resolveFlags(new Map(), new Map(), baseEnv()), loaded: false };
-      cache = { at: Date.now(), flags };
+      const flags = { ...(cache?.flags ?? resolveFlags(new Map(), new Map(), baseEnv())), loaded: false };
+      cache = { at: Date.now() - CACHE_MS + 2_000, flags };
       return flags;
     })
     .finally(() => {

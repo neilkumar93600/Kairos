@@ -64,7 +64,8 @@ export type FailureCode = keyof typeof FAILURE_MESSAGES;
 export async function approveApplications(db: Db, userId: string, ids: string[], channel: SubmitChannel): Promise<string[]> {
   const flags = await getFlags(db);
   // A money invariant broke (jobs/invariants.ts) or the owner froze approvals: nothing new is approved until it is lifted.
-  if (flags.approvalsFrozen) throw new HttpError(503, "approvals_frozen", "Approvals are paused while we check an issue. Your drafts are safe; try again soon.");
+  // An api replica that cannot read ops_flags cannot know a freeze is on: it refuses rather than charge blind.
+  if (flags.approvalsFrozen || !flags.loaded) throw new HttpError(503, "approvals_frozen", "Approvals are paused while we check an issue. Your drafts are safe; try again soon.");
   if (channel === "cloud") {
     if (flags.pauseCloudApply) throw new HttpError(503, "cloud_paused", "The cloud applier is paused. Send from the extension, or try again later.");
     if (!(await cloudAllowed(db, userId))) throw forbidden(flags.cloudApplierOpen ? "The cloud applier is on Pro and Max" : "The cloud applier is not open yet");

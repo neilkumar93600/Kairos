@@ -96,18 +96,20 @@ export const PII_PATTERNS = {
   jwt: "eyJ[A-Za-z0-9_-]{10,}[.][A-Za-z0-9_-]{5,}",
 } as const;
 
-/** Columns that hold codes, counts or fixed sentences; a hit is a leak from a caller (free text, an error message). */
+/** Columns that hold codes, counts or fixed sentences (ops_audit payloads: flags, ids and counts only); a hit is a leak from a caller (free text, an error message). */
 const PII_COLUMNS = [
   ["companies", "last_poll_error"],
   ["applications", "failure_reason"],
   ["credit_ledger", "note"],
   ["metrics_minute", "label"],
   ["ops_audit", "target"],
+  ["ops_audit", "before"],
+  ["ops_audit", "after"],
 ] as const;
 
 const hasPii = (table: string, column: string) =>
-  count(sql`select 1 from ${sql.identifier(table)} where ${sql.identifier(column)} ~ ${PII_PATTERNS.email} or ${sql.identifier(column)} ~ ${PII_PATTERNS.jwt}
-      or ${sql.identifier(column)} ~ ${`^${PII_PATTERNS.phone}$`}`);
+  count(sql`select 1 from ${sql.identifier(table)} where ${sql.identifier(column)}::text ~ ${PII_PATTERNS.email} or ${sql.identifier(column)}::text ~ ${PII_PATTERNS.jwt}
+      or ${sql.identifier(column)}::text ~ ${`^${PII_PATTERNS.phone}$`}`);
 
 export interface Violation {
   id: string;

@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bufferedCounters, count, flushMetrics, gauge, LATENCY_BUCKETS_MS, observeLatency, resetMetrics, slo } from "../src/lib/metrics";
+import { applierSeriesOk, bufferedCounters, count, flushMetrics, gauge, LATENCY_BUCKETS_MS, observeLatency, resetMetrics, slo } from "../src/lib/metrics";
 import { classify, requestMetrics } from "../src/middleware/metrics";
 
 const written = vi.hoisted(() => ({ values: [] as Record<string, unknown>[], fail: false }));
@@ -90,6 +90,19 @@ describe("flushMetrics", () => {
     written.fail = false;
     await flushMetrics(new Date("2026-11-03T10:16:00Z"));
     expect(written.values).toEqual([{ minute: new Date("2026-11-03T10:16:00Z"), name: "c", label: "", value: 5 }]);
+  });
+});
+
+describe("applier series from Redis", () => {
+  it("accepts the applier's own series and refuses anything else, odd labels, and non-finite values", () => {
+    expect(applierSeriesOk("cloud.run", "submitted", 3)).toBe(true);
+    expect(applierSeriesOk("slo.s4.good", "", 1)).toBe(true);
+    expect(applierSeriesOk("slo.s1.good", "", 1)).toBe(false);
+    expect(applierSeriesOk("invariant_violations", "I-4", 0)).toBe(false);
+    expect(applierSeriesOk("cloud.run", "Jane Doe applied to Acme", 1)).toBe(false);
+    expect(applierSeriesOk("cloud.run", "x".repeat(41), 1)).toBe(false);
+    expect(applierSeriesOk("slo.s5.total", "", Number.NaN)).toBe(false);
+    expect(applierSeriesOk("slo.s5.total", "", -1)).toBe(false);
   });
 });
 

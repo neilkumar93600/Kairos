@@ -61,6 +61,12 @@ const fitJob = (row: Posting) => ({
   salaryMaxUsd: row.job.salaryMaxUsd,
 });
 
+/** pause_scoring, or flags nobody could read: spend stops rather than runs blind. */
+async function scoringPaused(): Promise<boolean> {
+  const f = await getFlags();
+  return f.pauseScoring || !f.loaded;
+}
+
 /** A lane member: the posting, and the follow-up attempt after a retryable model failure. */
 const toMember = (jobId: string, attempt: number) => (attempt ? `${jobId}:${attempt}` : jobId);
 const fromMember = (m: string) => ({ jobId: m.split(":")[0]!, attempt: Number(m.split(":")[1] ?? 0) });
@@ -75,7 +81,7 @@ const fromMember = (m: string) => ({ jobId: m.split(":")[0]!, attempt: Number(m.
  * failure comes back as a delayed follow-up of this job for that user (userIds and attempt set).
  */
 export async function processScoreMatches(job: Job<JobData["score-matches"]>) {
-  if ((await getFlags()).pauseScoring) {
+  if (await scoringPaused()) {
     // ponytail: postings that arrive while paused are not scored later; the nightly re-score of WP-42 picks them up.
     logger.info({ jobId: job.data.jobId }, "scoring paused (pause_scoring)");
     return { queued: 0, paused: true };
@@ -122,7 +128,7 @@ export async function runChunk<R>(from: Lane, userId: string, score: (members: s
 /** Scores the next chunk of one user's lane. Only matches at or above the user's threshold are stored. */
 export async function processScoreUser(job: Job<JobData["score-user"]>) {
   // Paused: the lane keeps its members; the user's next posting wakes it once scoring resumes.
-  if ((await getFlags()).pauseScoring) return { stored: 0, retrying: 0, paused: true };
+  if (await scoringPaused()) return { stored: 0, retrying: 0, paused: true };
   return runChunk(scoreLane(), job.data.userId, (members) => scoreChunk(job.data.userId, members));
 }
 

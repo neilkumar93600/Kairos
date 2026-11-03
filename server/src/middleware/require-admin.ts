@@ -12,7 +12,7 @@ export const ADMIN_FRESH_MS = 15 * 60_000;
  * After requireAuth. Fails closed at every step: an empty ADMIN_USER_IDS, or a user not in it, gets the same 404 as a route
  * that does not exist; an admin whose sign-in is older than 15 minutes (or whose session row cannot be read) gets 403
  * reauth_required with details.maxAgeSec. The allowlist check must stay first: a non-admin must never learn that the
- * freshness rule (or the route) exists, so staleness is only ever reported to a listed admin. Nothing here reads the body.
+ * freshness rule (or the route) exists. The 404 body is byte-identical to a missing route's; its headers also carry the authed chain's no-store and rate-limit headers, which a probe could tell apart. Accepted: it needs a signed-in account and learns only that /api/admin exists, so staleness is only ever reported to a listed admin. Nothing here reads the body.
  * ponytail: WP-30 adds a general "fresh session" kind to require-auth.ts; fold this check into it then.
  */
 export function requireAdmin(now: () => number = Date.now) {

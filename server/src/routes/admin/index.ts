@@ -49,7 +49,7 @@ adminRouter.get("/info", async (_req, res) => {
       .from(metricsMinute)
       .where(sql`${metricsMinute.name} in ('queue_waiting','queue_failed','queue_lag_s','invariant_violations') and ${metricsMinute.minute} > now() - interval '15 minutes'`)
       .orderBy(metricsMinute.name, metricsMinute.label, desc(metricsMinute.minute)),
-    db().select().from(opsAudit).orderBy(desc(opsAudit.at)).limit(20),
+    db().select({ id: opsAudit.id, at: opsAudit.at, actor: opsAudit.actor, action: opsAudit.action, target: opsAudit.target, before: opsAudit.before, after: opsAudit.after }).from(opsAudit).orderBy(desc(opsAudit.at)).limit(20),
   ]);
   res.json({
     approvalsFrozen: flags.approvalsFrozen,

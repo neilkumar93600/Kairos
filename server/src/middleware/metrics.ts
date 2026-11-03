@@ -4,7 +4,7 @@ import { count, observeLatency, slo } from "../lib/metrics";
 /** The money and inbound routes held to 99.9% (README Reliability, S1), by "METHOD /path". */
 const CRITICAL = new Set(["POST /api/applications/approve", "POST /api/extension/report", "POST /api/webhooks/stripe", "POST /api/webhooks/inbound-email"]);
 
-/** The route groups worth a series. Anything else, 404s included, is "other": the label comes from the client's path. */
+/** The route groups worth a series. Anything else, 404s included, is "other", so a client's invented path cannot create a series. */
 const GROUPS = new Set(["auth", "auth-providers", "contact", "me", "profile", "matches", "jobs", "resume", "applications", "credits", "inbox", "billing", "extension", "files", "admin", "webhooks"]);
 
 /** 503s we answer on purpose while a switch is set: not downtime, so they do not burn S1 or S1c. */

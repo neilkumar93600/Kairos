@@ -23,10 +23,12 @@ describe("resolveFlags", () => {
     expect(resolveFlags(rows({ llm_shed_level: 0 }), none, { ...off, LLM_SHED_LEVEL: 3 }).llmShedLevel).toBe(3);
   });
 
-  it("CLOUD_APPLIER_OPEN is the default; a row decides, so the owner can close what the env opened", () => {
+  it("CLOUD_APPLIER_OPEN=1 opens the channel and a row can close it; a row never opens it past a closed env", () => {
     expect(resolveFlags(rows({}), none, { ...off, CLOUD_APPLIER_OPEN: true }).cloudApplierOpen).toBe(true);
     expect(resolveFlags(rows({ cloud_applier_open: false }), none, { ...off, CLOUD_APPLIER_OPEN: true }).cloudApplierOpen).toBe(false);
-    expect(resolveFlags(rows({ cloud_applier_open: true }), none, off).cloudApplierOpen).toBe(true);
+    // The hard stop: CLOUD_APPLIER_OPEN=0 and a redeploy closes it even though a row says open.
+    expect(resolveFlags(rows({ cloud_applier_open: true }), none, off).cloudApplierOpen).toBe(false);
+    expect(resolveFlags(rows({}), none, off).cloudApplierOpen).toBe(false);
   });
 
   it("collects extension_only:<ats> rows that are true", () => {
@@ -94,7 +96,7 @@ describe("getFlags cache", () => {
     expect(loads()).toBe(1);
   });
 
-  it("with no answer ever, serves the env alone marked not loaded, and retries after the cache window, not every call", async () => {
+  it("with no answer ever, serves the env alone marked not loaded, and retries after 2 s, not every call", async () => {
     const state = { flags: [] as { key: string; value: unknown }[], fail: true };
     const { db, loads } = fakeDb(state);
     const first = await getFlags(db);
@@ -102,7 +104,7 @@ describe("getFlags cache", () => {
     state.fail = false;
     expect((await getFlags(db)).loaded).toBe(false);
     expect(loads()).toBe(0);
-    vi.advanceTimersByTime(CACHE_MS + 1);
+    vi.advanceTimersByTime(2_001);
     expect((await getFlags(db)).loaded).toBe(true);
   });
 
@@ -112,6 +114,7 @@ describe("getFlags cache", () => {
     expect((await getFlags(db)).approvalsFrozen).toBe(true);
     state.fail = true;
     vi.advanceTimersByTime(CACHE_MS + 1);
-    expect((await getFlags(db)).approvalsFrozen).toBe(true);
+    // The last answer stands, marked not loaded so approvals and claims refuse on it.
+    expect(await getFlags(db)).toMatchObject({ approvalsFrozen: true, loaded: false });
   });
 });
