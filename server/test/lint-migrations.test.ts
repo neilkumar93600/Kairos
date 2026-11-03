@@ -53,6 +53,17 @@ describe("lint-migrations", () => {
     expect(lint('DROP INDEX "plain_idx";')).toEqual([]);
   });
 
+  it("refuses a lone or unclosed dollar-quote delimiter on a function body (WP-17 review)", () => {
+    const fn = (open: string, close: string) => `CREATE FUNCTION f() RETURNS trigger LANGUAGE plpgsql AS ${open}\nBEGIN\n  RETURN NEW;\nEND ${close};`;
+    expect(lint(fn("$$", "$$"))).toEqual([]);
+    expect(lint(fn("$body$", "$body$"))).toEqual([]);
+    expect(lint(fn("$", "$"))).toEqual([expect.stringMatching(/opens with "\$"/), expect.stringMatching(/lone \$/)]);
+    expect(lint(fn("$$", "$"))).toEqual(expect.arrayContaining([expect.stringMatching(/lone \$/)]));
+    expect(lint(fn("$body$", "$$"))).toEqual([expect.stringMatching(/opened with \$body\$ is never closed/)]);
+    // A comment that mentions "AS $" is not a function body.
+    expect(lint(`-- written AS $ by mistake once\n${fn("$$", "$$")}`)).toEqual([]);
+  });
+
   it("keeps a no-transaction file to idempotent statements", () => {
     expect(lint("-- kairos:no-transaction\nCREATE INDEX CONCURRENTLY x ON jobs (id);")).toEqual([expect.stringMatching(/only idempotent/)]);
     expect(lint("-- kairos:no-transaction\nCREATE TABLE t (id int);")).toEqual([expect.stringMatching(/only idempotent/)]);

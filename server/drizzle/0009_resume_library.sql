@@ -222,7 +222,7 @@ REVOKE ALL ON FUNCTION snapshot_resume(uuid, text, text, text, text) FROM PUBLIC
 -- re-pointed, except by an operator; employment_id is re-linked only by a human (the user or ops). Two transitions stay
 -- open to any actor, because they cannot move a claim: setting import_id for the first time (the source backfill,
 -- which attaches pre-WP-17 facts to their new import) and clearing a link through ON DELETE SET NULL.
-CREATE FUNCTION facts_provenance_guard() RETURNS trigger LANGUAGE plpgsql AS $
+CREATE FUNCTION facts_provenance_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   actor text := kairos_actor();
 BEGIN
@@ -234,7 +234,7 @@ BEGIN
     RAISE EXCEPTION 'a confirmed fact keeps its provenance' USING ERRCODE = '23514', CONSTRAINT = 'facts_provenance_immutable';
   END IF;
   RETURN NEW;
-END $;--> statement-breakpoint
+END $$;--> statement-breakpoint
 CREATE TRIGGER facts_provenance_guard_bu BEFORE UPDATE OF import_id, employment_id, source_span_hash ON facts
   FOR EACH ROW EXECUTE FUNCTION facts_provenance_guard();--> statement-breakpoint
 

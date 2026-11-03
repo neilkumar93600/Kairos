@@ -68,6 +68,25 @@ export function uniqueIndexNames(texts) {
 }
 
 /**
+ * Lone or unbalanced dollar-quote delimiters (WP-17 review: "AS $" and "END $;" written for "$$" broke a migration).
+ * A function body opens with $tag$ after AS and must close with the same $tag$; a single $ there never parses.
+ */
+export function dollarQuoteProblems(text) {
+  const problems = [];
+  const body = text.replace(/--[^\n]*/g, "");
+  for (const m of body.matchAll(/\bAS\s+(\$[A-Za-z_]*\$?)(?=\s|$)/gi)) {
+    const open = m[1];
+    if (!/^\$[A-Za-z_]*\$$/.test(open)) {
+      problems.push(`function body opens with "${open}", not $$ or $tag$`);
+      continue;
+    }
+    if (body.indexOf(open, m.index + m[0].length) < 0) problems.push(`function body opened with ${open} is never closed`);
+  }
+  if (/\bEND\s+\$(?!\$|[A-Za-z_]*\$)/i.test(body)) problems.push("a function body closes with a lone $");
+  return problems;
+}
+
+/**
  * Problems in one migration file; an empty list means it passes. `uniqueIndexes` (uniqueIndexNames of every file) makes
  * dropping a unique index a contract change: old code may upsert on it with ON CONFLICT (WP-17 review).
  */
@@ -116,6 +135,7 @@ export function lintMigration(tag, text, uniqueIndexes = new Set()) {
       problems.push(`a no-transaction file holds only idempotent statements (IF [NOT] EXISTS, VALIDATE): "${s.slice(0, 60)}"`);
     }
   }
+  problems.push(...dollarQuoteProblems(text));
   return problems.map((p) => `${tag}: ${p}`);
 }
 
