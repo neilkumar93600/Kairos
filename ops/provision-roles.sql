@@ -141,7 +141,8 @@ GRANT USAGE ON SEQUENCE llm_calls_id_seq TO kairos_worker;
 
 -- kairos_applier: the cloud applier's interim role (CISO mustFix 1(4), WP-04). The definer functions of
 -- 02-database.md 8.3 replace these table grants in P5. What jobs/cloud-apply.ts and services/submissions.ts run:
---   read the application with its job's apply_url and closed_at, and the owner's plan (the claim prechecks);
+--   read the application with its job's apply_url and closed_at, and the owner's effective plan (plan, status and
+--   the past_due grace anchor of WP-10: planFor reads all three) for the claim prechecks;
 --   claim it (approved -> submitting) and record the result (status, submitted_at, receipt, failure_reason);
 --   for a submit only, insert the one ledger debit and read back its id.
 -- Nothing else: no user, session, account, profiles, facts, resumes, inbound_emails or llm_* table, no other
@@ -151,7 +152,7 @@ GRANT USAGE ON SEQUENCE llm_calls_id_seq TO kairos_worker;
 GRANT SELECT ON applications TO kairos_applier;
 GRANT UPDATE (status, submitted_at, receipt, failure_reason, updated_at) ON applications TO kairos_applier;
 GRANT SELECT (id, apply_url, closed_at) ON jobs TO kairos_applier;
-GRANT SELECT (user_id, plan, status) ON subscriptions TO kairos_applier;
+GRANT SELECT (user_id, plan, status, past_due_since) ON subscriptions TO kairos_applier;
 GRANT INSERT ON credit_ledger TO kairos_applier;
 GRANT SELECT (id) ON credit_ledger TO kairos_applier;
 

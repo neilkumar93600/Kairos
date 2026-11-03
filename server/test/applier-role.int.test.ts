@@ -90,7 +90,7 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
 
   it("reads the granted columns", async () => {
     await expect(asApplier("select id, apply_url, closed_at from jobs limit 1")).resolves.toBeDefined();
-    await expect(asApplier("select user_id, plan, status from subscriptions limit 1")).resolves.toBeDefined();
+    await expect(asApplier("select user_id, plan, status, past_due_since from subscriptions limit 1")).resolves.toBeDefined();
     await expect(asApplier("select id from credit_ledger limit 1")).resolves.toBeDefined();
   });
 
