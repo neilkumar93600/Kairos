@@ -1,50 +1,12 @@
-import { Readable } from "node:stream";
 import { text } from "node:stream/consumers";
-import { DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, type S3Client } from "@aws-sdk/client-s3";
-import { describe, expect, it, vi } from "vitest";
+import { ListObjectsV2Command, type S3Client } from "@aws-sdk/client-s3";
+import { describe, expect, it } from "vitest";
 import { HttpError } from "../src/lib/errors";
 import { parseEnv } from "../src/lib/env";
-import { createStorage, parseKey, PRESIGN_MAX_SEC, storageConfig, userKey, type BucketConfig, type StorageConfig } from "../src/lib/storage";
+import { createStorage, parseKey, PRESIGN_MAX_SEC, storageConfig, userKey } from "../src/lib/storage";
+import { fakeBucket as bucket, fakeR2, r2Config as config } from "./helpers/fake-r2";
 
 /** WP-14: private R2 buckets, per-user key prefixes, a token per bucket, presigned GETs of 5 minutes at most. */
-
-const bucket = (name: string): BucketConfig => ({ name, accessKeyId: `id-${name}`, secretAccessKey: `secret-${name}` });
-const config: StorageConfig = {
-  endpoint: "https://acct.r2.cloudflarestorage.com",
-  buckets: { uploads: bucket("kairos-uploads"), renders: bucket("kairos-renders"), snapshots: bucket("kairos-snapshots"), backups: bucket("kairos-backups") },
-};
-
-/** An in-memory R2 behind S3Client#send; it never opens a socket. Lists at most `pageSize` keys, like R2's 1,000. */
-function fakeR2(pageSize = 1000) {
-  const objects = new Map<string, string>(); // "<bucket name>|<object key>"
-  const calls: { bucket: string; command: string; accessKeyId: string }[] = [];
-  const makeClient = vi.fn((_endpoint: string, b: BucketConfig) => {
-    const send = async (cmd: { input: Record<string, unknown> }) => {
-      const input = cmd.input as { Bucket: string; Key?: string; Prefix?: string; Body?: string; Delete?: { Objects: { Key: string }[] } };
-      // The client is bound to its own bucket's token: a request for another bucket is R2's AccessDenied.
-      if (input.Bucket !== b.name) throw Object.assign(new Error("Access Denied"), { name: "AccessDenied" });
-      calls.push({ bucket: input.Bucket, command: cmd.constructor.name, accessKeyId: b.accessKeyId });
-      const id = `${input.Bucket}|${input.Key}`;
-      if (cmd instanceof PutObjectCommand) return void objects.set(id, String(input.Body));
-      if (cmd instanceof GetObjectCommand) {
-        if (!objects.has(id)) throw Object.assign(new Error("The specified key does not exist."), { name: "NoSuchKey" });
-        const body = objects.get(id)!;
-        return { Body: Readable.from([Buffer.from(body)]), ContentLength: body.length };
-      }
-      if (cmd instanceof ListObjectsV2Command) {
-        const keys = [...objects.keys()].filter((k) => k.startsWith(`${input.Bucket}|${input.Prefix}`)).map((k) => k.split("|")[1]!);
-        return { Contents: keys.slice(0, pageSize).map((Key) => ({ Key })), IsTruncated: keys.length > pageSize };
-      }
-      if (cmd instanceof DeleteObjectsCommand) {
-        for (const { Key } of input.Delete!.Objects) objects.delete(`${input.Bucket}|${Key}`);
-        return { Errors: [] };
-      }
-      throw new Error(`fake R2: unexpected ${cmd.constructor.name}`);
-    };
-    return { send } as unknown as S3Client;
-  });
-  return { objects, calls, makeClient, storage: createStorage(config, makeClient) };
-}
 
 describe("keys", () => {
   it("builds <bucket>/<userId>/<name> and parses it back", () => {
@@ -156,7 +118,7 @@ describe("deleteUserObjects (erasure)", () => {
   });
 
   it("pages past R2's list limit", async () => {
-    const r2 = fakeR2(2);
+    const r2 = fakeR2(config, 2);
     for (let i = 0; i < 5; i++) await r2.storage.put(userKey("renders", "u1", `${i}.pdf`), "x", "application/pdf");
     // Uploads and snapshots are empty but must still be configured: erasure refuses to skip a bucket it cannot see.
     expect(await r2.storage.deleteUserObjects("u1")).toBe(5);
