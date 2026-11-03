@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { APPLIER_FORBIDDEN, baseEnv, env, envFor, setProcessRole } from "../src/lib/env";
+import { APPLIER_FORBIDDEN, ENV_KEYS, baseEnv, env, envFor, setProcessRole } from "../src/lib/env";
 
 /** Per-process env schemas (CISO mustFix 1(3), platform-24): the applier boots with almost nothing and holds no secret. */
 
@@ -24,6 +24,13 @@ describe("envFor('applier')", () => {
   it("the parsed applier env carries no secret field", () => {
     const e = envFor("applier", applierOnly) as Record<string, unknown>;
     for (const key of APPLIER_FORBIDDEN) expect(e).not.toHaveProperty(key);
+  });
+
+  // A secret added to the api/worker schema later must not reach the applier just because nobody updated the list.
+  it("forbids every secret-like key the applier schema does not declare", () => {
+    const secretLike = /SECRET|_KEY|TOKEN|KEKS|PASSWORD/;
+    const missing = ENV_KEYS.all.filter((k) => secretLike.test(k) && !ENV_KEYS.applier.includes(k) && !(APPLIER_FORBIDDEN as readonly string[]).includes(k));
+    expect(missing).toEqual([]);
   });
 
   it.each([...APPLIER_FORBIDDEN])("refuses to boot in production when %s is set", (key) => {

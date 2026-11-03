@@ -50,6 +50,7 @@ export const APPLIER_FORBIDDEN = [
   "POSTMARK_SERVER_TOKEN",
   "STRIPE_SECRET_KEY",
   "STRIPE_WEBHOOK_SECRET",
+  "STRIPE_WEBHOOK_SECRET_PREVIOUS",
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_KEY_INTERACTIVE",
   "ANTHROPIC_KEY_BATCH",
@@ -181,6 +182,9 @@ const envSchema = z.object({
     ctx.addIssue({ code: "custom", path: ["STRIPE_WEBHOOK_SECRET"], message: "required in production with a live STRIPE_SECRET_KEY" });
   }
 });
+
+/** Key names only, for the test that keeps APPLIER_FORBIDDEN complete as secrets are added. */
+export const ENV_KEYS = { all: Object.keys(envSchema.shape), applier: Object.keys(applierShape) };
 
 export type Env = z.infer<typeof envSchema>;
 export type ApplierEnv = z.infer<typeof applierSchema>;
