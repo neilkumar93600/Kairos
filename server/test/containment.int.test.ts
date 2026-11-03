@@ -119,7 +119,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
     it("the worker refuses a non-owner's already-approved cloud row at claim (plan_lapsed): no browser, marked failed, no credit", async () => {
       const userId = await signIn();
       const id = await draftFor(userId);
-      await tdb.update(schema.applications).set({ status: "approved", channel: "cloud" }).where(eq(schema.applications.id, id));
+      await tdb.update(schema.applications).set({ status: "approved", channel: "cloud", approvedAt: new Date() }).where(eq(schema.applications.id, id));
       const launch = vi.spyOn(chromium, "launch").mockRejectedValue(new Error("browser must not start"));
 
       const result = await processCloudApply({ data: { applicationId: id } } as never);
@@ -136,7 +136,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
     it("the worker lets the owner's approved cloud row through the gate", async () => {
       const userId = await signIn(OWNER);
       const id = await draftFor(userId);
-      await tdb.update(schema.applications).set({ status: "approved", channel: "cloud" }).where(eq(schema.applications.id, id));
+      await tdb.update(schema.applications).set({ status: "approved", channel: "cloud", approvedAt: new Date() }).where(eq(schema.applications.id, id));
       vi.spyOn(chromium, "launch").mockRejectedValue(new Error("browser stub at /opt/secret/path"));
 
       await processCloudApply({ data: { applicationId: id } } as never);
@@ -163,7 +163,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
     async function approvedCloudRow() {
       const userId = await signIn(OWNER);
       const id = await draftFor(userId);
-      await tdb.update(schema.applications).set({ status: "approved", channel: "cloud" }).where(eq(schema.applications.id, id));
+      await tdb.update(schema.applications).set({ status: "approved", channel: "cloud", approvedAt: new Date() }).where(eq(schema.applications.id, id));
       return { userId, id };
     }
     const rowOf = async (id: string) => (await tdb.select().from(schema.applications).where(eq(schema.applications.id, id)))[0]!;

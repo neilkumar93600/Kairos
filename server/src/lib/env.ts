@@ -81,6 +81,8 @@ export const APPLIER_FORBIDDEN = [
   "R2_SNAPSHOTS_SECRET_ACCESS_KEY",
   "R2_BACKUPS_ACCESS_KEY_ID",
   "R2_BACKUPS_SECRET_ACCESS_KEY",
+  /** The migrator's direct URL (src/migrate.ts): kairos_migrator owns every table. */
+  "DATABASE_UNPOOLED_URL",
 ] as const;
 
 const applierSchema = z.object(applierShape);

@@ -11,8 +11,8 @@ export async function processCostRollup(): Promise<{ rows: number }> {
   const now = Date.now();
   let rows = 0;
   for (const day of [new Date(now - 86_400_000), new Date(now)].map((d) => d.toISOString().slice(0, 10))) {
-    const result = (await db().execute(sql`select llm_cost_rollup_day(${day}::date) as n`)) as unknown as { n: number }[];
-    rows += Number(result[0]?.n ?? 0);
+    const result = await db().execute<{ n: number }>(sql`select llm_cost_rollup_day(${day}::date) as n`);
+    rows += Number(result.rows[0]?.n ?? 0);
   }
   return { rows };
 }

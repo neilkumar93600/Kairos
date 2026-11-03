@@ -1,25 +1,34 @@
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import pg from "pg";
 import { baseEnv } from "../lib/env";
+import { logger } from "../lib/logger";
 import * as schema from "./schema";
 
-export type Db = PostgresJsDatabase<typeof schema>;
+export type Db = NodePgDatabase<typeof schema>;
 
-let sqlClient: postgres.Sql | undefined;
+let pool: pg.Pool | undefined;
 let database: Db | undefined;
 
+/**
+ * The process pool (pg 8, 02-database 4.4). Drizzle sends every query unnamed, so no prepared statement outlives its
+ * transaction and the pool is safe behind PgBouncer in transaction mode. Statement and idle timeouts are set per role
+ * (ops/provision-roles.sql), so this file carries none.
+ */
 export function db(): Db {
   if (!database) {
-    sqlClient = postgres(baseEnv().DATABASE_URL, { max: 10, idle_timeout: 20, connect_timeout: 10 });
-    database = drizzle(sqlClient, { schema, casing: "snake_case" });
+    pool = new pg.Pool({ connectionString: baseEnv().DATABASE_URL, max: 10, idleTimeoutMillis: 20_000, connectionTimeoutMillis: 10_000 });
+    // An idle client whose server connection drops emits "error"; without a listener that event kills the process.
+    pool.on("error", (err) => logger.warn({ err }, "idle database connection dropped"));
+    database = drizzle(pool, { schema, casing: "snake_case" });
   }
   return database;
 }
 
 export async function closeDb(): Promise<void> {
-  await sqlClient?.end({ timeout: 5 });
-  sqlClient = undefined;
+  const closing = pool;
+  pool = undefined;
   database = undefined;
+  await closing?.end();
 }
 
 export { schema };

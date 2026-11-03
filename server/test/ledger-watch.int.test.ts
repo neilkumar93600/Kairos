@@ -28,8 +28,8 @@ describe.skipIf(!hasTestDb)("ledger watch against Postgres", () => {
 
     await db.insert(schema.creditLedger).values([
       { userId, delta: 100, reason: "admin_adjustment", note: "manual" },
-      { userId, delta: 5, reason: "admin_adjustment", createdAt: new Date(Date.now() - 60 * 60_000) },
-      { userId, delta: 10, reason: "plan_grant" },
+      { userId, delta: 5, reason: "admin_adjustment", note: "old", createdAt: new Date(Date.now() - 60 * 60_000) },
+      { userId, delta: 10, reason: "plan_grant", stripeInvoiceId: "in_ledger_watch" },
     ]);
     expect(await processLedgerWatch()).toEqual({ rows: 1 });
   });

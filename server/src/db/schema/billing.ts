@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { user } from "./auth";
 import { applications } from "./applications";
 import { billingInterval, creditReason, planId } from "./enums";
@@ -24,9 +24,25 @@ export const creditLedger = pgTable(
     uniqueIndex("credit_ledger_application_reason_uq")
       .on(t.applicationId, t.reason)
       .where(sql`${t.applicationId} is not null`),
-    uniqueIndex("credit_ledger_invoice_uq")
-      .on(t.stripeInvoiceId)
+    // One grant and one expiry per invoice (billing-v02); replaced credit_ledger_invoice_uq, which allowed one row in all.
+    uniqueIndex("credit_ledger_invoice_reason_uq")
+      .on(t.stripeInvoiceId, t.reason)
       .where(sql`${t.stripeInvoiceId} is not null`),
+    uniqueIndex("credit_ledger_one_free_grant_uq").on(t.userId).where(sql`${t.reason} = 'free_grant'`),
+    // Shape of each reason (billing-44, billing-v03); a note is a code, never free text or an address (kept forever).
+    check(
+      "credit_ledger_sign_ck",
+      sql`(reason IN ('plan_grant','free_grant','refund_failed_submit') AND delta > 0) OR (reason = 'submission' AND delta = -1)
+        OR (reason = 'expiry' AND delta < 0) OR (reason = 'admin_adjustment' AND delta <> 0 AND note IS NOT NULL)`,
+    ),
+    check(
+      "credit_ledger_shape_ck",
+      sql`(reason IN ('plan_grant','expiry') AND stripe_invoice_id IS NOT NULL AND application_id IS NULL)
+        OR (reason = 'free_grant' AND stripe_invoice_id IS NULL AND application_id IS NULL)
+        OR (reason IN ('submission','refund_failed_submit') AND stripe_invoice_id IS NULL)
+        OR (reason = 'admin_adjustment' AND stripe_invoice_id IS NULL)`,
+    ),
+    check("credit_ledger_note_ck", sql`note IS NULL OR note ~ '^[A-Za-z0-9 _:=.,/#-]{1,200}$'`),
   ],
 );
 
@@ -45,20 +61,17 @@ export const subscriptions = pgTable("subscriptions", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   /** Set on entering past_due and kept while it lasts, cleared on leaving it: the 7-day grace anchor of effectivePlan. */
   pastDueSince: timestamp("past_due_since", { withTimezone: true }),
-});
+}, () => [
+  check(
+    "subscriptions_status_ck",
+    sql`status IN ('active','trialing','past_due','unpaid','canceled','incomplete','incomplete_expired','paused')`,
+  ),
+  check("subscriptions_past_due_ck", sql`(status = 'past_due') = (past_due_since IS NOT NULL)`),
+]);
 
 /** Stripe event ids we already handled, so a redelivered webhook is a no-op. */
 export const stripeEvents = pgTable("stripe_events", {
   id: text("id").primaryKey(),
   type: text("type").notNull(),
   processedAt: timestamp("processed_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
-export const contactMessages = pgTable("contact_messages", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  name: text("name").notNull(),
-  email: text("email").notNull(),
-  topic: text("topic").notNull(),
-  message: text("message").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

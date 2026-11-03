@@ -59,7 +59,8 @@ describe.skipIf(!hasTestDb)("P0 invariants against Postgres", () => {
     return j!.id;
   }
   async function application(userId: string, jobId: string, status: "draft" | "approved", channel: "extension" | "cloud" | null) {
-    const [a] = await db.insert(schema.applications).values({ userId, jobId, status, channel, resumeLines: [LINE], answers: [ANSWER] }).returning();
+    const approvedAt = status === "draft" ? null : new Date();
+    const [a] = await db.insert(schema.applications).values({ userId, jobId, status, channel, approvedAt, resumeLines: [LINE], answers: [ANSWER] }).returning();
     return a!.id;
   }
   async function candidate(id: string, prefs: Preferences) {

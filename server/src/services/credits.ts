@@ -14,10 +14,10 @@ export function availableCredits(balance: number, inFlight: number): number {
  * READ COMMITTED can straddle a submission report (debit and status change commit together) and overstate by one.
  */
 export async function availableCreditsNow(db: Db | Tx, userId: string): Promise<number> {
-  const rows = (await db.execute(sql`
+  const { rows } = await db.execute<{ available: number }>(sql`
     select (select coalesce(sum(${creditLedger.delta}), 0) from ${creditLedger} where ${creditLedger.userId} = ${userId})::int
          - (select count(*) from ${applications} where ${applications.userId} = ${userId} and ${applications.status} in ('approved', 'submitting'))::int
-      as available`)) as unknown as { available: number }[];
+      as available`);
   return Math.max(0, Number(rows[0]?.available ?? 0));
 }
 
@@ -50,7 +50,7 @@ export async function chargeSubmission(tx: Tx, userId: string, applicationId: st
   return inserted.length === 1;
 }
 
-/** Grants a paid invoice's credits. Idempotent: credit_ledger_invoice_uq allows one row per Stripe invoice. */
+/** Grants a paid invoice's credits. Idempotent: credit_ledger_invoice_reason_uq allows one plan_grant per Stripe invoice. */
 export async function grantPlanCredits(tx: Tx, grant: { userId: string; delta: number; stripeInvoiceId: string }): Promise<boolean> {
   const inserted = await tx
     .insert(creditLedger)
