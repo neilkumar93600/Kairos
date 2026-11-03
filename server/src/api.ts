@@ -16,6 +16,7 @@ const app = createApp({
   corsOrigins: [e.WEB_ORIGIN, ...(e.EXTENSION_ORIGIN ? [e.EXTENSION_ORIGIN] : [])],
   edgeSecret: e.KAIROS_EDGE_SECRET,
   proxyHops: e.TRUSTED_PROXY_HOPS_DIRECT,
+  sharedLimits: true,
   healthChecks: {
     database: async () => {
       await db().execute(sql`select 1`);

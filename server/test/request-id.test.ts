@@ -6,7 +6,8 @@ import { createApp } from "../src/app";
 import type { AuthGateway } from "../src/lib/auth";
 import { createLogger, httpLogger, requestId } from "../src/lib/logger";
 import { errorHandler } from "../src/middleware/error-handler";
-import { publicFormLimiter } from "../src/middleware/rate-limit";
+import { clientIpResolver } from "../src/middleware/client-ip";
+import { createLimiters } from "../src/middleware/rate-limit";
 import { pollErrorCode } from "../src/jobs/poll-boards";
 import { BoardNotFoundError } from "../src/services/ats";
 
@@ -74,7 +75,8 @@ describe("rate limit 429", () => {
   it("answers with the error envelope and a request id", async () => {
     const a = express();
     a.use(requestId);
-    a.get("/x", publicFormLimiter, (_req, res) => res.json({ ok: true }));
+    a.use(clientIpResolver(undefined));
+    a.get("/x", createLimiters(false).contact, (_req, res) => res.json({ ok: true }));
     a.use(errorHandler);
     let res = await request(a).get("/x");
     for (let i = 0; i < 5 && res.status === 200; i++) res = await request(a).get("/x");
