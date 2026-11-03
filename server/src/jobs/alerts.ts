@@ -2,8 +2,9 @@ import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { metricsMinute } from "../db/schema";
 import { llmCostDaily } from "../db/schema/platform";
+import { logger } from "../lib/logger";
 import { SHED_LEVELS } from "../llm/budget";
-import { gauge } from "../lib/metrics";
+import { foldApplierMetrics, gauge } from "../lib/metrics";
 import { signal, type Signal } from "../lib/sentry";
 import { burnRate, SLOS, sloWindow, type SloId } from "../lib/slo";
 import { QUEUES, queue, type QueueName } from "./queues";
@@ -71,7 +72,9 @@ export function evaluate(i: AlertInput): { signal: Signal; why: string }[] {
 
 export async function processAlerts(): Promise<{ signal: Signal; why: string }[]> {
   const d = db();
-  const [hour, sixHours, month] = await Promise.all([sloWindow(d, 60), sloWindow(d, 360), sloWindow(d, 30 * 24 * 60)]);
+  // The 30-day sum is the costly read: once an hour (the first run of each hour), not every 5 minutes.
+  const monthly = new Date().getUTCMinutes() < 5;
+  const [hour, sixHours, month] = await Promise.all([sloWindow(d, 60), sloWindow(d, 360), monthly ? sloWindow(d, 30 * 24 * 60) : Promise.resolve({})]);
   const [spend] = await d
     .select({
       usd: sql<number>`coalesce(sum(${llmCostDaily.costUsd}), 0)::float8`,
@@ -109,6 +112,7 @@ export async function processAlerts(): Promise<{ signal: Signal; why: string }[]
 
 /** Every minute: each queue's waiting, delayed and failed counts, and the age of its oldest waiting job. */
 export async function processMetricsSample(): Promise<void> {
+  await foldApplierMetrics().catch((err: unknown) => logger.warn({ err }, "applier metrics not folded"));
   for (const name of Object.values(QUEUES) as QueueName[]) {
     const q = queue(name);
     const counts = await q.getJobCounts("waiting", "failed");
@@ -122,6 +126,6 @@ export async function processMetricsSample(): Promise<void> {
 
 /** Nightly: metrics older than 35 days (the SLO window is 30). */
 export async function processMetricsPrune(): Promise<number> {
-  const gone = await db().delete(metricsMinute).where(sql`${metricsMinute.minute} < now() - interval '35 days'`).returning({ m: metricsMinute.minute });
-  return gone.length;
+  const gone = await db().execute(sql`delete from metrics_minute where minute < now() - interval '35 days'`);
+  return gone.rowCount ?? 0;
 }

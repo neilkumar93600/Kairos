@@ -12,7 +12,7 @@ const NOW = Date.parse("2026-11-03T12:00:00Z");
 async function run(user: string | undefined, sessionId: string | undefined = "s1") {
   const next = vi.fn();
   await requireAdmin(() => NOW)({ user: user ? { id: user } : undefined, sessionId } as unknown as Request, {} as never, next);
-  return next.mock.calls[0]?.[0] as { status: number; code: string } | undefined;
+  return next.mock.calls[0]?.[0] as { status: number; code: string; details?: unknown } | undefined;
 }
 
 beforeEach(() => {
@@ -37,7 +37,7 @@ describe("requireAdmin", () => {
 
   it("asks an admin whose sign-in is older than 15 minutes to sign in again", async () => {
     state.createdAt = new Date(NOW - ADMIN_FRESH_MS - 1);
-    expect(await run("owner")).toMatchObject({ status: 403, code: "reauth_required" });
+    expect(await run("owner")).toMatchObject({ status: 403, code: "reauth_required", details: { maxAgeSec: 900 } });
   });
 
   it("refuses an admin whose session row is missing or unknown", async () => {

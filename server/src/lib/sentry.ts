@@ -112,6 +112,8 @@ const SIGNALS = {
   backup_stale: 1,
   /** The latest dump's manifest has a warning: a table shrank, the dump shrank, or it nears R2's 5 GiB put (WP-13). */
   backup_warning: 1,
+  /** ops_flags could not be read: the kill switches are running on their last answer or the env alone (WP-27). */
+  flags_unreadable: 1,
   /** A money or approval invariant failed (jobs/invariants.ts): approvals_frozen was set (WP-27). Pages. */
   invariant_breach: 1,
   /** A fast SLO burn: 14.4x over 1 hour (WP-27). */

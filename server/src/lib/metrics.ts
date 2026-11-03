@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { metricsMinute } from "../db/schema";
 import { logger } from "./logger";
+import { redis } from "./redis";
 
 /**
  * In-house metrics (WP-27; Grafana and OTel wait for WP-40). A process buffers counters and gauges and writes them to
@@ -41,24 +42,62 @@ export function observeLatency(group: string, ms: number): void {
 /** Splits a buffer key; exported for the flush test. */
 export const split = (k: string): [string, string] => k.split("\u0000") as [string, string];
 
-/** Writes and clears the buffers. A failed write puts the counters back, so nothing is lost to a database blip. */
-export async function flushMetrics(now = new Date()): Promise<number> {
+/** Where the applier's counters go: it holds no write grant on metrics_minute, so they pass through Redis. */
+export const APPLIER_METRICS_KEY = "kairos:applier-metrics";
+type Sink = (counters: Map<string, number>) => Promise<void>;
+
+/** The applier's sink: one hash, one HINCRBYFLOAT per series. */
+export const redisSink: Sink = async (c) => {
+  const pipe = redis().multi();
+  for (const [k, v] of c) pipe.hincrbyfloat(APPLIER_METRICS_KEY, k, v);
+  await pipe.exec();
+};
+
+/**
+ * Worker side: moves the applier's counters from Redis into this process's buffer (the next flush writes them). The hash is
+ * renamed first, so counts that arrive during the fold land in a fresh hash; a leftover from a crashed fold is folded too.
+ * ponytail: a worker that dies between the rename and its flush loses up to a minute of applier counts.
+ */
+export async function foldApplierMetrics(): Promise<void> {
+  const tmp = `${APPLIER_METRICS_KEY}:fold`;
+  for (const source of [tmp, APPLIER_METRICS_KEY]) {
+    if (source === APPLIER_METRICS_KEY && !(await redis().rename(APPLIER_METRICS_KEY, tmp).then(() => true, () => false))) break;
+    const h = await redis().hgetall(tmp);
+    for (const [k, v] of Object.entries(h)) {
+      const [name, label] = split(k);
+      count(name, Number(v), label);
+    }
+    await redis().del(tmp);
+  }
+}
+
+/**
+ * Writes and clears the buffers, in one transaction with the rows sorted by (name, label): two processes writing the same
+ * minute then lock rows in the same order and cannot deadlock. A failed write puts the counters back.
+ */
+export async function flushMetrics(now = new Date(), sink?: Sink): Promise<number> {
   const c = new Map(counters);
   const g = new Map(gauges);
   counters.clear();
   gauges.clear();
   const minute = new Date(Math.floor(now.getTime() / 60_000) * 60_000);
   try {
-    await db().transaction(async (tx) => {
-      for (const [k, value] of c) {
-        const [name, label] = split(k);
-        await tx.insert(metricsMinute).values({ minute, name, label, value }).onConflictDoUpdate({ target: [metricsMinute.minute, metricsMinute.name, metricsMinute.label], set: { value: sql`${metricsMinute.value} + excluded.value` } });
-      }
-      for (const [k, value] of g) {
-        const [name, label] = split(k);
-        await tx.insert(metricsMinute).values({ minute, name, label, value }).onConflictDoUpdate({ target: [metricsMinute.minute, metricsMinute.name, metricsMinute.label], set: { value } });
-      }
-    });
+    if (sink) await sink(c);
+    else {
+      const rows = [
+        ...[...c].map(([k, value]) => ({ k, value, gauge: false })),
+        ...[...g].map(([k, value]) => ({ k, value, gauge: true })),
+      ].sort((x, y) => (x.k < y.k ? -1 : x.k > y.k ? 1 : 0));
+      await db().transaction(async (tx) => {
+        for (const r of rows) {
+          const [name, label] = split(r.k);
+          await tx
+            .insert(metricsMinute)
+            .values({ minute, name, label, value: r.value })
+            .onConflictDoUpdate({ target: [metricsMinute.minute, metricsMinute.name, metricsMinute.label], set: { value: r.gauge ? r.value : sql`${metricsMinute.value} + excluded.value` } });
+        }
+      });
+    }
   } catch (err) {
     logger.warn({ err }, "metrics not written; kept for the next flush");
     for (const [k, v] of c) counters.set(k, (counters.get(k) ?? 0) + v);
@@ -69,11 +108,11 @@ export async function flushMetrics(now = new Date()): Promise<number> {
 }
 
 /** Flushes every 30 s while the process lives; a last flush runs at shutdown through the returned stop. */
-export function startMetricsFlush(): () => Promise<void> {
-  const timer = setInterval(() => void flushMetrics(), 30_000).unref();
+export function startMetricsFlush(sink?: Sink): () => Promise<void> {
+  const timer = setInterval(() => void flushMetrics(new Date(), sink), 30_000).unref();
   return async () => {
     clearInterval(timer);
-    await flushMetrics();
+    await flushMetrics(new Date(), sink);
   };
 }
 

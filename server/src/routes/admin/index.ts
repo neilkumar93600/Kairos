@@ -62,9 +62,13 @@ adminRouter.get("/info", async (_req, res) => {
 const companyId = z.uuid();
 const companyColumns = { id: companies.id, name: companies.name, ats: companies.ats, boardToken: companies.boardToken, active: companies.active, lastPolledAt: companies.lastPolledAt };
 
-/** Companies, inactive first: an imported board waits here until the owner activates it. */
+/**
+ * Companies, inactive first: an imported board waits here until the owner activates it.
+ * ponytail: capped at 200 rows with no cursor; the ~2,000-company seed of WP-23 needs lib/pagination.ts (WP-30) wired in.
+ */
 adminRouter.get("/companies", async (req, res) => {
-  const active = req.query.active === undefined ? undefined : req.query.active === "true";
+  const filter = parseParam(z.object({ active: z.enum(["true", "false"]).optional() }), req.query);
+  const active = filter.active === undefined ? undefined : filter.active === "true";
   const rows = await db()
     .select(companyColumns)
     .from(companies)
@@ -74,6 +78,11 @@ adminRouter.get("/companies", async (req, res) => {
   res.json({ companies: rows });
 });
 
+/**
+ * ponytail: WP-42 adds companies.inactive_reason with CHECK companies_active_reason_ck. Once it merges, this update must also
+ * set inactive_reason: null on activate, 'owner' on deactivate (and the list below can use companies_review_idx), or the
+ * CHECK rejects the write. The coordinator makes that one-line change at merge.
+ */
 async function setActive(id: string, active: boolean, actor: string) {
   return db().transaction(async (tx) => {
     const [before] = await tx.select(companyColumns).from(companies).where(eq(companies.id, id)).for("update");

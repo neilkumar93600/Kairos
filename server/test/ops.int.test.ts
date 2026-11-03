@@ -109,10 +109,13 @@ describe.skipIf(!hasTestDb)("ops flags, admin routes and invariants against Post
     it("sets a flag and writes its audit row in the same call; refuses an unknown flag and a wrong value", async () => {
       const res = await request(app).put("/api/admin/flags/pause_cloud_apply").set(as(owner)).send({ value: true });
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ before: null, after: true });
+      expect(res.body).toEqual({ before: null, after: true, changed: true });
       expect(await audit()).toMatchObject([{ actor: owner, action: "flag_set", target: "pause_cloud_apply", before: null, after: true }]);
       expect((await request(app).get("/api/admin/flags").set(as(owner))).body.flags.pauseCloudApply).toBe(true);
 
+      // The same value again writes nothing and leaves no second audit row.
+      expect((await request(app).put("/api/admin/flags/pause_cloud_apply").set(as(owner)).send({ value: true })).body.changed).toBe(false);
+      expect((await request(app).get("/api/admin/companies?active=maybe").set(as(owner))).status).toBe(400);
       expect((await request(app).put("/api/admin/flags/nope").set(as(owner)).send({ value: true })).status).toBe(422);
       expect((await request(app).put("/api/admin/flags/llm_shed_level").set(as(owner)).send({ value: 9 })).status).toBe(422);
       expect(await audit()).toHaveLength(1);
@@ -189,6 +192,21 @@ describe.skipIf(!hasTestDb)("ops flags, admin routes and invariants against Post
       expect((await getFlags(db)).approvalsFrozen).toBe(false);
     });
 
+    it("ops_flags refuses a key lib/flags.ts does not know, and ops_audit refuses an update or delete even from the owner role", async () => {
+      await expect(db.insert(schema.opsFlags).values({ key: "pause_everything", value: true, updatedBy: "x" })).rejects.toThrow();
+      await setFlag("pause_scoring", true, owner);
+      await expect(db.update(schema.opsAudit).set({ actor: "x" })).rejects.toThrow();
+      await expect(db.delete(schema.opsAudit)).rejects.toThrow();
+    });
+
+    it("a page-only breach (a negative balance, an unconfirmed citation) does not freeze approvals", async () => {
+      await db.insert(schema.creditLedger).values({ userId: member, delta: -20, reason: "admin_adjustment", note: "test" });
+      expect((await processInvariantsHourly()).map((v) => v.id)).toEqual(["BL-2"]);
+      resetFlagCache();
+      expect((await getFlags(db)).approvalsFrozen).toBe(false);
+      expect(await audit()).toHaveLength(0);
+    });
+
     it("an injected charge on an application that was never submitted freezes approvals and leaves an audit row", async () => {
       const id = await application(member, { status: "approved", channel: "extension" });
       await db.update(schema.applications).set({ updatedAt: new Date(Date.now() - 5 * 60_000) }).where(eq(schema.applications.id, id));
@@ -203,11 +221,13 @@ describe.skipIf(!hasTestDb)("ops flags, admin routes and invariants against Post
       expect(await audit()).toHaveLength(1);
     });
 
-    it("a negative balance and a submitted application with no charge are both caught", async () => {
+    it("a negative balance and a submitted application with no charge are both caught, and the second freezes", async () => {
       await db.insert(schema.creditLedger).values({ userId: member, delta: -20, reason: "admin_adjustment", note: "test" });
       const id = await application(member, { status: "submitted", channel: "extension" });
       await db.update(schema.applications).set({ updatedAt: new Date(Date.now() - 5 * 60_000) }).where(eq(schema.applications.id, id));
-      expect((await processInvariantsHourly()).map((v) => v.id).sort()).toEqual(["BAL-1", "I-4"]);
+      expect((await processInvariantsHourly()).map((v) => v.id).sort()).toEqual(["BL-2", "I-4"]);
+      resetFlagCache();
+      expect((await getFlags(db)).approvalsFrozen).toBe(true);
     });
   });
 });

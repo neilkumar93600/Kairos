@@ -64,7 +64,9 @@ export function createApp(deps: AppDeps) {
   app.use(clientIpResolver(deps.edgeSecret, deps.proxyHops));
   app.use(helmet());
   app.use(httpLogger());
-  app.use(cors({ origin: deps.corsOrigins, credentials: true, allowedHeaders: ["content-type", "authorization", "x-request-id"], exposedHeaders: ["x-request-id"] }));
+  const corsMiddleware = cors({ origin: deps.corsOrigins, credentials: true, allowedHeaders: ["content-type", "authorization", "x-request-id"], exposedHeaders: ["x-request-id"] });
+  // 05-api 2.1: /api/admin is same-origin only (the web's /api rewrite); it never gets CORS headers, so no page on another origin can read it.
+  app.use((req, res, next) => (req.path.startsWith("/api/admin") ? next() : corsMiddleware(req, res, next)));
 
   app.use(healthRouter(deps.healthChecks, deps.isDraining));
   app.use("/api/auth", signalOn([429], "auth_rate_limited"), capAuthBody);

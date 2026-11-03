@@ -245,7 +245,8 @@ export async function processCloudApply(job: Job<JobData["cloud-apply"]>, opts: 
   // The operator flags (lib/flags.ts) are read before every claim, so a flip stops new claims within 10 s. A parked run
   // leaves the application approved and unclaimed; it resumes when the flag is lifted.
   const flags = await getFlags();
-  if (flags.pauseCloudApply || flags.approvalsFrozen || (ats !== undefined && flags.extensionOnly.has(ats))) {
+  // Never read the table in this process (database blip at boot): the kill switches are unknown, so do not claim.
+  if (!flags.loaded || flags.pauseCloudApply || flags.approvalsFrozen || (ats !== undefined && flags.extensionOnly.has(ats))) {
     logger.info({ jobId: job.id, ats }, "cloud apply parked by an ops flag");
     count("cloud.parked", 1, ats ?? "");
     await job.moveToDelayed(Date.now() + 15_000 + Math.floor(Math.random() * 5_000), opts.token);

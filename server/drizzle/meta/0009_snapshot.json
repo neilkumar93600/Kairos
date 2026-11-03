@@ -1,5 +1,5 @@
 {
-  "id": "0b7c20ff-5bc7-49f3-9bb7-ee405abff602",
+  "id": "076be092-1a2d-4efb-bf80-30945db4165e",
   "prevId": "16e15a30-272e-4cd0-a28b-2290eff839be",
   "version": "7",
   "dialect": "postgresql",
@@ -2601,7 +2601,29 @@
           "notNull": true
         }
       },
-      "indexes": {},
+      "indexes": {
+        "metrics_minute_name_minute_idx": {
+          "name": "metrics_minute_name_minute_idx",
+          "columns": [
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "minute",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {
         "metrics_minute_minute_name_label_pk": {
@@ -2726,7 +2748,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "ops_flags_key_ck": {
+          "name": "ops_flags_key_ck",
+          "value": "key ~ '^(pause_cloud_apply|pause_scoring|llm_paused|approvals_frozen|cloud_applier_open|llm_shed_level|extension_only:(greenhouse|lever|ashby))$'"
+        }
+      },
       "isRLSEnabled": false
     }
   },

@@ -5,6 +5,7 @@ import { bufferedCounters, count, flushMetrics, gauge, LATENCY_BUCKETS_MS, obser
 import { classify, requestMetrics } from "../src/middleware/metrics";
 
 const written = vi.hoisted(() => ({ values: [] as Record<string, unknown>[], fail: false }));
+vi.mock("../src/lib/redis", () => ({ redis: () => ({}) }));
 vi.mock("../src/db/client", () => ({
   db: () => ({
     transaction: async (fn: (tx: unknown) => Promise<void>) => {
@@ -59,6 +60,28 @@ describe("flushMetrics", () => {
     expect(bufferedCounters().size).toBe(0);
   });
 
+  it("writes rows in a fixed order, so two processes cannot lock them against each other", async () => {
+    count("b");
+    count("a", 1, "z");
+    count("a", 1, "b");
+    gauge("c", 1);
+    await flushMetrics(new Date("2026-11-03T10:15:00Z"));
+    expect(written.values.map((v) => `${v.name}|${v.label}`)).toEqual(["a|b", "a|z", "b|", "c|"]);
+  });
+
+  it("hands the counters to a sink (the applier's Redis) instead of the table, and keeps them when it fails", async () => {
+    count("cloud.run", 2, "submitted");
+    const sink = vi.fn(async () => {});
+    await flushMetrics(new Date(), sink);
+    expect(sink).toHaveBeenCalledOnce();
+    expect(written.values).toEqual([]);
+    count("cloud.run", 1);
+    await flushMetrics(new Date(), async () => {
+      throw new Error("redis down");
+    });
+    expect([...bufferedCounters().values()]).toEqual([1]);
+  });
+
   it("keeps the counts for the next flush when the write fails", async () => {
     count("c", 4);
     written.fail = true;
@@ -77,6 +100,25 @@ describe("request metrics", () => {
     expect(classify("POST", "/api/applications/approve")).toEqual({ group: "applications", target: 500 });
     expect(classify("POST", "/api/auth/sign-in/email")).toEqual({ group: "auth", target: 800 });
     expect(classify("POST", "/api/jobs/abc/tailor")).toEqual({ group: "ai", target: 14_000 });
+  });
+
+  it("maps a path the client invented to the group other, so labels stay bounded", () => {
+    expect(classify("GET", "/api/zzz")).toEqual({ group: "other", target: 300 });
+    expect(classify("GET", "/api/zzz/deep/path")?.group).toBe("other");
+    expect(classify("GET", "/nothing")?.group).toBe("other");
+  });
+
+  it("does not count a designed 503 (approvals frozen, cloud paused) against S1 or S1c, but counts any other 503", async () => {
+    const app = express();
+    app.use(requestMetrics());
+    app.post("/api/applications/approve", (_req, res) => {
+      res.locals.errorCode = "approvals_frozen";
+      res.status(503).end();
+    });
+    app.get("/api/matches", (_req, res) => void res.status(503).end());
+    await request(app).post("/api/applications/approve");
+    await request(app).get("/api/matches");
+    expect(snapshot()).toMatchObject({ "slo.s1.total|": 2, "slo.s1.good|": 1, "slo.s1c.good|": 1, "slo.s1c.total|": 1 });
   });
 
   it("counts a 500 as bad for S1 and S1c on a critical route, and a 404 as good", async () => {

@@ -182,12 +182,16 @@ END $$;
 -- kairos_metrics (Grafana): aggregates only, never a user id or free text. metrics_minute joins it below (WP-27).
 GRANT SELECT ON llm_cost_daily TO kairos_metrics;
 
--- Operator flags, audit and metrics (WP-27, 0009). ops_audit is append-only for every runtime role: no UPDATE, no DELETE.
--- The applier reads the flags before each claim and writes only its own run counters (numbers keyed by a code, no text).
-GRANT SELECT, INSERT, UPDATE ON ops_flags, feature_flags TO kairos_api, kairos_worker;
+-- Operator flags, audit and metrics (WP-27, 0009). ops_audit is insert-only for every runtime role (and a trigger blocks
+-- the owner). Nothing writes feature_flags yet, so it is read-only. The applier reads the flags and writes no table of
+-- its own metrics: it counts into Redis and the worker folds the counts into metrics_minute (jobs/alerts.ts), so the
+-- internet-facing process cannot overwrite invariant_violations or an slo counter.
+-- Deviation from the 02-database 4.2 matrix: the api holds SELECT, INSERT, UPDATE on metrics_minute for its own request
+-- counters (lib/metrics.ts); it still cannot delete, and only the worker prunes.
+GRANT SELECT, INSERT, UPDATE ON ops_flags TO kairos_api, kairos_worker;
+GRANT SELECT ON feature_flags TO kairos_api, kairos_worker, kairos_applier;
 GRANT SELECT, INSERT ON ops_audit TO kairos_api, kairos_worker;
 GRANT SELECT, INSERT, UPDATE ON metrics_minute TO kairos_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON metrics_minute TO kairos_worker;
-GRANT SELECT ON ops_flags, feature_flags TO kairos_applier;
-GRANT SELECT, INSERT, UPDATE ON metrics_minute TO kairos_applier;
+GRANT SELECT ON ops_flags TO kairos_applier;
 GRANT SELECT ON metrics_minute TO kairos_metrics;

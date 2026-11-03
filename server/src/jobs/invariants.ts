@@ -7,18 +7,21 @@ import { signal } from "../lib/sentry";
 
 /**
  * Invariant checks (WP-27; ops-40, ops-41, applications-v04). Each query counts violating rows and must be 0. The hourly
- * set is cheap; the nightly set adds the citation check, the cross-tenant scan and the PII scan. Any violation of a
- * money or approval check sets approvals_frozen (an ops_audit row, actor system:invariants) and pages; only the owner
- * lifts it, through /api/admin/flags. Ids follow the invariant catalogue (02-database 2341, 08-submission-settlement).
+ * set is cheap; the nightly set adds the citation check, the cross-tenant scan and the PII scan. Only the checks marked
+ * `freezes` (I-4 and LEDGER-1, the money checks of workers/15-ops-monitors 3.6) set approvals_frozen (an ops_audit row,
+ * actor system:invariants); the rest page and leave approvals open, because a user's own action can trip them (unconfirming
+ * a cited fact, a late confirmation). Only the owner lifts a freeze, through /api/admin/flags.
  * Not checkable yet, because their tables arrive with WP-42/WP-29/WP-26: I-1 dual submission and I-2 possible
  * duplicates (submission_attempts), I-5 (application_events), I-7 (verification_results).
- * ponytail: full scans, fine at beta size; chunk by user_id range when applications passes ~1M rows.
+ * ponytail: I-8 compares f.id::text, which skips the primary-key index (a nightly scan, fine at beta size). Full scans elsewhere too; chunk by user_id range when applications passes ~1M rows.
  * ponytail: freezes without a report-only mode; ops-40's soak period would add an INVARIANTS_REPORT_ONLY env.
  */
 export interface Check {
   id: string;
   /** What a violation means, for the log and the runbook. */
   what: string;
+  /** True: a violation freezes approvals as well as paging. */
+  freezes: boolean;
   query: ReturnType<typeof sql>;
 }
 
@@ -26,13 +29,15 @@ const count = (inner: ReturnType<typeof sql>) => sql`select count(*)::int as n f
 
 export const HOURLY: Check[] = [
   {
-    id: "I-3",
+    id: "BL-1",
+    freezes: false,
     what: "a user has more approved and submitting applications than credits",
     query: count(sql`select a.user_id from applications a where a.status in ('approved','submitting') group by a.user_id
       having count(*) > coalesce((select sum(l.delta) from credit_ledger l where l.user_id = a.user_id), 0)`),
   },
   {
     id: "I-4",
+    freezes: true,
     what: "a submitted application without exactly one submission charge, or a charge on an application that is not submitted",
     query: count(sql`select a.id from applications a where a.status = 'submitted' and a.updated_at < now() - interval '1 minute'
         and (select count(*) from credit_ledger l where l.application_id = a.id and l.reason = 'submission') <> 1
@@ -42,12 +47,14 @@ export const HOURLY: Check[] = [
   },
   {
     id: "I-6",
+    freezes: false,
     what: "an application in submitting for over 30 minutes (the 10-minute sweep did not settle it)",
     query: count(sql`select id from applications where status = 'submitting' and updated_at < now() - interval '30 minutes'`),
   },
-  { id: "BAL-1", what: "a negative credit balance", query: count(sql`select user_id from credit_ledger group by user_id having sum(delta) < 0`) },
+  { id: "BL-2", freezes: false, what: "a negative credit balance", query: count(sql`select user_id from credit_ledger group by user_id having sum(delta) < 0`) },
   {
     id: "LEDGER-1",
+    freezes: true,
     what: "a ledger row on an application of another user",
     query: count(sql`select l.id from credit_ledger l join applications a on a.id = l.application_id where l.user_id <> a.user_id`),
   },
@@ -56,6 +63,7 @@ export const HOURLY: Check[] = [
 export const NIGHTLY: Check[] = [
   {
     id: "I-8",
+    freezes: false,
     what: "an approved or submitting application cites a fact that is unconfirmed, missing or another user's",
     query: count(sql`select a.id from applications a
         cross join lateral jsonb_array_elements(a.resume_lines) line
@@ -69,11 +77,13 @@ export const NIGHTLY: Check[] = [
 export const CROSS_TENANT: Check[] = [
   {
     id: "XT-1",
+    freezes: false,
     what: "an application whose match belongs to another user",
     query: count(sql`select a.id from applications a join matches m on m.id = a.match_id where m.user_id <> a.user_id`),
   },
   {
     id: "XT-2",
+    freezes: false,
     what: "an inbound email linked to another user's application",
     query: count(sql`select e.id from inbound_emails e join applications a on a.id = e.application_id where a.user_id <> e.user_id`),
   },
@@ -101,6 +111,7 @@ const hasPii = (table: string, column: string) =>
 
 export interface Violation {
   id: string;
+  freezes: boolean;
   what: string;
   n: number;
 }
@@ -110,16 +121,17 @@ async function run(checks: Check[]): Promise<Violation[]> {
   for (const c of checks) {
     const n = Number((await db().execute(c.query)).rows[0]?.n ?? 0);
     gauge("invariant_violations", n, c.id);
-    if (n > 0) out.push({ id: c.id, what: c.what, n });
+    if (n > 0) out.push({ id: c.id, freezes: c.freezes, what: c.what, n });
   }
   return out;
 }
 
-/** Freezes approvals (once) and pages. The ids and counts go to the log; never a row. */
+/** Pages, and freezes approvals when a freezing check failed. The ids and counts go to the log; never a row. */
 async function breach(violations: Violation[], by: string): Promise<void> {
   logger.error({ violations }, "invariant breach");
   signal("invariant_breach", violations.length);
-  if (!(await getFlags()).approvalsFrozen) await setFlag("approvals_frozen", true, by);
+  // setFlag writes nothing when the flag is already set.
+  if (violations.some((v) => v.freezes)) await setFlag("approvals_frozen", true, by);
 }
 
 export async function processInvariantsHourly(): Promise<Violation[]> {
@@ -137,7 +149,7 @@ export async function processInvariantsNightly(): Promise<Violation[]> {
     logger.error({ crossTenant }, "cross-tenant rows");
     signal("cross_tenant_row", crossTenant.length);
   }
-  const pii = await run(PII_COLUMNS.map(([t, c]) => ({ id: `PII:${t}.${c}`, what: `an address, phone or token shape in ${t}.${c}`, query: hasPii(t, c) })));
+  const pii = await run(PII_COLUMNS.map(([t, c]) => ({ id: `PII:${t}.${c}`, what: `an address, phone or token shape in ${t}.${c}`, freezes: false, query: hasPii(t, c) })));
   if (pii.length) {
     logger.error({ pii }, "PII shapes in code columns");
     signal("pii_in_column", pii.length);

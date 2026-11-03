@@ -4,6 +4,7 @@ import { db, type Db } from "../db/client";
 import { featureFlags, opsAudit, opsFlags } from "../db/schema";
 import { baseEnv } from "./env";
 import { logger } from "./logger";
+import { signal } from "./sentry";
 
 /**
  * Operator flags (WP-27), stored in ops_flags and read with a 10 s cache, so a flip takes effect on every replica within
@@ -42,6 +43,8 @@ export interface Flags {
   /** ATS names whose cloud runs are off; those applications go through the extension. */
   extensionOnly: ReadonlySet<string>;
   features: ReadonlyMap<string, boolean>;
+  /** False when the table has never been read in this process: these are the env's values alone. */
+  loaded: boolean;
 }
 
 export const CACHE_MS = 10_000;
@@ -65,6 +68,7 @@ export function resolveFlags(
     llmShedLevel: Math.max(shed, e.LLM_SHED_LEVEL ?? 0) as 0 | 1 | 2 | 3,
     extensionOnly: new Set([...rows].filter(([k, v]) => k.startsWith(EXTENSION_ONLY_PREFIX) && v === true).map(([k]) => k.slice(EXTENSION_ONLY_PREFIX.length))),
     features,
+    loaded: true,
   };
 }
 
@@ -76,7 +80,7 @@ async function load(from: Db): Promise<Flags> {
   return resolveFlags(new Map(flagRows.map((r) => [r.key, r.value])), new Map(featureRows.map((r) => [r.key, r.enabled])), baseEnv());
 }
 
-/** The flags, at most 10 s old. One load at a time per process; a failed load keeps the last answer (or the env's alone). */
+/** The flags, at most 10 s old. One load at a time per process;  */
 export async function getFlags(from: Db = db()): Promise<Flags> {
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.flags;
   inflight ??= load(from)
@@ -85,10 +89,12 @@ export async function getFlags(from: Db = db()): Promise<Flags> {
       return flags;
     })
     .catch((err: unknown) => {
+      // Fail open on the last answer, but loudly: every kill switch is blind until the next successful load.
       logger.warn({ err }, "flags not loaded; using the last answer");
-      // Retry in 1 s, not on every call.
-      cache = { at: Date.now() - CACHE_MS + 1_000, flags: cache?.flags ?? resolveFlags(new Map(), new Map(), baseEnv()) };
-      return cache.flags;
+      signal("flags_unreadable");
+      const flags = cache?.flags ?? { ...resolveFlags(new Map(), new Map(), baseEnv()), loaded: false };
+      cache = { at: Date.now(), flags };
+      return flags;
     })
     .finally(() => {
       inflight = undefined;
@@ -107,17 +113,19 @@ type Tx = Pick<Db, "select" | "insert">;
  * Sets one flag and writes its ops_audit row in the same transaction (an admin write never lacks its audit row).
  * Other processes see it within CACHE_MS. `actor` is a user id or "system:<job>".
  */
-export async function setFlag(key: string, value: unknown, actor: string, tx?: Tx): Promise<{ before: unknown; after: unknown }> {
+export async function setFlag(key: string, value: unknown, actor: string, tx?: Tx): Promise<{ before: unknown; after: unknown; changed: boolean }> {
   const parsed = schemaFor(key)?.safeParse(value);
   if (!parsed?.success) throw new Error(`invalid flag ${key}`);
   const run = async (t: Tx) => {
-    const [prev] = await t.select({ value: opsFlags.value }).from(opsFlags).where(eq(opsFlags.key, key));
+    const [prev] = await t.select({ value: opsFlags.value }).from(opsFlags).where(eq(opsFlags.key, key)).for("update");
+    // Same value: no write and no audit row (an invariant run on an already frozen flag stays quiet).
+    if (prev && JSON.stringify(prev.value) === JSON.stringify(parsed.data)) return { before: prev.value, after: parsed.data, changed: false };
     await t
       .insert(opsFlags)
       .values({ key, value: parsed.data, updatedBy: actor })
       .onConflictDoUpdate({ target: opsFlags.key, set: { value: parsed.data, updatedBy: actor, updatedAt: sql`now()` } });
     await t.insert(opsAudit).values({ actor, action: "flag_set", target: key, before: prev?.value ?? null, after: parsed.data });
-    return { before: prev?.value ?? null, after: parsed.data };
+    return { before: prev?.value ?? null, after: parsed.data, changed: true };
   };
   const result = tx ? await run(tx) : await db().transaction((t) => run(t));
   resetFlagCache();

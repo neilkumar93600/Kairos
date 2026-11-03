@@ -1,10 +1,10 @@
-import { slo } from "../lib/metrics";
 import type { Job } from "bullmq";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { applications, companies, inboundEmails, jobs } from "../db/schema";
 import { classifyByRules } from "../services/email-classifier";
 import type { JobData } from "./queues";
+import { slo } from "../lib/metrics";
 
 /** Tags a forwarded reply and links it to the most recent submitted application at the company it names. */
 export async function processClassifyEmail(job: Job<JobData["classify-email"]>) {

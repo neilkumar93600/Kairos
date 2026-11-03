@@ -94,6 +94,18 @@ describe("getFlags cache", () => {
     expect(loads()).toBe(1);
   });
 
+  it("with no answer ever, serves the env alone marked not loaded, and retries after the cache window, not every call", async () => {
+    const state = { flags: [] as { key: string; value: unknown }[], fail: true };
+    const { db, loads } = fakeDb(state);
+    const first = await getFlags(db);
+    expect(first.loaded).toBe(false);
+    state.fail = false;
+    expect((await getFlags(db)).loaded).toBe(false);
+    expect(loads()).toBe(0);
+    vi.advanceTimersByTime(CACHE_MS + 1);
+    expect((await getFlags(db)).loaded).toBe(true);
+  });
+
   it("keeps the last answer when a load fails", async () => {
     const state = { flags: [{ key: "approvals_frozen", value: true }], fail: false };
     const { db } = fakeDb(state);

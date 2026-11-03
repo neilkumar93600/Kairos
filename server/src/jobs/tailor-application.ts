@@ -1,10 +1,10 @@
-import { slo } from "../lib/metrics";
 import type { Job } from "bullmq";
 import { and, eq, sql } from "drizzle-orm";
 import type { ApplicationAnswer, ResumeLine } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, companies, facts, jobs, profiles, savedAnswers, user } from "../db/schema";
 import { logger } from "../lib/logger";
+import { slo } from "../lib/metrics";
 import { tailorResume } from "../services/tailor";
 import { topFacts } from "../services/job-fit";
 import { planFor } from "../services/submissions";
