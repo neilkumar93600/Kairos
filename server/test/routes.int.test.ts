@@ -388,11 +388,14 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       expect(res.headers["kairos-allowance"]).toMatch(/^feature=jobTailor;used=1;limit=5;resets=/);
       expect(tailorResume).toHaveBeenCalledTimes(1);
       expect(tailorResume.mock.calls[0]![0]).toEqual([expect.objectContaining({ id: f })]);
-      // D2: the tailored copy is saved, linked to the job and the draft; a second call reuses it.
-      expect(res.body.resume).toMatchObject({ kind: "tailored", jobId: app1.jobId, applicationId: app1.id, readOnly: false });
-      const again = await request(app).post(`/api/jobs/${app1.jobId}/tailor`);
-      expect(again.body.resume.id).toBe(res.body.resume.id);
-      expect((await request(app).post("/api/resumes/tailor").send({ jobId: app1.jobId })).body.error).toMatchObject({ code: "exists", details: { resumeId: res.body.resume.id } });
+      // Release N, before migration 0011: no copy can be saved, so the frozen alias answers as before (proposals against
+      // the default base, nothing saved), and POST /resumes/tailor answers 503 resumes_user_uq with no Retry-After.
+      expect(res.body.resume).toMatchObject({ kind: "base", isDefault: true });
+      expect(await tdb.select().from(schema.resumes).where(eq(schema.resumes.kind, "tailored"))).toEqual([]);
+      const direct = await request(app).post("/api/resumes/tailor").send({ jobId: app1.jobId });
+      expect(direct.status).toBe(503);
+      expect(direct.body.error).toMatchObject({ code: "service_unavailable", details: { reason: "resumes_user_uq" } });
+      expect(direct.headers["retry-after"]).toBeUndefined();
     });
   });
 
@@ -441,21 +444,17 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       expect(after.answers.map((a) => a.fieldKey)).toContain("email");
     });
 
-    it("saves the draft's tailored copy from the base whose target roles match the title (PRD 6.2, D2)", async () => {
+    it("before migration 0011: writes the draft, saves no copy, does not fail the job, and leaves the resume alone", async () => {
       const f = await fact("Built billing", true);
       const base = await seedBase(doc(f));
-      const [match] = await tdb
-        .insert(schema.resumes)
-        .values({ userId: me.id, resumeProfileId: base.resumeProfileId, name: "Engineering", targetRoles: ["Engineer"], document: doc(f) })
-        .returning();
       const app1 = await draft();
-      await run(app1.id);
-      await run(app1.id);
-      const copies = await tdb.select().from(schema.resumes).where(eq(schema.resumes.kind, "tailored"));
-      expect(copies).toHaveLength(1);
-      expect(copies[0]).toMatchObject({ baseResumeId: match!.id, jobId: app1.jobId, applicationId: app1.id });
-      const revs = await tdb.select().from(schema.resumeRevisions).where(eq(schema.resumeRevisions.resumeId, copies[0]!.id));
-      expect(revs.map((r) => r.reason)).toEqual(["before_tailor"]);
+      tailorResume.mockResolvedValue({ kept: [{ id: "m1", section: "Experience", text: "Built billing", factIds: [f] }], rejected: [] });
+      await expect(run(app1.id)).resolves.toMatchObject({ lines: 1 });
+      expect((await read(app1.id)).resumeLines).toEqual([expect.objectContaining({ text: "Built billing", factIds: [f] })]);
+      const rows = await tdb.select().from(schema.resumes).where(eq(schema.resumes.userId, me.id));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ id: base.id, kind: "base", version: base.version, document: base.document });
+      expect(await tdb.select().from(schema.resumeRevisions)).toEqual([]);
     });
 
     it("never overwrites lines or answers the user saved while the model ran", async () => {

@@ -10,10 +10,11 @@ import { RESUME_LINES, docx } from "./helpers/files";
 import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from "./helpers/test-db";
 
 /**
- * PRD R1 acceptance on the server (tests-67, WP-17) against Postgres: import a DOCX through the file gate, parse it
- * (model mocked), confirm the facts, build a base resume whose every line is the user's own words citing a confirmed
- * fact, a second base, a tailored copy that turns read-only once its application is approved, and History (name,
- * restore, compare). Never ran locally: no Postgres here; CI runs it.
+ * PRD R1 acceptance on the server (tests-67, WP-17) against Postgres, as release N ships it: import a DOCX through the
+ * file gate, parse it (model mocked), confirm the facts, build a base resume whose every line is the user's own words
+ * citing a confirmed fact, and History (name, restore, compare). Before migration 0011 a user keeps one resume: a second
+ * base or a tailored copy answers 503 resumes_user_uq. The second-base, default and tailored-copy cases travel with
+ * 0011 in its own commit. Never ran locally: no Postgres here; CI runs it.
  */
 if (hasTestDb) process.env.DATABASE_URL = testDbUrl("library");
 process.env.DATA_KEKS = `v1:${Buffer.from([...Array(32).keys()]).toString("base64")}`;
@@ -59,7 +60,7 @@ describe.skipIf(!hasTestDb)("resume library and imports (R1)", () => {
     for (const data of queued.splice(0)) await processParseResume({ data } as Job<JobData["parse-resume"]>);
   };
 
-  it("imports a DOCX, confirms, builds a base, a second base, a tailored copy, and keeps History", async () => {
+  it("imports a DOCX, confirms, builds a base from it, and keeps History", async () => {
     const up = await request(app).post("/api/profile/imports").attach("file", docx(RESUME_LINES), "Sample Resume.docx");
     expect(up.status).toBe(202);
     const { importId } = up.body as { importId: string };
@@ -77,59 +78,55 @@ describe.skipIf(!hasTestDb)("resume library and imports (R1)", () => {
     expect(read.facts.every((f) => !f.confirmed && f.assertedBy === "import")).toBe(true);
     expect(read.contact?.name).toBe("Sample Applicant");
 
-    // Nothing is citable before the confirm: a base built now has no lines from this import.
     const confirm = await request(app).post("/api/profile/facts/confirm").send({ ids: read.facts.map((f) => f.id) });
     expect(confirm.status).toBe(200);
     expect(confirm.body.facts.every((f: { confirmed: boolean }) => f.confirmed)).toBe(true);
 
+    // The user's first resume, so it fits under resumes_user_uq.
     const built = await request(app).post("/api/resumes").send({ from: "facts", name: "Analyst", importId, targetRoles: ["Data Analyst"] });
     expect(built.status).toBe(201);
     const base = resumeDetailSchema.parse(built.body.resume);
     const texts = base.sections.flatMap((s) => s.entries.flatMap((e) => [e.heading, ...e.lines.map((l) => l.text)]));
     expect(texts).toEqual(expect.arrayContaining(["Automated the weekly carrier scorecard in Python"]));
     expect(base).toMatchObject({ kind: "base", libraryName: "Analyst", isDefault: true, readOnly: false });
-
-    const second = await request(app).post("/api/resumes").send({ from: "duplicate", sourceId: base.id, name: "Second" });
-    expect(second.status).toBe(201);
-    expect(second.body.resume.isDefault).toBe(false);
     expect((await request(app).delete(`/api/resumes/${base.id}`)).body.error.code).toBe("is_default");
-    expect((await request(app).post(`/api/resumes/${second.body.resume.id}/default`)).body.resume.isDefault).toBe(true);
-    expect((await request(app).delete(`/api/resumes/${base.id}`)).status).toBe(204);
-    expect((await request(app).delete(`/api/resumes/${second.body.resume.id}`)).body.error.code).toBe("is_default");
 
     // History: name, change, restore, compare.
-    const id = second.body.resume.id as string;
-    const named = await request(app).post(`/api/resumes/${id}/revisions`).send({ name: "Before rewrite" });
+    const named = await request(app).post(`/api/resumes/${base.id}/revisions`).send({ name: "Before rewrite" });
     expect(named.status).toBe(201);
-    const changed: ResumeInput = { ...(second.body.resume as ResumeInput), name: "Changed" };
-    expect((await request(app).put(`/api/resumes/${id}`).send(changed)).status).toBe(200);
-    const rev = await request(app).get(`/api/resumes/${id}/revisions/${named.body.revision.id}`);
+    const changed: ResumeInput = { ...(built.body.resume as ResumeInput), name: "Changed" };
+    expect((await request(app).put(`/api/resumes/${base.id}`).send(changed)).status).toBe(200);
+    const rev = await request(app).get(`/api/resumes/${base.id}/revisions/${named.body.revision.id}`);
     expect(rev.body.revision).toMatchObject({ name: "Before rewrite", reason: "named" });
-    const restored = await request(app).post(`/api/resumes/${id}/revisions/${named.body.revision.id}/restore`);
-    expect(restored.body.resume.name).toBe(second.body.resume.name);
-    const reasons = (await request(app).get(`/api/resumes/${id}/revisions`)).body.revisions.map((r: { reason: string }) => r.reason);
+    const restored = await request(app).post(`/api/resumes/${base.id}/revisions/${named.body.revision.id}/restore`);
+    expect(restored.body.resume.name).toBe(built.body.resume.name);
+    const reasons = (await request(app).get(`/api/resumes/${base.id}/revisions`)).body.revisions.map((r: { reason: string }) => r.reason);
     expect(reasons).toEqual(expect.arrayContaining(["named", "edit", "restore"]));
-
-    // A tailored copy for a job: read-only once its application is approved.
-    const [company] = await tdb.insert(schema.companies).values({ name: "Sample Co", ats: "greenhouse", boardToken: "sample-co" }).returning();
-    const [job] = await tdb.insert(schema.jobs).values({ companyId: company!.id, externalId: "1", title: "Data Analyst", descriptionText: "SQL.", applyUrl: "https://example.com/a" }).returning();
-    const [application] = await tdb.insert(schema.applications).values({ userId: me.id, jobId: job!.id }).returning();
-    const tailored = await request(app).post("/api/resumes/tailor").send({ jobId: job!.id });
-    expect(tailored.status).toBe(200);
-    expect(tailored.body.resume).toMatchObject({ kind: "tailored", baseResumeId: id, applicationId: application!.id, readOnly: false, baseChanged: false });
-    await tdb.update(schema.applications).set({ status: "approved", approvedAt: new Date() }).where(eq(schema.applications.id, application!.id));
-    const copyId = tailored.body.resume.id as string;
-    expect((await request(app).put(`/api/resumes/${copyId}`).send(changed)).body.error.code).toBe("read_only");
-    const list = listResumesResponseSchema.parse((await request(app).get("/api/resumes")).body);
-    expect(list.resumes.find((r) => r.id === copyId)).toMatchObject({ readOnly: true, jobTitle: "Data Analyst", company: "Sample Co", baseName: "Second" });
+    expect(listResumesResponseSchema.parse((await request(app).get("/api/resumes")).body).resumes).toHaveLength(1);
   });
 
-  it("refuses the 11th base of a profile, a line citing an unconfirmed fact, and an import the plan's profile count excludes", async () => {
+  it("before migration 0011: a second resume answers 503 resumes_user_uq, with no Retry-After, and the first is untouched", async () => {
+    const first = (await request(app).get("/api/resumes")).body.resumes[0];
+    const before = await tdb.select().from(schema.resumes).where(eq(schema.resumes.userId, me.id));
+    const [company] = await tdb.insert(schema.companies).values({ name: "Sample Co", ats: "greenhouse", boardToken: "sample-co" }).returning();
+    const [job] = await tdb.insert(schema.jobs).values({ companyId: company!.id, externalId: "1", title: "Data Analyst", descriptionText: "SQL.", applyUrl: "https://example.com/a" }).returning();
+    await tdb.insert(schema.applications).values({ userId: me.id, jobId: job!.id });
+    for (const res of [
+      await request(app).post("/api/resumes").send({ from: "duplicate", sourceId: first.id, name: "Second" }),
+      await request(app).post("/api/resumes").send({ from: "facts", name: "Third" }),
+      await request(app).post("/api/resumes/tailor").send({ jobId: job!.id }),
+    ]) {
+      expect(res.status).toBe(503);
+      expect(res.body.error).toMatchObject({ code: "service_unavailable", details: { reason: "resumes_user_uq" } });
+      // No retry hint: the constraint goes away only with the next release, so a client loop would just hammer it.
+      expect(res.headers["retry-after"]).toBeUndefined();
+    }
+    expect(await tdb.select().from(schema.resumes).where(eq(schema.resumes.userId, me.id))).toEqual(before);
+  });
+
+  it("refuses a line citing an unconfirmed fact, and an import the plan's profile count excludes", async () => {
     const [f] = await tdb.insert(schema.facts).values({ userId: me.id, kind: "role", text: "Led a team", confirmed: false }).returning();
     const first = (await request(app).get("/api/resumes")).body.resumes[0];
-    for (let i = 0; i < 9; i++) expect((await request(app).post("/api/resumes").send({ from: "duplicate", sourceId: first.id, name: `B${i}` })).status).toBe(201);
-    const over = await request(app).post("/api/resumes").send({ from: "duplicate", sourceId: first.id, name: "Eleventh" });
-    expect(over.body.error).toMatchObject({ code: "limit_reached", details: { limit: 10 } });
     const doc = (await request(app).get(`/api/resumes/${first.id}`)).body.resume as ResumeInput;
     doc.sections[0]!.entries.push({ id: "e-x", heading: "X", subheading: null, meta: null, headingFactId: null, hidden: false, lines: [{ id: "l-x", section: "Experience", text: "Led a team", factIds: [f!.id] }] });
     expect((await request(app).put(`/api/resumes/${first.id}`).send(doc)).body.error).toMatchObject({ code: "truth_lock", details: { lineIds: ["l-x"] } });
