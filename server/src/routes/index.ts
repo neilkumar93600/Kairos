@@ -33,20 +33,25 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
     next();
   };
   const authed = [requireAuth(gateway), limits.user, noStore];
-  // Money and security-posture routes (05-api 5.2): a session created in the last day, read without the cookie cache.
-  // Add a route here with its own line; the route stays in its router and meets requireAuth again below.
-  const fresh = requireAuth(gateway, "session-fresh");
-  router.post("/applications/approve", fresh);
-  router.use("/billing", fresh);
+  // Session-fresh routes (05-api 5.2 lists them): the session is read once, without the cookie cache, and must be under a
+  // day old. Flag the route's authz-matrix entry `fresh: true`; the matrix test fails if the flag and the mount disagree.
+  // Billing always enforces the age. Approve enforces it only under FRESH_SESSION_ENFORCE (the web has no sign-in-again
+  // flow yet), but always reads the session uncached.
+  const freshAuthed = [requireAuth(gateway, "session-fresh"), limits.user, noStore];
+  const approveAuthed = [
+    requireAuth(gateway, (req) => (req.method === "POST" && req.path === "/approve" ? "session-fresh" : "session"), { enforceAge: () => env().FRESH_SESSION_ENFORCE }),
+    limits.user,
+    noStore,
+  ];
   router.use("/me", authed, meRouter);
   router.use("/profile", authed, profileRouter);
   router.use("/matches", authed, matchesRouter);
   router.use("/jobs", authed, jobsRouter);
   router.use("/resume", authed, resumeRouter);
-  router.use("/applications", authed, applicationsRouter);
+  router.use("/applications", approveAuthed, applicationsRouter);
   router.use("/credits", authed, creditsRouter);
   router.use("/inbox", authed, inboxRouter);
-  router.use("/billing", authed, limits.billing, billingRouter);
+  router.use("/billing", freshAuthed, limits.billing, billingRouter);
   router.use("/extension", authed, extensionRouter);
   router.use("/files", authed, filesRouter);
   router.use(countFailedSignIn(limits));

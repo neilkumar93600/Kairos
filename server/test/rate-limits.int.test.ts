@@ -51,7 +51,7 @@ describe.skipIf(!hasTestDb)("rate limits in Postgres", () => {
 
   it("holds the ai_burst limit across two replicas", async () => {
     const user = { id: "ai-user", email: "ai@test.local", name: "A", emailVerified: true };
-    const signedIn: AuthGateway = { handler: signedOut.handler, getSession: async () => ({ user, sessionId: "s" }) };
+    const signedIn: AuthGateway = { handler: signedOut.handler, getSession: async () => ({ user, sessionId: "s", createdAt: new Date() }) };
     const replica = () => createApp({ auth: signedIn, corsOrigins: [], healthChecks: {}, sharedLimits: true });
     const [a, b] = [replica(), replica()];
     // An empty body stops at validation (422) after the limiter counted it: 10 a minute per user, whichever replica.

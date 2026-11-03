@@ -62,8 +62,8 @@ export const SESSIONS_KEPT = 20;
 /** Removes all but the user's `keep` most recently used sessions. Returns how many went. */
 export async function pruneOldSessions(database: Db, userId: string, keep = SESSIONS_KEPT): Promise<number> {
   const { rowCount } = await database.execute(sql`
-    delete from session where user_id = ${userId} and id not in (
-      select id from session where user_id = ${userId} order by updated_at desc, id desc limit ${keep})`);
+    delete from ${schema.session} where user_id = ${userId} and id not in (
+      select id from ${schema.session} where user_id = ${userId} order by updated_at desc, id desc limit ${keep})`);
   return rowCount ?? 0;
 }
 
@@ -214,7 +214,7 @@ export interface SessionUser {
 export interface AuthGateway {
   handler: (request: Request) => Promise<Response>;
   /** `fresh`: bypass Better Auth's cookie cache, so a revoked session is refused at once. `createdAt` ages out "session-fresh" routes. */
-  getSession: (headers: Headers, opts?: { fresh?: boolean }) => Promise<{ user: SessionUser; sessionId: string; createdAt?: Date } | null>;
+  getSession: (headers: Headers, opts?: { fresh?: boolean }) => Promise<{ user: SessionUser; sessionId: string; createdAt: Date } | null>;
 }
 
 export function authGateway(): AuthGateway {

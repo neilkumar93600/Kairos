@@ -25,7 +25,7 @@ describe.skipIf(!hasTestDb)("billing routes against Postgres", () => {
     app = createApp({
       auth: {
         handler: async () => new Response("{}"),
-        getSession: async () => ({ user: { id: userId, email: `${userId}@test.local`, name: "B", emailVerified: true }, sessionId: "s" }),
+        getSession: async () => ({ user: { id: userId, email: `${userId}@test.local`, name: "B", emailVerified: true }, sessionId: "s", createdAt: new Date() }),
       },
       corsOrigins: [],
       healthChecks: {},

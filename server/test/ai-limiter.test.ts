@@ -4,7 +4,7 @@ import { createApp } from "../src/app";
 
 const as = (id: string) =>
   createApp({
-    auth: { handler: async () => new Response(null), getSession: async () => ({ user: { id, email: `${id}@t.local`, name: id, emailVerified: true }, sessionId: "s" }) },
+    auth: { handler: async () => new Response(null), getSession: async () => ({ user: { id, email: `${id}@t.local`, name: id, emailVerified: true }, sessionId: "s", createdAt: new Date() }) },
     corsOrigins: [],
     healthChecks: {},
   });

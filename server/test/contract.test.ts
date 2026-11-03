@@ -17,7 +17,7 @@ const gateway = (session: Awaited<ReturnType<AuthGateway["getSession"]>>): AuthG
 
 const signedOut = createApp({ auth: gateway(null), corsOrigins: [], healthChecks: {} });
 const unverified = createApp({
-  auth: gateway({ user: { id: "u1", email: "u1@test.local", name: "U", emailVerified: false }, sessionId: "s1" }),
+  auth: gateway({ user: { id: "u1", email: "u1@test.local", name: "U", emailVerified: false }, sessionId: "s1", createdAt: new Date() }),
   corsOrigins: [],
   healthChecks: {},
 });
