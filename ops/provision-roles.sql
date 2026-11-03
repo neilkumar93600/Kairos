@@ -182,3 +182,18 @@ END $$;
 -- kairos_metrics (Grafana): aggregates only, never a user id or free text. metrics_minute and the ops_*_v views join
 -- it when they exist (WP-27).
 GRANT SELECT ON llm_cost_daily TO kairos_metrics;
+
+-- WP-42: the lifecycle tables (_db/applications.md 2.3, 02-database 7.7). No runtime role updates or deletes
+-- application_events (its trigger stops the owner too) or deletes submission_attempts. The worker holds INSERT and
+-- UPDATE on tracker_items, not 7.7's SELECT: recordEvent creates an application's item when a worker records its first
+-- event, and WP-21's projector moves stages. The applier gets nothing here; WP-29's attempt functions give it its rows.
+GRANT SELECT, INSERT, UPDATE, DELETE ON tracker_items TO kairos_api;
+GRANT SELECT, INSERT, UPDATE ON tracker_items TO kairos_worker;
+GRANT SELECT, INSERT ON application_events TO kairos_api, kairos_worker;
+GRANT SELECT, INSERT, UPDATE ON submission_attempts TO kairos_api, kairos_worker;
+GRANT SELECT ON application_events TO kairos_readonly;
+GRANT SELECT (id, application_id, user_id, attempt_no, channel, ats, approved_by, phase, state, failure_code, lease_conflict,
+  duplicate_reports, late_confirmation, worker_identity, browser_launched_at, submit_seen_at, heartbeat_at, started_at,
+  finished_at, settled_at) ON submission_attempts TO kairos_readonly;
+-- The sent resume snapshot is the user's resume, not analytics: the readonly loop above grants every new column.
+REVOKE SELECT (resume_snapshot) ON applications FROM kairos_readonly;
