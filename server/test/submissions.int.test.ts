@@ -1,8 +1,8 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Db } from "../src/db/client";
-import { applications, companies, jobs } from "../src/db/schema";
-import { approveApplications, claimForCloud } from "../src/services/submissions";
+import { applications, companies, creditLedger, jobs } from "../src/db/schema";
+import { approveApplications, claimForCloud, recordSubmission } from "../src/services/submissions";
 import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb } from "./helpers/test-db";
 
 const LINE = { id: "l1", section: "Experience", text: "Built the billing service", factIds: ["f1"] };
@@ -101,5 +101,53 @@ describe.skipIf(!hasTestDb)("submissions against Postgres", () => {
     const id = await draft(userId, "a", { status: "withdrawn", channel: "cloud" });
     await expect(claimForCloud(db, id)).resolves.toBe(false);
     expect(await statusOf(id)).toBe("withdrawn");
+  });
+
+  describe("report rules (WP-04)", () => {
+    const report = (applicationId: string, outcome: "submitted" | "failed") => ({
+      applicationId,
+      outcome,
+      failureReason: outcome === "failed" ? "Tab closed" : undefined,
+      filledFields: [],
+      submittedAt: "2001-01-01T00:00:00.000Z",
+    });
+    const ledger = async (userId: string) => (await db.select().from(creditLedger).where(eq(creditLedger.userId, userId))).filter((l) => l.reason === "submission");
+
+    it("an extension 'failed' report cannot settle a cloud application the applier is sending (applications-v07)", async () => {
+      const userId = await seedUser(db, { credits: 5 });
+      const id = await draft(userId, "a", { status: "approved", channel: "cloud" });
+      await claimForCloud(db, id);
+      await expect(recordSubmission(db, userId, report(id, "failed"), "extension")).rejects.toMatchObject({ status: 409 });
+      expect(await statusOf(id)).toBe("submitting");
+      // The applier's own result still lands.
+      await recordSubmission(db, userId, report(id, "submitted"), "cloud");
+      expect(await statusOf(id)).toBe("submitted");
+      expect(await ledger(userId)).toHaveLength(1);
+    });
+
+    it("an extension 'submitted' report on a cloud send in progress is still recorded, and charged once", async () => {
+      const userId = await seedUser(db, { credits: 5 });
+      const id = await draft(userId, "a", { status: "approved", channel: "cloud" });
+      await claimForCloud(db, id);
+      await recordSubmission(db, userId, report(id, "submitted"), "extension");
+      await recordSubmission(db, userId, report(id, "submitted"), "cloud");
+      expect(await statusOf(id)).toBe("submitted");
+      expect(await ledger(userId)).toHaveLength(1);
+    });
+
+    it("submitted_at is server time, never the report's clock (applications-v01)", async () => {
+      const userId = await seedUser(db, { credits: 5 });
+      const id = await draft(userId, "a", { status: "approved", channel: "extension" });
+      const before = Date.now();
+      await recordSubmission(db, userId, report(id, "submitted"), "extension");
+      const [row] = await db.select({ at: applications.submittedAt }).from(applications).where(eq(applications.id, id));
+      expect(row!.at!.getTime()).toBeGreaterThanOrEqual(before - 1000);
+    });
+
+    it("a non-owner cannot approve cloud while CLOUD_APPLIER_OPEN is off, whatever the plan", async () => {
+      const userId = await seedUser(db, { credits: 5 });
+      const id = await draft(userId, "a");
+      await expect(approveApplications(db, userId, [id], "cloud")).rejects.toMatchObject({ status: 403, message: "The cloud applier is not open yet" });
+    });
   });
 });
