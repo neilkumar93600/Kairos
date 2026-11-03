@@ -43,15 +43,15 @@ Compare the row counts with the latest core dump's manifest (`backups/core/lates
 
 ## 5. Replay the money journal (10 minutes)
 
-From `server/` on a checkout of the running release, through the worker so the backups token is in the environment:
+From `server/` on a checkout of the running release, with the backups bucket and token exported as in [R-DR-2](R-DR-2.md) section 0 (sealed variables are invisible to `railway run`):
 
 ```bash
 export RESTORE_DATABASE_URL="$RESTORED_URL"
-railway run --service sd1-worker -- npx tsx scripts/journal-replay.ts --since 2026-11-03T14:02:00Z            # dry run
-railway run --service sd1-worker -- npx tsx scripts/journal-replay.ts --since 2026-11-03T14:02:00Z --apply
+npx tsx scripts/journal-replay.ts --since 2026-11-03T14:02:00Z            # dry run
+npx tsx scripts/journal-replay.ts --since 2026-11-03T14:02:00Z --apply
 ```
 
-(Production: the production worker service.) `--since` is the restore point; the script starts 10 minutes earlier on its own. Read the dry run's JSON before applying:
+`--since` is the restore point; the script starts 10 minutes earlier on its own. Read the dry run's JSON before applying:
 
 - `gaps`: minutes with no journal object. A gap during the incident means ledger rows of that minute may be missing; find them in Stripe and the applier's logs.
 - `ledger.inserted`: rows the restore lacked, put back with their original ids. Running it again inserts nothing.
@@ -69,13 +69,13 @@ railway postgres pgbouncer add --service postgres-restored-<stamp> --pool-mode t
 railway postgres pitr enable --service postgres-restored-<stamp>
 ```
 
-Until its first base backup completes there is no PITR, so start an extra dump at once: on the `pgbackup` service set `DATABASE_BACKUP_URL` to the sibling's private URL (role `kairos_backup`, see step 7) and trigger a run now: Railway's run-now action on the cron service if your dashboard has one, otherwise set its cron schedule to two minutes from now and back to `10 2 * * *` once `core/latest.json` is new.
+Until its first base backup completes there is no PITR, so start an extra dump at once: on the `pgbackup` service set `DATABASE_BACKUP_URL` to the sibling's private URL (role `kairos_backup`, see step 7) and trigger a run now: set its cron schedule to two minutes from now, and back to `10 2 * * *` once `core/latest.json` is new (the schedule lives in `.railway/railway.ts`, so a plan shows drift until it is back).
 
 ## 7. Cut over (15 minutes)
 
 1. Run `ops/provision-roles.sql` against the sibling with the same role passwords, or new ones (`-v api_password=...` etc.); then update every service's database variables. A PITR restore keeps the roles, so usually only the host changes.
 2. Change the database host in each service's variables (api, worker, applier, pgbackup) to the sibling, then deploy in this order: api, worker, applier. Keep `CLOUD_APPLIER_OPEN=0` for now.
-3. The old service stays, unused, for 7 days; then delete it.
+3. The sibling was created outside `.railway/railway.ts`, so plans show drift and the apply jobs stop. In the same hour, open the pull request that declares it in the file in place of `Postgres`. The old service stays, unused, for 7 days; then remove it from Railway by hand.
 
 ## 8. After the cut-over (30 minutes, then 1 hour of watching)
 

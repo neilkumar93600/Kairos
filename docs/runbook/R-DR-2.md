@@ -18,6 +18,14 @@ A dump is `pg_dump --format=custom`, encrypted with age to the two public keys i
 - Git Bash and Node 22, a checkout of the running release, `npm ci` at the repository root.
 - PostgreSQL 18 command-line tools: the EDB Windows installer with only "Command Line Tools" selected, then `export PATH="/c/Program Files/PostgreSQL/18/bin:$PATH"`. Check: `pg_restore --version` prints 18.x. An older pg_restore cannot read an 18 dump.
 - The Railway CLI, signed in.
+- The backups bucket and the pgbackup token (owner-actions/WP-13.md step 5) from the password manager. The token variables are sealed on Railway, and `railway run` cannot see sealed values, so export them in the shell you restore from:
+
+  ```bash
+  read -rs R2_ENDPOINT && export R2_ENDPOINT
+  read -rs R2_BUCKET_BACKUPS && export R2_BUCKET_BACKUPS
+  read -rs R2_BACKUPS_ACCESS_KEY_ID && export R2_BACKUPS_ACCESS_KEY_ID
+  read -rs R2_BACKUPS_SECRET_ACCESS_KEY && export R2_BACKUPS_SECRET_ACCESS_KEY
+  ```
 
 ## 1. Stop anything that sends or charges
 
@@ -27,20 +35,22 @@ As R-DR-1 step 1. In a full loss the services are failing already; leave them st
 
 Railway > the project > New > Database > PostgreSQL, then in its settings set the image to the PITR-capable `postgres-ssl:18` image, or deploy into a new project or region if Railway itself is the problem (R-DR-3). Wait for it to boot. From its Connect tab, copy the public URL as `RESTORE_DATABASE_URL` (`read -rs RESTORE_DATABASE_URL && export RESTORE_DATABASE_URL`).
 
+A database created by hand is not in `.railway/railway.ts`: while it exists every plan shows it as a deletion and the apply jobs stop (they never delete). For the drill, delete it the same day. For a real recovery, the cut-over (step 5) includes the pull request that declares it in the file in place of `Postgres`.
+
 ## 3. Restore the newest dump (target: under 60 minutes)
 
 From `server/`, with the kit's age key typed or pasted (`read -rs AGE_IDENTITY && export AGE_IDENTITY`; the owner's or the recovery key, either decrypts):
 
 ```bash
-railway run --service sd1-worker -- npx tsx scripts/backup.ts restore core
+npx tsx scripts/backup.ts restore core
 ```
 
-(Production: the production worker; `restore full` for the weekly dump, or a manifest key such as `backups/core/kairos-20261103T021000Z.manifest.json` for an older one.) It downloads the dump, refuses it unless both checksums match the manifest, decrypts it, runs `pg_restore --no-owner --no-acl --exit-on-error --jobs=4`, then counts every table and compares with the manifest. The last line is either
+(`restore full` for the weekly dump, or a manifest key such as `backups/core/kairos-20261103T021000Z.manifest.json` for an older one.) It downloads the dump, refuses it unless both checksums match the manifest, decrypts it, runs `pg_restore --no-owner --no-acl --exit-on-error --jobs=4`, then counts every table and compares with the manifest. The last line is either
 
 - `PASS: <n> tables match the manifest; restore took <m> minutes. Next: journal-replay --since <snapshotAt>`, or
 - `FAIL: ...` with one `MISMATCH` line per table. A mismatch means the restore is incomplete: do not cut over to it. Try the previous dump (its manifest key), then the full dump.
 
-`railway run` only lends the worker's variables (the backups token); `RESTORE_DATABASE_URL` must differ from the worker's `DATABASE_URL`, and the script refuses otherwise. Run `unset AGE_IDENTITY` when done.
+The script refuses a `RESTORE_DATABASE_URL` equal to `DATABASE_URL`, so a shell that also holds a live database URL cannot restore over it. Run `unset AGE_IDENTITY` when done.
 
 ## 4. Roles, migrations and the journal (20 minutes)
 
@@ -49,8 +59,8 @@ railway run --service sd1-worker -- npx tsx scripts/backup.ts restore core
 3. Replay the journal from the dump's snapshot. Dry run first, read it, then apply:
 
    ```bash
-   railway run --service sd1-worker -- npx tsx scripts/journal-replay.ts --since <snapshotAt from step 3>
-   railway run --service sd1-worker -- npx tsx scripts/journal-replay.ts --since <snapshotAt from step 3> --apply
+   npx tsx scripts/journal-replay.ts --since <snapshotAt from step 3>
+   npx tsx scripts/journal-replay.ts --since <snapshotAt from step 3> --apply
    ```
 
    How to read the report: R-DR-1 step 5. After a dump restore expect more `ledger.skipped` (users who signed up after the dump: their accounts are gone, their ledger rows are listed) and more `applications.missing` (drafts created after the dump: lost, the user re-creates them; a missing application the journal shows as `submitted` was sent, so tell the user).
@@ -69,7 +79,7 @@ As R-DR-1 step 8. In addition, compare every subscription with Stripe for users 
 Pass when last night's dump restores into a scratch database in under 60 minutes with every row count matching, and the journal replay brings the ledger to within 2 minutes of the moment you call the failure.
 
 1. Note the time as `T_FAIL` (UTC, for example `2026-11-03T15:00:00Z`). Create a scratch Postgres 18 service on staging (step 2).
-2. Step 3 against it with the staging worker. Record the minutes from the PASS line.
+2. Step 3 against it, with the staging bucket and token. Record the minutes from the PASS line.
 3. Replay up to the failure: `journal-replay.ts --since <snapshotAt> --until $T_FAIL --apply` (as in step 4.3).
 4. Compare the ledger with the live staging database up to `T_FAIL`, on both:
 

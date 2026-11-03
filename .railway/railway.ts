@@ -23,6 +23,13 @@ const SIZE = {
   worker: { production: 3, staging: 1, vcpu: 2, memoryGB: 2, heapMB: 1536, healthcheckTimeout: 120, drainingSeconds: 60, overlapSeconds: 0 },
   applier: { production: 6, staging: 1, vcpu: 2, memoryGB: 4, heapMB: 1024, healthcheckTimeout: 120, drainingSeconds: 180, overlapSeconds: 0 },
 };
+/**
+ * Cron services: one run that exits, so no healthcheck, drain or restart. Keep equal to ops/railway-limits.json `cron`.
+ * pgbackup (WP-13, 06-infrastructure 1.2 and 5.3): about 1 vCPU for up to an hour a night; pg_dump runs beside node.
+ */
+const CRON = {
+  pgbackup: { vcpu: 2, memoryGB: 4, heapMB: 512, schedule: "10 2 * * *", start: "node dist/pgbackup.js auto" },
+};
 
 /** Values the owner sets by hand, sealed, on that one service (owner-actions/WP-15.md). The file only says who holds what. */
 const byHand = (...names: string[]) => Object.fromEntries(names.map((name) => [name, preserve()]));
@@ -45,11 +52,13 @@ export default defineRailway((ctx) => {
   const db = postgres("Postgres", { region: REGION });
   const cache = redis("Redis", { region: REGION });
 
+  // Production's commit already passed CI and the staging gate (promote.yml), so it does not wait for checks again.
+  const source = () => github(REPO, { branch: env === "production" ? "release" : "main", checkSuites: env === "staging" });
+
   const kairos = (name: keyof typeof SIZE, dockerfile: string, watch: string[], vars: Record<string, string | VariableValue>, preDeploy?: string) => {
     const size = SIZE[name];
     return service(name, {
-      // Production's commit already passed CI and the staging gate (promote.yml), so it does not wait for checks again.
-      source: github(REPO, { branch: env === "production" ? "release" : "main", checkSuites: env === "staging" }),
+      source: source(),
       build: { builder: "DOCKERFILE", dockerfilePath: dockerfile, watchPatterns: watch },
       start: `node dist/${name}.js`,
       ...(preDeploy ? { preDeploy } : {}),
@@ -94,5 +103,22 @@ export default defineRailway((ctx) => {
     ...byHand("DATABASE_URL", "SENTRY_DSN", "HEARTBEAT_URL", "OWNER_USER_IDS"),
   });
 
-  return project("kairos", { resources: [db, cache, api, worker, applier] });
+  // The nightly encrypted dumps (WP-13): the only holder of kairos_backup's URL, and of public age keys only.
+  const pgbackup = service("pgbackup", {
+    source: source(),
+    build: { builder: "DOCKERFILE", dockerfilePath: "ops/pgbackup/Dockerfile", watchPatterns: ["ops/pgbackup/**", ...WATCH] },
+    start: CRON.pgbackup.start,
+    replicas: { [REGION]: 1 },
+    deploy: {
+      cronSchedule: CRON.pgbackup.schedule,
+      restartPolicyType: "NEVER",
+      limitOverride: { containers: { cpu: CRON.pgbackup.vcpu, memoryBytes: CRON.pgbackup.memoryGB * 1024 ** 3 } },
+    },
+    env: {
+      NODE_OPTIONS: `--enable-source-maps --max-old-space-size=${CRON.pgbackup.heapMB}`,
+      ...byHand("DATABASE_BACKUP_URL", "BACKUP_AGE_RECIPIENTS", "HEARTBEAT_URL_BACKUP", "R2_ENDPOINT", ...r2("BACKUPS")),
+    },
+  });
+
+  return project("kairos", { resources: [db, cache, api, worker, applier, pgbackup] });
 });

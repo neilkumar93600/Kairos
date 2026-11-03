@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import program from "../../.railway/railway";
 import limits from "../../ops/railway-limits.json";
 import { APPLIER_FORBIDDEN, ENV_KEYS } from "../src/lib/env";
+import { PGBACKUP_ENV_KEYS } from "../src/pgbackup";
 
 // WP-15: .railway/railway.ts is the only deploy config Railway gets (Config as Code stops being read on 2026-12-01).
 // Nothing compiles it against Railway until an apply, so the rules it must keep are checked here: sizes equal to
@@ -11,6 +12,8 @@ import { APPLIER_FORBIDDEN, ENV_KEYS } from "../src/lib/env";
 
 const ENVIRONMENTS = ["production", "staging"] as const;
 const NAMES = Object.keys(limits.services) as (keyof typeof limits.services)[];
+/** Cron services (WP-13's pgbackup): a run that exits, so no healthcheck, drain or restart. */
+const CRONS = Object.keys(limits.cron) as (keyof typeof limits.cron)[];
 /** Literal values allowed in the file; everything else is preserve() (set by hand, sealed) or a reference. */
 const LITERALS = ["PORT", "NODE_OPTIONS", "LLM_GATEWAY", "RAILWAY_SHM_SIZE_BYTES"];
 
@@ -28,7 +31,7 @@ describe(".railway/railway.ts", () => {
   for (const environment of ENVIRONMENTS) {
     it(`${environment}: every service matches ops/railway-limits.json and 06-infrastructure 1.6`, async () => {
       const all = await services(environment);
-      expect(Object.keys(all).sort()).toEqual([...NAMES].sort());
+      expect(Object.keys(all).sort()).toEqual([...NAMES, ...CRONS].sort());
       for (const name of NAMES) {
         const want = limits.services[name];
         const deploy = all[name]!.deploy!;
@@ -46,6 +49,28 @@ describe(".railway/railway.ts", () => {
       }
     });
   }
+
+  for (const environment of ENVIRONMENTS) {
+    it(`${environment}: every cron service matches ops/railway-limits.json and never restarts`, async () => {
+      const all = await services(environment);
+      for (const name of CRONS) {
+        const want = limits.cron[name];
+        const deploy = all[name]!.deploy!;
+        expect(deploy.multiRegionConfig?.[limits.region]?.numReplicas, name).toBe(want.replicas[environment]);
+        expect(deploy.limitOverride?.containers, name).toEqual({ cpu: want.vcpu, memoryBytes: want.memoryGB * 1024 ** 3 });
+        expect(deploy, name).toMatchObject({ startCommand: want.start, cronSchedule: want.schedule, restartPolicyType: want.restart });
+        expect(deploy.healthcheckPath, name).toBeUndefined();
+        expect(vars(all[name]!).NODE_OPTIONS, name).toEqual({ type: "literal", value: `--enable-source-maps --max-old-space-size=${want.heapMB}` });
+        expect(want.heapMB, name).toBeLessThanOrEqual(want.memoryGB * 1024 * 0.75);
+      }
+    });
+  }
+
+  it("pgbackup builds its own image and holds exactly the variables it reads", async () => {
+    const { pgbackup } = await services("production");
+    expect(pgbackup!.build).toMatchObject({ builder: "DOCKERFILE", dockerfilePath: "ops/pgbackup/Dockerfile" });
+    expect(Object.keys(vars(pgbackup!)).sort()).toEqual([...PGBACKUP_ENV_KEYS, "NODE_OPTIONS"].sort());
+  });
 
   it("lists the databases, so an apply never deletes them", async () => {
     const names = (await resources("production")).filter((r) => r.type === "database").map((r) => r.name);
@@ -76,19 +101,23 @@ describe(".railway/railway.ts", () => {
 
   it("holds no secret value, and every secret sits only on the service that needs it", async () => {
     const all = await services("production");
-    const holders = (key: string) => NAMES.filter((n) => key in vars(all[n]!));
-    for (const name of NAMES) {
+    const holders = (key: string) => [...NAMES, ...CRONS].filter((n) => key in vars(all[n]!));
+    for (const name of [...NAMES, ...CRONS]) {
       for (const [key, value] of Object.entries(vars(all[name]!))) {
         if (value.type === "literal") expect(LITERALS, `${name}.${key} is a literal`).toContain(key);
         // A typo here would set a variable no process reads.
-        expect([...ENV_KEYS.all, ...LITERALS, "DATABASE_UNPOOLED_URL"], `${name}.${key}`).toContain(key);
+        const read = name === "pgbackup" ? PGBACKUP_ENV_KEYS : [...ENV_KEYS.all, "DATABASE_UNPOOLED_URL"];
+        expect([...read, ...LITERALS], `${name}.${key}`).toContain(key);
       }
     }
     const applier = Object.keys(vars(all.applier!));
     expect(applier.filter((k) => (APPLIER_FORBIDDEN as readonly string[]).includes(k))).toEqual([]);
     expect(applier.filter((k) => !ENV_KEYS.applier.includes(k) && !LITERALS.includes(k))).toEqual([]);
     for (const key of ["DATABASE_UNPOOLED_URL", "KAIROS_EDGE_SECRET", "GOOGLE_CLIENT_SECRET"]) expect(holders(key), key).toEqual(["api"]);
-    for (const key of ["ANTHROPIC_KEY_BATCH", "R2_BACKUPS_ACCESS_KEY_ID", "R2_BACKUPS_SECRET_ACCESS_KEY"]) expect(holders(key), key).toEqual(["worker"]);
+    expect(holders("ANTHROPIC_KEY_BATCH")).toEqual(["worker"]);
+    // Backups (WP-13): every user's data. The worker writes the journal; pgbackup reads every row and writes the dumps.
+    for (const key of ["R2_BUCKET_BACKUPS", "R2_BACKUPS_ACCESS_KEY_ID", "R2_BACKUPS_SECRET_ACCESS_KEY"]) expect(holders(key), key).toEqual(["worker", "pgbackup"]);
+    for (const key of ["DATABASE_BACKUP_URL", "BACKUP_AGE_RECIPIENTS", "HEARTBEAT_URL_BACKUP"]) expect(holders(key), key).toEqual(["pgbackup"]);
   });
 
   it("refuses any other environment or project, since an apply deletes what the file leaves out", async () => {

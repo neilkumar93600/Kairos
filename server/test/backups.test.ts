@@ -11,7 +11,7 @@ import { fakeR2 } from "./helpers/fake-r2";
 
 const signal = vi.fn();
 vi.mock("../src/lib/sentry", () => ({ signal: (...args: unknown[]) => signal(...args) }));
-const { encryptFile, parseBackupEnv, pgDumpArgs, publish } = await import("../src/pgbackup");
+const { encryptFile, kindsFor, parseBackupEnv, pgDumpArgs, publish } = await import("../src/pgbackup");
 const { processBackupCheck } = await import("../src/jobs/backup-check");
 
 // WP-13, 06-infrastructure 5.3: nightly core and weekly full pg_dump, age-encrypted to public recipients only, with a
@@ -69,6 +69,26 @@ describe("parseBackupEnv", () => {
     expect(() => parseBackupEnv({ ...base, BACKUP_AGE_RECIPIENTS: "" })).toThrow(/BACKUP_AGE_RECIPIENTS/);
     expect(() => parseBackupEnv({ ...base, BACKUP_AGE_RECIPIENTS: "age1notakey" })).toThrow(/recipient 1/);
     expect(() => parseBackupEnv({ ...base, DATABASE_BACKUP_URL: "", BACKUP_AGE_RECIPIENTS: "x" })).toThrow(/DATABASE_BACKUP_URL/);
+  });
+});
+
+describe("kindsFor", () => {
+  const SUNDAY = Date.parse("2026-11-08T02:10:00Z");
+  const fresh = manifest({ kind: "full", finishedAt: "2026-11-01T02:40:00Z" });
+
+  it("auto: the core dump nightly, the full dump on Sundays", () => {
+    expect(kindsFor("auto", SUNDAY - 24 * HOUR, fresh)).toEqual(["core"]);
+    expect(kindsFor("auto", SUNDAY, fresh)).toEqual(["core", "full"]);
+  });
+
+  it("auto: also the full dump when there is none, or the last is over 7.5 days old (a failed Sunday)", () => {
+    expect(kindsFor("auto", SUNDAY - 6 * 24 * HOUR, null)).toEqual(["core", "full"]);
+    expect(kindsFor("auto", SUNDAY + 24 * HOUR, fresh)).toEqual(["core", "full"]);
+  });
+
+  it("core or full alone when asked; anything else is refused", () => {
+    expect(kindsFor("full", SUNDAY - 24 * HOUR, fresh)).toEqual(["full"]);
+    expect(() => kindsFor("nope", SUNDAY, fresh)).toThrow(/unknown mode/);
   });
 });
 
