@@ -4,6 +4,7 @@ import type { ApplicationAnswer, ResumeLine } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, companies, facts, jobs, profiles, resumes, savedAnswers, user } from "../db/schema";
 import { HttpError } from "../lib/errors";
+import { recordEvent } from "../services/events";
 import { copyFor, createCopy } from "../services/resume-library";
 import { logger } from "../lib/logger";
 import { slo } from "../lib/metrics";
@@ -80,18 +81,27 @@ export async function processTailorApplication(job: Job<JobData["tailor-applicat
  * mapping them into the document is the resume-tailor suggestion mode of WP-41.
  */
 async function ensureTailoredCopy(userId: string, applicationId: string, job: { id: string; title: string; company: string }) {
-  const existing = await copyFor(userId, job.id);
-  if (existing) {
-    if (!existing.applicationId) await db().update(resumes).set({ applicationId }).where(eq(resumes.id, existing.id));
-    return;
+  let copy = await copyFor(userId, job.id);
+  if (copy && !copy.applicationId) await db().update(resumes).set({ applicationId }).where(eq(resumes.id, copy.id));
+  if (!copy) {
+    try {
+      copy = await createCopy({ id: userId }, await planFor(db(), userId), job);
+    } catch (err) {
+      // A concurrent copy won the unique index: that copy is the job's, which is what was wanted. Before the contract
+      // migration (resumes_user_uq still there) the draft simply has no copy yet; the draft itself is already written.
+      if (!(err instanceof HttpError && (err.code === "exists" || err.code === "service_unavailable"))) throw err;
+      copy = await copyFor(userId, job.id);
+    }
   }
-  try {
-    await createCopy({ id: userId }, await planFor(db(), userId), job);
-  } catch (err) {
-    // A concurrent copy won the unique index: that copy is the job's, which is what was wanted. Before migration 0011
-    // (resumes_user_uq still there) the draft simply has no copy yet; the draft itself is already written.
-    if (!(err instanceof HttpError && (err.code === "exists" || err.code === "service_unavailable"))) throw err;
+  // The tracker card's version chip (PRD 9.2): once per copy, so a rerun of this job records nothing twice.
+  if (copy) {
+    await recordEvent(db(), {
+      userId,
+      applicationId,
+      kind: "resume_linked",
+      actor: "system",
+      payload: { resumeId: copy.id, resumeName: copy.name },
+      dedupeKey: `resume_linked:${copy.id}`,
+    });
   }
-  // ponytail: WP-42's recordEvent(tx, { kind: "resume_linked", ... }) is not on this base; the coordinator calls it here
-  // (and where an existing copy is linked above) at merge, so the tracker card shows the version chip's event.
 }
