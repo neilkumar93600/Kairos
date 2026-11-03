@@ -11,6 +11,7 @@ import {
 } from "@auto-career/shared";
 import { db } from "../db/client";
 import { HttpError } from "../lib/errors";
+import { pageParams } from "../lib/pagination";
 import { currentUser } from "../middleware/require-auth";
 import { validateBody } from "../middleware/validate";
 import * as library from "../services/resume-library";
@@ -30,9 +31,11 @@ const param = (v: unknown) => (typeof v === "string" ? v : "");
 resumesRouter.get("/", async (req, res) => {
   const query = listResumesQuerySchema.safeParse(req.query);
   if (!query.success) throw new HttpError(400, "invalid_param", "kind must be base or tailored", query.error.issues);
+  // Opt-in keyset pages (?limit, ?cursor); without them the first 200, which today is the whole library.
+  const page = pageParams(req.query, 200, "resumes", ["bool", "bool", "ts"]);
   const me = currentUser(req);
   await library.defaultBase(me.id, await planFor(db(), me.id));
-  res.json({ resumes: await library.listSummaries(me.id, query.data.kind) });
+  res.json(await library.listSummaries(me.id, query.data.kind, page));
 });
 
 resumesRouter.post("/", validateBody(createResumeRequestSchema), async (req, res) => {

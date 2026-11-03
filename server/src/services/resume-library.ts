@@ -1,5 +1,6 @@
-import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, or, sql, type AnyColumn } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import { keysetBefore, slicePage, tsKey, type After } from "../lib/pagination";
 import type { PlanId, ResumeDetail, ResumeInput, ResumeSummary } from "@auto-career/shared";
 import { MAX_BASE_RESUMES_PER_PROFILE } from "@auto-career/shared";
 import { db, type Db } from "../db/client";
@@ -75,11 +76,22 @@ export async function toDetail(row: Row): Promise<ResumeDetail> {
 }
 
 /** GET /resumes: the caller's library, newest first within kind, with the job and application each copy belongs to. */
-export async function listSummaries(userId: string, kind?: "base" | "tailored"): Promise<ResumeSummary[]> {
+/**
+ * The library list in keyset pages (lib/pagination.ts, opt-in): bases first, the default first among them, then newest
+ * edit, all descending so one tuple compares. A tailored copy per job makes this list grow with applications.
+ */
+export async function listSummaries(
+  userId: string,
+  kind: "base" | "tailored" | undefined,
+  page: { limit: number; after?: After },
+): Promise<{ resumes: ResumeSummary[]; nextCursor?: string }> {
   const base = alias(resumes, "base");
+  // A computed sort key: keysetBefore joins it like a column.
+  const isBase = sql<boolean>`(${resumes.kind} = 'base')` as unknown as AnyColumn;
   const rows = await db()
     .select({
       r: resumes,
+      cursorTs: tsKey(resumes.updatedAt),
       profileName: resumeProfiles.name,
       baseName: base.name,
       jobTitle: jobs.title,
@@ -94,11 +106,20 @@ export async function listSummaries(userId: string, kind?: "base" | "tailored"):
     .leftJoin(companies, eq(companies.id, jobs.companyId))
     .leftJoin(matches, and(eq(matches.jobId, resumes.jobId), eq(matches.userId, userId)))
     .leftJoin(applications, eq(applications.id, resumes.applicationId))
-    .where(and(eq(resumes.userId, userId), isNull(resumes.archivedAt), kind ? eq(resumes.kind, kind) : undefined))
-    .orderBy(asc(resumes.kind), desc(resumes.isDefault), desc(resumes.updatedAt));
-  const profilesSeen = new Set(rows.map((x) => x.r.resumeProfileId));
+    .where(
+      and(
+        eq(resumes.userId, userId),
+        isNull(resumes.archivedAt),
+        kind ? eq(resumes.kind, kind) : undefined,
+        page.after && keysetBefore([isBase, resumes.isDefault, resumes.updatedAt], ["boolean", "boolean", "timestamptz"], resumes.id, page.after),
+      ),
+    )
+    .orderBy(desc(isBase), desc(resumes.isDefault), desc(resumes.updatedAt), desc(resumes.id))
+    .limit(page.limit + 1);
+  const sliced = slicePage(rows, page.limit, "resumes", (x) => [x.r.kind === "base", x.r.isDefault, x.cursorTs], (x) => x.r.id);
+  const profilesSeen = new Set(sliced.rows.map((x) => x.r.resumeProfileId));
   const many = profilesSeen.size > 1 || (await db().select({ id: resumeProfiles.id }).from(resumeProfiles).where(eq(resumeProfiles.userId, userId))).length > 1;
-  return rows.map(({ r, ...x }) => ({
+  const summaries = sliced.rows.map(({ r, cursorTs: _, ...x }): ResumeSummary => ({
     id: r.id,
     name: r.name,
     kind: r.kind,
@@ -120,6 +141,7 @@ export async function listSummaries(userId: string, kind?: "base" | "tailored"):
     readOnly: r.kind === "tailored" && x.appStatus !== null && (SENT as readonly string[]).includes(x.appStatus),
     updatedAt: r.updatedAt.toISOString(),
   }));
+  return { resumes: summaries, ...(sliced.nextCursor ? { nextCursor: sliced.nextCursor } : {}) };
 }
 
 /** The resume's contact for a new document: account and Profile, clipped to the schema's limits. */

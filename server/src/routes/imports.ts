@@ -8,6 +8,7 @@ import { decrypt } from "../lib/crypto";
 import { env } from "../lib/env";
 import { HttpError, notFound } from "../lib/errors";
 import { logger } from "../lib/logger";
+import { bodyPermit } from "../middleware/deadline";
 import { currentUser } from "../middleware/require-auth";
 import { hit } from "../middleware/rate-limit";
 import { busy, extractFile, hasSlot, IMPORT_MAX_BYTES } from "../services/import/extract";
@@ -29,7 +30,8 @@ const DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingm
 // A file upload on a replica whose extraction slots are all taken is refused before its body is read.
 const slotFirst: express.RequestHandler = (req, _res, next) => next(req.is("multipart/form-data") && !hasSlot() ? busy() : undefined);
 
-importsRouter.post("/", slotFirst, multipart, async (req, res) => {
+// At most 4 import bodies held in memory per replica (WP-30); then the thread slots; then the body.
+importsRouter.post("/", bodyPermit(4), slotFirst, multipart, async (req, res) => {
   const me = currentUser(req);
   const plan = await planFor(db(), me.id);
   if (req.is("multipart/form-data")) {
