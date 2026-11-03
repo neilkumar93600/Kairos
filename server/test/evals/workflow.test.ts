@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 // The eval gate lives in a YAML file no compiler checks; these pin what WP-20's acceptance rests on.
-const yml = readFileSync(new URL("../../../.github/workflows/evals.yml", import.meta.url), "utf8");
+// CRLF read as LF: a Windows checkout (core.autocrlf) must pass the same patterns as CI.
+const yml = readFileSync(new URL("../../../.github/workflows/evals.yml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 describe("evals.yml", () => {
   it("runs on pull requests that touch an agent, its golden set or the truth checks", () => {
