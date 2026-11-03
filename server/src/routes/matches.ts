@@ -3,6 +3,7 @@ import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client";
 import { applications, companies, jobs, matches } from "../db/schema";
+import { asActor } from "../lib/actor";
 import { notFound } from "../lib/errors";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam } from "../middleware/validate";
@@ -31,13 +32,17 @@ matchesRouter.get("/", async (req, res) => {
   res.json({ matches: rows });
 });
 
+// Skip and queue are the user's decisions: matches_status_guard admits them only from the user actor (02-database 8.3).
 matchesRouter.post("/:id/skip", async (req, res) => {
   const id = parseParam(z.uuid(), req.params.id);
-  const [match] = await db()
-    .update(matches)
-    .set({ status: "skipped" })
-    .where(and(eq(matches.id, id), eq(matches.userId, currentUser(req).id)))
-    .returning({ id: matches.id });
+  const [match] = await db().transaction(async (tx) => {
+    await asActor(tx, "user");
+    return tx
+      .update(matches)
+      .set({ status: "skipped" })
+      .where(and(eq(matches.id, id), eq(matches.userId, currentUser(req).id)))
+      .returning({ id: matches.id });
+  });
   if (!match) throw notFound("Match");
   res.json({ ok: true });
 });
@@ -54,7 +59,10 @@ matchesRouter.post("/:id/queue", async (req, res) => {
     .values({ userId: me.id, jobId: match.jobId, matchId: match.id })
     .onConflictDoNothing({ target: [applications.userId, applications.jobId] })
     .returning({ id: applications.id });
-  await db().update(matches).set({ status: "queued" }).where(eq(matches.id, match.id));
+  await db().transaction(async (tx) => {
+    await asActor(tx, "user");
+    await tx.update(matches).set({ status: "queued" }).where(eq(matches.id, match.id));
+  });
 
   if (created) {
     // The user's drafts from the last day still waiting for their lines, this one included: a user who queues 50 at

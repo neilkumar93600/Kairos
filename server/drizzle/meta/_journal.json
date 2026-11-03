@@ -64,6 +64,34 @@
       "when": 1793687798488,
       "tag": "0008_auth_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793703999699,
+      "tag": "0009_lifecycle_expand",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793704008563,
+      "tag": "0010_match_below_bar",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793704010298,
+      "tag": "0011_lifecycle_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793704012089,
+      "tag": "0012_lifecycle_indexes",
+      "breakpoints": true
     }
   ]
 }
