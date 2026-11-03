@@ -26,6 +26,11 @@ describe("job schedules", () => {
     expect(byId["reconcile-apply"]).toMatchObject({ queue: "maintenance", repeat: { every: 60_000 } });
   });
 
+  it("drafts and mail whose job Redis lost are redriven every 5 minutes", () => {
+    expect(byId["redrive-drafts"]).toMatchObject({ queue: "maintenance", repeat: { every: 5 * 60_000 } });
+    expect(byId["redrive-inbox"]).toMatchObject({ queue: "maintenance", repeat: { every: 5 * 60_000 } });
+  });
+
   it("an unknown maintenance job fails instead of passing silently", async () => {
     await expect(processMaintenance({ name: "nope" } as never)).rejects.toThrow(/nope/);
   });

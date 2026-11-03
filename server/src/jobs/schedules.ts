@@ -1,7 +1,7 @@
 import type { Job, RepeatOptions } from "bullmq";
 import { processPartitions } from "./partitions";
 import type { QueueName } from "./queues";
-import { processReconcileApply, processSweepSubmitting } from "./reconcile";
+import { processReconcileApply, processRedriveDrafts, processRedriveInbox, processSweepSubmitting } from "./reconcile";
 
 export interface Schedule {
   queue: QueueName;
@@ -30,6 +30,9 @@ export const SCHEDULES: Schedule[] = [
   // Cloud sends stuck in submitting settle as unconfirmed (ops-18), and lost cloud-apply jobs come back (applications-40).
   { queue: "maintenance", id: "sweep-submitting", repeat: { every: MINUTE / 2 }, run: processSweepSubmitting },
   { queue: "maintenance", id: "reconcile-apply", repeat: { every: MINUTE }, run: processReconcileApply },
+  // Drafts whose tailoring job and mail whose classify job Redis lost (platform-v02, messaging-v04).
+  { queue: "maintenance", id: "redrive-drafts", repeat: { every: 5 * MINUTE }, run: processRedriveDrafts },
+  { queue: "maintenance", id: "redrive-inbox", repeat: { every: 5 * MINUTE }, run: processRedriveInbox },
 ];
 
 /** The maintenance queue's processor: the scheduler id is the job name. */

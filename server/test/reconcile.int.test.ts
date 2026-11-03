@@ -1,4 +1,5 @@
 import { eq, sql } from "drizzle-orm";
+import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
 import * as schema from "../src/db/schema";
@@ -9,7 +10,8 @@ import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from ".
 process.env.DATABASE_URL = testDbUrl("reconcile");
 
 const redrive = vi.fn(async () => true);
-vi.mock("../src/jobs/queues", async (orig) => ({ ...(await orig<typeof import("../src/jobs/queues")>()), redrive }));
+const enqueue = vi.fn(async () => undefined);
+vi.mock("../src/jobs/queues", async (orig) => ({ ...(await orig<typeof import("../src/jobs/queues")>()), redrive, enqueue }));
 const signal = vi.fn();
 vi.mock("../src/lib/sentry", async (orig) => ({ ...(await orig<typeof import("../src/lib/sentry")>()), signal }));
 
@@ -27,6 +29,7 @@ describe.skipIf(!hasTestDb)("reconcilers against Postgres", () => {
   });
   beforeEach(async () => {
     redrive.mockClear();
+    enqueue.mockReset();
     signal.mockReset();
     await resetDb(db);
   });
@@ -123,6 +126,52 @@ describe.skipIf(!hasTestDb)("reconcilers against Postgres", () => {
       const id = await approvedCloud(userId, 3 * MINUTE);
       await Promise.all([reconcile.processReconcileApply(), reconcile.processReconcileApply()]);
       expect(await Promise.all([claimForCloud(db, id), claimForCloud(db, id)])).toEqual(expect.arrayContaining([true, false]));
+    });
+  });
+
+  describe("redrives (platform-v02: draft without prepare, unclassified email)", () => {
+    const ago = (ms: number) => new Date(Date.now() - ms);
+
+    it("re-adds tailoring for a draft that was never prepared, and never replaces a finished tailoring job", async () => {
+      const userId = await seedUser(db);
+      const lost = await application(userId, { resumeLines: [], answers: [], createdAt: ago(10 * MINUTE) });
+      await application(userId, { resumeLines: [], createdAt: ago(10 * MINUTE) }); // prepared: zero kept lines, answers written
+      await application(userId, { resumeLines: [], answers: [], createdAt: ago(MINUTE) }); // its own job is still running
+      await application(userId, { resumeLines: [], answers: [], createdAt: ago(2 * 24 * 60 * MINUTE) }); // past the lookback
+
+      await expect(reconcile.processRedriveDrafts()).resolves.toEqual({ checked: 1, added: 1 });
+      expect(redrive).toHaveBeenCalledExactlyOnceWith("tailor-application", { applicationId: lost }, `tailor-${lost}`, false);
+    });
+
+    it("re-adds classification for mail still unclassified after 5 minutes", async () => {
+      const userId = await seedUser(db);
+      const mail = (id: string, receivedAt: Date, kind: "other" | null = null) =>
+        db.insert(schema.inboundEmails).values({ userId, providerMessageId: id, sender: "hr@acme.com", subject: "Hi", textBody: "x", receivedAt, kind }).returning();
+      const [[lost]] = await Promise.all([mail("lost", ago(10 * MINUTE)), mail("done", ago(10 * MINUTE), "other"), mail("fresh", ago(MINUTE))]);
+
+      await expect(reconcile.processRedriveInbox()).resolves.toEqual({ checked: 1, added: 1 });
+      expect(redrive).toHaveBeenCalledExactlyOnceWith("classify-email", { inboundEmailId: lost!.id }, `classify-${lost!.id}`, true);
+    });
+
+    it("a redelivered mail is queued again while unclassified (messaging-08: the first enqueue failed after the insert)", async () => {
+      const { createApp } = await import("../src/app");
+      const app = createApp({ auth: { handler: async () => new Response("{}"), getSession: async () => null }, corsOrigins: [], healthChecks: {} });
+      const userId = await seedUser(db);
+      await db.insert(schema.profiles).values({ userId, forwardingAddress: `u-${userId}@replies.test` });
+      const send = () =>
+        request(app).post("/api/webhooks/inbound-email?token=test-inbound-secret").send({ MessageID: "m1", From: "hr@acme.com", To: `u-${userId}@replies.test`, Subject: "Hi", TextBody: "x" });
+
+      enqueue.mockRejectedValueOnce(new Error("redis down"));
+      expect((await send()).status).toBe(500);
+      const res = await send();
+      expect(res.body).toEqual({ stored: false });
+      const [row] = await db.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, "m1"));
+      expect(enqueue).toHaveBeenLastCalledWith("classify-email", { inboundEmailId: row!.id }, `classify-${row!.id}`);
+
+      await db.update(schema.inboundEmails).set({ kind: "other" }).where(eq(schema.inboundEmails.id, row!.id));
+      enqueue.mockClear();
+      await send();
+      expect(enqueue).not.toHaveBeenCalled();
     });
   });
 });
