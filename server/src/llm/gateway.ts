@@ -199,10 +199,10 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
       if (sent.outcome === "failed") {
         breaker.record(workspace, modelNow, sent.error.code);
         lastError = sent.error;
+        if (sent.error.code === "rate_limited") on429(workspace, modelNow); // AIMD on every 429, retried or not (6.3)
         const policy = retryPolicy(sent.error.code, workspace);
         if (attempt - 1 >= policy.retries) break; // no retries left for this class
         if (sent.error.code === "rate_limited") {
-          on429(workspace, modelNow);
           const wait = retryAfterMs(sent.retryAfterSeconds, workspace);
           if (wait === null) break; // beyond the workspace ceiling: no retry (5.2)
           await d.sleep(wait);

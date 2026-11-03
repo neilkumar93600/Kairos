@@ -4,7 +4,7 @@ import { Budget } from "../../src/llm/budget";
 import { memorySpendStore } from "../../src/llm/spend-store";
 import { fakeAnthropic, type Scripted } from "../../src/llm/testing";
 import { resetBreakers } from "../../src/llm/breaker";
-import { resetLimiter } from "../../src/llm/limiter";
+import { acquire, resetLimiter } from "../../src/llm/limiter";
 import { AgentError } from "../../src/llm/errors";
 import { userHash } from "../../src/llm/redact";
 import { fitScorer } from "../../src/agents/fit-scorer/spec";
@@ -111,6 +111,15 @@ describe("runAgent", () => {
     expect(out.attempts).toBe(3);
     expect(rows.map((r) => r.status)).toEqual(["error", "error", "ok"]);
     expect(rows.map((r) => r.callKind)).toEqual(["primary", "retry", "retry"]);
+  });
+
+  it("applies AIMD on every 429, including the last one of a chain (scale-v01)", async () => {
+    const limited = { status: 429, type: "rate_limit_error", retryAfter: 1 };
+    configureGateway({ ...deps, client: () => fakeAnthropic([limited, limited, limited]) });
+    await expect(runAgent(fitScorer, fitInput, {})).rejects.toMatchObject({ code: "rate_limited" });
+    // 20 tokens, then for each send: take one and halve the rest (19 -> 9.5, 8.5 -> 4.25, 3.25 -> 1.6): one token left.
+    (await acquire("batch", "claude-haiku-5-5", 0)).release();
+    await expect(acquire("batch", "claude-haiku-5-5", 0)).rejects.toThrow("limiter_timeout");
   });
 
   it("repairs a schema-invalid reply once, sending paths and codes only", async () => {
