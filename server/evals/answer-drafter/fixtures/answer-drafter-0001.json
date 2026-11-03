@@ -1,0 +1,18 @@
+{
+  "caseId": "answer-drafter-0001",
+  "promptVersion": 1,
+  "promptSha256": "3dac8c06ecec6f8322020b46d68736e158b339d8587627d63f41d46089bb97f8",
+  "inputHash": "20c88b66fa4ca8e42c6aea5c79e7d0682d34aa041290210c29f882bcebe8fe82",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "text": "I build billing systems: my billing API served 40,000 invoices a month, and I cut invoice processing time by 30% at Quillon Labs. Fernwood Analytics would let me keep doing that work.",
+        "factIds": [
+          "f4",
+          "f2"
+        ]
+      }
+    }
+  ]
+}

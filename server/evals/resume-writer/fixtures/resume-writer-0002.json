@@ -1,0 +1,27 @@
+{
+  "caseId": "resume-writer-0002",
+  "promptVersion": 1,
+  "promptSha256": "93689092284ef700de6e68175b3f6f6d9206733237a658b41a2664bae6c34066",
+  "inputHash": "5fade4fe96734d171599545aa83846e74a033f734c361b504629e36d36dc411e",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": "l2",
+            "action": "rewrite",
+            "after": "Built a billing API that served 40,000 invoices a month",
+            "why": "Adds the volume the fact states",
+            "factIds": [
+              "f4"
+            ],
+            "needsFact": null
+          }
+        ]
+      }
+    }
+  ]
+}

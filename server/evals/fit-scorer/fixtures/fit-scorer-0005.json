@@ -1,0 +1,18 @@
+{
+  "caseId": "fit-scorer-0005",
+  "promptVersion": 1,
+  "promptSha256": "4a7fb84b833f4d048212bd6acad80b7a0479768b698ee236f13468eb69f675ed",
+  "inputHash": "573fff37397a3165d6359f7ac934a7975cdd252e955ff3649cf5b966169c8b29",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "score": 70,
+        "reasons": [
+          "Java and Kotlin match the posting",
+          "An M.S. in Computer Science fits a junior role"
+        ]
+      }
+    }
+  ]
+}

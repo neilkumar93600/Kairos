@@ -1,0 +1,39 @@
+{
+  "caseId": "resume-tailor-0003",
+  "promptVersion": 1,
+  "promptSha256": "56daa5a999d31075f51f084de24cfe646cc044c5c458076702f98d60bf12f5f7",
+  "inputHash": "05eedb3d898260d9ce8744e0dee75dfb3f830e97632789ec04184a4592e33533",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "lines": [
+          {
+            "id": "l1",
+            "section": "Experience",
+            "text": "Backend Engineer at Quillon Labs from 2021 to 2024",
+            "factIds": [
+              "f1"
+            ]
+          },
+          {
+            "id": "l2",
+            "section": "Experience",
+            "text": "Mentored 3 junior engineers",
+            "factIds": [
+              "f6"
+            ]
+          },
+          {
+            "id": "l3",
+            "section": "Experience",
+            "text": "Built a billing API that served 40,000 invoices a month",
+            "factIds": [
+              "f4"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

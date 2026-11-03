@@ -1,0 +1,25 @@
+{
+  "caseId": "resume-parser-0003",
+  "promptVersion": 1,
+  "promptSha256": "9d478c531a649f8d3da83b746de04979cfe050fb7d6e80b785a09a4428b4cc6f",
+  "inputHash": "9ad22f873ecec0002346e625a9d0199efc176d5f7baa59583de0f17b663d6df8",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "facts": [
+          {
+            "kind": "role",
+            "text": "Payments Intern at Copperline Payments from May 2023 to Aug 2023",
+            "sourceSpan": "Payments Intern, Copperline Payments | May 2023 - Aug 2023"
+          },
+          {
+            "kind": "project",
+            "text": "Built a Visa payment gateway integration",
+            "sourceSpan": "Built a Visa payment gateway integration"
+          }
+        ]
+      }
+    }
+  ]
+}

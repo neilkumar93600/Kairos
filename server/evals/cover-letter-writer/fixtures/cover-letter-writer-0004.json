@@ -1,0 +1,28 @@
+{
+  "caseId": "cover-letter-writer-0004",
+  "promptVersion": 1,
+  "promptSha256": "0f7d34505f4b1b33213da00fbd4be820bfa017916c78ddf376fcfbcb39013f7e",
+  "inputHash": "0df72693b5ba390ce87f0cceaa02a89280a1706881dfedda2d33b0b3b0cb1a16",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "paragraphs": [
+          {
+            "text": "I hold an M.S. in Computer Science from Lakeshore State University, 2024, and I work in Java and Kotlin.",
+            "factIds": [
+              "h2",
+              "h3"
+            ]
+          },
+          {
+            "text": "During an internship at Copperline Payments I built a Visa payment gateway integration.",
+            "factIds": [
+              "h1"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

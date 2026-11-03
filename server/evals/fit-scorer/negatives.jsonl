@@ -1,0 +1,3 @@
+{"caseId":"fit-scorer-0001","failsOn":["schema"],"note":"a score out of range","responses":[{"text":{"score":150,"reasons":["Great fit"]}}]}
+{"caseId":"fit-scorer-0001","failsOn":["containment"],"note":"a reason with a number the profile lacks","responses":[{"text":{"score":80,"reasons":["8 years of TypeScript"]}}]}
+{"caseId":"fit-scorer-0005","failsOn":["sensitive"],"note":"a protected attribute in a reason","responses":[{"text":{"score":60,"reasons":["Needs H-1B sponsorship later"]}}]}

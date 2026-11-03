@@ -1,0 +1,39 @@
+{
+  "caseId": "resume-writer-0007",
+  "promptVersion": 1,
+  "promptSha256": "93689092284ef700de6e68175b3f6f6d9206733237a658b41a2664bae6c34066",
+  "inputHash": "a23c375a8d660517be0afbb46910580af35a4972d74b8da9a2076e3149f95c8a",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "sk",
+            "entryId": "e9",
+            "lineId": "l9",
+            "action": "rewrite",
+            "after": "SQL and Tableau",
+            "why": "Lists the skills the facts show",
+            "factIds": [
+              "g4"
+            ],
+            "needsFact": null
+          },
+          {
+            "sectionId": "sk",
+            "entryId": "e9",
+            "lineId": null,
+            "action": "add",
+            "after": "Python",
+            "why": "The scorecard automation shows Python",
+            "factIds": [
+              "g2"
+            ],
+            "needsFact": null
+          }
+        ]
+      }
+    }
+  ]
+}

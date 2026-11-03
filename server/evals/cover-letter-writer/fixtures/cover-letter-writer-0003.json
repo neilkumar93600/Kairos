@@ -1,0 +1,22 @@
+{
+  "caseId": "cover-letter-writer-0003",
+  "promptVersion": 1,
+  "promptSha256": "0f7d34505f4b1b33213da00fbd4be820bfa017916c78ddf376fcfbcb39013f7e",
+  "inputHash": "84557c1a12e9e0c8a536ec593f15c2c819b6dbb5828fb4c1ab7166e83a4303d2",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "paragraphs": [
+          {
+            "text": "I was a Backend Engineer at Quillon Labs from 2021 to 2024, where I built a billing API that served 40,000 invoices a month.",
+            "factIds": [
+              "f1",
+              "f4"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

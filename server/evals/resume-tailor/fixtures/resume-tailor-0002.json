@@ -1,0 +1,49 @@
+{
+  "caseId": "resume-tailor-0002",
+  "promptVersion": 1,
+  "promptSha256": "56daa5a999d31075f51f084de24cfe646cc044c5c458076702f98d60bf12f5f7",
+  "inputHash": "1d8c094f389bf94bea9c3ee4c48b0c310a7a425cab69413c32820cc3a944b36d",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "lines": [
+          {
+            "id": "l1",
+            "section": "Experience",
+            "text": "Data Analyst at Brightwater Parcel Co from 2022 to 2025",
+            "factIds": [
+              "g1"
+            ]
+          },
+          {
+            "id": "l2",
+            "section": "Experience",
+            "text": "Automated the weekly carrier scorecard in Python, saving 6 hours a week",
+            "factIds": [
+              "g2",
+              "g3"
+            ]
+          },
+          {
+            "id": "l3",
+            "section": "Experience",
+            "text": "Built Tableau dashboards for 12 regional managers",
+            "factIds": [
+              "g5"
+            ]
+          },
+          {
+            "id": "l4",
+            "section": "Skills",
+            "text": "SQL, Tableau and Python",
+            "factIds": [
+              "g4",
+              "g2"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

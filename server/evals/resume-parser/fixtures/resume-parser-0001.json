@@ -1,0 +1,45 @@
+{
+  "caseId": "resume-parser-0001",
+  "promptVersion": 1,
+  "promptSha256": "9d478c531a649f8d3da83b746de04979cfe050fb7d6e80b785a09a4428b4cc6f",
+  "inputHash": "5a0a03544ff125ce4cb8a10b54568b6700d8065fdcd7fafa73ef076bd7ab4536",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "facts": [
+          {
+            "kind": "role",
+            "text": "Data Analyst at Brightwater Parcel Co since Feb 2022",
+            "sourceSpan": "Data Analyst, Brightwater Parcel Co - Columbus, OH\nFeb 2022 - Present"
+          },
+          {
+            "kind": "project",
+            "text": "Automated the weekly carrier scorecard in Python",
+            "sourceSpan": "Automated the weekly carrier scorecard in Python"
+          },
+          {
+            "kind": "metric",
+            "text": "Saved 6 hours a week by automating the carrier scorecard",
+            "sourceSpan": "saving 6 hours a week"
+          },
+          {
+            "kind": "project",
+            "text": "Built Tableau dashboards for 12 regional managers",
+            "sourceSpan": "Built Tableau dashboards for 12 regional managers"
+          },
+          {
+            "kind": "education",
+            "text": "M.S. Business Analytics, Lakeshore State University, 2021",
+            "sourceSpan": "M.S. Business Analytics, Lakeshore State University, 2021"
+          },
+          {
+            "kind": "skill",
+            "text": "Python, SQL and Tableau",
+            "sourceSpan": "SKILLS: Python, SQL, Tableau"
+          }
+        ]
+      }
+    }
+  ]
+}

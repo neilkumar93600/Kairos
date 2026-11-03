@@ -1,0 +1,39 @@
+{
+  "caseId": "resume-writer-0001",
+  "promptVersion": 1,
+  "promptSha256": "93689092284ef700de6e68175b3f6f6d9206733237a658b41a2664bae6c34066",
+  "inputHash": "bf32de38e37dab20391e62064265b92ce883271580586d31118633f874d71d13",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": "l1",
+            "action": "rewrite",
+            "after": "Cut invoice processing time by 30% at Quillon Labs",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f2"
+            ],
+            "needsFact": null
+          },
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": "l1",
+            "action": "rewrite",
+            "after": "Cut invoice processing time by 30%",
+            "why": "Shorter, leads with the result",
+            "factIds": [
+              "f2"
+            ],
+            "needsFact": null
+          }
+        ]
+      }
+    }
+  ]
+}

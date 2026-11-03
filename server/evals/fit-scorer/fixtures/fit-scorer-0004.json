@@ -1,0 +1,18 @@
+{
+  "caseId": "fit-scorer-0004",
+  "promptVersion": 1,
+  "promptSha256": "4a7fb84b833f4d048212bd6acad80b7a0479768b698ee236f13468eb69f675ed",
+  "inputHash": "6ce5ada48df27006bda4e466e330cf7ad57598e021ac91f0e787de73119a247f",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "score": 21,
+        "reasons": [
+          "No backend engineering experience",
+          "No TypeScript or PostgreSQL in the profile"
+        ]
+      }
+    }
+  ]
+}

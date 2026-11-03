@@ -1,0 +1,18 @@
+{
+  "caseId": "answer-drafter-0002",
+  "promptVersion": 1,
+  "promptSha256": "3dac8c06ecec6f8322020b46d68736e158b339d8587627d63f41d46089bb97f8",
+  "inputHash": "015896ac3aebabb7df9cfa899a2047738aa5a8d83a9ca981aa9ff6e3f3735a1f",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "text": "I automated the weekly carrier scorecard in Python, which saved 6 hours a week.",
+        "factIds": [
+          "g2",
+          "g3"
+        ]
+      }
+    }
+  ]
+}

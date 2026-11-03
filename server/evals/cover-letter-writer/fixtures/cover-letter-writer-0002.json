@@ -1,0 +1,29 @@
+{
+  "caseId": "cover-letter-writer-0002",
+  "promptVersion": 1,
+  "promptSha256": "0f7d34505f4b1b33213da00fbd4be820bfa017916c78ddf376fcfbcb39013f7e",
+  "inputHash": "72e45f547d1c6465aff4a931879915bab3030ad01c792e2be6ca755c60816454",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "paragraphs": [
+          {
+            "text": "I am a Data Analyst at Brightwater Parcel Co, where I have worked since 2022.",
+            "factIds": [
+              "g1"
+            ]
+          },
+          {
+            "text": "I automated the weekly carrier scorecard in Python, saving 6 hours a week, and built Tableau dashboards for 12 regional managers.",
+            "factIds": [
+              "g2",
+              "g3",
+              "g5"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "caseId": "resume-writer-0005",
+  "promptVersion": 1,
+  "promptSha256": "93689092284ef700de6e68175b3f6f6d9206733237a658b41a2664bae6c34066",
+  "inputHash": "a85e028479d1717bec3f58f5059216f37f15b997253fef5aab0d39cfdbcb85b8",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": "l2",
+            "action": "rewrite",
+            "after": "Built a billing API that kept 99.9% uptime over 2023",
+            "why": "Adds the reliability from the user's note",
+            "factIds": [
+              "n1"
+            ],
+            "needsFact": null
+          }
+        ]
+      }
+    }
+  ]
+}

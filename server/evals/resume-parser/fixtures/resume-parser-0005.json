@@ -1,0 +1,25 @@
+{
+  "caseId": "resume-parser-0005",
+  "promptVersion": 1,
+  "promptSha256": "9d478c531a649f8d3da83b746de04979cfe050fb7d6e80b785a09a4428b4cc6f",
+  "inputHash": "fc5e280a5f278301c3f9ca831c96f958274b30e92664866209f033c6356a4dfc",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "facts": [
+          {
+            "kind": "role",
+            "text": "Data Analyst at Brightwater Parcel Co",
+            "sourceSpan": "Data Analyst, Brightwater Parcel Co"
+          },
+          {
+            "kind": "project",
+            "text": "Built Tableau dashboards for 12 regional managers",
+            "sourceSpan": "Built Tableau dashboards for 12 regional managers"
+          }
+        ]
+      }
+    }
+  ]
+}

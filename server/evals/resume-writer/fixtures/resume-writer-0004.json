@@ -1,0 +1,52 @@
+{
+  "caseId": "resume-writer-0004",
+  "promptVersion": 1,
+  "promptSha256": "93689092284ef700de6e68175b3f6f6d9206733237a658b41a2664bae6c34066",
+  "inputHash": "014f140ea7f6576f246e3068f77687f12f60c30b813930b14b4596b327de0dbe",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": "l1",
+            "action": "rewrite",
+            "after": "Cut invoice processing time by 30% at Quillon Labs",
+            "why": "Leads with the result the posting cares about",
+            "factIds": [
+              "f2"
+            ],
+            "needsFact": null
+          },
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": "l2",
+            "action": "rewrite",
+            "after": "Mentored 3 junior engineers",
+            "why": "Names the scope",
+            "factIds": [
+              "f6"
+            ],
+            "needsFact": null
+          },
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": null,
+            "action": "add",
+            "after": "Built a billing API in TypeScript and PostgreSQL that served 40,000 invoices a month",
+            "why": "Shows the stack the posting asks for",
+            "factIds": [
+              "f4",
+              "f3"
+            ],
+            "needsFact": null
+          }
+        ]
+      }
+    }
+  ]
+}

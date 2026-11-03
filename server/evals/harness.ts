@@ -265,12 +265,13 @@ export async function runEval(opts: RunOptions): Promise<Report> {
       results.push(result);
       if (opts.mode === "fixtures") {
         const fx = loadFixture(dir, c);
-        const stale = staleness(fx, c, spec);
-        if (stale || !fx) {
-          result.failures.push({ grader: "fixture", detail: stale ?? "no fixture" });
+        // A protected question is never sent, so it has nothing to record: any request at all is the leak.
+        const stale = c.expect.abstain === "sensitive" && !fx ? null : staleness(fx, c, spec);
+        if (stale) {
+          result.failures.push({ grader: "fixture", detail: stale });
           continue;
         }
-        const { outcome, costUsd } = await runCase(c, fakeAnthropic(fx.responses.map(scripted)), false);
+        const { outcome, costUsd } = await runCase(c, fakeAnthropic(fx?.responses.map(scripted) ?? []), false);
         result.costUsd = costUsd;
         result.failures.push(...grade(c, outcome));
         continue;

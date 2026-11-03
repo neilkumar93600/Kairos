@@ -1,0 +1,30 @@
+{
+  "caseId": "resume-parser-0006",
+  "promptVersion": 1,
+  "promptSha256": "9d478c531a649f8d3da83b746de04979cfe050fb7d6e80b785a09a4428b4cc6f",
+  "inputHash": "cba70c6c23cdb54d78ca761629f73b5ddbe58b28d78b61a09b57f4b671cd04e1",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "facts": [
+          {
+            "kind": "metric",
+            "text": "Processed 40,000 invoices a month",
+            "sourceSpan": "Processed 40,000 invoices a month"
+          },
+          {
+            "kind": "metric",
+            "text": "Saved $1.2M annually",
+            "sourceSpan": "saving $1.2M annually"
+          },
+          {
+            "kind": "metric",
+            "text": "Grew ARR 3.5x in 18 months",
+            "sourceSpan": "Grew ARR 3.5x in 18 months"
+          }
+        ]
+      }
+    }
+  ]
+}
