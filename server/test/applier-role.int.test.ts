@@ -174,6 +174,10 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       llm_cost_daily: ["S", "SIU", "S"],
       user_daily_usage: ["SIU", "SIUD", "S"],
       ai_usage: ["SIU", "SD", ""],
+      ops_flags: ["SIU", "SIU", ""],
+      feature_flags: ["SIU", "SIU", ""],
+      ops_audit: ["SI", "SI", ""],
+      metrics_minute: ["SIU", "SIUD", ""],
     };
     const ROLES = ["kairos_api", "kairos_worker", "kairos_readonly"] as const;
     const PRIVS = { S: "SELECT", I: "INSERT", U: "UPDATE", D: "DELETE" } as const;
@@ -216,6 +220,10 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       ["kairos_readonly", "select stripe_customer_id from subscriptions limit 1", false],
       ["kairos_metrics", "select day, cost_usd from llm_cost_daily limit 1", true],
       ["kairos_metrics", "select user_id from user_daily_usage limit 1", false],
+      ["kairos_api", "update ops_audit set actor = 'x'", false],
+      ["kairos_worker", "delete from ops_audit", false],
+      ["kairos_applier", "insert into ops_flags (key, value, updated_by) values ('x', 'true', 'x')", false],
+      ["kairos_metrics", "select name, value from metrics_minute limit 1", true],
       ["kairos_api", "update credit_ledger set delta = 100", false],
       ["kairos_api", "delete from credit_ledger", false],
       ["kairos_worker", "update credit_ledger set note = 'x'", false],

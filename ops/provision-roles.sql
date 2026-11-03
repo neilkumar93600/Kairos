@@ -179,6 +179,15 @@ BEGIN
   END LOOP;
 END $$;
 
--- kairos_metrics (Grafana): aggregates only, never a user id or free text. metrics_minute and the ops_*_v views join
--- it when they exist (WP-27).
+-- kairos_metrics (Grafana): aggregates only, never a user id or free text. metrics_minute joins it below (WP-27).
 GRANT SELECT ON llm_cost_daily TO kairos_metrics;
+
+-- Operator flags, audit and metrics (WP-27, 0009). ops_audit is append-only for every runtime role: no UPDATE, no DELETE.
+-- The applier reads the flags before each claim and writes only its own run counters (numbers keyed by a code, no text).
+GRANT SELECT, INSERT, UPDATE ON ops_flags, feature_flags TO kairos_api, kairos_worker;
+GRANT SELECT, INSERT ON ops_audit TO kairos_api, kairos_worker;
+GRANT SELECT, INSERT, UPDATE ON metrics_minute TO kairos_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON metrics_minute TO kairos_worker;
+GRANT SELECT ON ops_flags, feature_flags TO kairos_applier;
+GRANT SELECT, INSERT, UPDATE ON metrics_minute TO kairos_applier;
+GRANT SELECT ON metrics_minute TO kairos_metrics;
