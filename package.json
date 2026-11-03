@@ -27,5 +27,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "railway": "3.16.0"
   }
 }
