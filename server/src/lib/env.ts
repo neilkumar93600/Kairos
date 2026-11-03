@@ -51,6 +51,7 @@ export const APPLIER_FORBIDDEN = [
   "STRIPE_SECRET_KEY",
   "STRIPE_WEBHOOK_SECRET",
   "STRIPE_WEBHOOK_SECRET_PREVIOUS",
+  "KAIROS_EDGE_SECRET",
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_KEY_INTERACTIVE",
   "ANTHROPIC_KEY_BATCH",
@@ -139,6 +140,11 @@ const envSchema = z.object({
   LLM_RPM_SONNET: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).optional()),
   /** Only the evals and llm:record scripts set this; allows a real client under NODE_ENV=test. */
   ALLOW_LLM_NETWORK: z.preprocess(emptyToUndefined, z.coerce.number().optional()),
+
+  /** api only. Proves a request came through the web edge (web/proxy.ts, 05-api 5.5); the same value is set on Vercel. */
+  KAIROS_EDGE_SECRET: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
+  /** api only. Proxies between Railway's edge and the api, skipped from the right of X-Forwarded-For. Set only from the S-B1 probe. */
+  TRUSTED_PROXY_HOPS_DIRECT: z.coerce.number().int().min(0).max(3).default(0),
 }).superRefine((e, ctx) => {
   // Without a token the mailer logs emails instead of sending them. Fine locally; in production
   // that would put sign-up and reset codes in the logs, so refuse to boot.

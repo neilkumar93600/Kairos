@@ -190,6 +190,28 @@ describe.skipIf(!hasTestDb)("Better Auth end to end", () => {
     expect((await agent.get("/api/me")).status).toBe(401);
   });
 
+  // WP-03: Better Auth's limiter in auth_rate_limit keyed by the resolved client IP, and the per-email limits in rate_limits.
+  it("caps sign-ups at 3 a day per client IP, whatever X-Forwarded-For prefix the caller sends", async () => {
+    const from = (ip: string, i: number) =>
+      request(app).post("/api/auth/sign-up/email").set("origin", WEB).set("x-forwarded-for", `10.66.0.${i}, ${ip}`).send({ email: `farm${ip}-${i}@test.local`, password: PASSWORD, name: "F" });
+    for (let i = 0; i < 3; i++) expect((await from("198.51.100.20", i)).status).toBe(200);
+    expect((await from("198.51.100.20", 3)).status).toBe(429);
+    expect((await from("198.51.100.21", 4)).status).toBe(200);
+  });
+
+  it("limits password sign-ins to 5 a minute per email, even from a new address each time", async () => {
+    const attempt = () => post(request.agent(app), "/sign-in/email", { email: "Target@test.local", password: "wrong-password-123" });
+    for (let i = 0; i < 5; i++) expect((await attempt()).status).toBe(401);
+    expect((await attempt()).status).toBe(429);
+    expect((await post(request.agent(app), "/sign-in/email", { email: "other@test.local", password: "wrong-password-123" })).status).toBe(401);
+  });
+
+  it("mails at most 3 codes per 10 minutes to one address, from any address", async () => {
+    const send = (email: string) => post(request.agent(app), "/email-otp/send-verification-otp", { email, type: "sign-in" });
+    for (const email of ["inbox@test.local", "Inbox@test.local", "inbox+x@test.local"]) expect((await send(email)).status).toBe(200);
+    expect((await send("inbox@test.local")).status).toBe(429);
+  });
+
   it("passes scripts/smoke.mjs against a local API (sign up, OTP, sign in, /api/me, Google redirect)", async () => {
     const server = app.listen(0);
     try {

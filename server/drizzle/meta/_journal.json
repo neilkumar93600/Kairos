@@ -29,6 +29,13 @@
       "when": 1793681807116,
       "tag": "0003_billing_past_due_since",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793683066176,
+      "tag": "0004_rate_limits",
+      "breakpoints": true
     }
   ]
 }

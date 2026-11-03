@@ -89,4 +89,12 @@ describe("parseEnv", () => {
     expect(parseEnv({ ...prod, STRIPE_SECRET_KEY: "sk_live_x", STRIPE_WEBHOOK_SECRET: "whsec_x" }).STRIPE_SECRET_KEY).toBe("sk_live_x");
     expect(parseEnv({ ...prod, STRIPE_SECRET_KEY: "sk_test_x" }).STRIPE_SECRET_KEY).toBe("sk_test_x");
   });
+
+  // The edge secret is the only thing that lets a request choose its client IP (05-api 5.5).
+  it("refuses a short KAIROS_EDGE_SECRET; no inner proxy hops unless set", () => {
+    expect(() => parseEnv({ ...base, KAIROS_EDGE_SECRET: "short" })).toThrow(/KAIROS_EDGE_SECRET/);
+    expect(parseEnv({ ...base, KAIROS_EDGE_SECRET: "" }).KAIROS_EDGE_SECRET).toBeUndefined();
+    expect(parseEnv(base).TRUSTED_PROXY_HOPS_DIRECT).toBe(0);
+    expect(parseEnv({ ...base, TRUSTED_PROXY_HOPS_DIRECT: "1" }).TRUSTED_PROXY_HOPS_DIRECT).toBe(1);
+  });
 });
