@@ -13,7 +13,7 @@ import { processParseResume } from "./jobs/parse-resume";
 import { processPollBoards } from "./jobs/poll-boards";
 import { closeQueues, queue, QUEUES, workerConcurrency, workerOptions, type QueueName } from "./jobs/queues";
 import { processMaintenance, SCHEDULES } from "./jobs/schedules";
-import { processScoreMatches } from "./jobs/score-matches";
+import { processScoreMatches, processScoreUser } from "./jobs/score-matches";
 import { processTailorApplication } from "./jobs/tailor-application";
 
 setProcessRole("worker");
@@ -23,6 +23,7 @@ initSentry("worker");
 const handlers: Partial<Record<QueueName, (job: Job) => Promise<unknown>>> = {
   [QUEUES.pollBoards]: processPollBoards,
   [QUEUES.scoreMatches]: processScoreMatches,
+  [QUEUES.scoreUser]: processScoreUser,
   [QUEUES.tailorApplication]: processTailorApplication,
   [QUEUES.parseResume]: processParseResume,
   [QUEUES.classifyEmail]: processClassifyEmail,

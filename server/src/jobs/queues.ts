@@ -145,6 +145,49 @@ export async function redrive<N extends QueueName>(name: N, data: JobData[N], jo
   return true;
 }
 
+/**
+ * A per-user lane: what one user still has waiting on a queue, drained a chunk per job (scale-06). BullMQ groups are a
+ * BullMQ Pro feature, so fairness comes from holding at most one waiting job per user: one user's backlog sits in the
+ * lane, not in the queue, and other users' jobs are never behind more than one of its chunks.
+ */
+export interface Lane {
+  /** Adds members (first in, first out; a member already waiting keeps its place) and makes sure a job will drain them. */
+  add(userId: string, members: string[]): Promise<void>;
+  peek(userId: string, n: number): Promise<string[]>;
+  done(userId: string, members: string[]): Promise<void>;
+  /** Queues the user's job again, behind every other user's, when members remain. */
+  next(userId: string): Promise<void>;
+}
+
+/** A lane's members expire this long after the last add, so a lane nobody drains cannot fill a noeviction Redis. */
+const LANE_TTL_MS = 7 * 24 * 3600 * 1000;
+
+/**
+ * The lane in Redis: a sorted set per user, scored by when each member arrived, and a job deduplicated per user with
+ * keepLastIfActive. A wake while the user's job waits does nothing (that job will see the new members); a wake while it
+ * runs is kept and becomes a new job, at the back of the queue, once the run ends. So no wake is lost.
+ * ponytail: a user job that fails all its attempts leaves its lane until the user's next add; WP-42 replaces this loop.
+ */
+export function redisLane(name: "score-user"): Lane {
+  const key = (userId: string) => `kairos:lane:${name}:${userId}`;
+  const wake = (userId: string) =>
+    (queue(name) as unknown as Queue).add(name, { userId }, { deduplication: { id: userId, keepLastIfActive: true }, removeOnComplete: true });
+  return {
+    async add(userId, members) {
+      if (members.length === 0) return;
+      const now = Date.now();
+      await redis().zadd(key(userId), "NX", ...members.flatMap((m, i) => [now + i, m]));
+      await redis().pexpire(key(userId), LANE_TTL_MS);
+      await wake(userId);
+    },
+    peek: (userId, n) => redis().zrange(key(userId), 0, n - 1),
+    done: async (userId, members) => void (members.length && (await redis().zrem(key(userId), ...members))),
+    async next(userId) {
+      if ((await redis().zcard(key(userId))) > 0) await wake(userId);
+    },
+  };
+}
+
 export async function closeQueues(): Promise<void> {
   await Promise.all([...queues.values()].map((q) => q.close()));
   queues.clear();

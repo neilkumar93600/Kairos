@@ -3,12 +3,14 @@ import { and, eq } from "drizzle-orm";
 import type { Preferences } from "@auto-career/shared";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
+import { memoryLane } from "./helpers/lanes";
 import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from "./helpers/test-db";
 
 /**
  * The interim controls on the old scoring loop (WP-06, CISO mustFix 3; matching-60, 61, v02; scale-12): only users active
  * in the last 14 days with credits and billing not paused are scored; dailyScoringCap and dailyModelSpendCapUsd are
- * checked in user_daily_usage before each call; a retryable model failure becomes a delayed follow-up job.
+ * checked in user_daily_usage before each call; a retryable model failure becomes a delayed follow-up job. Since WP-45
+ * the posting job fans out to per-user lanes and the model calls run per user (processScoreUser): run() does both.
  */
 
 // The app's global db() reads DATABASE_URL lazily, so it is set before any app module loads.
@@ -36,20 +38,23 @@ describe.skipIf(!hasTestDb)("scoring controls against Postgres", () => {
   let db: Db;
   let schema: typeof import("../src/db/schema");
   let platform: typeof import("../src/db/schema/platform");
-  let processScoreMatches: typeof import("../src/jobs/score-matches").processScoreMatches;
+  let scoring: typeof import("../src/jobs/score-matches");
+  let lane: ReturnType<typeof memoryLane>;
   let AgentError: typeof import("../src/llm/errors").AgentError;
 
   beforeAll(async () => {
     db = await testDb("scoring_controls");
     schema = await import("../src/db/schema");
     platform = await import("../src/db/schema/platform");
-    ({ processScoreMatches } = await import("../src/jobs/score-matches"));
+    scoring = await import("../src/jobs/score-matches");
     ({ AgentError } = await import("../src/llm/errors"));
   });
   beforeEach(async () => {
     scoreFit.mockClear();
     scoreFit.mockImplementation(async () => ({ score: 90, reasons: ["Strong match"] }));
     enqueue.mockClear();
+    lane = memoryLane();
+    scoring.setScoreLane(lane);
     await resetDb(db);
   });
   afterAll(async () => {
@@ -58,8 +63,12 @@ describe.skipIf(!hasTestDb)("scoring controls against Postgres", () => {
     await closeTestDbs();
   });
 
-  const run = (jobId: string, extra: { userIds?: string[]; attempt?: number } = {}) =>
-    processScoreMatches({ data: { jobId, ...extra } } as Parameters<typeof processScoreMatches>[0]);
+  /** The posting job, then every user job it queued, in queue order; the counts of the user jobs summed. */
+  async function run(jobId: string, extra: { userIds?: string[]; attempt?: number } = {}) {
+    await scoring.processScoreMatches({ data: { jobId, ...extra } } as Parameters<typeof scoring.processScoreMatches>[0]);
+    const runs = await lane.drain((userId) => scoring.processScoreUser({ data: { userId } } as Parameters<typeof scoring.processScoreUser>[0]));
+    return { stored: runs.reduce((n, r) => n + r.stored, 0), retrying: runs.reduce((n, r) => n + r.retrying, 0) };
+  }
   // On the legacy path (the test default) scoreFit gets no context, so each user's fact carries the user id.
   const scoredUsers = () => scoreFit.mock.calls.map((c) => String(c[1]).match(/user ([0-9a-f-]{36})/)?.[1] ?? null);
 

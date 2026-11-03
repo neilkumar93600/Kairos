@@ -3,6 +3,7 @@ import request from "supertest";
 import type { Preferences } from "@auto-career/shared";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
+import { memoryLane } from "./helpers/lanes";
 import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from "./helpers/test-db";
 
 // P0 invariant tests (ADR-001 B.14): pinned on the skeleton so the DBOS migration (P2-P4) cannot regress them.
@@ -183,12 +184,15 @@ describe.skipIf(!hasTestDb)("P0 invariants against Postgres", () => {
   });
 
   it("never calls the fit model for a user who fails the hard filters", async () => {
-    const { processScoreMatches } = await import("../src/jobs/score-matches");
+    const { processScoreMatches, processScoreUser, setScoreLane } = await import("../src/jobs/score-matches");
+    const lane = memoryLane();
+    setScoreLane(lane);
     await candidate("excludes-acme", { ...PREFS, excludedCompanies: ["Acme"] });
     await candidate("passes", PREFS);
     const jobId = await job(await company("Acme"), "a");
 
     await processScoreMatches({ data: { jobId } } as Parameters<typeof processScoreMatches>[0]);
+    await lane.drain((userId) => processScoreUser({ data: { userId } } as Parameters<typeof processScoreUser>[0]));
     // Exactly one call: for the passing user (positive control), none for the excluded one.
     expect(scoreFit).toHaveBeenCalledTimes(1);
     const matched = await db.select({ userId: schema.matches.userId }).from(schema.matches);

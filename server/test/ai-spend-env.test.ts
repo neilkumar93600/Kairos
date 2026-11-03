@@ -52,8 +52,9 @@ describe("PAUSE_SCORING", () => {
   it("stops the scoring loop before it reads anything", async () => {
     vi.stubEnv("PAUSE_SCORING", "true");
     vi.resetModules();
-    const { processScoreMatches } = await import("../src/jobs/score-matches");
-    // No database is reachable here, so any query would throw.
-    expect(await processScoreMatches({ data: { jobId: "00000000-0000-4000-8000-000000000000" } } as never)).toEqual({ stored: 0, paused: true });
+    const { processScoreMatches, processScoreUser } = await import("../src/jobs/score-matches");
+    // No database or Redis is reachable here, so any query would throw. Both the fan-out and the user's chunk stop.
+    expect(await processScoreMatches({ data: { jobId: "00000000-0000-4000-8000-000000000000" } } as never)).toEqual({ queued: 0, paused: true });
+    expect(await processScoreUser({ data: { userId: "u" } } as never)).toEqual({ stored: 0, retrying: 0, paused: true });
   });
 });
