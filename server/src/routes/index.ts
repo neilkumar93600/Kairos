@@ -8,6 +8,7 @@ import { billingRouter } from "./billing";
 import { contactRouter } from "./contact";
 import { creditsRouter } from "./credits";
 import { extensionRouter } from "./extension";
+import { filesRouter } from "./files";
 import { inboxRouter } from "./inbox";
 import { jobsRouter } from "./jobs";
 import { matchesRouter } from "./matches";
@@ -36,6 +37,7 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   router.use("/inbox", authed, inboxRouter);
   router.use("/billing", authed, limits.billing, billingRouter);
   router.use("/extension", authed, extensionRouter);
+  router.use("/files", authed, filesRouter);
   router.use(countFailedSignIn(limits));
   return router;
 }

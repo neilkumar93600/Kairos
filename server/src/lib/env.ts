@@ -61,6 +61,15 @@ export const APPLIER_FORBIDDEN = [
   "USER_HASH_KEY",
   "DATA_KEKS",
   "LINK_SIGNING_KEY",
+  // R2 (WP-14): the applier only ever gets short presigned URLs minted by the worker, never a storage key.
+  "R2_UPLOADS_ACCESS_KEY_ID",
+  "R2_UPLOADS_SECRET_ACCESS_KEY",
+  "R2_RENDERS_ACCESS_KEY_ID",
+  "R2_RENDERS_SECRET_ACCESS_KEY",
+  "R2_SNAPSHOTS_ACCESS_KEY_ID",
+  "R2_SNAPSHOTS_SECRET_ACCESS_KEY",
+  "R2_BACKUPS_ACCESS_KEY_ID",
+  "R2_BACKUPS_SECRET_ACCESS_KEY",
 ] as const;
 
 const applierSchema = z.object(applierShape);
@@ -172,6 +181,22 @@ const envSchema = z.object({
       })
       .optional(),
   ),
+  // Object storage (WP-14, 06-infrastructure 4.3): Cloudflare R2, one token per bucket and process, so a leaked key
+  // opens one bucket. A bucket is on when its name and both key halves are set; lib/storage.ts refuses the others.
+  /** https://<account id>.r2.cloudflarestorage.com */
+  R2_ENDPOINT: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  R2_BUCKET_UPLOADS: z.preprocess(emptyToUndefined, z.string().optional()),
+  R2_UPLOADS_ACCESS_KEY_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+  R2_UPLOADS_SECRET_ACCESS_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  R2_BUCKET_RENDERS: z.preprocess(emptyToUndefined, z.string().optional()),
+  R2_RENDERS_ACCESS_KEY_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+  R2_RENDERS_SECRET_ACCESS_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  R2_BUCKET_SNAPSHOTS: z.preprocess(emptyToUndefined, z.string().optional()),
+  R2_SNAPSHOTS_ACCESS_KEY_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+  R2_SNAPSHOTS_SECRET_ACCESS_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  R2_BUCKET_BACKUPS: z.preprocess(emptyToUndefined, z.string().optional()),
+  R2_BACKUPS_ACCESS_KEY_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+  R2_BACKUPS_SECRET_ACCESS_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
 }).superRefine((e, ctx) => {
   // Without a token the mailer logs emails instead of sending them. Fine locally; in production
   // that would put sign-up and reset codes in the logs, so refuse to boot.
@@ -213,6 +238,20 @@ const envSchema = z.object({
   // A live key takes real money; without the webhook secret every event answers 400, so nobody gets a plan or credits.
   if (e.NODE_ENV === "production" && e.STRIPE_SECRET_KEY?.startsWith("sk_live_") && !e.STRIPE_WEBHOOK_SECRET) {
     ctx.addIssue({ code: "custom", path: ["STRIPE_WEBHOOK_SECRET"], message: "required in production with a live STRIPE_SECRET_KEY" });
+  }
+}).superRefine((e, ctx) => {
+  // R2 (WP-14): half a bucket is a deploy mistake, caught at boot instead of at the first upload.
+  let anyBucket = false;
+  for (const b of ["UPLOADS", "RENDERS", "SNAPSHOTS", "BACKUPS"] as const) {
+    const keys = [`R2_BUCKET_${b}`, `R2_${b}_ACCESS_KEY_ID`, `R2_${b}_SECRET_ACCESS_KEY`] as const;
+    const first = keys.find((k) => e[k]);
+    if (!first) continue;
+    anyBucket = true;
+    for (const k of keys) if (!e[k]) ctx.addIssue({ code: "custom", path: [k], message: `required with ${first}` });
+  }
+  if (anyBucket && !e.R2_ENDPOINT) ctx.addIssue({ code: "custom", path: ["R2_ENDPOINT"], message: "required with an R2 bucket" });
+  if (e.NODE_ENV === "production" && e.R2_ENDPOINT && !e.R2_ENDPOINT.startsWith("https://")) {
+    ctx.addIssue({ code: "custom", path: ["R2_ENDPOINT"], message: "must be https in production" });
   }
 });
 
