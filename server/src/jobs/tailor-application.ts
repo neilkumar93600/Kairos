@@ -2,7 +2,9 @@ import type { Job } from "bullmq";
 import { and, eq, sql } from "drizzle-orm";
 import type { ApplicationAnswer, ResumeLine } from "@auto-career/shared";
 import { db } from "../db/client";
-import { applications, companies, facts, jobs, profiles, savedAnswers, user } from "../db/schema";
+import { applications, companies, facts, jobs, profiles, resumes, savedAnswers, user } from "../db/schema";
+import { HttpError } from "../lib/errors";
+import { copyFor, createCopy } from "../services/resume-library";
 import { logger } from "../lib/logger";
 import { tailorResume } from "../services/tailor";
 import { topFacts } from "../services/job-fit";
@@ -64,5 +66,26 @@ export async function processTailorApplication(job: Job<JobData["tailor-applicat
     .update(applications)
     .set({ resumeLines: ifEmpty(applications.resumeLines, kept), answers: ifEmpty(applications.answers, answers), updatedAt: new Date() })
     .where(and(eq(applications.id, row.app.id), eq(applications.status, "draft")));
+  await ensureTailoredCopy(row.app.userId, row.app.id, { id: row.job.id, title: row.job.title, company: row.companyName });
   return { lines: kept.length, answers: answers.length };
+}
+
+/**
+ * PRD 6.2 and D2: every draft has a tailored copy in the library, started from the base whose target roles best match
+ * the job title (else the default), with a before_tailor revision; a copy the user made first is linked to the draft.
+ * ponytail: the pipeline's tailored lines stay on applications.resume_lines, not written into the copy's document;
+ * mapping them into the document is the resume-tailor suggestion mode of WP-41.
+ */
+async function ensureTailoredCopy(userId: string, applicationId: string, job: { id: string; title: string; company: string }) {
+  const existing = await copyFor(userId, job.id);
+  if (existing) {
+    if (!existing.applicationId) await db().update(resumes).set({ applicationId }).where(eq(resumes.id, existing.id));
+    return;
+  }
+  try {
+    await createCopy({ id: userId }, await planFor(db(), userId), job);
+  } catch (err) {
+    // A concurrent copy won the unique index: that copy is the job's, which is what was wanted.
+    if (!(err instanceof HttpError && err.code === "exists")) throw err;
+  }
 }

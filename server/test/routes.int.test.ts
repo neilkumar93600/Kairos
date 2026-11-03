@@ -441,6 +441,23 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       expect(after.answers.map((a) => a.fieldKey)).toContain("email");
     });
 
+    it("saves the draft's tailored copy from the base whose target roles match the title (PRD 6.2, D2)", async () => {
+      const f = await fact("Built billing", true);
+      const base = await seedBase(doc(f));
+      const [match] = await tdb
+        .insert(schema.resumes)
+        .values({ userId: me.id, resumeProfileId: base.resumeProfileId, name: "Engineering", targetRoles: ["Engineer"], document: doc(f) })
+        .returning();
+      const app1 = await draft();
+      await run(app1.id);
+      await run(app1.id);
+      const copies = await tdb.select().from(schema.resumes).where(eq(schema.resumes.kind, "tailored"));
+      expect(copies).toHaveLength(1);
+      expect(copies[0]).toMatchObject({ baseResumeId: match!.id, jobId: app1.jobId, applicationId: app1.id });
+      const revs = await tdb.select().from(schema.resumeRevisions).where(eq(schema.resumeRevisions.resumeId, copies[0]!.id));
+      expect(revs.map((r) => r.reason)).toEqual(["before_tailor"]);
+    });
+
     it("never overwrites lines or answers the user saved while the model ran", async () => {
       const confirmed = await fact("Built billing", true);
       const app1 = await draft();
