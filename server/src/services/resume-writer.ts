@@ -239,10 +239,11 @@ export async function suggestEdits(
           {
             scope: req.scope,
             refine: req.refine ?? null,
-            resumeView: renderView(view),
-            facts: confirmed.map((f) => ({ id: f.id, kind: f.kind, text: f.text })),
-            noteFact: factCreated ? { id: factCreated.id, kind: factCreated.kind, text: factCreated.text } : null,
-            job: ctx.job ? { title: ctx.job.title, company: ctx.job.company, descriptionText: ctx.job.descriptionText } : null,
+            // Clipped to the input schema (the gateway refuses anything longer); the render cuts the view deeper.
+            resumeView: renderView(view).slice(0, 12_000),
+            facts: confirmed.slice(0, 60).map((f) => ({ id: f.id, kind: f.kind, text: f.text })),
+            noteFact: factCreated ? { id: factCreated.id, kind: factCreated.kind, text: factCreated.text.slice(0, 400) } : null,
+            job: ctx.job ? { title: ctx.job.title.slice(0, 200), company: ctx.job.company.slice(0, 200), descriptionText: ctx.job.descriptionText.slice(0, 20_000) } : null,
             maxSuggestions: max,
           },
           deps.callCtx ?? {},

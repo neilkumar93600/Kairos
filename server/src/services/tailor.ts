@@ -64,7 +64,12 @@ export async function tailorResume(
   const factTexts = new Map(facts.map((f) => [f.id, f.text]));
   if (callCtx ?? gatewayEnabled()) {
     // The gateway path (LLM_GATEWAY=anthropic); the truth lock below still owns the final word.
-    const out = await runAgent(resumeTailor, { facts, job }, callCtx ?? {});
+    // Clipped to the input schema (60 facts; the gateway refuses more). Callers pass their best facts first.
+    const input = {
+      facts: facts.slice(0, 60),
+      job: { title: job.title.slice(0, 200), companyName: job.companyName.slice(0, 200), descriptionText: job.descriptionText.slice(0, 20_000) },
+    };
+    const out = await runAgent(resumeTailor, input, callCtx ?? {});
     return enforceTruthLock(out.data.lines, factTexts);
   }
   const factList = facts.map((f) => `[${f.id}] (${f.kind}) ${redactContact(f.text)}`).join("\n");

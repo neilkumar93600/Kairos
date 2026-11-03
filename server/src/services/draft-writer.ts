@@ -39,6 +39,9 @@ const letterSchema = z.object({ paragraphs: z.array(answerSchema).min(1).max(12)
 const TRUTH_RULES =
   "Write only in the first person, in plain words. Never add a number, employer, job title, date, tool, degree or scope that is not in the cited facts. Cite the id of every fact you use in factIds.";
 
+/** The posting clipped to the agents' input schema (the gateway refuses anything longer); the render cuts deeper. */
+const clipJob = (job: Job): Job => ({ title: job.title.slice(0, 200), company: job.company.slice(0, 200), descriptionText: job.descriptionText.slice(0, 20_000) });
+
 const factList = (facts: DraftFact[]) => facts.map((f) => `[${f.id}] (${f.kind}) ${f.text}`).join("\n");
 // Title and company come from the posting too, so they are fenced with its description.
 const jobBlock = (job: Job) => `Target job:\n${untrusted("job_description", `${job.title} at ${job.company}\n\n${job.descriptionText}`, 6000)}`;
@@ -71,7 +74,12 @@ export async function draftAnswer(
     // The gateway path (LLM_GATEWAY=anthropic); verification below owns the truth rules in code.
     const out = await runAgent(
       answerDrafter,
-      { label: input.label, facts: input.facts, savedAnswers: input.savedAnswers ?? null, job: input.job },
+      {
+        label: input.label.slice(0, 500),
+        facts: input.facts.slice(0, 60),
+        savedAnswers: input.savedAnswers?.slice(0, 20).map((s) => ({ label: s.label.slice(0, 500), answer: s.answer.slice(0, 5_000) })) ?? null,
+        job: clipJob(input.job),
+      },
       deps.callCtx ?? {},
     ).then((r) => r.data);
     if (verified(out, ok, input.job)) return { text: out.text.trim(), factIds: [...new Set(out.factIds)] };
@@ -104,7 +112,7 @@ export async function draftCoverLetter(input: { job: Job; facts: DraftFact[] }, 
   const ok = new Map(input.facts.map((f) => [f.id, f.text]));
   if (deps.callCtx || (!deps.chat && gatewayEnabled())) {
     // The gateway path (LLM_GATEWAY=anthropic); the same paragraph filter applies in code.
-    const out = await runAgent(coverLetterWriter, { facts: input.facts, job: input.job }, deps.callCtx ?? {}).then((r) => r.data);
+    const out = await runAgent(coverLetterWriter, { facts: input.facts.slice(0, 60), job: clipJob(input.job) }, deps.callCtx ?? {}).then((r) => r.data);
     return letterFrom(out.paragraphs, ok, input.job);
   }
   const chat = deps.chat ?? chatJson;

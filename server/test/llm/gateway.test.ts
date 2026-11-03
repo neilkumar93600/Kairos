@@ -9,6 +9,7 @@ import { AgentError } from "../../src/llm/errors";
 import { userHash } from "../../src/llm/redact";
 import { fitScorer } from "../../src/agents/fit-scorer/spec";
 import { resumeTailor } from "../../src/agents/resume-tailor/spec";
+import { AGENTS } from "../../src/agents/registry";
 import type { CallRow } from "../../src/llm/ledger";
 
 /** The gateway tests of 03-agent-runtime.md 15.3: fake client, no network, one row per send. */
@@ -271,6 +272,68 @@ describe("runAgent", () => {
       expect(json).not.toContain("React");
     }
   });
+});
+
+/** Inputs at every schema bound (strings at max length, arrays at max items), plain ASCII. */
+const text = (n: number) => "Built and ran billing services for a team. ".repeat(Math.ceil(n / 43)).slice(0, n);
+const maxFacts = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `fact-${i}`, kind: "role", text: text(400) }));
+const maxJob = { title: text(200), company: text(200), descriptionText: text(20_000) };
+const MAX_INPUTS: Record<keyof typeof AGENTS, unknown> = {
+  "fit-scorer": { profileSummary: text(6_000), job: { title: text(200), companyName: text(200), location: text(200), remote: true, descriptionText: text(20_000) } },
+  "resume-parser": { resumeText: text(30_000) },
+  "resume-tailor": { facts: maxFacts(60), job: { title: text(200), companyName: text(200), descriptionText: text(20_000) } },
+  "resume-writer": { scope: "resume", refine: "use_numbers", resumeView: text(12_000), facts: maxFacts(60), noteFact: { id: "note-1", kind: "metric", text: text(400) }, job: maxJob, maxSuggestions: 15 },
+  "answer-drafter": { label: text(500), facts: maxFacts(60), savedAnswers: Array.from({ length: 20 }, () => ({ label: text(500), answer: text(5_000) })), job: maxJob },
+  "cover-letter-writer": { facts: maxFacts(60), job: maxJob },
+};
+
+describe("runAgent input contract (llm-agents-05, v01)", () => {
+  let rows: CallRow[];
+  const base = (fake: ReturnType<typeof fakeAnthropic>): GatewayDeps => ({
+    client: () => fake,
+    budget: new Budget(memorySpendStore()),
+    writeRow: async (row) => {
+      rows.push(row);
+      return "x";
+    },
+    now: () => Date.now(),
+    sleep: async () => {},
+    flags: () => ({ llmPaused: false, batchPaused: false, disabled: {}, promptPin: {} }),
+  });
+
+  beforeEach(() => {
+    rows = [];
+    resetBreakers();
+    resetLimiter();
+  });
+  afterEach(() => configureGateway({ writeRow: async () => null }));
+
+  it("refuses an input that fails spec.input before any spend, with no row", async () => {
+    const fake = fakeAnthropic(okFit());
+    configureGateway(base(fake));
+    await expect(runAgent(fitScorer, { ...fitInput, profileSummary: "" }, {})).rejects.toMatchObject({ code: "invalid_request", retryable: false });
+    await expect(runAgent(resumeTailor, { ...tailoringInput, facts: maxFacts(61) }, {})).rejects.toMatchObject({ code: "invalid_request" });
+    expect(fake.requests).toHaveLength(0);
+    expect(rows).toHaveLength(0);
+  });
+
+  it("refuses a rendered prompt above the agent's maxInputTokens before any spend", async () => {
+    const fake = fakeAnthropic(okFit());
+    configureGateway(base(fake));
+    await expect(runAgent({ ...fitScorer, maxInputTokens: 500 }, fitInput, {})).rejects.toMatchObject({ code: "invalid_request", retryable: false });
+    expect(fake.requests).toHaveLength(0);
+    expect(rows).toHaveLength(0);
+  });
+
+  for (const [id, spec] of Object.entries(AGENTS)) {
+    it(`${id}: an input at every schema bound still fits maxInputTokens and the per-call cap, so it reaches the model`, async () => {
+      const fake = fakeAnthropic([{ status: 401, type: "authentication_error" }]); // a code the gateway itself never raises
+      configureGateway(base(fake));
+      const err = await runAgent(spec as typeof fitScorer, MAX_INPUTS[id as keyof typeof AGENTS] as never, { userId: "user-max" }).catch((e: unknown) => e);
+      expect((err as AgentError).code, `${id} was refused before sending: ${(err as Error).message}`).toBe("auth");
+      expect(fake.requests).toHaveLength(1);
+    });
+  }
 });
 
 describe("budget scope refusal", () => {

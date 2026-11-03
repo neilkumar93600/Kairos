@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { Preferences } from "@auto-career/shared";
-import { passesHardFilters, type FitJob } from "../src/services/fit";
+import { passesHardFilters, scoreFit, type FitJob } from "../src/services/fit";
+import { configureGateway } from "../src/llm/gateway";
+import { Budget } from "../src/llm/budget";
+import { memorySpendStore } from "../src/llm/spend-store";
+import { fakeAnthropic } from "../src/llm/testing";
+import { resetBreakers } from "../src/llm/breaker";
+import { resetLimiter } from "../src/llm/limiter";
 
 const prefs: Preferences = {
   roles: ["software engineer"],
@@ -57,5 +63,28 @@ describe("passesHardFilters", () => {
     expect(r.reasons).toEqual(
       expect.arrayContaining(["Company is on your exclude list", 'Mentions excluded keyword "clearance"', "Posted salary is below your floor"]),
     );
+  });
+});
+
+describe("scoreFit on the gateway path", () => {
+  afterEach(() => configureGateway({ writeRow: async () => null }));
+
+  it("clips an oversized summary and posting to the agent's input schema, so the call still goes out (llm-agents-v01)", async () => {
+    resetBreakers();
+    resetLimiter();
+    const fake = fakeAnthropic([
+      { content: [{ type: "text", text: JSON.stringify({ score: 70, reasons: ["Meets the API requirement"] }) }], stop_reason: "end_turn", usage: { input_tokens: 900, output_tokens: 30 } },
+    ]);
+    configureGateway({
+      client: () => fake,
+      budget: new Budget(memorySpendStore()),
+      writeRow: async () => "call-1",
+      sleep: async () => {},
+      flags: () => ({ llmPaused: false, batchPaused: false, disabled: {}, promptPin: {} }),
+    });
+    const huge = { ...job, title: "Software Engineer ".repeat(20), location: "New York; ".repeat(40), descriptionText: "Build APIs in TypeScript. ".repeat(1_200) };
+    const out = await scoreFit(huge, "- (skill) TypeScript APIs\n".repeat(400), { userId: "u1" });
+    expect(out.score).toBe(70);
+    expect(fake.requests).toHaveLength(1);
   });
 });

@@ -97,7 +97,15 @@ export async function scoreFit(
   if (callCtx) {
     // The gateway path (LLM_GATEWAY=anthropic): the hard filters above are the caller's gate, so
     // this call only ever sees pairs that passed them (INV-1).
-    const out = await runAgent(fitScorer, { profileSummary, job: { ...job } }, callCtx);
+    // Clipped to the input schema (the gateway refuses anything longer); the render cuts deeper still.
+    const clipped = {
+      title: job.title.slice(0, 200),
+      companyName: job.companyName.slice(0, 200),
+      location: job.location?.slice(0, 200) ?? null,
+      remote: job.remote,
+      descriptionText: job.descriptionText.slice(0, 20_000),
+    };
+    const out = await runAgent(fitScorer, { profileSummary: profileSummary.slice(0, 6_000), job: clipped }, callCtx);
     return { score: out.data.score, reasons: out.data.reasons };
   }
   const posting = `${job.title} at ${job.companyName}\nLocation: ${job.location ?? "unspecified"}${job.remote ? " (remote)" : ""}\n\n${job.descriptionText}`;

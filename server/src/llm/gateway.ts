@@ -82,6 +82,14 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
   const callKind = opts.callKind ?? "primary";
   const nonces: string[] = [];
 
+  // The input contract (2.1, llm-agents-v01): bounds such as facts .max(60) hold here, not only on paper. Paths only,
+  // never values, in the message.
+  const parsedInput = spec.input.safeParse(input);
+  if (!parsedInput.success) {
+    const paths = parsedInput.error.issues.slice(0, 5).map((i) => `${i.path.map(String).join(".") || "$"}: ${i.code}`);
+    throw new AgentError("invalid_request", `${spec.id}: input fails its schema (${paths.join(", ")})`, false);
+  }
+
   // Kill switches (4.5): before any spend.
   const flags = d.flags();
   if (flags.llmPaused) throw new AgentError("llm_paused", "all model calls are paused", false);
@@ -107,9 +115,11 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
   const canaryExempt = [rendered.userBlock?.text ?? "", ...rendered.untrusted.filter((b) => USER_LABELS.has(b.label)).map((b) => b.text)].join("\n");
 
   // Per-call budget estimate (9.2): worst case, every input token uncached.
+  // The agent's maxInputTokens (2.2) bounds the whole prompt; the render caps keep a schema-valid input under it.
   const inputTokensEstimate = estimateInputTokens([systemText, rendered.userBlock?.text ?? "", variableBlock]);
-  if (inputTokensEstimate > MAX_PROMPT_TOKENS) {
-    throw new AgentError("invalid_request", `estimated prompt ${inputTokensEstimate} tokens is above the ${MAX_PROMPT_TOKENS} ceiling`, false);
+  const inputCeiling = Math.min(spec.maxInputTokens, MAX_PROMPT_TOKENS);
+  if (inputTokensEstimate > inputCeiling) {
+    throw new AgentError("invalid_request", `${spec.id}: estimated prompt ${inputTokensEstimate} tokens is above its ${inputCeiling} ceiling`, false);
   }
   const maxTokens = typeof spec.maxTokens === "function" ? spec.maxTokens(input) : spec.maxTokens;
   const effort = typeof spec.effort === "function" ? spec.effort(input) : spec.effort;

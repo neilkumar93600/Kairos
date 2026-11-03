@@ -22,7 +22,9 @@ export const fitScorer: AgentSpec<FitScorerInput, FitScorerOutput> = {
   output: FitScorerOutput,
   schemaSnapshot: snap,
   maxTokens: 200,
-  maxInputTokens: 3_000,
+  // ponytail: v1 sends the profile block and the whole posting, so the ceiling is the most the $0.0006 per-call cap
+  // allows at 200 output tokens; 3.3's 3,000 is the v2 job-card budget and returns with fit-scorer v2.
+  maxInputTokens: 5_000,
   timeoutMs: 20_000,
   expectedCostUsd: 0.00021,
   maxCostPerCallUsd: 0.0006,

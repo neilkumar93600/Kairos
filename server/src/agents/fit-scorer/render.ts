@@ -13,6 +13,6 @@ export function renderFitScorer(input: FitScorerInput, ctx: { userId?: string })
   const job = `${input.job.title} at ${input.job.companyName}\nLocation: ${input.job.location ?? "unspecified"}${input.job.remote ? " (remote)" : ""}\n\n${input.job.descriptionText}`;
   return {
     userBlock: fenceUserBlock("profile", profile, "fit-scorer", ctx),
-    untrusted: [{ label: "job_description", text: job, maxTokens: 2_100 }],
+    untrusted: [{ label: "job_description", text: job, maxTokens: 1_950 }], // a max-size profile plus this fits maxInputTokens
   };
 }
