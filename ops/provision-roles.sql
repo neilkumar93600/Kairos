@@ -182,3 +182,12 @@ END $$;
 -- kairos_metrics (Grafana): aggregates only, never a user id or free text. metrics_minute and the ops_*_v views join
 -- it when they exist (WP-27).
 GRANT SELECT ON llm_cost_daily TO kairos_metrics;
+
+-- Privacy (WP-25, migration 0009). The api runs the erasure transaction of Settings > Delete account
+-- (services/erasure.ts): it writes the task, the ledger archive and the erased-address hash, deletes the user's contact
+-- messages and the user row; it reads erased_emails and writes consent at sign-up. The worker finishes each task
+-- (jobs/erasure.ts), archives the ledger of unverified accounts it purges, and runs the operator scripts. Neither
+-- may rewrite or delete the archive or the erased-address list; kairos_readonly reads none of the four tables.
+GRANT SELECT, INSERT, UPDATE ON deletion_tasks, consent_records TO kairos_api, kairos_worker;
+GRANT SELECT, INSERT ON credit_ledger_archive, erased_emails TO kairos_api, kairos_worker;
+GRANT DELETE ON contact_messages TO kairos_api;

@@ -35,6 +35,8 @@ export const applications = pgTable(
     failureReason: text("failure_reason"),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
     submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    /** Set by scrub-applications (jobs/retention.ts) once sensitive answer and receipt values are blanked (INV-9). */
+    contentScrubbedAt: timestamp("content_scrubbed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
