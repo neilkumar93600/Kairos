@@ -14,6 +14,7 @@ import { inboxRouter } from "./inbox";
 import { jobsRouter } from "./jobs";
 import { matchesRouter } from "./matches";
 import { meRouter } from "./me";
+import { notificationsRouter } from "./notifications";
 import { profileRouter } from "./profile";
 import { resumeRouter } from "./resume";
 
@@ -54,6 +55,7 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   router.use("/billing", freshAuthed, limits.billing, billingRouter);
   router.use("/extension", authed, extensionRouter);
   router.use("/files", authed, filesRouter);
+  router.use("/notifications", authed, notificationsRouter);
   router.use(countFailedSignIn(limits));
   return router;
 }

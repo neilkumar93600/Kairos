@@ -46,6 +46,13 @@ describe("pagination", () => {
     for (const k of [1.5, 3_000_000_000, "7", null]) expect(refused(b64({ v: 1, t: "x", k: [k, TS], id: ID }), ["int", "ts"])).toBe(true);
   });
 
+  it("refuses a cursor carrying a field encodeCursor never writes (WP-44 review)", () => {
+    const good = JSON.parse(Buffer.from(encodeCursor("notifications", ["2026-11-03T10:00:00.123456Z"], "6f1c2a52-6d3e-4a0e-9a59-6e7f1b2c3d4e"), "base64url").toString());
+    const extra = Buffer.from(JSON.stringify({ ...good, x: 1 })).toString("base64url");
+    expect(() => pageParams({ cursor: extra }, 50, "notifications", ["ts"])).toThrow(HttpError);
+    expect(pageParams({ cursor: Buffer.from(JSON.stringify(good)).toString("base64url") }, 50, "notifications", ["ts"]).after?.id).toBe(good.id);
+  });
+
   it("slices limit+1 rows into a page and a nextCursor built from the last kept row", () => {
     const rows = [1, 2, 3].map((n) => ({ id: `${ID.slice(0, -1)}${n}`, at: `2026-11-0${n}T00:00:00.000001Z` }));
     const page = slicePage(rows, 2, "x", (r) => [r.at], (r) => r.id);

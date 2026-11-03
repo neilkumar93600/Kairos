@@ -92,6 +92,13 @@
       "when": 1793704012089,
       "tag": "0012_lifecycle_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793717829323,
+      "tag": "0013_outbound_mail",
+      "breakpoints": true
     }
   ]
 }

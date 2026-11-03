@@ -199,3 +199,16 @@ GRANT SELECT ON application_events TO kairos_readonly;
 GRANT SELECT (id, application_id, user_id, attempt_no, channel, ats, approved_by, phase, state, failure_code, lease_conflict,
   duplicate_reports, late_confirmation, worker_identity, browser_launched_at, submit_seen_at, heartbeat_at, started_at,
   finished_at, settled_at) ON submission_attempts TO kairos_readonly;
+
+-- Outbound mail and signed links (WP-44, 02-database 4.2). The api reads and marks notifications read, verifies and
+-- consumes signed links and records Postmark's bounce and complaint events; the worker claims and sends mail, mints
+-- links, writes notifications and runs the retention deletes. The api can change only read_at on a notification.
+-- The api sends no notify mail (the worker does), so it has no email_sends grant; on action_tokens it can mint a link
+-- and mark one used, nothing else.
+GRANT SELECT, INSERT ON action_tokens TO kairos_api;
+GRANT UPDATE (used_at) ON action_tokens TO kairos_api;
+GRANT SELECT, INSERT ON notifications TO kairos_api;
+GRANT UPDATE (read_at) ON notifications TO kairos_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON email_suppressions TO kairos_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON email_sends, notifications, action_tokens TO kairos_worker;
+GRANT SELECT, INSERT ON email_suppressions TO kairos_worker;

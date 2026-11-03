@@ -112,6 +112,12 @@ const SIGNALS = {
   backup_stale: 1,
   /** The latest dump's manifest has a warning: a table shrank, the dump shrank, or it nears R2's 5 GiB put (WP-13). */
   backup_warning: 1,
+  /** Postmark refused the token (401): no notify email is going out (A-EMAIL-7, SEV1; WP-44). */
+  postmark_unauthorized: 1,
+  /** email_sends rows given up after 5 claims: those emails were never confirmed sent (WP-44 notify-reconcile). */
+  email_lease_exhausted: 1,
+  /** 401 or 403 on Postmark's delivery-event webhook: someone guessing its token (WP-44). */
+  postmark_events_token_rejected: 5,
 } as const;
 export type Signal = keyof typeof SIGNALS;
 

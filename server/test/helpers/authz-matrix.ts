@@ -48,6 +48,7 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "ALL /api/auth/*splat": { public: "Better Auth: sign-in and the caller's own session; it checks its own origins and limits" },
   "POST /api/webhooks/stripe": { public: "Stripe: the signature is the credential, and the event names its own customer" },
   "POST /api/webhooks/inbound-email": { public: "Postmark inbound: the token is the credential; mail is filed by forwarding address" },
+  "POST /api/webhooks/postmark-events": { public: "Postmark delivery events: the token is the credential; it only adds or lifts address-hash suppressions" },
   "POST /api/contact": { public: "the public contact form: stores a message and reads nothing back" },
   "GET /api/auth-providers": { public: "the configured sign-in methods; no user data" },
 
@@ -112,6 +113,10 @@ export const MATRIX: Record<string, MatrixEntry> = {
   },
 
   "GET /api/files/*key": { request: (t) => ({ path: `/api/files/${t.fileKey}` }) },
+
+  // WP-44: every statement filters by the caller's user id; read-all touches only the caller's unread rows.
+  "GET /api/notifications": own("/api/notifications"),
+  "POST /api/notifications/read": own("/api/notifications/read", { all: true }),
 };
 
 type Layer = { route?: { path: string | string[]; methods: Record<string, boolean> }; handle: { stack?: Layer[] }; mountPath?: string | string[] };

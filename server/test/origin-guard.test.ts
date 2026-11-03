@@ -1,6 +1,7 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
+import { csrfOrigins } from "../src/middleware/origin-guard";
 
 /**
  * originGuard (05-api 5.6, CISO should-fix "origin guard"): a cookie-authenticated write from another site is 403
@@ -59,5 +60,11 @@ describe("originGuard", () => {
     expect(auth.status).toBe(200);
     const hook = await request(app).post("/api/webhooks/inbound-email").set("cookie", COOKIE).set("origin", "https://evil.example").send({});
     expect(hook.body?.error?.code).not.toBe("origin_not_allowed");
+  });
+
+  it("lists the web origin, CSRF_ALLOWED_ORIGINS and API_PUBLIC_ORIGIN, where the signed-link forms post (WP-44)", () => {
+    const e = { WEB_ORIGIN: "https://kairos.example/", CSRF_ALLOWED_ORIGINS: ["https://preview.kairos.example"] };
+    expect(csrfOrigins({ ...e, API_PUBLIC_ORIGIN: "https://api.kairos.example" })).toEqual([WEB, "https://preview.kairos.example", "https://api.kairos.example"]);
+    expect(csrfOrigins({ ...e, API_PUBLIC_ORIGIN: undefined })).toEqual([WEB, "https://preview.kairos.example"]);
   });
 });

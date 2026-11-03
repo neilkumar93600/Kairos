@@ -80,6 +80,7 @@ export function createApp(deps: AppDeps) {
   app.use("/api/auth", signalOn([429], "auth_rate_limited"), capAuthBody);
   app.all("/api/auth/*splat", toNodeHandler(deps.auth.handler));
   app.use("/api/webhooks/inbound-email", signalOn([401, 403], "inbound_token_rejected"));
+  app.use("/api/webhooks/postmark-events", signalOn([401, 403], "postmark_events_token_rejected"));
   app.use("/api/webhooks", limits.webhook, webhooksRouter);
 
   app.use(express.json({ limit: "1mb" }));
