@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { env } from "../lib/env";
+import { AgentError } from "./errors";
 
 /**
  * SDK construction (03-agent-runtime.md 2.2). Only gateway.ts (and later batch.ts, drift.ts,
@@ -35,9 +36,9 @@ export interface AnthropicLike {
   };
 }
 
-function keyFor(workspace: Workspace): string | undefined {
-  const e = env();
-  return workspace === "batch" ? e.ANTHROPIC_KEY_BATCH : workspace === "evals" ? e.ANTHROPIC_KEY_EVALS : e.ANTHROPIC_KEY_INTERACTIVE;
+/** The workspace key's variable name; only the legacy chatJson path reads ANTHROPIC_API_KEY (16.1). */
+function keyVar(workspace: Workspace): "ANTHROPIC_KEY_BATCH" | "ANTHROPIC_KEY_EVALS" | "ANTHROPIC_KEY_INTERACTIVE" {
+  return workspace === "batch" ? "ANTHROPIC_KEY_BATCH" : workspace === "evals" ? "ANTHROPIC_KEY_EVALS" : "ANTHROPIC_KEY_INTERACTIVE";
 }
 
 export function createAnthropicClient(workspace: Workspace): AnthropicLike {
@@ -45,8 +46,10 @@ export function createAnthropicClient(workspace: Workspace): AnthropicLike {
   if (e.NODE_ENV === "test" && e.ALLOW_LLM_NETWORK !== 1) {
     throw new Error("real Anthropic client constructed in tests; set ALLOW_LLM_NETWORK=1 only in evals and llm:record");
   }
-  const key = keyFor(workspace) ?? e.ANTHROPIC_API_KEY;
-  if (!key) throw new Error(`ANTHROPIC key for workspace ${workspace} is not set`);
+  const key = e[keyVar(workspace)];
+  // No fallback to the legacy key: spend must land in the workspace whose console limit covers it. "auth" is never
+  // retried and never counts toward the breaker; routes answer 503.
+  if (!key) throw new AgentError("auth", `${keyVar(workspace)} is not set`, false);
   const client = new Anthropic({
     apiKey: key,
     baseURL: e.ANTHROPIC_BASE_URL, // undefined in production (env zod refuses any other value there)
