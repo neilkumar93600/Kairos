@@ -83,6 +83,8 @@ export const APPLIER_FORBIDDEN = [
   "R2_BACKUPS_SECRET_ACCESS_KEY",
   /** The migrator's direct URL (src/migrate.ts): kairos_migrator owns every table. */
   "DATABASE_UNPOOLED_URL",
+  /** pgbackup's URL (WP-13): kairos_backup reads every row of every table. Only the pgbackup service holds it. */
+  "DATABASE_BACKUP_URL",
 ] as const;
 
 const applierSchema = z.object(applierShape);

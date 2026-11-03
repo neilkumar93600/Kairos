@@ -231,7 +231,9 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
     it("sets each role's timeouts and moves every object to kairos_migrator", async () => {
       const { rows } = await raw.query("select rolname, rolconfig from pg_roles where rolname like 'kairos\\_%' order by 1");
       const config = Object.fromEntries(rows.map((r) => [r.rolname, r.rolconfig ?? []]));
-      expect(config.kairos_api).toEqual(expect.arrayContaining(["statement_timeout=10s", "idle_in_transaction_session_timeout=30s"]));
+      expect(config.kairos_api).toEqual(expect.arrayContaining(["statement_timeout=10s", "idle_in_transaction_session_timeout=30s", "lock_timeout=5s"]));
+      // pgbackup (WP-13): a dump runs as long as it needs, inside one snapshot.
+      expect(config.kairos_backup).toContain("statement_timeout=0");
       expect(config.kairos_worker).toContain("statement_timeout=120s");
       expect(config.kairos_applier).toContain("statement_timeout=5s");
       expect(config.kairos_readonly).toContain("default_transaction_read_only=on");

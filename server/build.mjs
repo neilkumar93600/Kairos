@@ -7,7 +7,8 @@ const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), 
 const external = Object.keys(pkg.dependencies).filter((name) => !name.startsWith("@auto-career/"));
 
 await build({
-  entryPoints: ["src/api.ts", "src/worker.ts", "src/applier.ts", "src/migrate.ts"],
+  // pgbackup.ts runs in its own image (ops/pgbackup/Dockerfile), the Railway cron service of WP-13.
+  entryPoints: ["src/api.ts", "src/worker.ts", "src/applier.ts", "src/migrate.ts", "src/pgbackup.ts"],
   outdir: "dist",
   bundle: true,
   platform: "node",

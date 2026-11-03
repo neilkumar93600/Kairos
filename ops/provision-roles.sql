@@ -57,6 +57,10 @@ ALTER ROLE kairos_backup SET statement_timeout = 0;
 ALTER ROLE kairos_api SET idle_in_transaction_session_timeout = '30s';
 ALTER ROLE kairos_worker SET idle_in_transaction_session_timeout = '30s';
 ALTER ROLE kairos_applier SET idle_in_transaction_session_timeout = '30s';
+-- A runtime statement fails after 5 s behind a lock (a migration's DDL) instead of queueing (06-infrastructure 1.7).
+ALTER ROLE kairos_api SET lock_timeout = '5s';
+ALTER ROLE kairos_worker SET lock_timeout = '5s';
+ALTER ROLE kairos_applier SET lock_timeout = '5s';
 ALTER ROLE kairos_readonly SET default_transaction_read_only = on;
 ALTER ROLE kairos_metrics SET default_transaction_read_only = on;
 GRANT pg_read_all_data TO kairos_backup;

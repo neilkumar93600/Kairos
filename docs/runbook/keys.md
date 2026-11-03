@@ -44,7 +44,7 @@ The kit holds the secrets that cannot be re-created (06-infrastructure 4.5):
 
 1. `DATA_KEKS` for production: the full current value (every version not yet retired), with each version's fingerprint.
 2. `DATA_KEKS` for staging. Optional: staging data can be re-created.
-3. The two backup `age` private keys (the owner's and the recovery key behind `BACKUP_AGE_RECIPIENTS`). WP-13 creates them; add them the day it does.
+3. The two backup `age` private keys (the owner's and the recovery key behind `BACKUP_AGE_RECIPIENTS`), each with its public key. They decrypt every database dump in R2; no service ever holds them. How to make and check them: section 8.
 4. Recovery codes: the password manager, the domain registrar, GitHub, Railway, Cloudflare, Stripe and the mailbox the accounts reset to.
 5. A one-page note for the second person: what Kairos is, that this envelope must stay sealed unless the owner is unreachable, and who to call (see owner-actions/WP-18.md).
 
@@ -65,8 +65,8 @@ DATA_KEKS production   v<n>:<base64>[,v<n-1>:<base64>]
   fingerprints         v<n> <16 hex>   v<n-1> <16 hex>
 DATA_KEKS staging      v<n>:<base64>
   fingerprints         v<n> <16 hex>
-Backup age keys        owner:    AGE-SECRET-KEY-...          (from WP-13)
-                       recovery: AGE-SECRET-KEY-...
+Backup age keys        owner:    AGE-SECRET-KEY-1...    public age1...
+                       recovery: AGE-SECRET-KEY-1...    public age1...
 Recovery codes         password manager, registrar, GitHub, Railway, Cloudflare, Stripe, mailbox
 ```
 
@@ -136,10 +136,26 @@ When: before the first encrypted column ships (WP-12), after every rotation, and
 
 A failed step 2 or 3 means the kit is wrong: fix it the same day (5.3).
 
-**A real loss.** Restore the database by the restore runbooks (WP-13), set `DATA_KEKS` from the kit on the new api and worker, deploy, and run step 3 against the restored data. If the kit is lost too, the encrypted columns cannot be read by anyone. Null them, tell affected users which data is gone (resume sources must be re-imported; reply bodies and sensitive answers are lost), and generate a new key (section 4).
+**A real loss.** Restore the database by the restore runbooks ([R-DR-1](R-DR-1.md), [R-DR-2](R-DR-2.md)), set `DATA_KEKS` from the kit on the new api and worker, deploy, and run step 3 against the restored data. If the kit is lost too, the encrypted columns cannot be read by anyone. Null them, tell affected users which data is gone (resume sources must be re-imported; reply bodies and sensitive answers are lost), and generate a new key (section 4).
 
 ## 7. Drill log
 
 | Date | Copy | check | open | Time | By |
 |---|---|---|---|---|---|
 | | | | | | |
+
+## 8. The backup age keys
+
+The pgbackup service encrypts each dump to the public keys in `BACKUP_AGE_RECIPIENTS` (two: the owner's and the recovery key) and holds no private key; it refuses to start if a private key is pasted there. Either private key alone decrypts a dump. Losing both makes every dump unreadable (PITR still works); leaking one exposes the dumps still in R2 (at most 28 days of them) to whoever also holds the backups bucket token.
+
+**Make them** (once per environment; staging and production have their own pair). In Git Bash from `server/`:
+
+1. `npx tsx scripts/backup.ts keygen | clip`. The private key goes to the clipboard; the public key (`age1...`) is printed. Paste the private key into the password-manager item `Kairos emergency kit` at once, with the public key beside it.
+2. Repeat for the recovery key.
+3. Set `BACKUP_AGE_RECIPIENTS` on the `pgbackup` service to the two public keys, comma separated. Public keys are not secret, but keep the variable on that service only.
+4. Print the kit sheet with both private keys and reseal the offline copy (section 3).
+5. Clear the clipboard and close the terminal.
+
+**Check a kit copy** (part of the drill, section 6, once WP-13 is deployed): `read -rs AGE_IDENTITY && export AGE_IDENTITY`, paste the private key from the copy, `npx tsx scripts/backup.ts recipient`. Pass: it prints a public key listed in `BACKUP_AGE_RECIPIENTS` and in the latest manifest's `recipients`. The real proof is the monthly restore drill ([R-DR-2](R-DR-2.md) section 7), which decrypts last night's dump with it. `unset AGE_IDENTITY` afterwards.
+
+**Rotate** (yearly, or at once if one may have leaked): make a new pair, put both in the kit, set `BACKUP_AGE_RECIPIENTS` to the new public keys and trigger a pgbackup run. Keep the old private keys in the kit until the last dump encrypted to them has expired (28 days after the switch), then destroy them. A leaked key: also assume the dumps encrypted to it are readable by whoever has the R2 backups token, and count them in the breach assessment (section 5.2 step 3).
