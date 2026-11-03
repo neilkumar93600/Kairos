@@ -16,3 +16,7 @@ export const forbidden = (message = "Not allowed") => new HttpError(403, "forbid
 export const paymentRequired = (message: string, details?: { available: number; requested: number }) =>
   new HttpError(402, "payment_required", message, details);
 export const conflict = (message: string) => new HttpError(409, "conflict", message);
+
+/** The next 00:00 UTC, when daily AI allowances and per-user spend caps reset, as 2026-10-24T00:00:00Z. */
+export const nextUtcMidnight = (now = new Date()): string =>
+  new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString().replace(".000Z", "Z");

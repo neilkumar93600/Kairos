@@ -33,6 +33,16 @@ describe("classifySensitive", () => {
     ["Will you require green card sponsorship?", "sponsorship"],
     ["Monthly stipend expected", "salary"],
     ["Do you have experience with PayPal integrations?", null],
+    // WP-06 gateway spy: personal details reached the model before.
+    ["Date of birth", "personal"],
+    ["What is your age?", "personal"],
+    ["Passport number", "personal"],
+    ["Social Security Number", "personal"],
+    ["Aadhaar number", "personal"],
+    ["Marital status", "personal"],
+    ["Religion", "personal"],
+    ["Nationality", "personal"],
+    ["Describe a project you managed on average budget", null],
   ];
   it.each(cases)("%s", (label, expected) => {
     expect(classifySensitive(label)).toBe(expected);

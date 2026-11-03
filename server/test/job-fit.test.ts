@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { jobFitSchema } from "@auto-career/shared";
 import { findSkills } from "../src/services/skills-dictionary";
-import { computeJobFit, extractRequirements, type JobFitInput } from "../src/services/job-fit";
+import { computeJobFit, extractRequirements, topFacts, type JobFitInput } from "../src/services/job-fit";
 
 const JD = `About Acme
 We build payments tooling.
@@ -142,5 +142,23 @@ describe("computeJobFit", () => {
     expect(fit.score).toBe(0);
     expect(fit.basis).toMatch(/no checks/i);
     expect(() => jobFitSchema.parse(fit)).not.toThrow();
+  });
+});
+
+describe("topFacts", () => {
+  const facts = [
+    { id: "a", text: "Ran payroll for a bakery" },
+    { id: "b", text: "Built Kubernetes deploys in Go" },
+    { id: "c", text: "Led a team of four" },
+    { id: "d", text: "Wrote Go services behind Kubernetes ingress" },
+  ];
+
+  it("keeps the facts that share the most posting words, in their original order", () => {
+    expect(topFacts(facts, "We run Go services on Kubernetes", 2).map((f) => f.id)).toEqual(["b", "d"]);
+  });
+
+  it("keeps the first n when there is no posting, and everything when under the cap", () => {
+    expect(topFacts(facts, null, 2).map((f) => f.id)).toEqual(["a", "b"]);
+    expect(topFacts(facts, "Go", 10)).toEqual(facts);
   });
 });

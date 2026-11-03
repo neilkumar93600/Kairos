@@ -9,7 +9,7 @@ import { MAX_PROMPT_TOKENS, estimateCallUsd, estimateInputTokens } from "./estim
 import { callNonce, echoCanaryHit, fence as fenceBlock } from "./fence";
 import { logger } from "../lib/logger";
 import { writeCallRow, type CallRow } from "./ledger";
-import { acquire, on429, onResponseHeaders } from "./limiter";
+import { acquire, on429, onResponseHeaders, type Permit } from "./limiter";
 import { userHash, userHashBytes } from "./redact";
 import { costOf, type Usage } from "./prices";
 import { canonicalJson, normalizeEnumCase } from "./schema";
@@ -22,6 +22,13 @@ import { canonicalJson, normalizeEnumCase } from "./schema";
  */
 
 const sha256 = (s: string): Buffer => createHash("sha256").update(s, "utf8").digest();
+
+/**
+ * The failures a tier-up may follow (2.6, llm-agents-12): a reply that failed validation, ran out of tokens or was
+ * refused, or a model that is overloaded. A budget refusal, auth, billing, bad request or injection echo never tiers up:
+ * a cheaper model is never substituted for a spent budget and a pricier one never buys past it.
+ */
+const TIER_UP_ON: ReadonlySet<LlmErrorCode> = new Set(["schema_invalid", "max_tokens", "refusal", "overloaded", "circuit_open"]);
 
 /** Fence labels of user-authored data (11.1 T2), the only text that exempts an echo-canary pattern. */
 const USER_LABELS: ReadonlySet<DataLabel> = new Set(["facts", "profile", "resume_text", "resume_lines", "user_note", "user_answer", "saved_answers"]);
@@ -75,6 +82,14 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
   const callKind = opts.callKind ?? "primary";
   const nonces: string[] = [];
 
+  // The input contract (2.1, llm-agents-v01): bounds such as facts .max(60) hold here, not only on paper. Paths only,
+  // never values, in the message.
+  const parsedInput = spec.input.safeParse(input);
+  if (!parsedInput.success) {
+    const paths = parsedInput.error.issues.slice(0, 5).map((i) => `${i.path.map(String).join(".") || "$"}: ${i.code}`);
+    throw new AgentError("invalid_request", `${spec.id}: input fails its schema (${paths.join(", ")})`, false);
+  }
+
   // Kill switches (4.5): before any spend.
   const flags = d.flags();
   if (flags.llmPaused) throw new AgentError("llm_paused", "all model calls are paused", false);
@@ -100,9 +115,11 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
   const canaryExempt = [rendered.userBlock?.text ?? "", ...rendered.untrusted.filter((b) => USER_LABELS.has(b.label)).map((b) => b.text)].join("\n");
 
   // Per-call budget estimate (9.2): worst case, every input token uncached.
+  // The agent's maxInputTokens (2.2) bounds the whole prompt; the render caps keep a schema-valid input under it.
   const inputTokensEstimate = estimateInputTokens([systemText, rendered.userBlock?.text ?? "", variableBlock]);
-  if (inputTokensEstimate > MAX_PROMPT_TOKENS) {
-    throw new AgentError("invalid_request", `estimated prompt ${inputTokensEstimate} tokens is above the ${MAX_PROMPT_TOKENS} ceiling`, false);
+  const inputCeiling = Math.min(spec.maxInputTokens, MAX_PROMPT_TOKENS);
+  if (inputTokensEstimate > inputCeiling) {
+    throw new AgentError("invalid_request", `${spec.id}: estimated prompt ${inputTokensEstimate} tokens is above its ${inputCeiling} ceiling`, false);
   }
   const maxTokens = typeof spec.maxTokens === "function" ? spec.maxTokens(input) : spec.maxTokens;
   const effort = typeof spec.effort === "function" ? spec.effort(input) : spec.effort;
@@ -120,7 +137,7 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
   // the share cap permits. Defer throws retryable; fail-closed throws non-retryable.
   for (let chain = 0; chain < 2; chain++) {
     const perCallCap = chain === 0 ? spec.maxCostPerCallUsd : (spec.tierUp?.maxCostPerCallUsd ?? spec.maxCostPerCallUsd);
-    const result = await runOnModel(model, perCallCap);
+    const result = await runOnModel(model, perCallCap, chain === 0 ? callKind : "tier_up");
     if (result.ok) {
       return {
         data: result.data,
@@ -134,17 +151,17 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
       };
     }
     lastError = result.error;
-    if (chain === 0 && spec.tierUp && model !== "claude-sonnet-5-5" && (await d.budget.tierUpAllowed(spec))) {
+    if (chain === 0 && spec.tierUp && model !== "claude-sonnet-5-5" && TIER_UP_ON.has(lastError.code) && (await d.budget.tierUpAllowed(spec))) {
       model = "claude-sonnet-5-5";
       tieredUp = true;
       continue;
     }
     const retryable = spec.onFailure === "defer" || spec.onFailure === "tier_up_then_defer";
-    throw new AgentError(lastError.code, `${spec.id}: ${lastError.message}`, retryable, lastError.violations);
+    throw new AgentError(lastError.code, `${spec.id}: ${lastError.message}`, retryable, lastError.violations, lastError.budget);
   }
   throw lastError ?? new AgentError("server_error", `${spec.id}: exhausted`, false);
 
-  async function runOnModel(modelNow: ClaudeModel, maxCostPerCallUsd: number): Promise<{ ok: true; data: O; usage: AgentResult<O>["usage"]; llmCallId: string } | { ok: false; error: AgentError }> {
+  async function runOnModel(modelNow: ClaudeModel, maxCostPerCallUsd: number, firstKind: CallKind): Promise<{ ok: true; data: O; usage: AgentResult<O>["usage"]; llmCallId: string } | { ok: false; error: AgentError }> {
     // Budget check before every send (9.3); a refusal writes a budget_stopped row. The tier-up
     // model is judged against the tier-up cap, not the primary cap (2.6).
     const estUsd = estimateCallUsd(inputTokensEstimate, maxTokens, modelNow);
@@ -153,79 +170,84 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
       await record({
         model: modelNow,
         status: "budget_stopped",
-        errorCode: null,
+        errorCode: "budget_stopped", // llm_calls_error_code_ck: every row that is not ok names its code
         stopReason: null,
         usage: { input_tokens: 0, output_tokens: 0 },
         costUsd: 0,
         latencyMs: 0,
-        callKind,
+        callKind: firstKind,
         attempts: attempts + 1,
         tieredUp,
         requestId: null,
         retryAfterSeconds: null,
       });
-      return { ok: false, error: new AgentError("budget_stopped", `${spec.id} refused by budget scope ${decision.scope}`, false) };
+      return { ok: false, error: new AgentError("budget_stopped", `${spec.id} refused by budget scope ${decision.scope}`, false, undefined, { scope: decision.scope, retryAfter: decision.retryAfter }) };
     }
 
-    // Breaker, then limiter (5.3, 6.3).
+    // Breaker, then a limiter permit per send (5.3, 6.3).
     if (!breaker.allow(workspace, modelNow)) {
       return { ok: false, error: new AgentError("circuit_open", `circuit open for ${modelNow}`, false) };
     }
-    let permit;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      attempts += 1;
+      const sent = await sendWithPermit(modelNow, { attempt, kind: attempt === 1 ? firstKind : "retry", repairTurns: [] });
+      if (sent.outcome === "ok") {
+        breaker.recordSuccess(workspace, modelNow);
+        return { ok: true, data: sent.data, usage: sent.usage, llmCallId: sent.llmCallId };
+      }
+      if (sent.outcome === "failed") {
+        breaker.record(workspace, modelNow, sent.error.code);
+        lastError = sent.error;
+        if (sent.error.code === "rate_limited") on429(workspace, modelNow); // AIMD on every 429, retried or not (6.3)
+        const policy = retryPolicy(sent.error.code, workspace);
+        if (attempt - 1 >= policy.retries) break; // no retries left for this class
+        if (sent.error.code === "rate_limited") {
+          const wait = retryAfterMs(sent.retryAfterSeconds, workspace);
+          if (wait === null) break; // beyond the workspace ceiling: no retry (5.2)
+          await d.sleep(wait);
+        } else {
+          await d.sleep(policy.backoffMs(attempt));
+        }
+        continue;
+      }
+      // sent.outcome === "invalid": at most one repair re-ask on the same model (2.5), never for
+      // max_tokens, refusal or injection_echo.
+      breaker.recordSuccess(workspace, modelNow);
+      if (sent.error.code === "injection_echo") {
+        lastError = sent.error;
+        break;
+      }
+      attempts += 1;
+      const repaired = await sendWithPermit(modelNow, {
+        attempt: attempts,
+        kind: "repair",
+        repairTurns: repairTurns(sent.replyText, sent.violations),
+      });
+      if (repaired.outcome === "ok") {
+        return { ok: true, data: repaired.data, usage: repaired.usage, llmCallId: repaired.llmCallId };
+      }
+      if (repaired.outcome === "failed") {
+        breaker.record(workspace, modelNow, repaired.error.code);
+        lastError = repaired.error;
+      } else {
+        lastError = new AgentError(repaired.error.code, `${spec.id}: repair failed validation`, false, repaired.violations);
+      }
+      break; // the repair was the last chance on this model
+    }
+    return { ok: false, error: lastError ?? new AgentError("server_error", `${spec.id}: failed`, false) };
+  }
+
+  /** One send under its own limiter permit: every retry and repair takes an RPM token, and no permit is held while a backoff sleeps. */
+  async function sendWithPermit(modelNow: ClaudeModel, a: Parameters<typeof sendOnce>[1]): ReturnType<typeof sendOnce> {
+    let permit: Permit;
     try {
       permit = await acquire(workspace, modelNow, workspace === "interactive" ? 2_000 : 30_000);
     } catch {
-      return { ok: false, error: new AgentError("limiter_timeout", `limiter timeout for ${modelNow}`, true) };
+      return { outcome: "failed", error: new AgentError("limiter_timeout", `limiter timeout for ${modelNow}`, true) };
     }
-
     try {
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        attempts += 1;
-        const sent = await sendOnce(modelNow, { attempt, kind: attempt === 1 ? callKind : "retry", repairTurns: [] });
-        if (sent.outcome === "ok") {
-          breaker.recordSuccess(workspace, modelNow);
-          return { ok: true, data: sent.data, usage: sent.usage, llmCallId: sent.llmCallId };
-        }
-        if (sent.outcome === "failed") {
-          breaker.record(workspace, modelNow, sent.error.code);
-          lastError = sent.error;
-          const policy = retryPolicy(sent.error.code, workspace);
-          if (attempt - 1 >= policy.retries) break; // no retries left for this class
-          if (sent.error.code === "rate_limited") {
-            on429(workspace, modelNow);
-            const wait = retryAfterMs(sent.retryAfterSeconds, workspace);
-            if (wait === null) break; // beyond the workspace ceiling: no retry (5.2)
-            await d.sleep(wait);
-          } else {
-            await d.sleep(policy.backoffMs(attempt));
-          }
-          continue;
-        }
-        // sent.outcome === "invalid": at most one repair re-ask on the same model (2.5), never for
-        // max_tokens, refusal or injection_echo.
-        breaker.recordSuccess(workspace, modelNow);
-        if (sent.error.code === "injection_echo") {
-          lastError = sent.error;
-          break;
-        }
-        attempts += 1;
-        const repaired = await sendOnce(modelNow, {
-          attempt: attempts,
-          kind: "repair",
-          repairTurns: repairTurns(sent.replyText, sent.violations),
-        });
-        if (repaired.outcome === "ok") {
-          return { ok: true, data: repaired.data, usage: repaired.usage, llmCallId: repaired.llmCallId };
-        }
-        if (repaired.outcome === "failed") {
-          breaker.record(workspace, modelNow, repaired.error.code);
-          lastError = repaired.error;
-        } else {
-          lastError = new AgentError(repaired.error.code, `${spec.id}: repair failed validation`, false, repaired.violations);
-        }
-        break; // the repair was the last chance on this model
-      }
-      return { ok: false, error: lastError ?? new AgentError("server_error", `${spec.id}: failed`, false) };
+      return await sendOnce(modelNow, a);
     } finally {
       permit.release();
     }

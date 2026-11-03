@@ -12,7 +12,11 @@ import type { SessionUser } from "../lib/auth";
 import { computeJobFit } from "../services/job-fit";
 import { fetchPostingFromBoard, importJob, jobUpsertValues, type ImportIo } from "../services/job-import";
 import { renderResumeText } from "../services/resume-doc";
-import { suggestEdits } from "../services/resume-writer";
+import { metered } from "../services/allowance";
+import { planFor } from "../services/submissions";
+import { gatewayCtx } from "../llm/wire";
+import { tailorResume, tailorSuggestions } from "../services/tailor";
+import { topFacts } from "../services/job-fit";
 import { loadResume, userFacts, visibleJob, writerLimiter } from "./resume";
 
 /** Pasted-link job import. Mounted at /api/jobs. */
@@ -79,8 +83,11 @@ const importLimiter = rateLimit({
   handler: (_req, _res, next) => next(new HttpError(429, "rate_limited", "Too many job imports. Try again in a minute.")),
 });
 
+/** Metered by the jobImports allowance (CISO mustFix 3): each import fetches a third-party board and stores a posting. */
 jobsRouter.post("/import", importLimiter, validateBody(importJobSchema), async (req, res) => {
-  res.json(await importJob(currentUser(req).id, req.body.url, dbIo));
+  const me = currentUser(req);
+  const plan = await planFor(db(), me.id);
+  res.json(await metered(res, { userId: me.id, plan, feature: "jobImports" }, () => importJob(me.id, req.body.url, dbIo)));
 });
 
 /** The deterministic F1 fit of one visible job against the user's base resume and confirmed facts. */
@@ -108,19 +115,23 @@ jobsRouter.get("/:jobId/fit", async (req, res) => {
   res.json(match ? { fit, matchId: match.id } : { fit });
 });
 
-/** Tailoring proposals for one job. Nothing is saved: accepted lines go into the draft through PATCH /api/applications/:id. */
+/**
+ * Tailoring proposals for one job, from resume-tailor on Haiku (resume-34) and the truth lock, mapped onto the base
+ * resume. Nothing is saved: accepted lines go into the draft through PATCH /api/applications/:id.
+ */
 jobsRouter.post("/:jobId/tailor", writerLimiter, async (req, res) => {
+  const me = currentUser(req);
   const jobId = jobIdParam(req.params.jobId);
-  const { job, factRows, resume, fit } = await fitFor(currentUser(req), jobId);
-  const { suggestions } = await suggestEdits(
-    { scope: "resume", jobId },
-    { resume, facts: factRows, job },
-    {
-      // No note on this route, so the writer never creates a fact.
-      createFact: async () => {
-        throw new Error("tailor never saves a note");
-      },
-    },
-  );
-  res.json({ resume, suggestions, fit });
+  const [{ job, factRows, resume, fit }, plan] = await Promise.all([fitFor(me, jobId), planFor(db(), me.id)]);
+  const confirmed = factRows.filter((f) => f.confirmed).map((f) => ({ id: f.id, kind: f.kind, text: f.text }));
+  const posting = { title: job.title, companyName: job.company, descriptionText: job.descriptionText };
+  // The tailor route is interactive work (03-agent-runtime 3.3); the 60 facts the posting needs most go in.
+  const ctx = gatewayCtx({ userId: me.id, plan, jobId, feature: "jobTailor", budgetClass: "interactive" });
+  // No confirmed fact means nothing a line could cite: no model call and no unit taken.
+  const { kept } = confirmed.length
+    ? await metered(res, { userId: me.id, plan, feature: "jobTailor" }, () =>
+        tailorResume(topFacts(confirmed, `${job.title}\n${job.descriptionText}`, 60), posting, ctx),
+      )
+    : { kept: [] };
+  res.json({ resume, suggestions: tailorSuggestions(resume, kept, job.title), fit });
 });

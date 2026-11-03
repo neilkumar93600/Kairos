@@ -22,7 +22,9 @@ export const answerDrafter: AgentSpec<AnswerDrafterInput, AnswerDrafterOutput> =
   output: AnswerDrafterOutput,
   schemaSnapshot: snap,
   maxTokens: 900,
-  maxInputTokens: 5_000,
+  // ponytail: v1 also carries saved answers, so the ceiling is the most the $0.02 tier-up cap allows at 900 output
+  // tokens (3.3 says 5,000); the render trims the posting and saved answers to fit it.
+  maxInputTokens: 5_500,
   timeoutMs: 45_000,
   expectedCostUsd: 0.00048,
   maxCostPerCallUsd: 0.0012,

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ResumeInput } from "@auto-career/shared";
 import { Budget } from "../src/llm/budget";
 import { configureGateway } from "../src/llm/gateway";
 import { memorySpendStore } from "../src/llm/spend-store";
@@ -8,7 +9,7 @@ import { resetLimiter } from "../src/llm/limiter";
 
 const chatJson = vi.hoisted(() => vi.fn());
 vi.mock("../src/services/llm", () => ({ chatJson }));
-const { enforceTruthLock, tailorResume } = await import("../src/services/tailor");
+const { enforceTruthLock, tailorResume, tailorSuggestions } = await import("../src/services/tailor");
 
 const facts = [
   { id: "f1", kind: "role", text: "Built the billing service at Nordbeam in TypeScript" },
@@ -68,6 +69,11 @@ describe("enforceTruthLock", () => {
 describe("tailorResume", () => {
   beforeEach(() => chatJson.mockReset());
 
+  it("makes no model call when there is no confirmed fact to cite", async () => {
+    expect(await tailorResume([], job)).toEqual({ kept: [], rejected: [] });
+    expect(chatJson).not.toHaveBeenCalled();
+  });
+
   it("drops invented details on the legacy path", async () => {
     chatJson.mockResolvedValue({ lines: [...invented, ...honest] });
     const out = await tailorResume(facts, job);
@@ -112,5 +118,64 @@ describe("tailorResume", () => {
     chatJson.mockResolvedValue({ lines: honest });
     await tailorResume([{ id: "f3", kind: "role", text: "Reach me at jane@example.com" }, ...facts], job);
     expect(JSON.stringify(chatJson.mock.calls[0]![0].messages)).not.toContain("jane@example.com");
+  });
+});
+
+describe("tailorSuggestions (the tailor route on resume-tailor, resume-34)", () => {
+  const base: ResumeInput = {
+    name: "Jane Doe",
+    density: "comfortable",
+    contact: { name: "Jane Doe", email: "jane@example.com", phone: "", location: "", links: [] },
+    sections: [
+      {
+        id: "exp",
+        kind: "experience",
+        title: "Experience",
+        hidden: false,
+        entries: [
+          {
+            id: "e1",
+            heading: "Engineer at Nordbeam",
+            subheading: null,
+            meta: null,
+            headingFactId: "f0",
+            hidden: false,
+            lines: [{ id: "l1", section: "Experience", text: "Built billing", factIds: ["f1"] }],
+          },
+        ],
+      },
+      { id: "sk", kind: "skills", title: "Skills", hidden: false, entries: [] },
+    ],
+  };
+  const tl = (id: string, section: string, text: string, factIds: string[]) => ({ id, section, text, factIds });
+
+  it("rewrites the base line that cites the same fact, with its text as before", () => {
+    const [s] = tailorSuggestions(base, [tl("t1", "Experience", "Built the billing service in TypeScript", ["f1"])], "Backend engineer");
+    expect(s).toMatchObject({ action: "rewrite", sectionId: "exp", entryId: "e1", lineId: "l1", before: "Built billing", after: "Built the billing service in TypeScript", factIds: ["f1"], needsFact: null });
+    expect(s!.why).toBe("Tailored toward Backend engineer");
+  });
+
+  it("adds a line no base line covers to the section it names, under the entry whose heading it cites", () => {
+    const out = tailorSuggestions(
+      base,
+      [tl("t1", "Experience", "Cut invoice time by 30% at Nordbeam", ["f0", "f2"]), tl("t2", "skills", "TypeScript, PostgreSQL", ["f3"])],
+      "Engineer",
+    );
+    expect(out.map((s) => [s.action, s.sectionId, s.entryId, s.lineId, s.before])).toEqual([
+      ["add", "exp", "e1", null, null],
+      ["add", "sk", null, null, null],
+    ]);
+  });
+
+  it("skips unchanged lines and sections the resume lacks, rewrites a base line once, and keeps at most 15", () => {
+    const out = tailorSuggestions(
+      base,
+      [tl("same", "Experience", "Built billing", ["f1"]), tl("again", "Experience", "Built billing in Go", ["f1"]), tl("vol", "Volunteering", "Ran a food bank", ["f9"])],
+      "Engineer",
+    );
+    // "same" claims l1 without a change; "again" cannot rewrite l1 twice, so it is offered as a new line.
+    expect(out.map((s) => [s.action, s.sectionId, s.entryId, s.after])).toEqual([["add", "exp", null, "Built billing in Go"]]);
+    const many = Array.from({ length: 20 }, (_, i) => tl(`a${i}`, "Experience", `Shipped feature ${i}`, [`x${i}`]));
+    expect(tailorSuggestions(base, many, "Engineer")).toHaveLength(15);
   });
 });

@@ -26,7 +26,7 @@ export async function parseResumeToFacts(rawText: string, contact: ResumeContact
   const resumeText = redactResumeHeader(dropSensitiveLines(rawText), contact);
   if (callCtx ?? gatewayEnabled()) {
     // The gateway path (LLM_GATEWAY=anthropic); the render fences the redacted text.
-    const out = await runAgent(resumeParser, { resumeText }, callCtx ?? {});
+    const out = await runAgent(resumeParser, { resumeText: resumeText.slice(0, 30_000) }, callCtx ?? {}); // the input bound; the render cuts deeper
     return out.data.facts;
   }
   const result = await chatJson({

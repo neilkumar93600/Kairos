@@ -74,6 +74,23 @@ function significantWords(text: string): string[] {
   return [...new Set(words.map((w) => w.replace(/^\.+|\.+$/g, "")).filter((w) => w.length >= 3 && !STOPWORDS.has(w)))];
 }
 
+/**
+ * The n facts most relevant to a posting, for a prompt (llm-agents-59: 60 for tailoring and letters, 25 for answers).
+ * Ranked by the posting's significant words each fact shares; the kept ones stay in their given order, so the cached
+ * facts block is byte-stable whenever the same facts are picked. No posting keeps the first n.
+ * ponytail: word overlap, not the BM25 or requirement-coverage ranking of WP-41; swap the score when that lands.
+ */
+export function topFacts<F extends { text: string }>(facts: F[], postingText: string | null, n: number): F[] {
+  if (facts.length <= n || !postingText) return facts.slice(0, n);
+  const wanted = new Set(significantWords(postingText));
+  return facts
+    .map((f, i) => ({ f, i, score: significantWords(f.text).filter((w) => wanted.has(w)).length }))
+    .sort((a, b) => b.score - a.score || a.i - b.i)
+    .slice(0, n)
+    .sort((a, b) => a.i - b.i)
+    .map((x) => x.f);
+}
+
 const SENIORITY_ORDER: Seniority[] = ["intern", "entry", "mid", "senior", "lead"];
 
 /** The seniority marker in a title, or null when there is none (an unmarked title cannot be judged). */

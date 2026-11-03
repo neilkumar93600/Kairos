@@ -66,6 +66,8 @@ describe.skipIf(!hasTestDb)("P0 invariants against Postgres", () => {
     await seedUser(db, { id, credits: 5 });
     await db.insert(schema.profiles).values({ userId: id, forwardingAddress: `${id}@inbound.test`, preferences: prefs });
     await db.insert(schema.facts).values({ userId: id, kind: "skill", text: "TypeScript APIs", confirmed: true });
+    // Scoring covers only users active in the last 14 days (WP-06), so a candidate has a fresh session.
+    await db.insert(schema.session).values({ id: `s-${id}`, token: `t-${id}`, userId: id, expiresAt: new Date(Date.now() + 86_400_000) });
   }
 
   it("charges once when the same submission is reported eight times at once", async () => {

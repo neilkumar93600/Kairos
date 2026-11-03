@@ -52,6 +52,12 @@ export function retryPolicy(code: LlmErrorCode, workspace: "batch" | "interactiv
   }
 }
 
+/** Which budget scope refused (9.3); routes answer 429 with it, pipelines pick the retry delay from it. */
+export interface BudgetRefusal {
+  scope: "call" | "user_pipeline" | "user_interactive" | "agent" | "global" | "shed";
+  retryAfter: "next_utc_day" | "now";
+}
+
 export class AgentError extends Error {
   override name = "AgentError";
   constructor(
@@ -59,6 +65,7 @@ export class AgentError extends Error {
     message: string,
     readonly retryable: boolean = false,
     readonly violations?: { code: string; path: string }[],
+    readonly budget?: BudgetRefusal,
   ) {
     super(message);
   }
@@ -84,6 +91,7 @@ const SPEND_LIMIT_PATTERNS = [
  * the AgentError message; they can quote request content.
  */
 export function classifyError(err: unknown): LlmErrorCode {
+  if (err instanceof AgentError) return err.code;
   const status = statusOf(err);
   const type = errorTypeOf(err);
   const message = err instanceof Error ? err.message : String(err);

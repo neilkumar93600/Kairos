@@ -1,4 +1,4 @@
-export type SensitiveKind = "eeo" | "work_authorization" | "sponsorship" | "salary";
+export type SensitiveKind = "eeo" | "work_authorization" | "sponsorship" | "salary" | "personal";
 
 // ponytail: order matters. Sponsorship and visa go first so "authorized to work without sponsorship" asks the sponsorship question.
 // Citizenship, green card, permanent residence and immigration status are work_authorization: they ask about status today;
@@ -12,6 +12,11 @@ const RULES: [SensitiveKind, RegExp][] = [
   ],
   ["salary", /\b(salary|salaries|compensation|desired pay|expected pay|pay (expectations?|range)|hourly rate|ctc|stipend|remuneration|pay)\b/i],
   ["eeo", /\b(disabilit\w*|disabled|veteran|gender|race|racial|ethnic\w*|sexual orientation|pronouns?|hispanic|latino|latina|latinx|transgender|eeo|lgbtq\w*)\b/i],
+  // Personal details and government ids, as dropSensitiveLines treats them in resumes (llm/redact.ts).
+  [
+    "personal",
+    /\b(date of birth|birth ?date|d\.?o\.?b|age|how old|nationality|marital status|religion|religious|caste|passport|social security|ssn|national id\w*|aadhaa?r|pan (card|number)|driver'?s licen[cs]e)\b/i,
+  ],
 ];
 
 /**

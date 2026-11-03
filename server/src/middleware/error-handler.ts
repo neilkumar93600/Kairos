@@ -1,6 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
-import { HttpError } from "../lib/errors";
+import { HttpError, nextUtcMidnight } from "../lib/errors";
 import { logger } from "../lib/logger";
+import { AgentError } from "../llm/errors";
+import { LlmError } from "../services/llm";
 
 export function notFoundHandler(_req: Request, _res: Response, next: NextFunction) {
   next(new HttpError(404, "route_not_found", "No such route"));
@@ -12,10 +14,36 @@ const BODY_ERRORS: Record<string, [status: number, code: string, message: string
   "entity.too.large": [413, "payload_too_large", "The request body is too large"],
 };
 
+/**
+ * A model failure on a route (03-agent-runtime 5.5, 9.3): 422 ai_refused for a refusal, 429 rate_limited when a budget
+ * scope stopped the call (daily_allowance for the user's own caps, service_budget for agent, global and shed), and 503
+ * ai_unavailable for everything else. Never a 500, never the internal message.
+ */
+function aiError(err: AgentError | LlmError): HttpError {
+  if (err instanceof AgentError && err.code === "refusal") {
+    return new HttpError(422, "ai_refused", "The assistant could not write this one. Try a different line or add a fact.");
+  }
+  const scope = err instanceof AgentError ? err.budget?.scope : undefined;
+  if (scope === "user_pipeline" || scope === "user_interactive") {
+    return new HttpError(429, "rate_limited", "You have used today's AI allowance. It resets at 00:00 UTC.", { reason: "daily_allowance", resetsAt: nextUtcMidnight() });
+  }
+  if (scope === "agent" || scope === "global" || scope === "shed") {
+    return new HttpError(429, "rate_limited", "The AI assistant is paused to stay within its daily budget. Try again later.", { reason: "service_budget" });
+  }
+  return new HttpError(503, "ai_unavailable", "The writing assistant is busy. Try again in a minute.");
+}
+
 /** Every error leaves as { error: { code, message, details?, requestId? } }. Unknown errors never leak internals. */
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   const requestId = res.getHeader("x-request-id");
   const rid = typeof requestId === "string" ? { requestId } : {};
+  if (err instanceof AgentError || err instanceof LlmError) {
+    const code = err instanceof AgentError ? err.code : "legacy_client";
+    // A bad input or precheck is our bug; the rest is the provider or a budget doing its job.
+    const level = code === "invalid_request" || code === "precheck_failed" ? "error" : "warn";
+    logger[level]({ aiCode: code, requestId, path: req.path, method: req.method }, "model call failed on a route");
+    err = aiError(err);
+  }
   if (err instanceof HttpError) {
     res.status(err.status).json({ error: { code: err.code, message: err.message, details: err.details, ...rid } });
     return;

@@ -12,14 +12,14 @@ export function renderAnswerDrafter(input: AnswerDrafterInput, ctx: { userId?: s
     {
       label: "job_description",
       text: `Target job:\n${input.job.title} at ${input.job.company}\n\n${input.job.descriptionText}`,
-      maxTokens: 2_000,
+      maxTokens: 1_900,
     },
   ];
   if (input.savedAnswers?.length) {
     blocks.push({
       label: "saved_answers",
       text: `Answers the user approved before (match their voice):\n${input.savedAnswers.map((s) => `- ${s.label}: ${s.answer}`).join("\n")}`,
-      maxTokens: 1_000,
+      maxTokens: 400, // voice examples; with the facts and the posting this fits maxInputTokens
     });
   }
 

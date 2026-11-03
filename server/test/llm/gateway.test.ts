@@ -4,11 +4,12 @@ import { Budget } from "../../src/llm/budget";
 import { memorySpendStore } from "../../src/llm/spend-store";
 import { fakeAnthropic, type Scripted } from "../../src/llm/testing";
 import { resetBreakers } from "../../src/llm/breaker";
-import { resetLimiter } from "../../src/llm/limiter";
+import { acquire, resetLimiter } from "../../src/llm/limiter";
 import { AgentError } from "../../src/llm/errors";
 import { userHash } from "../../src/llm/redact";
 import { fitScorer } from "../../src/agents/fit-scorer/spec";
 import { resumeTailor } from "../../src/agents/resume-tailor/spec";
+import { AGENTS } from "../../src/agents/registry";
 import type { CallRow } from "../../src/llm/ledger";
 
 /** The gateway tests of 03-agent-runtime.md 15.3: fake client, no network, one row per send. */
@@ -112,6 +113,15 @@ describe("runAgent", () => {
     expect(rows.map((r) => r.callKind)).toEqual(["primary", "retry", "retry"]);
   });
 
+  it("applies AIMD on every 429, including the last one of a chain (scale-v01)", async () => {
+    const limited = { status: 429, type: "rate_limit_error", retryAfter: 1 };
+    configureGateway({ ...deps, client: () => fakeAnthropic([limited, limited, limited]) });
+    await expect(runAgent(fitScorer, fitInput, {})).rejects.toMatchObject({ code: "rate_limited" });
+    // 20 tokens, then for each send: take one and halve the rest (19 -> 9.5, 8.5 -> 4.25, 3.25 -> 1.6): one token left.
+    (await acquire("batch", "claude-haiku-5-5", 0)).release();
+    await expect(acquire("batch", "claude-haiku-5-5", 0)).rejects.toThrow("limiter_timeout");
+  });
+
   it("repairs a schema-invalid reply once, sending paths and codes only", async () => {
     const fake = fakeAnthropic([
       { content: [{ type: "text", text: '{"score": "high", "reasons": []}' }], stop_reason: "end_turn", usage: { input_tokens: 500, output_tokens: 20 } },
@@ -178,7 +188,52 @@ describe("runAgent", () => {
     expect(out.model).toBe("claude-sonnet-5-5");
     expect(rows.map((r) => r.model)).toEqual(["claude-haiku-5-5", "claude-sonnet-5-5"]);
     expect(rows.map((r) => r.tieredUp)).toEqual([false, true]);
+    expect(rows.map((r) => r.callKind)).toEqual(["primary", "tier_up"]); // 2.6: the first Sonnet send is a tier_up row
     expect(out.data.lines).toHaveLength(1);
+  });
+
+  it("tiers up after overload retries are spent (2.6)", async () => {
+    const tailored = JSON.stringify({ lines: [{ id: "l1", section: "Experience", text: "Built the billing service at Nordbeam", factIds: ["f1"] }] });
+    const fake = fakeAnthropic([
+      { status: 529, type: "overloaded_error" },
+      { status: 529, type: "overloaded_error" },
+      { status: 529, type: "overloaded_error" },
+      { content: [{ type: "text", text: tailored }], stop_reason: "end_turn", usage: { input_tokens: 900, output_tokens: 60 } },
+    ]);
+    configureGateway({ ...deps, client: () => fake });
+    const out = await runAgent(resumeTailor, tailoringInput, { userId: "user-123" });
+    expect(out.model).toBe("claude-sonnet-5-5");
+    expect(rows.map((r) => r.status)).toEqual(["error", "error", "error", "ok"]);
+  });
+
+  it("never tiers up on an auth, billing or invalid request failure (llm-agents-12)", async () => {
+    for (const [status, type, code] of [
+      [401, "authentication_error", "auth"],
+      [402, "billing_error", "billing"],
+      [400, "invalid_request_error", "invalid_request"],
+    ] as const) {
+      rows = [];
+      const fake = fakeAnthropic([{ status, type }]);
+      configureGateway({ ...deps, client: () => fake });
+      await expect(runAgent(resumeTailor, tailoringInput, { userId: "user-123" })).rejects.toMatchObject({ code });
+      expect(rows.map((r) => r.model)).toEqual(["claude-haiku-5-5"]);
+      expect(fake.requests).toHaveLength(1);
+    }
+  });
+
+  it("a budget refusal never tiers up and writes one budget_stopped row with its error code (llm-agents-22)", async () => {
+    const spent = new Budget({
+      snapshotToday: async () => ({ globalUsd: 999, agentUsd: {}, tierUpCallsToday: {}, callsYesterday: {} }),
+      userSpend: async () => ({ pipelineUsd: 0, interactiveUsd: 0 }),
+    });
+    const fake = fakeAnthropic(okFit());
+    configureGateway({ ...deps, budget: spent, client: () => fake });
+    await expect(runAgent(resumeTailor, tailoringInput, { userId: "user-123" })).rejects.toMatchObject({
+      code: "budget_stopped",
+      budget: { scope: "global", retryAfter: "now" },
+    });
+    expect(fake.requests).toHaveLength(0);
+    expect(rows.map((r) => [r.status, r.errorCode, r.model])).toEqual([["budget_stopped", "budget_stopped", "claude-haiku-5-5"]]);
   });
 
   it("refuses a send whose estimate exceeds the per-call cap (9.2, checked in the budget)", async () => {
@@ -226,6 +281,68 @@ describe("runAgent", () => {
       expect(json).not.toContain("React");
     }
   });
+});
+
+/** Inputs at every schema bound (strings at max length, arrays at max items), plain ASCII. */
+const text = (n: number) => "Built and ran billing services for a team. ".repeat(Math.ceil(n / 43)).slice(0, n);
+const maxFacts = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `fact-${i}`, kind: "role", text: text(400) }));
+const maxJob = { title: text(200), company: text(200), descriptionText: text(20_000) };
+const MAX_INPUTS: Record<keyof typeof AGENTS, unknown> = {
+  "fit-scorer": { profileSummary: text(6_000), job: { title: text(200), companyName: text(200), location: text(200), remote: true, descriptionText: text(20_000) } },
+  "resume-parser": { resumeText: text(30_000) },
+  "resume-tailor": { facts: maxFacts(60), job: { title: text(200), companyName: text(200), descriptionText: text(20_000) } },
+  "resume-writer": { scope: "resume", refine: "use_numbers", resumeView: text(12_000), facts: maxFacts(60), noteFact: { id: "note-1", kind: "metric", text: text(400) }, job: maxJob, maxSuggestions: 15 },
+  "answer-drafter": { label: text(500), facts: maxFacts(60), savedAnswers: Array.from({ length: 20 }, () => ({ label: text(500), answer: text(5_000) })), job: maxJob },
+  "cover-letter-writer": { facts: maxFacts(60), job: maxJob },
+};
+
+describe("runAgent input contract (llm-agents-05, v01)", () => {
+  let rows: CallRow[];
+  const base = (fake: ReturnType<typeof fakeAnthropic>): GatewayDeps => ({
+    client: () => fake,
+    budget: new Budget(memorySpendStore()),
+    writeRow: async (row) => {
+      rows.push(row);
+      return "x";
+    },
+    now: () => Date.now(),
+    sleep: async () => {},
+    flags: () => ({ llmPaused: false, batchPaused: false, disabled: {}, promptPin: {} }),
+  });
+
+  beforeEach(() => {
+    rows = [];
+    resetBreakers();
+    resetLimiter();
+  });
+  afterEach(() => configureGateway({ writeRow: async () => null }));
+
+  it("refuses an input that fails spec.input before any spend, with no row", async () => {
+    const fake = fakeAnthropic(okFit());
+    configureGateway(base(fake));
+    await expect(runAgent(fitScorer, { ...fitInput, profileSummary: "" }, {})).rejects.toMatchObject({ code: "invalid_request", retryable: false });
+    await expect(runAgent(resumeTailor, { ...tailoringInput, facts: maxFacts(61) }, {})).rejects.toMatchObject({ code: "invalid_request" });
+    expect(fake.requests).toHaveLength(0);
+    expect(rows).toHaveLength(0);
+  });
+
+  it("refuses a rendered prompt above the agent's maxInputTokens before any spend", async () => {
+    const fake = fakeAnthropic(okFit());
+    configureGateway(base(fake));
+    await expect(runAgent({ ...fitScorer, maxInputTokens: 500 }, fitInput, {})).rejects.toMatchObject({ code: "invalid_request", retryable: false });
+    expect(fake.requests).toHaveLength(0);
+    expect(rows).toHaveLength(0);
+  });
+
+  for (const [id, spec] of Object.entries(AGENTS)) {
+    it(`${id}: an input at every schema bound still fits maxInputTokens and the per-call cap, so it reaches the model`, async () => {
+      const fake = fakeAnthropic([{ status: 401, type: "authentication_error" }]); // a code the gateway itself never raises
+      configureGateway(base(fake));
+      const err = await runAgent(spec as typeof fitScorer, MAX_INPUTS[id as keyof typeof AGENTS] as never, { userId: "user-max" }).catch((e: unknown) => e);
+      expect((err as AgentError).code, `${id} was refused before sending: ${(err as Error).message}`).toBe("auth");
+      expect(fake.requests).toHaveLength(1);
+    });
+  }
 });
 
 describe("budget scope refusal", () => {

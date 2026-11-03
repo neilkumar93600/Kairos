@@ -145,6 +145,11 @@ const envSchema = z.object({
   KAIROS_EDGE_SECRET: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
   /** api only. Proxies between Railway's edge and the api, skipped from the right of X-Forwarded-For. Set only from the S-B1 probe. */
   TRUSTED_PROXY_HOPS_DIRECT: z.coerce.number().int().min(0).max(3).default(0),
+
+  // AI spend controls (WP-06). The shed level is set by hand until ops_flags lands (WP-27); global spend raises it too.
+  LLM_SHED_LEVEL: z.coerce.number().int().min(0).max(3).default(0),
+  /** Kill switch for the scoring loop (true, 1, on): new postings are not scored while set. */
+  PAUSE_SCORING: z.preprocess(emptyToUndefined, z.stringbool().default(false)),
 }).superRefine((e, ctx) => {
   // Without a token the mailer logs emails instead of sending them. Fine locally; in production
   // that would put sign-up and reset codes in the logs, so refuse to boot.
