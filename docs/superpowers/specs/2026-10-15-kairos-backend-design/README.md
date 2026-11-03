@@ -36,7 +36,7 @@ Non-negotiable invariants, unchanged: the truth lock (every AI-written resume li
 1. The invariants (`01` B.16, `_research/requirements.md` INV-n) and the owner decisions of section 1. No document overrides them.
 2. A dated amendment (`[Amended 2026-10-30, ...]`) wins over the text it names. Amendments carry the decision they implement.
 3. For the resume library, versions, imports, templates, tracker, `application_events` and sent-resume timing, the PRD wins; for the truth rules and the web contract of the workspace, the workspace spec wins; elsewhere in the web contract, the frozen code wins.
-4. `02-database.md` wins over `01` B.10 and over the `_db/` domain drafts for the schema; `05-api.md` wins for HTTP; `06-infrastructure.md` wins for infrastructure, and its S-D1-corrected tables win over `01` where they differ; a worker spec wins for flow detail in its own domain.
+4. `02-database.md` wins over `01` B.10 and over the `_db/` domain drafts for the schema; `05-api.md` wins for HTTP; `06-infrastructure.md` wins for infrastructure, and its S-D1-corrected tables win over `01` where they differ; a worker spec wins for flow detail in its own domain; an agent spec under `agents/` wins over `01` B.9.2 and `03` 3.3 and 13.2 for its own agent's input, output, prompt, checks and eval format (*added 2026-11-03, WP-49*), while the worker or route spec that calls the agent keeps the flow around the call.
 5. Where the plan and a specification disagree about **order or scope**, the plan wins; about **shape**, the specification (or the PRD where rule 3 applies) wins.
 
 **Name map** (old name in files that were not edited, current name):

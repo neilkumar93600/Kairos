@@ -2,6 +2,15 @@
 
 Revision 1, 2026-10-23. Status: Proposed. Part of the backend re-architecture spec set. Implements the `resume-parser` row of `01-architecture.md` B.9.2 and the `resume-parser` rows of `03-agent-runtime.md` (3.3, 7.1, 9.4, 13.2). Where this spec refines those rows it says so in section 13.
 
+**Amendments (2026-11-03, WP-49).** These win over the text they name (README precedence rule 2).
+
+| # | Section | Amendment | Decision it implements |
+|---|---|---|---|
+| 1 | 4.1, 4.2 | The shape conflict with `01-architecture.md` B.9.2 ("character offsets") is settled for this spec: the model returns `fromLine` and `toLine` on the `[L<n>]` tags, and the server derives character offsets (4.4). B.9.2 and `03` 13.2 are amended to match | Agent specs win on their agent's shape (README rule 4) |
+| 2 | 2, 7.4, 11 | The runner is the BullMQ `parse-resume` job on the worker, not a DBOS step (ADR-001 Revision 3, path c). Read "the step throws and DBOS retries" as "the job throws and BullMQ retries with backoff"; the workflow ids of section 2 become BullMQ job ids; reconciler R-3 is the stuck-parse reconciler of WP-17. Built by WP-17 | Path (c) |
+| 3 | 2, 7.4 | Each import is its own record (`resume_imports`, PRD 6.4 and 12). The write contract is scoped to the import: rows carry `facts.import_id`, and step 4's delete reads `WHERE import_id = $1 AND asserted_by = 'import' AND NOT confirmed AND ...`. A re-parse never touches another import's facts | PRD authoritative (README 1) |
+| 4 | 3.2, 3.3, 13 item 8 | `server/src/modules/profile/{segment,finalize-parse}.ts` read `server/src/services/import/{segment,finalize-parse}.ts` (WP-17 file list; there is no `modules/` directory). Until WP-17 lands, WP-07 applies `redactResumeHeader` and `dropSensitiveLines` to the v1 path in `jobs/parse-resume.ts` | Today's layout |
+
 Stakes: medium. Model: `claude-haiku-5-5`, with `claude-sonnet-5-5` on a repeated schema failure. Budget: $0.005 per call. Worker: `resume-parse`. Prompt version specified here: `resume-parser@v2` (version 1 is the port of today's prompt, already in `server/src/agents/resume-parser/`).
 
 Skills applied: `prompt-engineering-patterns` (instruction hierarchy, fixed examples, progressive disclosure, versioned prompts) and `llm-structured-output` (strict schema with field descriptions, nullable instead of optional, validation after constrained decoding, one repair re-ask, enum casing). Both loaded without error. Evidence tags as in `03-agent-runtime.md`: **[V]** verified against Anthropic documentation on 2026-10-23 by that document; **[est]** estimate; **[verify]** to be confirmed by spike S-A1.
