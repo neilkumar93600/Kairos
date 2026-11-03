@@ -6,6 +6,7 @@ import { baseEnv, type BaseEnv } from "../lib/env";
 import { conflict, forbidden, notFound, paymentRequired } from "../lib/errors";
 import { effectivePlan } from "./billing-events";
 import { availableCreditsNow, chargeSubmission } from "./credits";
+import { redactConfirmation } from "./sensitive";
 
 /** The user's effective plan: past_due keeps the paid plan for 7 days, then counts as Free. */
 export async function planFor(db: Db, userId: string): Promise<PlanId> {
@@ -136,7 +137,8 @@ export async function recordSubmission(db: Db, userId: string, report: Submissio
         .set({
           status: "submitted",
           submittedAt: new Date(),
-          receipt: { filledFields: report.filledFields, confirmationText: report.confirmationText, channel },
+          // The employer's page wrote the confirmation: no addresses or phone numbers in it, 4 KB at most (WP-25).
+          receipt: { filledFields: report.filledFields, confirmationText: redactConfirmation(report.confirmationText), channel },
           failureReason: null,
           updatedAt: new Date(),
         })
