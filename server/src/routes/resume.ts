@@ -1,23 +1,23 @@
 import { Router } from "express";
-import { and, desc, eq, isNotNull, notInArray, or } from "drizzle-orm";
+import { and, eq, isNotNull, or } from "drizzle-orm";
 import { z } from "zod";
 import {
   resumeInputSchema,
   suggestionRequestSchema,
   type Resume,
-  type ResumeContact,
   type ResumeInput,
   type SuggestionRequest,
 } from "@auto-career/shared";
 import { db } from "../db/client";
-import { applications, companies, facts, jobs, matches, profiles, resumeRevisions, resumes } from "../db/schema";
+import { applications, companies, facts, jobs, matches } from "../db/schema";
 import type { SessionUser } from "../lib/auth";
 import { asActor } from "../lib/actor";
 import { HttpError, notFound } from "../lib/errors";
 import { aiLimiter } from "../middleware/rate-limit";
 import { currentUser } from "../middleware/require-auth";
 import { validateBody } from "../middleware/validate";
-import { claimViolations, defaultResume, profileContactFrom, truthLockViolations, type ProfileFact } from "../services/resume-doc";
+import type { ProfileFact } from "../services/resume-doc";
+import { defaultBase, saveDocument, toDetail } from "../services/resume-library";
 import { suggestEdits } from "../services/resume-writer";
 import { metered } from "../services/allowance";
 import { planFor } from "../services/submissions";
@@ -34,33 +34,12 @@ const FACT_COLUMNS = { id: facts.id, kind: facts.kind, text: facts.text, sourceS
 export const userFacts = (userId: string): Promise<ProfileFact[]> =>
   db().select(FACT_COLUMNS).from(facts).where(eq(facts.userId, userId)).orderBy(facts.createdAt);
 
-const toResume = (row: typeof resumes.$inferSelect): Resume => ({ ...row.document, id: row.id, updatedAt: row.updatedAt.toISOString() });
-
-/** Contact for a new resume, from the account and Profile, clipped to the schema's limits. */
-async function contactFor(user: SessionUser): Promise<ResumeContact> {
-  const [p] = await db().select().from(profiles).where(eq(profiles.userId, user.id));
-  return {
-    name: user.name.slice(0, 120),
-    email: user.email.slice(0, 200),
-    phone: (p?.phone ?? "").slice(0, 40),
-    location: [p?.city, p?.country].filter(Boolean).join(", ").slice(0, 120),
-    links: [p?.linkedinUrl, p?.githubUrl, p?.portfolioUrl].filter((l): l is string => Boolean(l)).map((l) => l.slice(0, 300)),
-  };
-}
-
 /**
- * The saved resume. On first use a default built from confirmed facts is stored idempotently (architecture B.8.2), so
- * the id is real from the first GET and concurrent first loads converge on one row.
+ * The default base resume of the user's default profile, which the legacy /resume routes alias (05-api 11.1 as amended
+ * by WP-43). Built from confirmed facts on first use (services/resume-library.ts).
  */
-export async function loadResume(user: SessionUser, factRows?: ProfileFact[]): Promise<Resume> {
-  const find = () => db().select().from(resumes).where(eq(resumes.userId, user.id));
-  const [row] = await find();
-  if (row) return toResume(row);
-  const doc = defaultResume(factRows ?? (await userFacts(user.id)), await contactFor(user));
-  await db().insert(resumes).values({ userId: user.id, document: doc }).onConflictDoNothing({ target: resumes.userId });
-  const [stored] = await find();
-  if (!stored) throw new Error("Default resume insert returned no row");
-  return toResume(stored);
+export async function loadResume(user: SessionUser, _factRows?: ProfileFact[]): Promise<Resume> {
+  return toDetail(await defaultBase(user.id, await planFor(db(), user.id)));
 }
 
 /** A job the user can see: one of their matches or applications. Anything else is a 404. */
@@ -82,57 +61,11 @@ resumeRouter.get("/", async (req, res) => {
   res.json({ resume: await loadResume(currentUser(req)) });
 });
 
-/**
- * Saves the whole document. Every line and fact-backed heading must cite confirmed facts of this user, and every line
- * that changed must pass checkClaims against its cited facts (B.8.3), or nothing is stored.
- */
+/** Saves the default base resume: the truth lock, a revision of the old document, the write (resume-library saveDocument). */
 resumeRouter.put("/", validateBody(resumeInputSchema), async (req, res) => {
   const me = currentUser(req);
-  const doc = req.body as ResumeInput;
-  const [confirmed, [stored]] = await Promise.all([
-    db()
-      .select({ id: facts.id, text: facts.text })
-      .from(facts)
-      .where(and(eq(facts.userId, me.id), eq(facts.confirmed, true))),
-    db().select({ document: resumes.document }).from(resumes).where(eq(resumes.userId, me.id)),
-  ]);
-  const factTexts = new Map(confirmed.map((f) => [f.id, f.text]));
-  const reasons = claimViolations(doc, factTexts, stored?.document ?? null);
-  const lineIds = [...new Set([...truthLockViolations(doc, new Set(factTexts.keys())), ...Object.keys(reasons)])];
-  if (lineIds.length) {
-    throw new HttpError(422, "truth_lock", "Some lines cite facts that are not confirmed in your profile, or add details those facts do not contain", {
-      lineIds,
-      ...(Object.keys(reasons).length ? { reasons } : {}),
-    });
-  }
-
-  const row = await db().transaction(async (tx) => {
-    const [saved] = await tx
-      .insert(resumes)
-      .values({ userId: me.id, document: doc })
-      .onConflictDoUpdate({ target: resumes.userId, set: { document: doc, updatedAt: new Date() } })
-      .returning();
-    if (!saved) throw new Error("Resume upsert returned no row");
-    // B.8.3: application forms are filled from the profile, so the resume's contact is written back to it.
-    const [profile] = await tx.select({ country: profiles.country }).from(profiles).where(eq(profiles.userId, me.id));
-    if (profile) {
-      await tx
-        .update(profiles)
-        .set({ ...profileContactFrom(doc.contact, profile.country), updatedAt: new Date() })
-        .where(eq(profiles.userId, me.id));
-    }
-    await tx.insert(resumeRevisions).values({ resumeId: saved.id, document: doc });
-    // ponytail: keep the newest 50 revisions per resume; raise the cap or prune in a nightly job if history needs more.
-    const newest = tx
-      .select({ id: resumeRevisions.id })
-      .from(resumeRevisions)
-      .where(eq(resumeRevisions.resumeId, saved.id))
-      .orderBy(desc(resumeRevisions.createdAt))
-      .limit(50);
-    await tx.delete(resumeRevisions).where(and(eq(resumeRevisions.resumeId, saved.id), notInArray(resumeRevisions.id, newest)));
-    return saved;
-  });
-  res.json({ resume: toResume(row) });
+  const base = await defaultBase(me.id, await planFor(db(), me.id));
+  res.json({ resume: await toDetail(await saveDocument(me.id, base.id, req.body as ResumeInput)) });
 });
 
 /** Resume Writer proposals for one scope. Nothing is saved except a `note`, which becomes an unconfirmed fact. */

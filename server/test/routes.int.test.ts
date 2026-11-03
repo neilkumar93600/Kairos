@@ -71,6 +71,14 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
     return application!;
   }
 
+  /** The user's default base resume (WP-17: GET and PUT /api/resume alias it), in a default resume profile. */
+  async function seedBase(document: ResumeInput) {
+    const [p] = await tdb.insert(schema.resumeProfiles).values({ userId: me.id, name: "Main", isDefault: true, sourceText: "" }).returning();
+    return (await tdb.insert(schema.resumes).values({ userId: me.id, resumeProfileId: p!.id, isDefault: true, document }).returning())[0]!;
+  }
+  /** Stored documents, to assert a refused save stored nothing. */
+  const storedDocs = async () => (await tdb.select({ d: schema.resumes.document }).from(schema.resumes)).map((r) => JSON.stringify(r.d));
+
   const doc = (factId: string, headingFactId: string | null = null): ResumeInput => ({
     name: "Base resume",
     density: "comfortable",
@@ -127,7 +135,7 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       const bad = await request(app).put("/api/resume").send(doc(unconfirmed));
       expect(bad.status).toBe(422);
       expect(bad.body.error).toMatchObject({ code: "truth_lock", details: { lineIds: ["l1"] } });
-      expect((await tdb.select({ n: count() }).from(schema.resumes))[0]!.n).toBe(0);
+      expect(await storedDocs()).not.toContain(JSON.stringify(doc(unconfirmed)));
 
       const confirmed = await fact("Built billing", true);
       const ok = await request(app).put("/api/resume").send(doc(confirmed));
@@ -137,21 +145,31 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       const revisions = () => tdb.select({ n: count() }).from(schema.resumeRevisions).where(eq(schema.resumeRevisions.resumeId, resumeId));
       expect((await revisions())[0]!.n).toBe(1);
 
-      // 55 older revisions, then one more save: the prune keeps the newest 50, the new one among them.
+      // A second save within 10 minutes is coalesced: the revision keeps the state from before the burst (WP-17).
+      expect((await request(app).put("/api/resume").send({ ...doc(confirmed), name: "Burst" })).status).toBe(200);
+      expect((await revisions())[0]!.n).toBe(1);
+
+      // 55 older unnamed revisions and one named, all a day old, then one more save: the prune keeps the newest 50
+      // unnamed (the new one, holding the document from before this save, among them) and the named one.
       const old = Date.now() - 86_400_000;
+      await tdb.update(schema.resumeRevisions).set({ createdAt: new Date(old - 5000) }).where(eq(schema.resumeRevisions.resumeId, resumeId));
       await tdb
         .insert(schema.resumeRevisions)
-        .values(Array.from({ length: 55 }, (_, i) => ({ resumeId, document: doc(confirmed), createdAt: new Date(old + i * 1000) })));
+        .values([
+          ...Array.from({ length: 55 }, (_, i) => ({ resumeId, document: doc(confirmed), createdAt: new Date(old + i * 1000) })),
+          { resumeId, document: doc(confirmed), reason: "named" as const, name: "Keep me", createdAt: new Date(old - 10_000) },
+        ]);
       const renamed = { ...doc(confirmed), name: "Renamed" };
       expect((await request(app).put("/api/resume").send(renamed)).status).toBe(200);
-      expect((await revisions())[0]!.n).toBe(50);
+      expect((await revisions())[0]!.n).toBe(51);
       const [newest] = await tdb
         .select({ document: schema.resumeRevisions.document })
         .from(schema.resumeRevisions)
         .where(eq(schema.resumeRevisions.resumeId, resumeId))
         .orderBy(desc(schema.resumeRevisions.createdAt))
         .limit(1);
-      expect(newest!.document.name).toBe("Renamed");
+      expect(newest!.document.name).toBe("Burst");
+      expect((await tdb.select().from(schema.resumeRevisions).where(eq(schema.resumeRevisions.name, "Keep me"))).length).toBe(1);
     });
   });
 
@@ -163,7 +181,7 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
         .send({ ...doc(f), sections: [{ ...doc(f).sections[0]!, entries: [{ ...doc(f).sections[0]!.entries[0]!, lines: [{ id: "l1", section: "Experience", text: "Built billing at Initech for 40 teams", factIds: [f] }] }] }] });
       expect(res.status).toBe(422);
       expect(res.body.error).toMatchObject({ code: "truth_lock", details: { lineIds: ["l1"], reasons: { l1: "number_not_in_facts" } } });
-      expect((await tdb.select({ n: count() }).from(schema.resumes))[0]!.n).toBe(0);
+      expect((await storedDocs()).some((d) => d.includes("40 teams"))).toBe(false);
     });
 
     it("422s a changed line adding a percentage, tool or employer, naming the rule (WP-07 acceptance)", async () => {
@@ -178,15 +196,15 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
         const res = await request(app).put("/api/resume").send(body);
         expect(res.status, text).toBe(422);
         expect(res.body.error).toMatchObject({ code: "truth_lock", details: { lineIds: ["l1"], reasons: { l1: rule } } });
+        expect((await storedDocs()).some((d) => d.includes(text))).toBe(false);
       }
-      expect((await tdb.select({ n: count() }).from(schema.resumes))[0]!.n).toBe(0);
     });
 
     it("does not re-check a line that is unchanged from the stored document", async () => {
       const f = await fact("Built billing", true);
       const legacy = doc(f);
       legacy.sections[0]!.entries[0]!.lines[0]!.text = "Built billing in 2019";
-      await tdb.insert(schema.resumes).values({ userId: me.id, document: legacy });
+      await seedBase(legacy);
       expect((await request(app).put("/api/resume").send({ ...legacy, name: "Renamed" })).status).toBe(200);
     });
   });
@@ -361,7 +379,7 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
   describe("POST /api/jobs/:jobId/tailor", () => {
     it("runs resume-tailor (Haiku) and maps its lines onto the base resume, metered by jobTailor (resume-34)", async () => {
       const f = await fact("Built billing", true);
-      await tdb.insert(schema.resumes).values({ userId: me.id, document: doc(f) });
+      await seedBase(doc(f));
       const app1 = await draft();
       tailorResume.mockResolvedValue({ kept: [{ id: "t1", section: "Experience", text: "Built the billing service", factIds: [f] }], rejected: [] });
       const res = await request(app).post(`/api/jobs/${app1.jobId}/tailor`);
@@ -370,6 +388,14 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       expect(res.headers["kairos-allowance"]).toMatch(/^feature=jobTailor;used=1;limit=5;resets=/);
       expect(tailorResume).toHaveBeenCalledTimes(1);
       expect(tailorResume.mock.calls[0]![0]).toEqual([expect.objectContaining({ id: f })]);
+      // Release N, before migration 0011: no copy can be saved, so the frozen alias answers as before (proposals against
+      // the default base, nothing saved), and POST /resumes/tailor answers 503 resumes_user_uq with no Retry-After.
+      expect(res.body.resume).toMatchObject({ kind: "base", isDefault: true });
+      expect(await tdb.select().from(schema.resumes).where(eq(schema.resumes.kind, "tailored"))).toEqual([]);
+      const direct = await request(app).post("/api/resumes/tailor").send({ jobId: app1.jobId });
+      expect(direct.status).toBe(503);
+      expect(direct.body.error).toMatchObject({ code: "service_unavailable", details: { reason: "resumes_user_uq" } });
+      expect(direct.headers["retry-after"]).toBeUndefined();
     });
   });
 
@@ -416,6 +442,19 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       const after = await read(app1.id);
       expect(after.resumeLines).toEqual(userLines);
       expect(after.answers.map((a) => a.fieldKey)).toContain("email");
+    });
+
+    it("before migration 0011: writes the draft, saves no copy, does not fail the job, and leaves the resume alone", async () => {
+      const f = await fact("Built billing", true);
+      const base = await seedBase(doc(f));
+      const app1 = await draft();
+      tailorResume.mockResolvedValue({ kept: [{ id: "m1", section: "Experience", text: "Built billing", factIds: [f] }], rejected: [] });
+      await expect(run(app1.id)).resolves.toMatchObject({ lines: 1 });
+      expect((await read(app1.id)).resumeLines).toEqual([expect.objectContaining({ text: "Built billing", factIds: [f] })]);
+      const rows = await tdb.select().from(schema.resumes).where(eq(schema.resumes.userId, me.id));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ id: base.id, kind: "base", version: base.version, document: base.document });
+      expect(await tdb.select().from(schema.resumeRevisions)).toEqual([]);
     });
 
     it("never overwrites lines or answers the user saved while the model ran", async () => {

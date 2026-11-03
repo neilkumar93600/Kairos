@@ -40,16 +40,20 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
       await db.insert(schema.inboundEmails).values({ userId, providerMessageId: randomUUID(), sender: "a@b.c", subject: "s", textBody: body, receivedAt: ago(days) });
       await db.insert(schema.contactMessages).values({ name: "n", email: "x@y.z", topic: "support", message: body, createdAt: ago(days * 2) });
     }
-    const [unreferenced, referenced, recent, saved] = [await job(200), await job(200), await job(10), await job(200)];
+    const [unreferenced, referenced, recent, saved, tailored] = [await job(200), await job(200), await job(10), await job(200), await job(200)];
     await db.insert(schema.applications).values({ userId, jobId: referenced });
     // A job saved to the tracker is purged, never deleted (its item would lose the posting; DB-reviewer round 2).
     await db.insert(schema.trackerItems).values({ userId, jobId: saved });
+    // So is a job a tailored resume was made for (WP-17): the copy would lose the job it names.
+    const document = { name: "n", density: "comfortable" as const, contact: { name: "n", email: "", phone: "", location: "", links: [] }, sections: [] };
+    await db.insert(schema.resumes).values({ userId, kind: "tailored", name: "For E", jobId: tailored, document });
 
-    expect(await retention.processRetention()).toEqual({ inbound_body: 1, contact_messages: 1, matches_below_bar: 0, jobs_closed: 3 });
+    expect(await retention.processRetention()).toEqual({ inbound_body: 1, contact_messages: 1, matches_below_bar: 0, jobs_closed: 4 });
     expect((await db.select().from(schema.inboundEmails)).map((r) => r.textBody).sort()).toEqual(["", "new"]);
     expect((await db.select().from(schema.contactMessages)).map((r) => r.message)).toEqual(["new"]);
     const jobs = await db.select().from(schema.jobs);
-    expect(jobs.map((j) => j.id).sort()).toEqual([referenced, recent, saved].sort());
+    expect(jobs.map((j) => j.id).sort()).toEqual([referenced, recent, saved, tailored].sort());
+    expect(jobs.find((j) => j.id === tailored)).toMatchObject({ descriptionText: "", raw: null });
     expect(jobs.find((j) => j.id === referenced)).toMatchObject({ descriptionText: "", raw: null });
     expect(jobs.find((j) => j.id === saved)).toMatchObject({ descriptionText: "", raw: null });
     // A second run changes nothing.

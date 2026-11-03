@@ -1,16 +1,17 @@
 import { Router } from "express";
-import { and, eq, exists, not, or, sql } from "drizzle-orm";
+import { and, eq, exists, inArray, not, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { z } from "zod";
-import { FACT_KINDS, getPlan, httpUrl, preferencesSchema } from "@auto-career/shared";
+import { FACT_KINDS, confirmFactsRequestSchema, getPlan, httpUrl, preferencesSchema } from "@auto-career/shared";
 import { db } from "../db/client";
-import { applications, facts, profiles, resumeProfiles, resumes, savedAnswers } from "../db/schema";
+import { applications, employments, facts, profiles, resumeProfiles, resumes, savedAnswers } from "../db/schema";
 import { asActor } from "../lib/actor";
 import { HttpError, forbidden, notFound } from "../lib/errors";
 import { FACT_COLUMNS, PROFILE_COLUMNS, RESUME_PROFILE_COLUMNS } from "../lib/serializers";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
-import { enqueue } from "../jobs/queues";
+import { hit } from "../middleware/rate-limit";
+import { countImport, createImport } from "../services/import/imports";
 import { planFor } from "../services/submissions";
 
 /** Profile, preferences, resumes, facts and saved answers. Mounted at /api/profile. */
@@ -53,19 +54,51 @@ profileRouter.put("/preferences", validateBody(preferencesSchema), async (req, r
 
 const resumeSchema = z.object({ name: z.string().trim().min(1).max(80), text: z.string().min(200).max(60_000) });
 
-/** Accepts resume text (the web app extracts it from the uploaded PDF or DOCX) and queues fact parsing. */
+/**
+ * The frozen onboarding paste: a new resume profile (plan-gated) whose text becomes its first import (WP-17). The text
+ * is stored only encrypted on the import; resume_profiles.source_text stays empty until WP-46 drops it.
+ */
 profileRouter.post("/resumes", validateBody(resumeSchema), async (req, res) => {
   const me = currentUser(req);
-  const limit = getPlan(await planFor(db(), me.id)).resumeProfiles;
+  const plan = await planFor(db(), me.id);
+  const limit = getPlan(plan).resumeProfiles;
   const existing = await db().select({ id: resumeProfiles.id }).from(resumeProfiles).where(eq(resumeProfiles.userId, me.id));
   if (existing.length >= limit) throw forbidden(`Your plan allows ${limit} resume profile${limit === 1 ? "" : "s"}`);
+  await countImport(me.id, hit);
   const [resume] = await db()
     .insert(resumeProfiles)
-    .values({ userId: me.id, name: req.body.name, sourceText: req.body.text, isDefault: existing.length === 0 })
+    .values({ userId: me.id, name: req.body.name, sourceText: "", isDefault: existing.length === 0 })
     .returning(RESUME_PROFILE_COLUMNS);
   if (!resume) throw new Error("Resume insert returned no row");
-  await enqueue("parse-resume", { resumeProfileId: resume.id }, `parse-${resume.id}`);
+  await createImport({ userId: me.id, plan, text: req.body.text, sourceKind: "text", fileName: req.body.name, resumeProfileId: resume.id });
   res.status(202).json({ resume });
+});
+
+/**
+ * Bulk confirm (PRD 6.4 step 2, "Confirm all in this role"): the user's own facts only, as the user (facts_guard), and
+ * the roles those facts sit under with them, so a confirmed role heading can print. Any id that is not the caller's
+ * is a 404 and nothing is confirmed.
+ */
+profileRouter.post("/facts/confirm", validateBody(confirmFactsRequestSchema), async (req, res) => {
+  const me = currentUser(req);
+  const ids = [...new Set((req.body as { ids: string[] }).ids)];
+  if (!ids.every((id) => z.uuid().safeParse(id).success)) throw notFound("Fact");
+  const confirmedFacts = await db().transaction(async (tx) => {
+    await asActor(tx, "user");
+    const mine = and(inArray(facts.id, ids), eq(facts.userId, me.id));
+    const owned = await tx.select({ id: facts.id, employmentId: facts.employmentId }).from(facts).where(mine);
+    if (owned.length !== ids.length) throw notFound("Fact");
+    const rows = await tx.update(facts).set({ confirmed: true }).where(mine).returning(FACT_COLUMNS);
+    const roles = [...new Set(owned.flatMap((f) => (f.employmentId ? [f.employmentId] : [])))];
+    if (roles.length) {
+      await tx
+        .update(employments)
+        .set({ confirmed: true })
+        .where(and(inArray(employments.id, roles), eq(employments.userId, me.id), eq(employments.confirmed, false)));
+    }
+    return rows;
+  });
+  res.json({ facts: confirmedFacts });
 });
 
 profileRouter.get("/facts", async (req, res) => {

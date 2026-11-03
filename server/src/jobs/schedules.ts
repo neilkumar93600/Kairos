@@ -1,6 +1,7 @@
 import type { Job, RepeatOptions } from "bullmq";
 import { processAlerts, processMetricsPrune, processMetricsSample } from "./alerts";
 import { processBackupCheck } from "./backup-check";
+import { processBackfillSources, processStuckParses } from "./import-maintenance";
 import { processErasure, processOrphanUploads } from "./erasure";
 import { processRetention, processScrubApplications } from "./retention";
 import { processInvariantsHourly, processInvariantsNightly } from "./invariants";
@@ -57,6 +58,9 @@ export const SCHEDULES: Schedule[] = [
   { queue: "maintenance", id: "journal-reconcile", repeat: { pattern: "40 * * * *", tz: "UTC" }, run: () => processJournalReconcile() },
   // The backup-age alert and the manifest warnings of the pgbackup cron service's dumps (WP-13, ops-65).
   { queue: "maintenance", id: "backup-check", repeat: { pattern: "20 * * * *", tz: "UTC" }, run: () => processBackupCheck() },
+  // Resume imports whose parse job was lost or exhausted (R-3, WP-17), and plaintext sources moved to encrypted imports (B-14).
+  { queue: "maintenance", id: "stuck-parses", repeat: { every: 5 * MINUTE }, run: processStuckParses },
+  { queue: "maintenance", id: "backfill-sources", repeat: { pattern: "10 * * * *", tz: "UTC" }, run: processBackfillSources },
   // Account erasure's stores outside Postgres, and the page for a task open 24 hours (WP-25, 02-database 16.2).
   { queue: "maintenance", id: "erasure", repeat: { every: MINUTE }, run: () => processErasure() },
   { queue: "maintenance", id: "orphan-uploads", repeat: { pattern: "55 3 * * *", tz: "UTC" }, run: () => processOrphanUploads() },

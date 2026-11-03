@@ -6,7 +6,10 @@
 //
 // details shapes the web may read (05-api 4.5): rate_limited { reason: "user_limit" | "ip_limit" | "daily_allowance" |
 // "service_budget", bucket?: limiter class (anon, user_api, billing, contact, webhook_ip, ai_burst), retryAfterSec?,
-// resetsAt? }; reauth_required { maxAgeSec }; service_unavailable { retryAfterSec }.
+// resetsAt? }; reauth_required { maxAgeSec }; service_unavailable { retryAfterSec?, reason? } (reason "resumes_user_uq": a
+// second resume before the contract migration of WP-17 runs; it carries no Retry-After, a retry cannot succeed).
+// WP-17's resume library and imports: exists { resumeId }, limit_reached { limit }, truth_lock { lineIds, reasons? },
+// unsupported_type and unreadable { reason } (the file gate's reason code), payload_too_large { limitBytes }.
 // approvals_frozen, cloud_paused, extension_only and unknown_flag are WP-27's (ops flags); listed here because this file is the catalog.
 export const ERROR_CATALOG: Record<string, readonly number[]> = {
   ai_refused: [422],
@@ -20,6 +23,7 @@ export const ERROR_CATALOG: Record<string, readonly number[]> = {
   cloud_paused: [503],
   conflict: [409],
   email_unverified: [403],
+  exists: [409],
   extension_only: [409],
   fact_cited: [409],
   forbidden: [403],
@@ -28,6 +32,11 @@ export const ERROR_CATALOG: Record<string, readonly number[]> = {
   invalid_json: [400],
   invalid_param: [400],
   invalid_scope: [422],
+  is_default: [409],
+  last_base: [409],
+  limit_reached: [409],
+  no_text_layer: [422],
+  not_base: [409],
   not_found: [404],
   origin_not_allowed: [403],
   payload_too_large: [413],
@@ -36,6 +45,7 @@ export const ERROR_CATALOG: Record<string, readonly number[]> = {
   price_unavailable: [400],
   profile_only: [422],
   rate_limited: [429],
+  read_only: [409],
   reauth_required: [403],
   route_not_found: [404],
   service_unavailable: [503],
@@ -44,5 +54,7 @@ export const ERROR_CATALOG: Record<string, readonly number[]> = {
   truth_lock: [422],
   unauthorized: [401],
   unknown_flag: [422],
+  unreadable: [422],
   unsupported_board: [422],
+  unsupported_type: [415],
 };

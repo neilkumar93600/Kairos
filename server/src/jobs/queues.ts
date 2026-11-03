@@ -24,7 +24,8 @@ export interface JobData {
   /** Drains one chunk of the user's scoring lane (jobs/score-matches.ts). */
   "score-user": { userId: string };
   "tailor-application": { applicationId: string };
-  "parse-resume": { resumeProfileId: string };
+  /** One import (WP-17). `resumeProfileId` is the shape queued before WP-17; such a job is skipped (backfill-sources). */
+  "parse-resume": { importId: string } | { resumeProfileId: string };
   "classify-email": { inboundEmailId: string };
   "cloud-apply": { applicationId: string };
   "cost-rollup": { schedule: true };

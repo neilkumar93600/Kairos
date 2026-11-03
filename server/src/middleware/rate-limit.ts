@@ -122,6 +122,8 @@ export function createLimiters(shared: boolean) {
     /** Checkout and portal each create Stripe objects. */
     billing: limiter("billing", 10, 600_000, true, (req) => req.method !== "POST"),
     contact: limiter("contact", 5, 3_600_000, false),
+    /** Resume imports (05-api 6.2 `upload`, scale-52): 10 an hour per user. Runs before the body is read. */
+    upload: limiter("upload", 10, 3_600_000, true, (req) => req.method !== "POST"),
     /** Stripe and Postmark send from shared ranges: this only blunts floods. Runs before any body is read. */
     webhook: limiter("webhook_ip", 600, 60_000, false),
     /** Signed-link pages, GET and POST (WP-44, routes/links.ts): a guessed or replayed link costs its sender here. */

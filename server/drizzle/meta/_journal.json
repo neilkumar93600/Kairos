@@ -113,6 +113,20 @@
       "when": 1793718784688,
       "tag": "0015_privacy",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793719244015,
+      "tag": "0016_resume_library",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793719264585,
+      "tag": "0017_facts_import_indexes",
+      "breakpoints": true
     }
   ]
 }

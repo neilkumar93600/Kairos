@@ -12,6 +12,7 @@ import { contactRouter } from "./contact";
 import { creditsRouter } from "./credits";
 import { extensionRouter } from "./extension";
 import { filesRouter } from "./files";
+import { importsRouter } from "./imports";
 import { inboxRouter } from "./inbox";
 import { jobsRouter } from "./jobs";
 import { matchesRouter } from "./matches";
@@ -19,6 +20,7 @@ import { meRouter } from "./me";
 import { notificationsRouter } from "./notifications";
 import { profileRouter } from "./profile";
 import { resumeRouter } from "./resume";
+import { resumesRouter } from "./resumes";
 
 /** Every JSON route under /api. Auth routes (/api/auth/*) and webhooks are mounted separately in app.ts. */
 export function apiRouter(gateway: AuthGateway, limits: Limiters) {
@@ -47,6 +49,8 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
     noStore,
   ];
   router.use("/me", authed, meRouter);
+  // Before /profile, so an import meets requireAuth and the limits once (WP-17).
+  router.use("/profile/imports", authed, limits.upload, importsRouter);
   router.use("/profile", authed, profileRouter);
   router.use("/matches", authed, matchesRouter);
   router.use("/jobs", authed, jobsRouter);
@@ -57,6 +61,7 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   router.use("/billing", freshAuthed, limits.billing, billingRouter);
   router.use("/extension", authed, extensionRouter);
   router.use("/files", authed, filesRouter);
+  router.use("/resumes", authed, resumesRouter);
   router.use("/admin", requireAdmin(gateway), limits.user, noStore, adminRouter);
   router.use("/notifications", authed, notificationsRouter);
   router.use(countFailedSignIn(limits));
