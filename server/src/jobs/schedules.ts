@@ -1,4 +1,5 @@
 import type { Job, RepeatOptions } from "bullmq";
+import { processBackupCheck } from "./backup-check";
 import { processJournalReconcile, processMoneyJournal } from "./money-journal";
 import { processPartitions } from "./partitions";
 import type { QueueName } from "./queues";
@@ -49,6 +50,8 @@ export const SCHEDULES: Schedule[] = [
   // reconcile merges late commits and fills gaps.
   { queue: "maintenance", id: "money-journal", repeat: { pattern: "15 * * * * *", tz: "UTC" }, run: () => processMoneyJournal() },
   { queue: "maintenance", id: "journal-reconcile", repeat: { pattern: "40 * * * *", tz: "UTC" }, run: () => processJournalReconcile() },
+  // The backup-age alert and the manifest warnings of the pgbackup cron service's dumps (WP-13, ops-65).
+  { queue: "maintenance", id: "backup-check", repeat: { pattern: "20 * * * *", tz: "UTC" }, run: () => processBackupCheck() },
 ];
 
 /** The maintenance queue's processor: the scheduler id is the job name. */

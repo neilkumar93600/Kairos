@@ -44,6 +44,10 @@ describe("job schedules", () => {
     expect(byId["journal-reconcile"]).toMatchObject({ queue: "maintenance", repeat: { pattern: "40 * * * *", tz: "UTC" } });
   });
 
+  it("backup age and manifest warnings are checked hourly (WP-13)", () => {
+    expect(byId["backup-check"]).toMatchObject({ queue: "maintenance", repeat: { pattern: "20 * * * *", tz: "UTC" } });
+  });
+
   it("an unknown maintenance job fails instead of passing silently", async () => {
     await expect(processMaintenance({ name: "nope" } as never)).rejects.toThrow(/nope/);
   });
