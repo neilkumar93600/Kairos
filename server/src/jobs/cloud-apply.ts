@@ -5,7 +5,7 @@ import { chromium, type Browser } from "playwright-core";
 import type { SubmissionReport } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, jobs } from "../db/schema";
-import { env } from "../lib/env";
+import { applierEnv } from "../lib/env";
 import { logger } from "../lib/logger";
 import { claimForCloud, recordSubmission } from "../services/submissions";
 import type { JobData } from "./queues";
@@ -18,7 +18,7 @@ import type { JobData } from "./queues";
 let browser: Browser | undefined;
 
 async function getBrowser(): Promise<Browser> {
-  browser ??= await chromium.launch({ headless: true, executablePath: env().CHROMIUM_EXECUTABLE_PATH });
+  browser ??= await chromium.launch({ headless: true, executablePath: applierEnv().CHROMIUM_EXECUTABLE_PATH });
   return browser;
 }
 
@@ -36,7 +36,7 @@ export async function processCloudApply(job: Job<JobData["cloud-apply"]>) {
   if (!row || row.app.status !== "approved" || row.app.channel !== "cloud") return { skipped: true };
   // Owner-only until WP-04 (CISO mustFix 1). Also catches rows approved before the gate and retries of old jobs.
   // A failed report charges no credit; recordSubmission accepts a row that is still 'approved'.
-  if (!env().OWNER_USER_IDS.includes(row.app.userId)) {
+  if (!applierEnv().OWNER_USER_IDS.includes(row.app.userId)) {
     await recordSubmission(
       db(),
       row.app.userId,
@@ -56,7 +56,7 @@ export async function processCloudApply(job: Job<JobData["cloud-apply"]>) {
     submittedAt: new Date().toISOString(),
   });
 
-  const fillerPath = env().FILLER_SCRIPT_PATH;
+  const fillerPath = applierEnv().FILLER_SCRIPT_PATH;
   if (!existsSync(fillerPath)) {
     await recordSubmission(db(), row.app.userId, fail("Form filler bundle missing on the applier"), "cloud");
     return { submitted: false };

@@ -1,6 +1,6 @@
 import { Queue, type ConnectionOptions } from "bullmq";
 import { Redis } from "ioredis";
-import { env } from "../lib/env";
+import { baseEnv } from "../lib/env";
 
 /** Queue names. The worker service consumes all but `cloud-apply`, which the applier service consumes. */
 export const QUEUES = {
@@ -25,7 +25,7 @@ export type QueueName = keyof JobData;
 
 /** Each queue and worker gets its own connection; BullMQ needs maxRetriesPerRequest: null. */
 export function redisConnection(): ConnectionOptions {
-  return new Redis(env().REDIS_URL, { maxRetriesPerRequest: null, family: 0 });
+  return new Redis(baseEnv().REDIS_URL, { maxRetriesPerRequest: null, family: 0 });
 }
 
 const queues = new Map<QueueName, Queue>();

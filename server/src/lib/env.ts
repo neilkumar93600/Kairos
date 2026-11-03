@@ -2,18 +2,22 @@ import { z } from "zod";
 
 const emptyToUndefined = (v: unknown) => (v === "" ? undefined : v);
 
-const envSchema = z.object({
+/** "1"/"true" or "0"/"false"; anything else is refused rather than guessed. */
+const flag = (fallback: "0" | "1") =>
+  z.preprocess(emptyToUndefined, z.enum(["0", "1", "true", "false"]).default(fallback).transform((v) => v === "1" || v === "true"));
+
+/**
+ * What every process reads, the applier included. Each Railway service sets its own DATABASE_URL: the applier's
+ * connects as kairos_applier (ops/provision-roles.sql).
+ */
+const baseShape = {
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  PORT: z.coerce.number().int().default(4000),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
 
-  BETTER_AUTH_SECRET: z.string().min(32),
-  BETTER_AUTH_URL: z.string().url(),
-  WEB_ORIGIN: z.string().url(),
-  /** Comma-separated user ids that may use the cloud channel until the applier is contained (WP-04). Empty: nobody. */
+  /** Comma-separated user ids that may always use the cloud channel (they test it on any plan). Empty: nobody. */
   OWNER_USER_IDS: z.preprocess(
     emptyToUndefined,
     z
@@ -21,6 +25,50 @@ const envSchema = z.object({
       .default("")
       .transform((raw) => raw.split(",").map((id) => id.trim()).filter(Boolean)),
   ),
+  /** Opens the cloud channel to paid plans with cloudApplier. Owner-only (0) until WP-04 is accepted and S-AP4 is settled. */
+  CLOUD_APPLIER_OPEN: flag("0"),
+};
+
+const applierShape = {
+  ...baseShape,
+  CHROMIUM_EXECUTABLE_PATH: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Chromium's own sandbox. Turn off (0) only after the owner signs the S-AP4 risk acceptance. */
+  APPLIER_CHROMIUM_SANDBOX: flag("1"),
+  APPLIER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
+  /** Built by `npm run build -w @auto-career/extension`; the applier image copies it to /app/filler.js. */
+  FILLER_SCRIPT_PATH: z.string().default("../extension/dist/filler.js"),
+};
+
+/**
+ * Secrets the applier must never hold (07-cloud-applier.md 9): a hostile employer page that escapes the renderer
+ * finds none of them. In production the applier refuses to boot when any is set.
+ */
+export const APPLIER_FORBIDDEN = [
+  "BETTER_AUTH_SECRET",
+  "INBOUND_WEBHOOK_SECRET",
+  "GOOGLE_CLIENT_SECRET",
+  "POSTMARK_SERVER_TOKEN",
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_KEY_INTERACTIVE",
+  "ANTHROPIC_KEY_BATCH",
+  "ANTHROPIC_KEY_EVALS",
+  "USER_HASH_KEY",
+  "DATA_KEKS",
+  "LINK_SIGNING_KEY",
+] as const;
+
+const applierSchema = z.object(applierShape);
+
+/** The api and the worker: everything. */
+const envSchema = z.object({
+  ...applierShape,
+  PORT: z.coerce.number().int().default(4000),
+
+  BETTER_AUTH_SECRET: z.string().min(32),
+  BETTER_AUTH_URL: z.string().url(),
+  WEB_ORIGIN: z.string().url(),
   EXTENSION_ORIGIN: z.preprocess(emptyToUndefined, z.string().startsWith("chrome-extension://").optional()),
   /** Extra web origins Better Auth trusts (a Vercel preview alias, a second domain). Exact origins only, never a wildcard. */
   CSRF_ALLOWED_ORIGINS: z
@@ -83,11 +131,6 @@ const envSchema = z.object({
   LLM_RPM_SONNET: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).optional()),
   /** Only the evals and llm:record scripts set this; allows a real client under NODE_ENV=test. */
   ALLOW_LLM_NETWORK: z.preprocess(emptyToUndefined, z.coerce.number().optional()),
-
-  CHROMIUM_EXECUTABLE_PATH: z.preprocess(emptyToUndefined, z.string().optional()),
-  APPLIER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
-  /** Built by `npm run build -w @auto-career/extension`; the applier image copies it to /app/filler.js. */
-  FILLER_SCRIPT_PATH: z.string().default("../extension/dist/filler.js"),
 }).superRefine((e, ctx) => {
   // Without a token the mailer logs emails instead of sending them. Fine locally; in production
   // that would put sign-up and reset codes in the logs, so refuse to boot.
@@ -129,21 +172,61 @@ const envSchema = z.object({
 });
 
 export type Env = z.infer<typeof envSchema>;
+export type ApplierEnv = z.infer<typeof applierSchema>;
+/** The fields every role has; shared modules (db client, queues, the cloud gate) read only these. */
+export type BaseEnv = Pick<ApplierEnv, keyof typeof baseShape>;
+export type ProcessRole = "api" | "worker" | "applier";
 
-let cached: Env | undefined;
+function formatIssues(issues: { path: PropertyKey[]; message: string }[]): Error {
+  const lines = issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
+  return new Error(`Invalid environment:\n${lines}`);
+}
 
-/** Validates an environment. Throws with every missing or invalid variable listed. */
+/** Validates an environment for the api and worker. Throws with every missing or invalid variable listed. */
 export function parseEnv(source: Record<string, string | undefined>): Env {
   const parsed = envSchema.safeParse(source);
-  if (!parsed.success) {
-    const lines = parsed.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
-    throw new Error(`Invalid environment:\n${lines}`);
-  }
+  if (!parsed.success) throw formatIssues(parsed.error.issues);
   return parsed.data;
 }
 
-/** Parses process.env once. */
+/** Validates the environment of one process role (platform-24). Names forbidden keys, never their values. */
+export function envFor(role: "applier", source: Record<string, string | undefined>): ApplierEnv;
+export function envFor(role: "api" | "worker", source: Record<string, string | undefined>): Env;
+export function envFor(role: ProcessRole, source: Record<string, string | undefined>): Env | ApplierEnv {
+  if (role !== "applier") return parseEnv(source);
+  const parsed = applierSchema.safeParse(source);
+  const issues: { path: PropertyKey[]; message: string }[] = parsed.success ? [] : [...parsed.error.issues];
+  // Outside production a developer's full .env is tolerated: the parsed applier env drops the keys either way.
+  if (source.NODE_ENV === "production") {
+    for (const key of APPLIER_FORBIDDEN) if (source[key]) issues.push({ path: [key], message: "must not be set on the applier" });
+  }
+  if (issues.length > 0 || !parsed.success) throw formatIssues(issues);
+  return parsed.data;
+}
+
+let role: ProcessRole = "api";
+let cached: Env | undefined;
+let cachedApplier: ApplierEnv | undefined;
+
+/** Called first by each entry point that is not the api; the applier then cannot read the full env at all. */
+export function setProcessRole(next: ProcessRole): void {
+  role = next;
+}
+
+/** Parses process.env once for the api and the worker. Throws in the applier, so no applier path reaches a secret. */
 export function env(): Env {
+  if (role === "applier") throw new Error("env() is not available in the applier; use applierEnv() or baseEnv()");
   cached ??= parseEnv(process.env);
   return cached;
+}
+
+/** The applier's own env (envFor('applier')), parsed once. */
+export function applierEnv(): ApplierEnv {
+  cachedApplier ??= envFor("applier", process.env);
+  return cachedApplier;
+}
+
+/** The fields every role has, read through the current role's schema. */
+export function baseEnv(): BaseEnv {
+  return role === "applier" ? applierEnv() : env();
 }

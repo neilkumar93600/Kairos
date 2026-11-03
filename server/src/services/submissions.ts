@@ -2,7 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { type PlanId, type SubmissionReport, type SubmitChannel } from "@auto-career/shared";
 import type { Db } from "../db/client";
 import { applications, subscriptions } from "../db/schema";
-import { env } from "../lib/env";
+import { baseEnv } from "../lib/env";
 import { conflict, forbidden, notFound, paymentRequired } from "../lib/errors";
 import { PAID_STATUSES } from "./billing-events";
 import { availableCreditsNow, chargeSubmission } from "./credits";
@@ -22,7 +22,7 @@ export async function planFor(db: Db, userId: string): Promise<PlanId> {
 export async function approveApplications(db: Db, userId: string, ids: string[], channel: SubmitChannel): Promise<string[]> {
   // The cloud applier is owner-only until WP-04 contains it (CISO mustFix 1); the owner tests it on any plan.
   // When the gate lifts, restore: getPlan(await planFor(db, userId)).cloudApplier, else forbidden("The cloud applier is on Pro and Max").
-  if (channel === "cloud" && !env().OWNER_USER_IDS.includes(userId)) throw forbidden("The cloud applier is not open yet");
+  if (channel === "cloud" && !baseEnv().OWNER_USER_IDS.includes(userId)) throw forbidden("The cloud applier is not open yet");
 
   return db.transaction(async (tx) => {
     // One approval at a time per user: two tabs reading the same balance would otherwise both commit.
