@@ -9,7 +9,7 @@ import { MAX_PROMPT_TOKENS, estimateCallUsd, estimateInputTokens } from "./estim
 import { callNonce, echoCanaryHit, fence as fenceBlock } from "./fence";
 import { logger } from "../lib/logger";
 import { writeCallRow, type CallRow } from "./ledger";
-import { acquire, on429, onResponseHeaders } from "./limiter";
+import { acquire, on429, onResponseHeaders, type Permit } from "./limiter";
 import { userHash, userHashBytes } from "./redact";
 import { costOf, type Usage } from "./prices";
 import { canonicalJson, normalizeEnumCase } from "./schema";
@@ -184,65 +184,70 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
       return { ok: false, error: new AgentError("budget_stopped", `${spec.id} refused by budget scope ${decision.scope}`, false, undefined, { scope: decision.scope, retryAfter: decision.retryAfter }) };
     }
 
-    // Breaker, then limiter (5.3, 6.3).
+    // Breaker, then a limiter permit per send (5.3, 6.3).
     if (!breaker.allow(workspace, modelNow)) {
       return { ok: false, error: new AgentError("circuit_open", `circuit open for ${modelNow}`, false) };
     }
-    let permit;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      attempts += 1;
+      const sent = await sendWithPermit(modelNow, { attempt, kind: attempt === 1 ? firstKind : "retry", repairTurns: [] });
+      if (sent.outcome === "ok") {
+        breaker.recordSuccess(workspace, modelNow);
+        return { ok: true, data: sent.data, usage: sent.usage, llmCallId: sent.llmCallId };
+      }
+      if (sent.outcome === "failed") {
+        breaker.record(workspace, modelNow, sent.error.code);
+        lastError = sent.error;
+        const policy = retryPolicy(sent.error.code, workspace);
+        if (attempt - 1 >= policy.retries) break; // no retries left for this class
+        if (sent.error.code === "rate_limited") {
+          on429(workspace, modelNow);
+          const wait = retryAfterMs(sent.retryAfterSeconds, workspace);
+          if (wait === null) break; // beyond the workspace ceiling: no retry (5.2)
+          await d.sleep(wait);
+        } else {
+          await d.sleep(policy.backoffMs(attempt));
+        }
+        continue;
+      }
+      // sent.outcome === "invalid": at most one repair re-ask on the same model (2.5), never for
+      // max_tokens, refusal or injection_echo.
+      breaker.recordSuccess(workspace, modelNow);
+      if (sent.error.code === "injection_echo") {
+        lastError = sent.error;
+        break;
+      }
+      attempts += 1;
+      const repaired = await sendWithPermit(modelNow, {
+        attempt: attempts,
+        kind: "repair",
+        repairTurns: repairTurns(sent.replyText, sent.violations),
+      });
+      if (repaired.outcome === "ok") {
+        return { ok: true, data: repaired.data, usage: repaired.usage, llmCallId: repaired.llmCallId };
+      }
+      if (repaired.outcome === "failed") {
+        breaker.record(workspace, modelNow, repaired.error.code);
+        lastError = repaired.error;
+      } else {
+        lastError = new AgentError(repaired.error.code, `${spec.id}: repair failed validation`, false, repaired.violations);
+      }
+      break; // the repair was the last chance on this model
+    }
+    return { ok: false, error: lastError ?? new AgentError("server_error", `${spec.id}: failed`, false) };
+  }
+
+  /** One send under its own limiter permit: every retry and repair takes an RPM token, and no permit is held while a backoff sleeps. */
+  async function sendWithPermit(modelNow: ClaudeModel, a: Parameters<typeof sendOnce>[1]): ReturnType<typeof sendOnce> {
+    let permit: Permit;
     try {
       permit = await acquire(workspace, modelNow, workspace === "interactive" ? 2_000 : 30_000);
     } catch {
-      return { ok: false, error: new AgentError("limiter_timeout", `limiter timeout for ${modelNow}`, true) };
+      return { outcome: "failed", error: new AgentError("limiter_timeout", `limiter timeout for ${modelNow}`, true) };
     }
-
     try {
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        attempts += 1;
-        const sent = await sendOnce(modelNow, { attempt, kind: attempt === 1 ? firstKind : "retry", repairTurns: [] });
-        if (sent.outcome === "ok") {
-          breaker.recordSuccess(workspace, modelNow);
-          return { ok: true, data: sent.data, usage: sent.usage, llmCallId: sent.llmCallId };
-        }
-        if (sent.outcome === "failed") {
-          breaker.record(workspace, modelNow, sent.error.code);
-          lastError = sent.error;
-          const policy = retryPolicy(sent.error.code, workspace);
-          if (attempt - 1 >= policy.retries) break; // no retries left for this class
-          if (sent.error.code === "rate_limited") {
-            on429(workspace, modelNow);
-            const wait = retryAfterMs(sent.retryAfterSeconds, workspace);
-            if (wait === null) break; // beyond the workspace ceiling: no retry (5.2)
-            await d.sleep(wait);
-          } else {
-            await d.sleep(policy.backoffMs(attempt));
-          }
-          continue;
-        }
-        // sent.outcome === "invalid": at most one repair re-ask on the same model (2.5), never for
-        // max_tokens, refusal or injection_echo.
-        breaker.recordSuccess(workspace, modelNow);
-        if (sent.error.code === "injection_echo") {
-          lastError = sent.error;
-          break;
-        }
-        attempts += 1;
-        const repaired = await sendOnce(modelNow, {
-          attempt: attempts,
-          kind: "repair",
-          repairTurns: repairTurns(sent.replyText, sent.violations),
-        });
-        if (repaired.outcome === "ok") {
-          return { ok: true, data: repaired.data, usage: repaired.usage, llmCallId: repaired.llmCallId };
-        }
-        if (repaired.outcome === "failed") {
-          breaker.record(workspace, modelNow, repaired.error.code);
-          lastError = repaired.error;
-        } else {
-          lastError = new AgentError(repaired.error.code, `${spec.id}: repair failed validation`, false, repaired.violations);
-        }
-        break; // the repair was the last chance on this model
-      }
-      return { ok: false, error: lastError ?? new AgentError("server_error", `${spec.id}: failed`, false) };
+      return await sendOnce(modelNow, a);
     } finally {
       permit.release();
     }
