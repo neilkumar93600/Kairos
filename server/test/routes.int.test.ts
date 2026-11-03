@@ -51,7 +51,7 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
     await tdb.insert(schema.profiles).values({ userId: id, forwardingAddress: `u-${id}@replies.test`, city: "Austin" });
     const user = me;
     app = createApp({
-      auth: { handler: async () => new Response(null, { status: 404 }), getSession: async () => ({ user, sessionId: "s" }) },
+      auth: { handler: async () => new Response(null, { status: 404 }), getSession: async () => ({ user, sessionId: "s", createdAt: new Date() }) },
       corsOrigins: [],
       healthChecks: {},
     });
