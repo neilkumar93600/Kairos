@@ -1,10 +1,13 @@
 import type { AuthProvider } from "@auto-career/shared";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { bearer, emailOTP, oneTimeToken } from "better-auth/plugins";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/client";
+import { CLIENT_IP_HEADER } from "../middleware/client-ip";
+import { hit } from "../middleware/rate-limit";
 import { cancelBillingForDeletedUser } from "../services/billing-events";
 import { INLINE_REQUEST, stripe } from "../services/stripe";
 import { env, type Env } from "./env";
@@ -23,6 +26,35 @@ function forwardingAddressFor(userId: string): string {
   return `u-${userId.slice(0, 8).toLowerCase()}-${suffix}@${env().INBOUND_EMAIL_DOMAIN}`;
 }
 
+type EmailLimit = [bucket: string, max: number, windowMs: number];
+/** Every path that mails a code shares one bucket per address: it protects the inbox, not the endpoint. */
+const CODE_MAIL: EmailLimit[] = [["auth_otp_send_email", 3, 600_000]];
+const EMAIL_LIMITS: Record<string, EmailLimit[]> = {
+  "/sign-in/email": [["auth_signin_email", 5, 60_000], ["auth_signin_email_hour", 20, 3_600_000]],
+  "/email-otp/send-verification-otp": CODE_MAIL,
+  "/email-otp/request-password-reset": CODE_MAIL,
+  "/forget-password/email-otp": CODE_MAIL,
+  "/send-verification-email": CODE_MAIL,
+};
+
+/**
+ * Per-email limits that Better Auth's ip+path limiter cannot express (05-api 6.4, CISO mustFix 4): password guessing
+ * against one account from many addresses, and mail bombing one inbox with codes. Counts live in rate_limits.
+ * Fails closed: if the count cannot be taken, the request fails.
+ */
+export async function limitByEmail(path: string, body: unknown): Promise<void> {
+  const limits = EMAIL_LIMITS[path];
+  const email = (body as { email?: unknown } | undefined)?.email;
+  if (!limits || typeof email !== "string") return;
+  // Hashed, so the table never holds an address; case and a +tag do not open a new bucket.
+  const id = createHash("sha256").update(email.trim().toLowerCase().replace(/\+[^@]*@/, "@")).digest("base64url");
+  for (const [bucket, max, windowMs] of limits) {
+    if ((await hit(`${bucket}:${id}`, windowMs)).count > max) {
+      throw new APIError("TOO_MANY_REQUESTS", { message: "Too many attempts for this email. Try again later." });
+    }
+  }
+}
+
 /** Sign-in methods this deployment can serve. The web shows only these (GET /api/auth-providers). */
 export function configuredProviders(e: Env): AuthProvider[] {
   return e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET ? ["email", "google"] : ["email"];
@@ -38,7 +70,7 @@ function createAuth() {
     trustedOrigins: [e.WEB_ORIGIN, ...(e.EXTENSION_ORIGIN ? [e.EXTENSION_ORIGIN] : []), ...e.CSRF_ALLOWED_ORIGINS],
     database: drizzleAdapter(db(), {
       provider: "pg",
-      schema: { user: schema.user, session: schema.session, account: schema.account, verification: schema.verification },
+      schema: { user: schema.user, session: schema.session, account: schema.account, verification: schema.verification, rateLimit: schema.authRateLimit },
     }),
     emailAndPassword: {
       enabled: true,
@@ -80,9 +112,26 @@ function createAuth() {
       expiresIn: 60 * 60 * 24 * 30,
       updateAge: 60 * 60 * 24,
     },
-    rateLimit: { enabled: true, window: 60, max: 30 },
+    rateLimit: {
+      enabled: true,
+      window: 60,
+      max: 60,
+      // auth_rate_limit: shared by every replica and kept across deploys, so one script cannot multiply its budget.
+      storage: "database",
+      // The per-IP rules of 05-api 6.4 that differ from Better Auth's defaults. The sign-up cap is the free-credit
+      // farming control (D-25); it counts attempts, not only accounts created.
+      customRules: {
+        "/sign-in/email": { window: 60, max: 20 },
+        "/sign-up/email": { window: 86_400, max: 3 },
+        "/email-otp/send-verification-otp": { window: 3_600, max: 10 },
+      },
+    },
+    hooks: { before: createAuthMiddleware(async (ctx) => limitByEmail(ctx.path, ctx.body)) },
     advanced: {
       useSecureCookies: e.NODE_ENV === "production",
+      // Written by clientIpResolver: the web edge's x-real-ip, or the hop Railway appended. Never X-Forwarded-For,
+      // whose multi-hop form resolved to one 'no-trusted-ip' bucket for the whole site.
+      ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] },
     },
     plugins: [
       emailOTP({
