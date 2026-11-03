@@ -1,6 +1,7 @@
 import { Router, type RequestHandler } from "express";
 import { configuredProviders, type AuthGateway } from "../lib/auth";
 import { env } from "../lib/env";
+import { routeDeadline } from "../middleware/deadline";
 import { requireAuth } from "../middleware/require-auth";
 import { countFailedSignIn, type Limiters } from "../middleware/rate-limit";
 import { applicationsRouter } from "./applications";
@@ -19,7 +20,7 @@ import { resumeRouter } from "./resume";
 /** Every JSON route under /api. Auth routes (/api/auth/*) and webhooks are mounted separately in app.ts. */
 export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   const router = Router();
-  router.use(limits.anon);
+  router.use(routeDeadline, limits.anon);
 
   router.use("/contact", limits.contact, contactRouter);
   router.get("/auth-providers", (_req, res) => {

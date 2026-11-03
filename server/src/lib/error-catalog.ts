@@ -30,6 +30,7 @@ export const ERROR_CATALOG: Record<string, readonly number[]> = {
   rate_limited: [429],
   reauth_required: [403],
   route_not_found: [404],
+  service_unavailable: [503],
   storage_unavailable: [503],
   timeout: [503],
   truth_lock: [422],

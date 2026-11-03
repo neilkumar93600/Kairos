@@ -31,6 +31,13 @@ export interface AppDeps {
   isDraining?: () => boolean;
 }
 
+// 05-api 2.1. Headers a later route family reads or writes are listed now, so adding it needs no CORS change.
+const CORS_ALLOWED = ["content-type", "authorization", "idempotency-key", "if-match", "if-none-match", "x-kairos-client", "x-request-id"];
+const CORS_EXPOSED = ["x-request-id", "retry-after", "etag", "ratelimit", "ratelimit-policy", "kairos-allowance", "kairos-contract", "idempotent-replayed"];
+
+/** Date of the newest additive API change (05-api 2.1, "Kairos-Contract"); informational. Bump it with a shape addition. */
+export const CONTRACT_DATE = "2026-10-23";
+
 const AUTH_BODY_MAX_BYTES = 64 * 1024;
 
 /**
@@ -62,8 +69,12 @@ export function createApp(deps: AppDeps) {
   app.use(clientIpResolver(deps.edgeSecret, deps.proxyHops));
   app.use(helmet());
   app.use(httpLogger());
-  app.use(cors({ origin: deps.corsOrigins, credentials: true, allowedHeaders: ["content-type", "authorization", "x-request-id"], exposedHeaders: ["x-request-id"] }));
+  app.use(cors({ origin: deps.corsOrigins, credentials: true, allowedHeaders: CORS_ALLOWED, exposedHeaders: CORS_EXPOSED, maxAge: 600 }));
 
+  app.use("/api", (_req, res, next) => {
+    res.set("kairos-contract", CONTRACT_DATE);
+    next();
+  });
   app.use(healthRouter(deps.healthChecks, deps.isDraining));
   app.use("/api/auth", signalOn([429], "auth_rate_limited"), capAuthBody);
   app.all("/api/auth/*splat", toNodeHandler(deps.auth.handler));
