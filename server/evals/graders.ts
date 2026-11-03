@@ -38,7 +38,7 @@ export interface EvalCase {
   reason?: string;
 }
 
-export type GraderId = "fixture" | "schema" | "fact_ids" | "containment" | "sensitive" | "injection_echo";
+export type GraderId = "fixture" | "budget" | "schema" | "fact_ids" | "containment" | "sensitive" | "injection_echo";
 export interface Failure {
   grader: GraderId;
   detail: string;
