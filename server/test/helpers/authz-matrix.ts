@@ -46,6 +46,7 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "ALL /api/auth/*splat": { public: "Better Auth: sign-in and the caller's own session; it checks its own origins and limits" },
   "POST /api/webhooks/stripe": { public: "Stripe: the signature is the credential, and the event names its own customer" },
   "POST /api/webhooks/inbound-email": { public: "Postmark inbound: the token is the credential; mail is filed by forwarding address" },
+  "POST /api/webhooks/postmark-events": { public: "Postmark delivery events: the token is the credential; it only adds or lifts address-hash suppressions" },
   "POST /api/contact": { public: "the public contact form: stores a message and reads nothing back" },
   "GET /api/auth-providers": { public: "the configured sign-in methods; no user data" },
 
