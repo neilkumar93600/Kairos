@@ -1,12 +1,12 @@
 # 02. Database design (integrated): Kairos backend on Postgres 18 and DBOS Transact
 
-Status: integrated design for implementation, revision 1, written 2026-10-23 (project calendar date 2026-10-16 for the spec set). It merges the six domain drafts under `_db/` (`identity-profile.md`, `catalog-matching.md`, `applications.md`, `billing.md`, `messaging.md`, `platform.md`) into one consistent schema, written against `01-architecture.md` revision 2 (ADR-001, postgres-durable on DBOS Transact 5.3.0, Anthropic agents), `04-matching.md`, the spike results in `_research/spike-s-d1-local.md`, the resume workspace contract (`docs/superpowers/specs/2026-10-23-resume-workspace/README.md`, sections 3, 6, 7 and 8), and the current schema (`server/drizzle/0000_init.sql`, `0001_resume_workspace.sql`, `server/src/db/schema/*.ts`).
+Status: integrated design for implementation, **revision 2, written 2026-10-25** (revision 1 was written 2026-10-23; project calendar date 2026-10-16 for the spec set). Revision 2 absorbs the as-built migration `server/drizzle/0002_platform_02_llm_ledger.sql` (applied on the working branch and immutable from now on) and the requests filed against revision 1 by `03-agent-runtime.md` (8.2, 13.4), `05-api.md` (24.1, DB-1 to DB-9) and `06-infrastructure.md` (deltas X1, X2, X3, X14, X15, X16, runner rules of 3.7, hardening H1 and H3); section 2.1 lists every revision-2 change. It merges the six domain drafts under `_db/` (`identity-profile.md`, `catalog-matching.md`, `applications.md`, `billing.md`, `messaging.md`, `platform.md`) into one consistent schema, written against `01-architecture.md` revision 2 (ADR-001, postgres-durable on DBOS Transact 5.3.0, Anthropic agents), `04-matching.md`, the spike results in `_research/spike-s-d1-local.md`, the resume workspace contract (`docs/superpowers/specs/2026-10-23-resume-workspace/README.md`, sections 3, 6, 7 and 8), and the current schema (`server/drizzle/0000_init.sql`, `0001_resume_workspace.sql`, `server/src/db/schema/*.ts`).
 
 **Precedence.** Where this document differs from a domain draft, this document wins, and section 2 says why. Where a domain draft carries detail this document only summarizes (long function bodies that did not change, per-domain row-size arithmetic, per-domain test fixtures), the draft section named in the text is the authoritative text and is part of this specification. Where this document differs from `01-architecture.md` B.10, this document wins for the schema and section 2 lists the change so the architecture text can be reconciled. The spike S-D1 correction table overrides both.
 
 Skills applied: `database-architect` (domain, access patterns and scale first; lifecycle and migration safety), `postgresql-optimization` (index strategy from queries, partial and covering indexes, autovacuum and configuration) and `ecc:database-migrations` (expand, backfill, switch, contract; schema and data migrations separate; concurrent index builds outside the migrator transaction; forward-only in production). All three loaded. Their intake questions are answered by the architecture: the database is Postgres 18, the ORM is Drizzle 0.45.4 with drizzle-kit 0.31.11, the driver is `pg` 8, the scale target is 10,000 users at public beta.
 
-**Validation.** Every SQL statement of sections 7 and 8.3 (245 statements, together with the draft validators, `effective_plan()` and the partition functions they call) was applied to a scratch `postgres:18` container (PostgreSQL 18.6) on 2026-10-23: all 55 tables, 4 unlogged tables, the views and functions were created; the foreign-key index check of 11.4 returned zero rows and caught a deliberately unindexed probe; `matches_status_guard` refused every illegal actor transition; `job_ghost_verdict_v`, `refresh_ghost_verdicts`, `job_fresh_at`, `store_form_questions` (as `kairos_applier`) and `archive_user_ledger` behaved as specified. The container was removed. The migration sequence of section 14 and the tests of section 17 are specified, not yet run.
+**Validation.** Every SQL statement of sections 7 and 8.3 (245 statements, together with the draft validators, `effective_plan()` and the partition functions they call) was applied to a scratch `postgres:18` container (PostgreSQL 18.6) on 2026-10-23: all 55 tables, 4 unlogged tables, the views and functions were created; the foreign-key index check of 11.4 returned zero rows and caught a deliberately unindexed probe; `matches_status_guard` refused every illegal actor transition; `job_ghost_verdict_v`, `refresh_ghost_verdicts`, `job_fresh_at`, `store_form_questions` (as `kairos_applier`) and `archive_user_ledger` behaved as specified. The container was removed. The migration sequence of section 14 and the tests of section 17 are specified, not yet run. The SQL that revision 2 adds or changes (the `ops_flags` and `feature_flags` checks, `eval_runs`, `applications_row_version`, `get_applier_payload`, the `matches_status_guard` actor rule, `profiles.mail_opt_out`, the grant block of 14.3) has not been executed yet; tests T-DB-14 to T-DB-17 cover it. Migration `0002` was applied by its implementer to a scratch `postgres:17` and probed (partition insert, roll-up, usage upsert, partition drop, erasure scrub) [V, `docs/superpowers/plans/2026-10-23-backend-phase-a.md`].
 
 Evidence tags: **[V]** verified against a repository file, a domain draft that executed the SQL, or the spike; **[est]** an estimate to be replaced by beta measurements in phase P8; **[verify]** a behavior that a named spike must prove before the phase that depends on it (S-P1 Postgres 18 and PITR on Railway, S-B1 Better Auth, S-D1 DBOS, S-A1 Anthropic, S-G1 Gmail forwarding, S-AP2 applier submit interception).
 
@@ -19,15 +19,15 @@ Evidence tags: **[V]** verified against a repository file, a domain draft that e
 | Engine | Railway `postgres-ssl:18` with pgBackRest PITR; extension `pg_trgm` |
 | Databases | `kairos` (business state, schema `public`, plus schema `dbos` for the datasource table) and `kairos_dbos` (DBOS checkpoints, owned by the SDK) |
 | Tables in `kairos.public` | **55** (19 exist today: the 17 of `0000_init.sql` plus `resumes` and `resume_revisions` of `0001_resume_workspace.sql`; 36 are new) |
-| Other relations | `dbos.transaction_completion`; views `applier_payload_v`, `scan_target_v`, `job_ghost_verdict_v`; weekly partitions of `llm_calls`; the transient `matches_shadow` during phase P4 only |
+| Other relations | `dbos.transaction_completion`; views `applier_payload_v` (internal), `scan_target_v`, `job_ghost_verdict_v` and the four `ops_*_v` dashboard views of `06-infrastructure.md` 6.8; weekly partitions of `llm_calls`; the transient `matches_shadow` during phase P4 only |
 | Postgres enum types | 9, all existing: `application_status`, `ats_provider`, `billing_interval`, `credit_reason`, `email_kind`, `fact_kind`, `match_status` (gains `below_bar`, server only), `plan_id`, `submit_channel`. Every new closed set is `text` with a named `CHECK` |
 | Partitioned tables | 1: `llm_calls` (weekly range partitions, dropped after 90 days) |
 | Unlogged tables | 4: `verified_claims`, `tailor_cache`, `rate_limits`, `auth_rate_limit` |
-| Runtime roles | `kairos_api`, `kairos_worker`, `kairos_applier`, `kairos_readonly`; owner `kairos_migrator`; DBOS roles `dbos_api`, `dbos_worker`, `dbos_applier`, owner `dbos_migrator` |
-| Applier surface | 2 views (`applier_payload_v`, `scan_target_v`), 6 `SECURITY DEFINER` functions (`claim_cloud_attempt`, `mark_browser_launched`, `mark_attempt_phase`, `record_attempt_result`, `store_form_questions`, `heartbeat_executor`), `SELECT` on `ops_flags` and `EXECUTE` on `ops_flag_on` |
-| Size after 12 months at the cost-model ceiling [est] | about 108 GB in `kairos` and `kairos_dbos` together (section 12.4); realistic first year about 60 to 70 GB |
+| Runtime roles | `kairos_api`, `kairos_worker`, `kairos_applier`, `kairos_readonly`, `kairos_metrics` (Grafana, aggregates only), `kairos_backup` (logical dumps only); owner `kairos_migrator`; DBOS roles `dbos_api`, `dbos_worker`, `dbos_applier`, owner `dbos_migrator` |
+| Applier surface | 1 view (`scan_target_v`), 7 `SECURITY DEFINER` functions (`claim_cloud_attempt`, `get_applier_payload`, `mark_browser_launched`, `mark_attempt_phase`, `record_attempt_result`, `store_form_questions`, `heartbeat_executor`), `SELECT` on `ops_flags` and `EXECUTE` on `ops_flag_on`. `applier_payload_v` still exists but is no longer granted to the applier (revision 2, `06-infrastructure.md` H1) |
+| Size after 12 months at the cost-model ceiling [est] | about 108 GB in `kairos` and `kairos_dbos` together (section 12.3); realistic first year about 60 to 70 GB |
 | Write load at growth [est] | about 13 DBOS checkpoint writes a second on average (about 55 per submitted application, target 60, alert 80), about 10 business row writes a second on average, peaks about 10 times higher |
-| Migration | 32 ordered migrations, `0002` to `0033`, over phases P1 to P7, the contract releases and phase 2; every step additive until the contract releases; the recorded contract suite stays green after every step (section 14) |
+| Migration | As built: `0000_init`, `0001_resume_workspace`, `0002_platform_02_llm_ledger`. Planned: 32 more ordered migrations (labels `0003` to `0033` plus `0015a`) over phases P1 to P7, the contract releases and phase 2; every step additive until the contract releases; the recorded contract suite stays green after every step (section 14) |
 
 The design rests on six rules that every section applies:
 
@@ -55,12 +55,12 @@ Each row names the conflict, the sources, the decision taken here, and the reaso
 | R-7 | Global lock order: billing rule L1 (`credit_balances` first), identity rules I1 and I2 (`profiles` first), identity rule A1 (`credit_balances`, `autopilot_settings`, `applications`), applications rule A-1 | billing 2.2, identity 2.2, applications 2.2 | One global order, section 5.1: `credit_balances` < `profiles` < identity children < `autopilot_settings` < `applications` by id < `submission_attempts` < `reminders` and other application children | No transaction takes `profiles` before `credit_balances` and then the reverse; the subscription sync, the only path that writes both, locks `credit_balances` first |
 | R-8 | Rehearsal call ids: `rehearsal_turns.llm_call_id` (architecture, platform) or `question_call_id` and `feedback_call_id` (applications) | applications 3.7, platform 2 | `question_call_id` and `feedback_call_id`, plain `bigint`, no foreign key | A turn has two model calls (the next question and the feedback); one column would lose one of them |
 | R-9 | `ops_flags.key` is a closed catalogue (platform), but applications needs `verification_full_log` and `ap2_verified`, and 04-matching section 23 overrides `matching.*` and `catalog.*` configuration keys through `ops_flags` | platform 4.8, applications X5, 04-matching 23 | The key `CHECK` admits the platform list, `verification_full_log`, `ap2_verified`, `extension_only:<ats>`, `host_backoff:<host>` and configuration overrides `^(matching|catalog)\.[a-z0-9_]{2,60}$` whose value is `detail->'value'`. Code validates override keys against `MATCHING_DEFAULTS` | One flag table, still typo-proof for kill switches; overrides are audited by the same trigger |
-| R-10 | The applier surface: architecture "one view and five functions"; catalog adds `scan_target_v`; platform adds `heartbeat_executor` | architecture B.10.4, catalog D5, platform P13 | Two views and six functions (section 4.3) | `scanForm` needs a job's apply URL and the applier cannot write tables, so it cannot heartbeat otherwise |
+| R-10 | The applier surface: architecture "one view and five functions"; catalog adds `scan_target_v`; platform adds `heartbeat_executor`; `06-infrastructure.md` H1 and H7 replace the payload view with a per-attempt function | architecture B.10.4, catalog D5, platform P13, 06 H1 | One view (`scan_target_v`) and seven functions (section 4.3): revision 2 replaces the applier's `SELECT` on `applier_payload_v` with `get_applier_payload(attempt_id, worker)` | `scanForm` needs a job's apply URL and the applier cannot write tables, so it cannot heartbeat otherwise; with the function a compromised applier can read only the attempt it claimed, not every queued cloud application |
 | R-11 | `facts_snapshot_hash` definition: "sha256 of sorted (id, text, confirmed_at)" (architecture, applications) or the SQL function of identity D14 (adds `kind` and `confirmed`, epoch-microsecond time) | identity D14, applications 3.1 | The identity function `facts_snapshot_hash(user_id, fact_ids)` is the only definition; `approveCore` calls it in SQL | Two implementations of one hash drift |
 | R-12 | Verification summary keys: `itemKind`, `itemId`, `reason` (architecture B.10.2) or `kind`, `ref`, `rule` (applications X7, `verificationSummarySchema`) | applications X7 | `kind`, `ref`, `rule` | Matches the shared zod schema the web reads |
-| R-13 | The `match_status` value `below_bar` used in the same migration that adds it | catalog D17 | `0006_catalog_00_enum_below_bar` ships in a release of its own (P1); no migration applied in the same deploy uses the value | Drizzle's migrator applies all pending files in one transaction, and a new enum value cannot be used before its transaction commits |
+| R-13 | The `match_status` value `below_bar` used in the same migration that adds it | catalog D17 | `0006_catalog_00_enum_below_bar` is a `-- kairos:no-transaction` file of its own and the last file of release P1 R1; no file of that release uses the value | A new enum value cannot be used before the transaction that adds it commits. The revision-2 runner (14.1) commits per file, so the release rule is a second safety, kept because a fresh-database build applies every file in one run |
 | R-14 | `jobs.last_seen_at` as a per-poll heartbeat (architecture, 04-matching 2.4) | catalog D1 | Written only on insert, reopen, change and import; freshness is `job_fresh_at(j, c)` using `companies.last_success_at` | Saves about 7.2 million row versions a day at base and 29 million at growth |
-| R-15 | Notification opt-outs: messaging asked for them, identity added three `profiles.notify_*` flags, platform added purpose `unsubscribe` | messaging Q-3, identity D5, platform P10 | `action_tokens` with purpose `unsubscribe` carry `entity_id` in (`digest`, `outcome_report`, `autopilot_summary`, `reminders`); consuming one sets `profiles.notify_weekly_report`, `notify_autopilot_summary` or `notify_reminders` to false, and for `digest` sets every `saved_searches.frequency` of the user to `off` | Every non-transactional email has a stored preference and a one-click opt-out |
+| R-15 | Notification opt-outs: messaging asked for them, identity added three `profiles.notify_*` flags, platform added purpose `unsubscribe`, `05-api.md` DB-3 asks for `profiles.mail_opt_out text[]` | messaging Q-3, identity D5, platform P10, 05-api 12.1 and DB-3 | **(revised in revision 2)** One column `profiles.mail_opt_out text[] NOT NULL DEFAULT '{}'` whose elements come from (`digest`, `outcome_report`, `autopilot_summary`, `reminders`); the three `notify_*` booleans of identity D5 are not created. `action_tokens` with purpose `unsubscribe` carry the same four values in `entity_id`; consuming one appends the kind once (`array(SELECT DISTINCT unnest(mail_opt_out \|\| $kind))`). The digest claim skips users whose array holds `digest` and only advances their `next_digest_at`, so `saved_searches.frequency` stays the user's own setting; the reminders query of applications 4.6 reads `NOT ('reminders' = ANY (p.mail_opt_out))` instead of `p.notify_reminders` | One opt-out store, written by the unsubscribe route of 05-api 12.1. `reminders` is a fourth value because F5 nudges are non-transactional too; 05-api lists three link kinds and gains the fourth as a settings toggle (Q-DB-16) |
 | R-16 | Better Auth's `rateLimit` table: platform says identity owns it; identity does not list it | platform 9.3 | **(new)** `auth_rate_limit`, an unlogged table in identity-profile, used through Better Auth's `rateLimit.storage = "database"` with `modelName: "auth_rate_limit"` [verify the option names in S-B1] | Auth limits must be shared across api replicas and fail closed |
 | R-17 | The ledger archive at account deletion runs in a `BEFORE DELETE` trigger on `"user"`; a large account is erased in batches (applications first), which nulls `credit_ledger.application_id` before the trigger copies the rows | billing 3.4 | **(new)** `archive_user_ledger(user_id)` is a callable `SECURITY DEFINER` function; the erasure workflow calls it as its first step, and the trigger calls the same function (idempotent through `ON CONFLICT (ledger_id) DO NOTHING`) | The archive keeps `application_id`, and the batch delete stays within the worker's statement timeout |
 | R-18 | `matches` status moves by the user versus the system; the frozen skip route has no status condition today | catalog D10, `routes/matches.ts` | **(new)** `matches_status_guard` uses the transaction actor: a user action (`kairos.actor = 'user'`) may set `queued` or `skipped` from any state; a system action may move only among `new`, `below_bar` and `expired` and never out of `queued` or `skipped` | Keeps the frozen skip and queue routes' behavior and makes "a user's decision is never overridden" a database rule |
@@ -70,6 +70,28 @@ Each row names the conflict, the sources, the decision taken here, and the reaso
 | R-22 | Contact-message erasure needs the account email after the cascade | messaging 5.4, platform P11 | `deletion_tasks.contact_email_enc` carries the email encrypted until `contact_done_at` | The email no longer exists in `"user"` after the cascade |
 | R-23 | `ai_usage` exhausted response: architecture B.8.10 said 402; owner decision D of the contract says 429 `rate_limited` | architecture A.10, platform 4.4 | 429 `rate_limited` with `details.reason = 'daily_allowance'` | The frozen `web/lib/api.ts` already maps 429 |
 | R-24 | Index naming collisions and duplicates (`applications_user_status_idx`, `facts_user_idx`, `session_user_id_idx`, `resume_revisions_resume_idx`, `credit_ledger_user_idx`, `credit_ledger_invoice_uq`, `matches_user_status_idx`, `jobs_title_trgm_idx`, `jobs_search_idx`) | all | Each superseded index is dropped in its domain's contract step or never created (section 11.3 lists every drop) | A strict prefix of another index or an index no query uses costs writes and saves nothing |
+
+### 2.1 Revision 2 changes (2026-10-25)
+
+| # | Source | Change | Where |
+|---|---|---|---|
+| V2-1 | As-built `0002_platform_02_llm_ledger.sql`; `03-agent-runtime.md` 8.2 | `llm_calls` gains `call_kind`, `budget_class`, `trace_id`, `batch_id` exactly as applied. 03's `request_id` is the existing `provider_request_id` (no second column). The two inline checks carry Postgres's default names `llm_calls_call_kind_check` and `llm_calls_budget_class_check`, which every later document uses. The file holds journal index 2, so the planned `platform_00_dbos_datasource` and `platform_01_control_plane` move to labels 0003 and 0004; nothing in them depends on the ledger or the reverse | 7.6.1, 14.3 |
+| V2-2 | `0002` header ("role grants ship with `ops/provision-roles.sql`") | Rule fixed: the provisioning script creates roles, moves ownership to `kairos_migrator` and sets default privileges (including `REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`); every per-object grant ships in a migration. The grants for the four tables and five functions of 0002 ship in 0004 of the same release, so no deployed code runs with the default-wide grant | 4.1, 14.3 |
+| V2-3 | `05-api.md` DB-1 | `applications_row_version_bu` makes `row_version` trigger-owned: it moves by exactly one on every client-visible change and never otherwise | 7.3.1, 8.3, 8.4 |
+| V2-4 | `05-api.md` DB-2 | `applications_ext_queue_idx` becomes `(user_id, approved_at, id)` | 11.2 |
+| V2-5 | `05-api.md` DB-3 | `profiles.mail_opt_out` replaces the three `notify_*` booleans (R-15) | 7.1.2 |
+| V2-6 | `05-api.md` DB-4; `03-agent-runtime.md` 4.5 and 16.2; `06-infrastructure.md` 3.7 and 13.4 | `ops_flags` key catalogue gains `llm_shed_level`, `alerts_muted`, `agent_disabled:<agentId>`, `prompt_pin:<agentId>`, `model_pin:<agentId>`, `backfill:<name>`, with `ops_flags_value_ck` typing `detail.value`. `feature_flags` admits `prompt_canary:<agentId>` and `prompt_shadow:<agentId>`, gains `detail jsonb` for the canary version, and caps shadows at 5%. The phase-2 flag is spelled `RESUME_SLOTS_MULTI` (revision 1 seeded `resume_slots_multi`, which its own key check refused) | 7.6.8, 7.6.9, 15 |
+| V2-7 | `05-api.md` DB-5 to DB-9 | Confirmed without change: the `ops_audit_action_ck` pattern admits `workflow.fork`, `queue.set`, `board_request.resolve`, `company.activate`, `autopilot.pause`, `llm.reconcile`; `ops_audit_request_uq` is unique per operator; the admin pause uses `paused_reason = 'owner_freeze'` and enabling clears the pair through `autopilot_settings_guard`; `inbound_emails.spam_score` exists; Better Auth's table is `auth_rate_limit`. Changed: the api's grant on `notifications` narrows to `S, I, U(read_at)` | 4.2 |
+| V2-8 | `03-agent-runtime.md` 13.4 | `eval_runs.kind` takes the runner's set (`ci`, `model_candidate`, `weekly_canary`, `nightly`, `manual`) plus `shadow_audit`; platform's `ship_gate` is `ci` and `model_change` is `model_candidate`. `baseline_run_id` is a `uuid` self reference (03 wrote `bigint`; the key is `uuid`); `judge_version` added. Eval sends never write `llm_calls` | 7.6.7 |
+| V2-9 | `06-infrastructure.md` X11, X16, H3 | Roles `kairos_metrics` and `kairos_backup`, created by the provisioning script (role creation needs `CREATEROLE`, which the migrator does not hold, so not by a migration as X16 proposed); connection limit 3 on `kairos_readonly` and `kairos_metrics`; migration `0015a_platform_05_ops_views` creates the four dashboard views | 4.1, 4.2, 14.3 |
+| V2-10 | `06-infrastructure.md` H1, H7 | `get_applier_payload(p_attempt_id, p_worker)`; the applier loses `SELECT` on `applier_payload_v` | 4.3, 8.3 |
+| V2-11 | `06-infrastructure.md` X1, X14 | Connection budget with Railway-managed PgBouncer: 118 of 200 at base, 134 at growth (worst case) | 4.4, 13.1 |
+| V2-12 | `06-infrastructure.md` X2, X3, X15 | Backups: daily core dump, weekly full dump, 2-minute money journal; five R2 buckets; tombstones kept forever | 12.2, 16 |
+| V2-13 | `06-infrastructure.md` 3.7 | Migration runner commits per file, honours `-- kairos:no-transaction` and `-- kairos:contract`, serializes with an advisory lock and connects unpooled; the out-of-band index scripts of revision 1 are replaced by no-transaction companion files; backfills that need TypeScript are DBOS workflows `backfill:<name>:<batch>` with a cursor in `ops_flags` | 11.1, 14.1, 14.3, 14.4, 14.5 |
+| V2-14 | Review of revision 1 | `matches_status_guard` admits the actor `migration:<name>` like `ops`; without it backfill B-10 (`skipped` to `below_bar`) would raise | 3.2, 8.3, 14.4 |
+| V2-15 | Review against `server/src/llm/ledger.ts` | The ledger inserts with `RETURNING id`, so `kairos_api` needs `SELECT (id)` on `llm_calls`, and both writers need `USAGE` on `llm_calls_id_seq` | 4.2, 14.3 |
+| V2-16 | Review against the as-built `platform.ts` | Tables whose DDL only custom SQL can express are declared in modules outside the `drizzle-kit generate` schema (as built: `platform.ts`, not re-exported from `index.ts`) | 14.1 |
+| V2-17 | `06-infrastructure.md` 1.7 | Server parameters aligned (`work_mem` 24 MB at growth, `wal_compression = lz4`); 06 is authoritative for both sizes | 13.1 |
 
 ---
 
@@ -92,7 +114,7 @@ Each row names the conflict, the sources, the decision taken here, and the reaso
 
 ### 3.2 The transaction-local actor `kairos.actor`
 
-Set with `SELECT set_config('kairos.actor', $1, true)` (transaction-local, safe under PgBouncer transaction mode), read by `kairos_actor()`. Values: `user` (a request by the signed-in owner, including a workflow the user started), `autopilot` (the Autopilot actor of `queueMatch` and `approveCore`; it can queue a `new` match and nothing else that is guarded here), `ops` (an operator repair with an `ops_audit` row), `migration:<name>` (a migration that changes audited rows), unset (workers, parsers, agents, sweepers). A non-`user` actor can never confirm, unconfirm or edit a fact. Guards that read it: `facts_guard`, `employments_guard`, `profiles_guard`, `resumes_guard`, `matches_status_guard`, `feature_flags_audit`. The helper `asActor(tx, "user")` in `server/src/lib/actor.ts` is called first by every user-facing write path; forgetting it fails closed (`check_violation`), never silently.
+Set with `SELECT set_config('kairos.actor', $1, true)` (transaction-local, safe under PgBouncer transaction mode), read by `kairos_actor()`. Values: `user` (a request by the signed-in owner, including a workflow the user started), `autopilot` (the Autopilot actor of `queueMatch` and `approveCore`; it can queue a `new` match and nothing else that is guarded here), `ops` (an operator repair with an `ops_audit` row), `migration:<name>` (a migration or backfill that changes audited or guarded rows; `matches_status_guard` treats it like `ops`), unset (workers, parsers, agents, sweepers). A non-`user` actor can never confirm, unconfirm or edit a fact. Guards that read it: `facts_guard`, `employments_guard`, `profiles_guard`, `resumes_guard`, `matches_status_guard`, `feature_flags_audit`. The helper `asActor(tx, "user")` in `server/src/lib/actor.ts` is called first by every user-facing write path; forgetting it fails closed (`check_violation`), never silently.
 
 ### 3.3 Encryption envelope
 
@@ -121,8 +143,11 @@ Queries filter by the session user id in one data-access layer (INV-11); the dat
 CREATE ROLE kairos_migrator LOGIN;            -- owns every object in kairos; runs migrations before deploy
 CREATE ROLE kairos_api      LOGIN;            -- api process, through PgBouncer
 CREATE ROLE kairos_worker   LOGIN;            -- worker process, through PgBouncer
-CREATE ROLE kairos_applier  LOGIN;            -- applier process, through PgBouncer: two views and six functions only
-CREATE ROLE kairos_readonly LOGIN;            -- analytics and support, column-limited
+CREATE ROLE kairos_applier  LOGIN;            -- applier process, through PgBouncer: one view and seven functions only (4.3)
+CREATE ROLE kairos_readonly LOGIN CONNECTION LIMIT 3;   -- analytics and support, column-limited (06 H3)
+CREATE ROLE kairos_metrics  LOGIN CONNECTION LIMIT 3;   -- Grafana: metrics_minute, llm_cost_daily and the ops_*_v views only (06 X11, X16)
+CREATE ROLE kairos_backup   LOGIN;                       -- pgbackup only (06 5.3)
+GRANT pg_read_all_data TO kairos_backup;
 ALTER DATABASE kairos OWNER TO kairos_migrator;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO kairos_api, kairos_worker, kairos_applier, kairos_readonly;
@@ -134,10 +159,21 @@ ALTER ROLE kairos_api      SET idle_in_transaction_session_timeout = '30s';
 ALTER ROLE kairos_worker   SET idle_in_transaction_session_timeout = '30s';
 ALTER ROLE kairos_applier  SET idle_in_transaction_session_timeout = '30s';
 ALTER ROLE kairos_readonly SET default_transaction_read_only = on;
+ALTER ROLE kairos_metrics  SET statement_timeout = '10s';
+ALTER ROLE kairos_metrics  SET default_transaction_read_only = on;
+ALTER ROLE kairos_backup   SET statement_timeout = 0;
+GRANT USAGE ON SCHEMA public TO kairos_metrics;
+-- Ownership of the skeleton's objects moves to the migrator once: a DO block over pg_class, pg_proc and pg_type of schema public
+-- (ALTER ... OWNER TO kairos_migrator), plus ALTER SCHEMA drizzle OWNER TO kairos_migrator (drizzle's bookkeeping table).
+ALTER DEFAULT PRIVILEGES FOR ROLE kairos_migrator IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO kairos_api, kairos_worker;   -- narrowed per table by the creating migration
+ALTER DEFAULT PRIVILEGES FOR ROLE kairos_migrator REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;   -- every EXECUTE is explicit
 -- DBOS system database roles: platform 5.2 (dbos_migrator owns kairos_dbos; dbos_api, dbos_worker, dbos_applier have DML on schema dbos only and no CONNECT on kairos)
 ```
 
 Default privileges grant `SELECT, INSERT, UPDATE, DELETE` on new tables to `kairos_api` and `kairos_worker` (architecture B.10.4); every migration that creates a table then revokes to the matrix below in the same file. `TRUNCATE` and `REFERENCES` are never granted to a runtime role. Account-deletion cascades and `SET NULL` actions run with the owner's privileges, so narrowed `DELETE` and `UPDATE` rights never block erasure.
+
+**Where grants live (revision 2, V2-2).** `ops/provision-roles.sql` is idempotent, runs as the Railway superuser before the first migration of every environment (and again when a role is added), and does only what a migration cannot: create roles and set their parameters, move ownership of the skeleton's objects to `kairos_migrator`, and set default privileges. `kairos_metrics` and `kairos_backup` are created there, not by a migration as `06-infrastructure.md` X16 proposed, because `CREATE ROLE` needs `CREATEROLE` and the migrator must not hold it. Every grant and revoke on a table, view, sequence or function ships in a migration, so production, staging and Testcontainers run identical grants and T-DB-1 tests them. Functions get no default `EXECUTE`: each migration grants `EXECUTE` explicitly, and the pure validators used in `CHECK` constraints are granted to `PUBLIC`, because a `CHECK` is evaluated with the privileges of the role that writes the row. The skeleton tables of 0000 and 0001 are narrowed by the first migration of their domain (0005, 0007, 0008, 0009, 0010, 0012); the four tables and five functions of 0002 by 0004 (grant block in 14.3).
 
 ### 4.2 Privilege matrix (final state, asserted by the grant test T-12)
 
@@ -163,7 +199,7 @@ Default privileges grant `SELECT, INSERT, UPDATE, DELETE` on new tables to `kair
 | `board_requests` | SIU | SUD | none | S |
 | `matches` | SIU | SIUD | none | S |
 | `user_match_state` | SIU | SIU | none | S |
-| `applications` | SIUD | SIUD | fn (`applier_payload_v`, `claim_cloud_attempt`) | S(all except resume_lines, answers, cover_letter, receipt, questions, resume_line_entries, failure_reason, lease_session_id) |
+| `applications` | SIUD | SIUD | fn (`get_applier_payload`, `claim_cloud_attempt`) | S(all except resume_lines, answers, cover_letter, receipt, questions, resume_line_entries, failure_reason, lease_session_id) |
 | `submission_attempts` | SIU | SIU | fn | S(all except evidence, session_id) |
 | `verification_results` | SI | SID | none | S |
 | `application_events` | SI | SI | none | S |
@@ -179,9 +215,9 @@ Default privileges grant `SELECT, INSERT, UPDATE, DELETE` on new tables to `kair
 | `inbound_emails` | SI | SIUD | none | none |
 | `forwarding_verifications` | SIUD | SIUD | none | none |
 | `email_sends` | SIU | SIUD | none | S |
-| `notifications` | SIU | SIUD | none | none |
+| `notifications` | S, I, U(read_at) | SIUD | none | none |
 | `contact_messages` | SI | SIUD | none | none |
-| `llm_calls` | I | SI, U(user_hash) | none | none |
+| `llm_calls` | I, S(id) (the ledger inserts with `RETURNING id`); `USAGE` on `llm_calls_id_seq` | SI, U(user_hash); `USAGE` on `llm_calls_id_seq` | none | none |
 | `llm_cost_daily` | S | SIU | none | S |
 | `user_daily_usage` | SIU | SIUD | none | S |
 | `ai_usage` | SIU | SD | none | none |
@@ -198,22 +234,24 @@ Default privileges grant `SELECT, INSERT, UPDATE, DELETE` on new tables to `kair
 | `rate_limits` | SIUD | fn (`rate_limits_purge`) | none | none |
 | `dbos.transaction_completion` | SIUD | SIUD | none | none |
 
-Notes: `kairos_api` has no `UPDATE` or `DELETE` on `inbound_emails` (the internet-facing role cannot rewrite evidence that feeds billing pauses) and no `DELETE` on `email_sends`, `contact_messages`, `notifications`. `UPDATE` and `DELETE` on `credit_ledger`, `credit_ledger_archive`, `application_events` and `ops_audit` are granted to no runtime role, and triggers block them for the owner too. Writes to `credit_balances` happen only in `SECURITY DEFINER` trigger functions.
+Notes: `kairos_metrics` has `SELECT` on `metrics_minute`, `llm_cost_daily` and the four `ops_*_v` views (owned by `kairos_migrator`, aggregates only, no user id or free text) and nothing else; `kairos_backup` has `pg_read_all_data` and no write (encrypted columns leave the database as stored ciphertext; unlogged tables are skipped by `--no-unlogged-table-data`). `kairos_api` has no `UPDATE` or `DELETE` on `inbound_emails` (the internet-facing role cannot rewrite evidence that feeds billing pauses) and no `DELETE` on `email_sends`, `contact_messages`, `notifications`. `UPDATE` and `DELETE` on `credit_ledger`, `credit_ledger_archive`, `application_events` and `ops_audit` are granted to no runtime role, and triggers block them for the owner too. Writes to `credit_balances` happen only in `SECURITY DEFINER` trigger functions.
 
 ### 4.3 The applier surface
 
 ```sql
-GRANT SELECT ON applier_payload_v, scan_target_v, ops_flags TO kairos_applier;
-GRANT EXECUTE ON FUNCTION claim_cloud_attempt(uuid, int, text), mark_browser_launched(uuid), mark_attempt_phase(uuid, text),
-                          record_attempt_result(uuid, text, text, jsonb), store_form_questions(uuid, smallint, jsonb),
-                          heartbeat_executor(text, text, text, text, text), ops_flag_on(text) TO kairos_applier;
+GRANT SELECT ON scan_target_v, ops_flags TO kairos_applier;
+REVOKE ALL ON applier_payload_v FROM kairos_applier;              -- revision 2 (06 H1): the payload only through the function
+GRANT EXECUTE ON FUNCTION claim_cloud_attempt(uuid, int, text), get_applier_payload(uuid, text), mark_browser_launched(uuid),
+                          mark_attempt_phase(uuid, text), record_attempt_result(uuid, text, text, jsonb),
+                          store_form_questions(uuid, smallint, jsonb), heartbeat_executor(text, text, text, text, text),
+                          ops_flag_on(text) TO kairos_applier;
 ```
 
-The applier has no table privilege, no model key, no data key and no Stripe key. Its database credential can read the cloud payload of approved applications only and write attempt state through the functions, each of which checks state and caps its input.
+The applier has no table or payload-view privilege, no model key, no data key and no Stripe key. Its database credential can read the payload of the one attempt it has claimed (`get_applier_payload` requires `state = 'open'`, `channel = 'cloud'`, the claiming worker's identity and the application's `current_attempt_id`, section 8.3), read public form targets through `scan_target_v`, and write attempt state through the functions, each of which checks state and caps its input. The order inside `applyCloud` is therefore claim, then read the payload, then launch.
 
 ### 4.4 Connections
 
-PgBouncer (transaction mode) carries every `kairos` application pool, including the DBOS Drizzle datasource [verify in the Railway half of S-D1]; DBOS system pools connect directly to `kairos_dbos` (DBOS holds a `LISTEN` connection per process). Budget at growth (architecture B.4.2, platform 5.2): PgBouncer server side 108 connections; direct DBOS 60 (api 3 x 4, worker 4 x 6, applier 8 x 3); migrator, readonly and superuser reserve 10; total 178 of `max_connections = 200`. Alert when PgBouncer `cl_waiting` is above 0 for a minute or server connections exceed 180. Nothing in the schema uses session state: no session advisory locks (only `pg_advisory_xact_lock`), no `SET` outside `SET LOCAL` or `set_config(..., true)`, no `LISTEN` on `kairos`, no temporary tables, no prepared statements that outlive a transaction (`pg` with named statements disabled through PgBouncer, or PgBouncer 1.24 `max_prepared_statements` [verify S-P1]).
+PgBouncer (Railway-managed, transaction mode, `06-infrastructure.md` X1) carries every `kairos` application pool, including the DBOS Drizzle datasource [verify in the Railway half of S-D1]; DBOS system pools connect directly to `kairos_dbos` (DBOS holds a `LISTEN` connection per process); the migrator and `pgbackup` connect directly (`DATABASE_UNPOOLED_URL`, `DATABASE_BACKUP_URL`). Worst-case budget (`06-infrastructure.md` 9.2 is authoritative; `DEFAULT_POOL_SIZE = 20` per role): PgBouncer server side 60 (`kairos_api`, `kairos_worker`, `kairos_applier`, 20 each) plus 6 (`kairos_metrics`, `kairos_readonly`, connection limit 3 each); direct DBOS 44 at base and 60 at growth (per replica: api pool 3 plus listener 1, worker 5 plus 1, applier 2 plus 1); `pgbackup`, migrator and operator console 5; superuser reserve 3. Total **118 of 200 at base and 134 of 200 at growth**; expected use 40 to 60 [est]. Alert when PgBouncer `cl_waiting` is above 0 for a minute or server connections exceed 160 (A-PG-8). Nothing in the schema uses session state: no session advisory locks (only `pg_advisory_xact_lock`), no `SET` outside `SET LOCAL` or `set_config(..., true)`, no `LISTEN` on `kairos`, no temporary tables, no prepared statements that outlive a transaction (`pg` with named statements disabled through PgBouncer, or PgBouncer 1.24 `max_prepared_statements` [verify S-P1]).
 
 ---
 
@@ -334,6 +372,7 @@ erDiagram
     USER ||--o{ AI_USAGE : "cascade"
     USER ||--o{ TAILOR_CACHE : "cascade"
     USER ||--o{ ACTION_TOKENS : "cascade"
+    EVAL_RUNS |o--o{ EVAL_RUNS : "baseline, set null"
     LLM_CALLS ||..o{ LLM_COST_DAILY : "rolled up"
     LLM_CALLS }o..o| MATCHES : "llm_call_id, no key"
     LLM_CALLS }o..o| VERIFICATION_RESULTS : "llm_call_id, no key"
@@ -368,7 +407,7 @@ erDiagram
     }
 ```
 
-Tables with no foreign key at all (`verification`, `auth_rate_limit`, `verified_claims`, `eval_runs`, `dbos_executors`, `metrics_minute`, `rate_limits`, `llm_calls`, `llm_cost_daily`, `ops_flags`, `feature_flags`, `ops_audit`, `deletion_tasks`, `contact_messages`) have no foreign key by design: they are control data, caches or telemetry, or they must outlive the rows they describe.
+Tables with no foreign key at all (`verification`, `auth_rate_limit`, `verified_claims`, `dbos_executors`, `metrics_minute`, `rate_limits`, `llm_calls`, `llm_cost_daily`, `ops_flags`, `feature_flags`, `ops_audit`, `deletion_tasks`, `contact_messages`) have no foreign key by design: they are control data, caches or telemetry, or they must outlive the rows they describe.
 
 ### 6.2 The money and sending core, with key columns
 
@@ -540,9 +579,7 @@ CREATE TABLE profiles (
   timezone                 text        NOT NULL DEFAULT 'UTC',
   preferences_version      integer     NOT NULL DEFAULT 0,    -- bumped by profiles_guard (R-1)
   facts_version            integer     NOT NULL DEFAULT 0,    -- bumped by the facts statement triggers (R-1)
-  notify_weekly_report     boolean     NOT NULL DEFAULT true,
-  notify_autopilot_summary boolean     NOT NULL DEFAULT true,
-  notify_reminders         boolean     NOT NULL DEFAULT true,
+  mail_opt_out             text[]      NOT NULL DEFAULT '{}', -- non-transactional mail kinds the user stopped (R-15, 05-api DB-3)
   created_at               timestamptz NOT NULL DEFAULT now(),
   updated_at               timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT profiles_forwarding_address_unique UNIQUE (forwarding_address),
@@ -558,7 +595,9 @@ CREATE TABLE profiles (
   CONSTRAINT profiles_email_hash_ck        CHECK (normalized_email_hash ~ '^[0-9a-f]{64}$'),
   CONSTRAINT profiles_sensitive_enc_ck     CHECK (octet_length(sensitive_answers_enc) BETWEEN 29 AND 16384),
   CONSTRAINT profiles_preferences_ck       CHECK (preferences IS NULL OR preferences_valid(preferences)),   -- threshold 50..95, cap 1..5
-  CONSTRAINT profiles_versions_ck          CHECK (preferences_version >= 0 AND facts_version >= 0)
+  CONSTRAINT profiles_versions_ck          CHECK (preferences_version >= 0 AND facts_version >= 0),
+  CONSTRAINT profiles_mail_opt_out_ck      CHECK (mail_opt_out <@ ARRAY['digest','outcome_report','autopilot_summary','reminders']::text[]
+                                                  AND cardinality(mail_opt_out) <= 4)
 );
 CREATE INDEX profiles_normalized_email_idx ON profiles (normalized_email_hash) WHERE normalized_email_hash IS NOT NULL;
 -- Triggers: profiles_guard_bu (immutable key and forwarding address, forward-only onboarding, time-zone validation,
@@ -702,7 +741,7 @@ CREATE TABLE resumes (
   CONSTRAINT resumes_template_ck       CHECK (template ~ '^[a-z0-9][a-z0-9-]{0,39}$'),
   CONSTRAINT resumes_version_ck        CHECK (version >= 1)
 );
-CREATE UNIQUE INDEX resumes_user_uq     ON resumes (user_id);   -- skeleton rule; dropped in the release that enables resume_slots_multi
+CREATE UNIQUE INDEX resumes_user_uq     ON resumes (user_id);   -- skeleton rule; dropped in the release that enables RESUME_SLOTS_MULTI
 CREATE INDEX        resumes_profile_idx ON resumes (resume_profile_id) WHERE resume_profile_id IS NOT NULL;
 ALTER TABLE resumes SET (autovacuum_vacuum_scale_factor = 0.05, autovacuum_analyze_scale_factor = 0.05);
 
@@ -1047,7 +1086,7 @@ CREATE TABLE applications (
   draft_state             text               NOT NULL DEFAULT 'pending',
   draft_issue             text,
   revision                integer            NOT NULL DEFAULT 1,           -- preparation generation: prepare:<id>:<revision>
-  row_version             integer            NOT NULL DEFAULT 0,           -- optimistic concurrency: ETag, reverify:<id>:<row_version>
+  row_version             integer            NOT NULL DEFAULT 0,           -- ETag, If-Match, reverify:<id>:<row_version>; owned by applications_row_version_bu
   channel                 submit_channel,
   approved_by             text,
   approved_at             timestamptz,
@@ -1118,7 +1157,8 @@ ALTER TABLE applications ALTER COLUMN resume_lines SET COMPRESSION lz4, ALTER CO
                          ALTER COLUMN questions SET COMPRESSION lz4, ALTER COLUMN cover_letter SET COMPRESSION lz4,
                          ALTER COLUMN receipt SET COMPRESSION lz4, ALTER COLUMN verification SET COMPRESSION lz4;   -- [verify lz4 in S-P1]
 -- Triggers: applications_fill_company_bi, applications_immutable_keys_bu, applications_assert_owner_biu, applications_guard_status_bu
--- (versions 1 to 3), applications_guard_draft_state_bu, applications_guard_stage_bu (this domain), applications_in_flight_aiud (billing).
+-- (versions 1 to 3), applications_guard_draft_state_bu, applications_guard_stage_bu, applications_row_version_bu (revision 2, 05-api DB-1)
+-- (this domain), applications_in_flight_aiud (billing).
 
 -- 7.3.2 submission_attempts: one row per send attempt, both channels; the attempt-phase protocol.
 CREATE TABLE submission_attempts (
@@ -1570,7 +1610,8 @@ CREATE INDEX        contact_messages_email_idx ON contact_messages (lower(email)
 ### 7.6 Domain `platform` (15 tables plus `dbos.transaction_completion`; writer modules `llm`, `agents`, `durable`, `lib`) [platform 4, 5.3]
 
 ```sql
--- 7.6.1 llm_calls: metadata-only ledger of every billed Anthropic request; weekly partitions; 90 days.
+-- 7.6.1 llm_calls: metadata-only ledger of every billed Anthropic request and every budget refusal; weekly partitions; 90 days.
+-- As built by 0002_platform_02_llm_ledger.sql (applied, immutable); this block equals that file.
 CREATE SEQUENCE llm_calls_id_seq AS bigint;
 CREATE TABLE llm_calls (
   id                  bigint        NOT NULL DEFAULT nextval('llm_calls_id_seq'),
@@ -1598,7 +1639,13 @@ CREATE TABLE llm_calls (
   attempts            smallint      NOT NULL DEFAULT 1,
   tiered_up           boolean       NOT NULL DEFAULT false,
   error_code          text,
-  provider_request_id text,
+  provider_request_id text,                                 -- Anthropic request-id header (03-agent-runtime 8.2 calls it request_id)
+  call_kind           text          NOT NULL DEFAULT 'primary'                     -- auto-named llm_calls_call_kind_check
+    CHECK (call_kind IN ('primary','retry','repair','tier_up','truth_repair','shadow','canary','audit','nightly')),
+  budget_class        text          NOT NULL DEFAULT 'pipeline'                    -- auto-named llm_calls_budget_class_check
+    CHECK (budget_class IN ('pipeline','interactive','ops','eval')),               -- 'eval' never occurs in production (7.6.7)
+  trace_id            text,                                 -- OpenTelemetry trace id
+  batch_id            text,                                 -- Message Batches id when is_batch
   CONSTRAINT llm_calls_pk            PRIMARY KEY (id, created_at),
   CONSTRAINT llm_calls_agent_ck      CHECK (agent_id ~ '^[a-z][a-z0-9-]{2,40}$'),
   CONSTRAINT llm_calls_model_ck      CHECK (model ~ '^claude-(haiku|sonnet)-5-5(-[0-9]{8})?$'),   -- Opus 5.5 and Fable 5.1 never in production
@@ -1710,14 +1757,17 @@ CREATE UNLOGGED TABLE tailor_cache (
 );
 CREATE INDEX tailor_cache_job_idx ON tailor_cache (job_id);
 
--- 7.6.7 eval_runs: ship gates, weekly canaries, shadow audits; kept forever.
+-- 7.6.7 eval_runs: CI gates, model candidates, weekly canaries, nightly runs, shadow audits; kept forever.
+-- Revision 2 (03-agent-runtime 13.4): the runner's kind set, baseline_run_id, judge_version. Eval sends never write llm_calls: the
+-- runner calls the kairos-evals workspace with the ledger writer off and records its spend in cost_usd; the judge (Opus 5.5)
+-- would be refused by llm_calls_model_ck by design.
 CREATE TABLE eval_runs (
   id              uuid          PRIMARY KEY DEFAULT uuidv7(),
   run_at          timestamptz   NOT NULL DEFAULT now(),
-  kind            text          NOT NULL,
+  kind            text          NOT NULL DEFAULT 'ci',
   agent_id        text          NOT NULL,
   prompt_version  smallint      NOT NULL,
-  model           text          NOT NULL,
+  model           text          NOT NULL,                -- the model under test; a candidate may be any Claude id
   workspace       text          NOT NULL DEFAULT 'kairos-evals',
   eval_set_hash   text          NOT NULL,
   cases           integer       NOT NULL,
@@ -1728,13 +1778,20 @@ CREATE TABLE eval_runs (
   passed          boolean       NOT NULL,
   cost_usd        numeric(10,6) NOT NULL DEFAULT 0,
   git_sha         text          NOT NULL,
-  CONSTRAINT eval_runs_kind_ck      CHECK (kind IN ('ship_gate','weekly_canary','shadow_audit','model_change')),
+  baseline_run_id uuid          REFERENCES eval_runs(id) ON DELETE SET NULL,   -- the active version's run on the same cases (--baseline)
+  judge_version   text,                                  -- '<rubricId>@v<N>', or null when no judge ran
+  CONSTRAINT eval_runs_kind_ck      CHECK (kind IN ('ci','model_candidate','weekly_canary','nightly','manual','shadow_audit')),
+  CONSTRAINT eval_runs_agent_ck     CHECK (agent_id ~ '^[a-z][a-z0-9-]{2,40}$'),
+  CONSTRAINT eval_runs_model_ck     CHECK (model ~ '^claude-[a-z0-9-]{3,60}$'),
+  CONSTRAINT eval_runs_judge_ck     CHECK (judge_version IS NULL OR judge_version ~ '^[a-z0-9][a-z0-9_-]{1,60}@v[0-9]{1,4}$'),
+  CONSTRAINT eval_runs_baseline_ck  CHECK (baseline_run_id IS DISTINCT FROM id),
   CONSTRAINT eval_runs_workspace_ck CHECK (workspace IN ('kairos-evals','kairos-prod-interactive','kairos-prod-batch')),
   CONSTRAINT eval_runs_cases_ck     CHECK (cases > 0 AND failed_cases BETWEEN 0 AND cases AND cardinality(failed_case_ids) <= 50),
   CONSTRAINT eval_runs_hashes_ck    CHECK (git_sha ~ '^[0-9a-f]{40}$' AND eval_set_hash ~ '^[0-9a-f]{64}$'),
   CONSTRAINT eval_runs_json_ck      CHECK (jsonb_typeof(metrics) = 'object' AND jsonb_typeof(gates) = 'object')
 );
-CREATE INDEX eval_runs_gate_idx ON eval_runs (agent_id, prompt_version, kind, run_at DESC);
+CREATE INDEX eval_runs_gate_idx     ON eval_runs (agent_id, prompt_version, kind, run_at DESC);   -- deploy gate; Autopilot eval gate reads kind 'ci' and 'shadow_audit'
+CREATE INDEX eval_runs_baseline_idx ON eval_runs (baseline_run_id) WHERE baseline_run_id IS NOT NULL;   -- self FK SET NULL
 
 -- 7.6.8 ops_flags: kill switches, automatic freezes and configuration overrides; every change audited by trigger (R-9).
 CREATE TABLE ops_flags (
@@ -1746,16 +1803,28 @@ CREATE TABLE ops_flags (
   set_at     timestamptz NOT NULL DEFAULT now(),
   expires_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT ops_flags_key_ck    CHECK (key ~ '^(pause_polling|pause_scoring|pause_drafting|pause_cloud_apply|llm_batch_paused|llm_paused|approvals_frozen|autopilot_frozen|verification_full_log|ap2_verified)$'
+  CONSTRAINT ops_flags_key_ck    CHECK (key ~ '^(pause_polling|pause_scoring|pause_drafting|pause_cloud_apply|llm_batch_paused|llm_paused|approvals_frozen|autopilot_frozen|verification_full_log|ap2_verified|llm_shed_level|alerts_muted)$'
                                      OR key ~ '^(extension_only|host_backoff):[a-z0-9_.-]{1,100}$'
+                                     OR key ~ '^(agent_disabled|prompt_pin|model_pin):[a-z][a-z0-9-]{2,40}$'
+                                     OR key ~ '^backfill:[a-z0-9_]{2,60}$'
                                      OR key ~ '^(matching|catalog)\.[a-z0-9_]{2,60}$'),
+  -- Typed values (revision 2, 05-api DB-4): nested CASE so a cast never runs on a value of the wrong JSON type.
+  CONSTRAINT ops_flags_value_ck  CHECK (CASE
+        WHEN key = 'llm_shed_level' THEN CASE WHEN jsonb_typeof(detail->'value') = 'number'
+                                              THEN (detail->>'value')::numeric IN (0, 1, 2, 3) ELSE false END
+        WHEN key LIKE 'prompt_pin:%' THEN CASE WHEN jsonb_typeof(detail->'value') = 'number'
+                                              THEN (detail->>'value')::numeric BETWEEN 1 AND 9999 ELSE false END
+        WHEN key LIKE 'model_pin:%'  THEN coalesce(detail->>'value', '') ~ '^claude-(haiku|sonnet)-5-5(-[0-9]{8})?$'   -- never Opus or Fable
+        WHEN key LIKE 'backfill:%'   THEN detail ? 'value'                         -- the cursor (last primary key processed)
+        WHEN key = 'alerts_muted'    THEN expires_at IS NOT NULL                   -- a mute always ends
+        ELSE true END),
   CONSTRAINT ops_flags_reason_ck CHECK (reason ~ '^[a-z0-9_]{3,64}$'),
   CONSTRAINT ops_flags_set_by_ck CHECK (set_by ~ '^(operator|system|cli|migration):[A-Za-z0-9_.:-]{1,100}$'),
   CONSTRAINT ops_flags_detail_ck CHECK (jsonb_typeof(detail) = 'object' AND octet_length(detail::text) <= 2048),
   CONSTRAINT ops_flags_expiry_ck CHECK (expires_at IS NULL OR expires_at > set_at)
 ) WITH (fillfactor = 70);
 
--- 7.6.9 feature_flags: per-user rollout of migration phases; deterministic bucket.
+-- 7.6.9 feature_flags: per-user rollout of migration phases, and prompt canaries and shadows (03-agent-runtime 16.2); deterministic bucket.
 CREATE TABLE feature_flags (
   key             text        PRIMARY KEY,
   enabled         boolean     NOT NULL DEFAULT false,
@@ -1764,9 +1833,13 @@ CREATE TABLE feature_flags (
   allow_user_ids  text[]      NOT NULL DEFAULT '{}',
   deny_user_ids   text[]      NOT NULL DEFAULT '{}',
   note            text        NOT NULL DEFAULT '',
+  detail          jsonb       NOT NULL DEFAULT '{}',      -- prompt_canary:/prompt_shadow: {"version": <int>}; the percent is rollout_percent
   updated_by      text        NOT NULL,
   updated_at      timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT feature_flags_key_ck     CHECK (key ~ '^[A-Z][A-Z0-9_]{2,63}$'),
+  CONSTRAINT feature_flags_key_ck     CHECK (key ~ '^[A-Z][A-Z0-9_]{2,63}$' OR key ~ '^(prompt_canary|prompt_shadow):[a-z][a-z0-9-]{2,40}$'),
+  CONSTRAINT feature_flags_detail_ck  CHECK (jsonb_typeof(detail) = 'object' AND octet_length(detail::text) <= 1024
+                                             AND (key !~ '^prompt_(canary|shadow):' OR jsonb_typeof(detail->'version') = 'number')),
+  CONSTRAINT feature_flags_shadow_ck  CHECK (key !~ '^prompt_shadow:' OR rollout_percent <= 5),   -- a shadow doubles cost
   CONSTRAINT feature_flags_percent_ck CHECK (rollout_percent BETWEEN 0 AND 100),
   CONSTRAINT feature_flags_lists_ck   CHECK (cardinality(allow_user_ids) <= 200 AND cardinality(deny_user_ids) <= 200),
   CONSTRAINT feature_flags_note_ck    CHECK (char_length(note) <= 500 AND note !~ '@'),
@@ -1948,8 +2021,11 @@ CREATE TABLE IF NOT EXISTS dbos.transaction_completion (
 | `submission_attempts_guard()` | row trigger | `submission_attempts` | invoker | n/a | applications 5.4 |
 | `application_events_immutable()` | row trigger | `application_events` | invoker | n/a | applications 5.5 |
 | `rehearsal_sessions_bind()` | row trigger | `rehearsal_sessions` | invoker | n/a | applications 5.6 |
-| `claim_cloud_attempt`, `mark_browser_launched`, `mark_attempt_phase`, `record_attempt_result` | functions | applier | definer | `kairos_applier` | applications 5.7 |
-| `applier_payload_v` | view, `security_barrier` | applier | invoker | `kairos_applier` | **8.3 (final text)** |
+| `claim_cloud_attempt`, `mark_browser_launched`, `mark_attempt_phase`, `record_attempt_result` | functions | applier | definer | `kairos_applier` | applications 5.7 (final text uses `SET search_path = public, pg_temp`) |
+| `get_applier_payload(uuid, text)` | function, stable | applier, after the claim | definer | `kairos_applier` | **8.3 (new, revision 2)** |
+| `applier_payload_v` | view, `security_barrier` | `get_applier_payload` | owner's rights | no runtime role (revision 2) | **8.3 (final text)** |
+| `applications_row_version()` | row trigger `applications_row_version_bu` | `applications` | invoker | n/a | **8.3 (new, revision 2)** |
+| `ops_submission_health_v`, `ops_billing_integrity_v`, `ops_funnel_v`, `ops_cost_per_submitted_v`, `ops_archive_status()` | views and a function, aggregates only | Grafana | owner's rights; function definer | `kairos_metrics` | `06-infrastructure.md` 6.8 (migration 0015a) |
 | `effective_plan(plan_id, text, timestamptz)` | function, stable | view, eligibility | invoker | `PUBLIC` | billing 3.1 |
 | `ensure_credit_balance(text)` | function | `lockCreditBalance` | definer | `kairos_api`, `kairos_worker` | billing 5 |
 | `credit_ledger_apply()` | row trigger `credit_ledger_ai` | `credit_ledger` | definer | n/a | billing 5 |
@@ -1974,8 +2050,8 @@ CREATE FUNCTION matches_status_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE v_actor text := kairos_actor();
 BEGIN
   IF NEW.status = OLD.status THEN RETURN NEW; END IF;
-  IF v_actor = 'ops' THEN
-    NULL;                                                         -- operator repair, audited by the caller
+  IF v_actor = 'ops' OR v_actor LIKE 'migration:%' THEN
+    NULL;                                                         -- operator repair or backfill B-10, audited by the caller (revision 2)
   ELSIF v_actor = 'user' THEN
     IF NEW.status NOT IN ('queued','skipped') THEN
       RAISE EXCEPTION 'a user action can only queue or skip a match' USING ERRCODE = '23514', CONSTRAINT = 'matches_status_guard';
@@ -2096,8 +2172,42 @@ CREATE TRIGGER user_archive_ledger_bd BEFORE DELETE ON "user" FOR EACH ROW EXECU
 REVOKE ALL ON FUNCTION archive_user_ledger(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION archive_user_ledger(text) TO kairos_worker;
 
+-- get_applier_payload (revision 2, 06 H1): the payload of the one open cloud attempt this worker claimed, nothing else.
+-- Attempt ids are uuidv7 values that only claim_cloud_attempt hands out; the worker check is defence in depth.
+CREATE FUNCTION get_applier_payload(p_attempt_id uuid, p_worker text) RETURNS SETOF applier_payload_v
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT v.*
+    FROM submission_attempts sa
+    JOIN applier_payload_v v ON v.application_id = sa.application_id AND v.current_attempt_id = sa.id
+   WHERE sa.id = p_attempt_id AND sa.state = 'open' AND sa.channel = 'cloud'
+     AND sa.worker_identity = left(p_worker, 100)
+$$;
+REVOKE ALL ON FUNCTION get_applier_payload(uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION get_applier_payload(uuid, text) TO kairos_applier;
+
+-- applications_row_version (revision 2, 05-api DB-1): row_version is trigger-owned. It moves by exactly one when a
+-- client-visible column changes and never otherwise, whatever value the statement set (claim_cloud_attempt's explicit
+-- "row_version + 1" therefore still yields one step). Lease, heartbeat-pointer and timestamp-only updates keep it, so they stay
+-- cheap and never invalidate a client's ETag.
+CREATE FUNCTION applications_row_version() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF (NEW.status, NEW.draft_state, NEW.draft_issue, NEW.revision, NEW.verification, NEW.resume_lines, NEW.resume_line_entries,
+      NEW.answers, NEW.cover_letter, NEW.resume_pdf_key, NEW.receipt, NEW.receipt_summary, NEW.failure_code, NEW.failure_reason,
+      NEW.stage, NEW.channel, NEW.approved_at, NEW.content_scrubbed_at)
+     IS DISTINCT FROM
+     (OLD.status, OLD.draft_state, OLD.draft_issue, OLD.revision, OLD.verification, OLD.resume_lines, OLD.resume_line_entries,
+      OLD.answers, OLD.cover_letter, OLD.resume_pdf_key, OLD.receipt, OLD.receipt_summary, OLD.failure_code, OLD.failure_reason,
+      OLD.stage, OLD.channel, OLD.approved_at, OLD.content_scrubbed_at) THEN
+    NEW.row_version := OLD.row_version + 1;
+  ELSE
+    NEW.row_version := OLD.row_version;
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER applications_row_version_bu BEFORE UPDATE ON applications FOR EACH ROW EXECUTE FUNCTION applications_row_version();
+
 -- Applier grants (section 4.3) and views for analytics
-GRANT SELECT ON applier_payload_v, scan_target_v TO kairos_applier;
+GRANT SELECT ON scan_target_v TO kairos_applier;
 GRANT SELECT ON job_ghost_verdict_v TO kairos_api, kairos_worker, kairos_readonly;
 ```
 
@@ -2109,7 +2219,7 @@ Postgres fires triggers of one event in name order. The names below give the req
 
 | Table and event | Order | Why |
 |---|---|---|
-| `applications` BEFORE UPDATE | `applications_assert_owner_biu`, `applications_guard_draft_state_bu`, `applications_guard_stage_bu`, `applications_guard_status_bu`, `applications_immutable_keys_bu` | All are independent checks; the status guard sets `updated_at` and `terminal_at` |
+| `applications` BEFORE UPDATE | `applications_assert_owner_biu`, `applications_guard_draft_state_bu`, `applications_guard_stage_bu`, `applications_guard_status_bu`, `applications_immutable_keys_bu`, `applications_row_version_bu` | The checks are independent; the status guard sets `updated_at` and `terminal_at`; the version trigger runs last so it sees every column the earlier triggers set |
 | `applications` AFTER | `applications_in_flight_aiud` | Sees the guarded result, updates `credit_balances` |
 | `facts` | BEFORE `facts_guard_biu`, `facts_owner_employment`, `facts_owner_profile`; AFTER statement `facts_bump_del`, `facts_bump_ins`, `facts_bump_upd` | Provenance first; version bump after the rows are final |
 | `deletion_tasks` BEFORE UPDATE | `deletion_tasks_guard_bu` before `deletion_tasks_touch_bu` | A refused update never touches `updated_at` |
@@ -2153,13 +2263,15 @@ Every product invariant, the database mechanism that enforces it (where one is p
 | INV-11 Queries scoped by the session user | Same-owner triggers on every cross-tenant reference; nightly cross-tenant scan | Data-access layer |
 | INV-12 Stripe signature; replays ignored | `stripe_events` primary key; store then process; `stripe_events_consistency_ck` | Raw-body check |
 | INV-13 Ledger never updated or deleted by a user path | `REVOKE UPDATE, DELETE`; `credit_ledger_immutable` (also for the owner); same for `application_events`, `ops_audit` | |
-| INV-14, INV-15 Untrusted input and minimum data to providers | `llm_calls` holds no prompt or completion; checkpoints carry ids only (seeded-PII scan of `kairos_dbos` and `dbos.transaction_completion`); `application_events.detail` scalars only; `notifications.detail` ids only | Fencing, schemas |
+| INV-14, INV-15 Untrusted input and minimum data to providers | `llm_calls` holds no prompt or completion; checkpoints carry ids only (seeded-PII scan of `kairos_dbos` and `dbos.transaction_completion`); `application_events.detail` scalars only; `notifications.detail` ids only; the applier reads only the attempt it claimed (`get_applier_payload`) | Fencing, schemas |
 | INV-18, INV-22 Approval needs available credits; balance derived | `credit_balances` maintained only by triggers; no `CHECK` so a received submission is always recordable; nightly drift check | `approveCore` checks `balance - in_flight` under the row lock |
 | INV-21 Migrations never edited after applied | Drizzle journal checksums; `drizzle-kit check` in CI | Review gate |
 | INV-23 Closed postings never charge | `posting_closed` is a non-resendable failure code; `closeJob` sets `closed_by = 'apply_page'`; `jobs_closed_coherent_ck` | Settlement |
 | Autopilot hands-off rules: off switch, spike pause, receipts, notification per send | Rule A1 lock order; `autopilot_settings` checks; `notifications_dedupe_uq (user_id, kind, entity_id)` makes one `autopilot_sent` notification per application; `application_events` `auto_approved` then `sent` is the receipt trail | `submission-health` |
 | Workspace contract: one base resume per slot; revisions before AI runs; tailored edits in the draft | `resumes_user_slot_uq`, `resumes_user_uq` until slots ship; `snapshot_resume` and `ensure_resume_revision` are the only revision writers; `resume_revisions_immutable`; `applications.resume_base_revision_id` with `SET NULL` | Routes |
 | F11 allowance cannot be overspent by a race | The guarded upsert of `ai_usage` enforces the limit in the statement that spends it | Refund on provider failure |
+| ETag, `304` and `If-Match` correctness (05-api 3.1, 15.2) | `applications_row_version_bu` owns `row_version` | Routes compare it in the `WHERE` clause |
+| Never Opus or Fable in production | `llm_calls_model_ck`; `ops_flags_value_ck` for `model_pin:<agentId>` | Gateway model registry |
 | Erasure reaches every store | `ON DELETE CASCADE` from `"user"` on every user-owned table, each backed by an index; `deletion_tasks` checks forbid `complete` with an identifier left | Erasure workflow (section 16) |
 
 ---
@@ -2228,7 +2340,7 @@ stateDiagram-v2
 3. Columns updated on hot paths stay out of index keys and predicates (section 3.5).
 4. `INCLUDE` columns where a hot read becomes index-only (`matches_user_new_idx`, `applications_company_cap_idx`, `credit_ledger_user_created_idx`, `jobs_family_idx`). Drizzle cannot express `INCLUDE`; the TypeScript schema declares the key columns and the migration SQL creates the index under the same name.
 5. BRIN only on append-only, time-ordered tables (`credit_ledger`, `submission_attempts`, `verification_results`, `llm_calls`, `metrics_minute`); never on tables whose old pages are reused by retention deletes (catalog D3 rejected it for `matches`).
-6. Indexes on tables above 1 million rows are built with `CREATE INDEX CONCURRENTLY` from a script outside the migrator transaction (section 14.1), then declared in the migration with `IF NOT EXISTS`.
+6. Indexes on tables that may exceed 100,000 rows are built with `CREATE INDEX CONCURRENTLY IF NOT EXISTS` in a `-- kairos:no-transaction` companion migration file (section 14.1).
 
 ### 11.2 Every index
 
@@ -2305,7 +2417,7 @@ stateDiagram-v2
 | `applications` | `applications_match_idx` | `(match_id) WHERE match_id IS NOT NULL` | P | Match `SET NULL`; queue check |
 | `applications` | `applications_resume_profile_idx` | `(resume_profile_id) WHERE ... IS NOT NULL` | P | Slot `SET NULL` |
 | `applications` | `applications_base_revision_idx` | `(resume_base_revision_id) WHERE ... IS NOT NULL` | P | Revision pruning check; revision `SET NULL` |
-| `applications` | `applications_ext_queue_idx` | `(user_id, approved_at) WHERE status = 'approved' AND channel = 'extension'` | P | Extension queue; 14-day return-to-draft |
+| `applications` | `applications_ext_queue_idx` | `(user_id, approved_at, id) WHERE status = 'approved' AND channel = 'extension'` | P | Extension queue on every side-panel open, ordered by `approved_at` then `id` (05-api 13.2, DB-2); 14-day return-to-draft |
 | `applications` | `applications_ext_claim_idx` | `(id) WHERE status = 'submitting' AND channel = 'extension'` | P | `leaseSweeper` expired claims |
 | `applications` | `applications_cloud_approved_idx` | `(approved_at) WHERE status = 'approved' AND channel = 'cloud'` | P | `reconcile-apply` |
 | `applications` | `applications_draft_work_idx` | `(updated_at) WHERE status = 'draft' AND draft_state IN ('pending','stale')` | P | `reconcile-prepare` |
@@ -2374,6 +2486,7 @@ stateDiagram-v2
 | `verified_claims` | `verified_claims_expires_idx` | `(expires_at)` | | 10-minute purge |
 | `tailor_cache` | `tailor_cache_job_idx` | `(job_id)` | | Job cascade at retention |
 | `eval_runs` | `eval_runs_gate_idx` | `(agent_id, prompt_version, kind, run_at DESC)` | | Deploy gate, Autopilot eval gate |
+| `eval_runs` | `eval_runs_baseline_idx` | `(baseline_run_id) WHERE baseline_run_id IS NOT NULL` | P | Self foreign key `SET NULL` (FK index rule) |
 | `action_tokens` | `action_tokens_user_idx` | `(user_id)` | | Cascade |
 | `deletion_tasks` | `deletion_tasks_open_idx` | `(next_attempt_at) WHERE stage IN ('requested','db_deleted')` | P | Erasure claim, 24-hour page |
 | `ops_audit` | `ops_audit_request_uq` | `(operator, request_id) WHERE request_id IS NOT NULL` | UP | Idempotent operator scripts |
@@ -2389,7 +2502,7 @@ Tables with no index beyond their primary key, by design: `profiles` (beyond the
 | `session_user_id_idx` | Dropped | `session_user_updated_idx` (strict prefix) | `0030_identity_04_contract` |
 | `facts_user_idx` | Dropped | `facts_user_created_idx` | same |
 | `resume_revisions_resume_idx` | Dropped | `resume_revisions_resume_created_idx` | same |
-| `resumes_user_uq` | Dropped | `resumes_user_slot_uq` | `0033_identity_06_multi_slot` (the release that enables `resume_slots_multi`) |
+| `resumes_user_uq` | Dropped | `resumes_user_slot_uq` | `0033_identity_06_multi_slot` (the release that enables `RESUME_SLOTS_MULTI`) |
 | `applications_user_status_idx` | Dropped | `applications_user_status_updated_idx` | `0028_apps_08_contract` |
 | `matches_user_status_idx` | Dropped | `matches_user_new_idx` plus `matches_user_job_uq` | `0029_catalog_05_contract` |
 | `credit_ledger_user_idx` | Dropped | `credit_ledger_user_created_idx` | `0009_billing_02_ledger_balances` |
@@ -2483,8 +2596,8 @@ Every rule runs in a DBOS schedule on the worker, in batches (5,000 rows by `cti
 | `metrics_minute` | 30 days | `metrics` | `metrics_minute_minute_brin` |
 | `dbos.transaction_completion` | Safety sweep after 21 days (the datasource deletes rows when a workflow finishes) | `dbos-retention` | sequential |
 | `kairos_dbos` workflows | 2 days after completion (queues `poll`, `candidates`, `score`, `notify`, `batch-llm`, schedules) or 14 days (all others), through `DBOS.listWorkflows` with `completedBefore` and `DBOS.deleteWorkflows(ids, true)` in batches of 500 | `dbos-retention` daily 03:30 UTC | DBOS-owned |
-| R2 objects | Uploads with the slot or account; tailored PDFs 90 days after submission or withdrawal; renders 30 days unused; failure snapshots 14 days; tombstones 60 days | R2 lifecycle, erasure | |
-| Backups | PITR about 4 weeks; weekly encrypted logical dumps 4 weeks (`pg_dump --no-unlogged-table-data`) | Railway, R2 lifecycle | |
+| R2 objects (five buckets, `06-infrastructure.md` X3) | `kairos-uploads`: with the slot or account; `kairos-renders`: tailored PDFs 90 days after submission or withdrawal, unused renders 30 days; `kairos-failures`: failure snapshots 14 days; `kairos-tombstones`: forever (an opaque hash per deleted user, X15); `kairos-backups`: below | R2 lifecycle, erasure | |
+| Backups (`06-infrastructure.md` X2, 5.3, 5.4) | PITR about 4 weeks; daily `age`-encrypted core dump 7 days; weekly full dump 28 days (both `--no-unlogged-table-data`, data of `llm_calls*`, `metrics_minute`, `session`, `verification`, `rate_limits` excluded, `jobs` data only in the full dump); money journal (ids and enums every 2 minutes) 35 days | Railway, `pgbackup`, `money-journal`, R2 lifecycle | |
 
 ### 12.3 Row and size projections at 10,000 users after 12 months [est]
 
@@ -2509,16 +2622,17 @@ Write rates at growth [est]: business tables about 10 row writes a second on ave
 
 ## 13. Postgres configuration and maintenance
 
-### 13.1 Server parameters (growth sizing 4 vCPU, 16 GB) [verify each is settable on Railway in S-P1]
+### 13.1 Server parameters (growth sizing 4 vCPU, 16 GB; `06-infrastructure.md` 1.7 is authoritative for both sizes) [verify each is settable on Railway in S-P1]
 
 | Parameter | Value | Reason |
 |---|---|---|
-| `max_connections` | 200 | Section 4.4 budget of 178 |
+| `max_connections` | 200 | Section 4.4 worst-case budget of 134 at growth |
 | `shared_buffers` | 4 GB | 25% of memory |
 | `effective_cache_size` | 12 GB | |
-| `work_mem` | 16 MB | Sorts of per-user result sets; batch jobs set `SET LOCAL work_mem = '128MB'` |
+| `work_mem` | 24 MB (16 MB at the 8 GB base size) | Sorts of per-user result sets; batch jobs set `SET LOCAL work_mem = '128MB'` |
 | `maintenance_work_mem` | 1 GB | Concurrent index builds, vacuum |
 | `max_wal_size` / `checkpoint_timeout` | 8 GB / 15 min | Smooth checkpoints under DBOS write bursts |
+| `wal_compression` | `lz4` | Smaller WAL archive and egress |
 | `random_page_cost` | 1.1 | SSD volumes |
 | `default_toast_compression` | `lz4` | JSON and text columns compress about 2.5 to 3 times [verify the image has lz4] |
 | `autovacuum_max_workers` / `autovacuum_naptime` | 4 / 20 s | Many small hot tables |
@@ -2544,13 +2658,15 @@ Write rates at growth [est]: business tables about 10 row writes a second on ave
 
 ### 14.1 Tooling: the Drizzle generate flow
 
-1. **Schema files.** One TypeScript file per domain under `server/src/db/schema/`: `auth.ts` (Better Auth tables and `auth_rate_limit`), `profile.ts` (the other identity tables), `catalog.ts` (`companies`, `jobs`, `form_questions`, `job_ghost_evidence`, `ghost_reports`, `board_requests`; it replaces `jobs.ts`), `matching.ts` (`matches`, `user_match_state`), `applications.ts` (`applications`, `verification_results`, `application_events`, `reminders`), `submission.ts` (`submission_attempts`), `coaching.ts` (`rehearsal_sessions`, `rehearsal_turns`), `billing.ts`, `messaging.ts` (takes `inboundEmails` from `applications.ts` and `contactMessages` from `billing.ts`), `platform.ts`, `enums.ts`, `relations.ts`, re-exported from `index.ts` with unchanged export names (moving a table between files generates no SQL). The domain drafts' section 10 (identity 10, catalog per table, applications 10, billing 10, messaging 11, platform 8) are the sketches; `matches` and `user_match_state` follow 7.2.7 and 7.2.8 in the same style (`text(name, { enum })` for text sets, `check()`, `.where()` for partial indexes, `uniqueIndex().on(...).nullsNotDistinct()` where needed). `enums.ts` changes `matchStatus` to `pgEnum("match_status", MATCH_STATUSES_DB)` with `MATCH_STATUSES_DB = [...MATCH_STATUSES, "below_bar"]`; `shared/` does not change.
+1. **Schema files.** One TypeScript file per domain under `server/src/db/schema/`: `auth.ts` (Better Auth tables and `auth_rate_limit`), `profile.ts` (the other identity tables), `catalog.ts` (`companies`, `jobs`, `form_questions`, `job_ghost_evidence`, `ghost_reports`, `board_requests`; it replaces `jobs.ts`), `matching.ts` (`matches`, `user_match_state`), `applications.ts` (`applications`, `verification_results`, `application_events`, `reminders`), `submission.ts` (`submission_attempts`), `coaching.ts` (`rehearsal_sessions`, `rehearsal_turns`), `billing.ts`, `messaging.ts` (takes `inboundEmails` from `applications.ts` and `contactMessages` from `billing.ts`), `platform.ts`, `enums.ts`, `relations.ts`, re-exported from `index.ts` with unchanged export names (moving a table between files generates no SQL). **SQL-owned tables (revision 2, V2-16):** a table whose DDL only custom SQL can express (partitioned, unlogged, or created by hand as 0002 did) is declared in a module that `drizzle.config.ts` does not load, so `drizzle-kit generate` never diffs against it and never emits a competing `CREATE TABLE`; code imports the module directly for typed queries. As built, `platform.ts` plays this role for `llm_calls`, `llm_cost_daily`, `user_daily_usage` and `ai_usage` and is deliberately not re-exported from `index.ts`; `verified_claims`, `tailor_cache`, `rate_limits`, `auth_rate_limit` and `dbos.transaction_completion` join it. T-DB-4 compares the live columns of SQL-owned tables with their TypeScript declarations. The domain drafts' section 10 (identity 10, catalog per table, applications 10, billing 10, messaging 11, platform 8) are the sketches; `matches` and `user_match_state` follow 7.2.7 and 7.2.8 in the same style (`text(name, { enum })` for text sets, `check()`, `.where()` for partial indexes, `uniqueIndex().on(...).nullsNotDistinct()` where needed). `enums.ts` changes `matchStatus` to `pgEnum("match_status", MATCH_STATUSES_DB)` with `MATCH_STATUSES_DB = [...MATCH_STATUSES, "below_bar"]`; `shared/` does not change.
 2. **Generate.** `npm run db:generate -w @auto-career/server -- --name <name>` writes the structural SQL and the snapshot. Raw SQL that drizzle-kit cannot express is a separate custom migration: `npx drizzle-kit generate --custom --name <name>` (functions, triggers, views, grants, `NOT VALID` and `VALIDATE`, `INCLUDE`, partitioning, `UNLOGGED`, storage parameters, `COMPRESSION`, backfill SQL). Before a generated file is applied anywhere it may be hand-amended (for example `CREATE INDEX IF NOT EXISTS`, `NOT VALID`); once applied it is never edited (INV-21).
 3. **Config.** `drizzle.config.ts` gains `schemaFilter: ["public"]` (the `dbos` schema is not drizzle's) and `tablesFilter: ["*", "!llm_calls_20*", "!llm_calls_default", "!matches_shadow"]`; `drizzle-kit push` is forbidden against any shared database; `drizzle-kit check` runs in CI and fails on snapshot drift.
-4. **Apply.** `server/src/migrate.ts` switches from `drizzle-orm/postgres-js/migrator` to `drizzle-orm/node-postgres/migrator` with the `pg@8` driver (spike S-D1 pin) and connects with `MIGRATION_DATABASE_URL` as `kairos_migrator`, directly to Postgres (not through PgBouncer), as the api's pre-deploy command. It sets `SET lock_timeout = '5s'` and retries the whole run up to three times on `lock_not_available`. Drizzle's migrator applies all pending files in **one transaction**; three consequences are rules here:
-   - `CREATE INDEX CONCURRENTLY` and `VALIDATE CONSTRAINT` on tables above 1 million rows run from ops scripts outside the migrator **before** the migration that declares them (`server/scripts/catalog-indexes.sql`, `applications-indexes.sql`, `validate-constraints.sql`, one statement per transaction); the migration repeats them idempotently (`CREATE INDEX IF NOT EXISTS`; validating a valid constraint is a no-op).
-   - A new enum value is never used in the deploy that adds it (R-13).
+4. **Apply (revision 2, V2-13).** `server/src/migrate.ts` is kept and extended as `06-infrastructure.md` 3.7 specifies (that section is authoritative for the runner): it reads drizzle's journal and keeps drizzle's bookkeeping table (`drizzle.__drizzle_migrations`, hash per file), uses the `pg@8` driver (spike S-D1 pin), connects as `kairos_migrator` with `DATABASE_UNPOOLED_URL` (directly, not through PgBouncer) as the api's pre-deploy command, holds `pg_advisory_lock(7281551)` for the whole run, sets `lock_timeout = '5s'` and retries a statement that cannot get its lock up to 3 times with 10-second pauses. Rules that follow:
+   - **One transaction per file**, not one for the whole run. A file whose first line is `-- kairos:no-transaction` runs statement by statement and holds only idempotent statements; it carries every `CREATE INDEX CONCURRENTLY IF NOT EXISTS`, `DROP INDEX CONCURRENTLY IF EXISTS` and `ALTER TYPE ... ADD VALUE IF NOT EXISTS`. An index on a table that may exceed 100,000 rows ships in such a companion file directly after the migration that needs it (marked "+ idx" in 14.3; the companion takes the next journal index). Each `VALIDATE CONSTRAINT` on a large table runs in a file of its own so that it holds no other lock.
+   - The expand-only linter (`scripts/lint-migrations.mjs`, CI job `migrations`) rejects `DROP TABLE`, `DROP COLUMN`, `ALTER COLUMN ... TYPE`, `RENAME`, unmarked `SET NOT NULL`, `ADD COLUMN ... NOT NULL` without a default, non-concurrent indexes on tables above 100,000 rows and `ALTER TYPE ... ADD VALUE` inside a transaction; the contract migrations (0028 to 0033) carry the `-- kairos:contract <reason>` header it requires.
+   - A new enum value is never used in the release that adds it (R-13).
    - A table rewrite (`GENERATED ... STORED`, `ALTER COLUMN TYPE`) is allowed only while the table is small; every such rewrite here ships before the paid beta.
+   - The pre-deploy command finishes within 5 minutes; anything slower is a backfill (14.4).
 5. **Fresh databases** (development, Testcontainers on `postgres:18`, the restore drill) are built by applying every migration from `0000` in order; there is no separate create script, so production and tests run the same SQL. Roles come from `ops/provision-roles.sql` first; `kairos_dbos` from `ops/provision-dbos.sql`.
 
 ### 14.2 What happens to each existing table
@@ -2583,11 +2699,11 @@ Numbers give the apply order; the journal index is assigned when the file is mer
 
 | # | Name | Phase and release | Content | Gate before it ships |
 |---|---|---|---|---|
-| 0002 | `platform_00_dbos_datasource` | P1 R1 | `CREATE EXTENSION IF NOT EXISTS pg_trgm`; schema `dbos`, `dbos.transaction_completion`, grants | Roles provisioned; S-P1 passed (Postgres 18, PITR, `uuidv7()`, lz4) |
-| 0003 | `platform_01_control_plane` | P1 R1 | `ops_flags`, `feature_flags`, `ops_audit` and their triggers and functions, `dbos_executors`, `heartbeat_executor`, `dbos_orphaned_executors`, `rate_limits`, `rate_limits_purge`, `metrics_minute`; seed `feature_flags` (section 15) | |
-| 0004 | `platform_02_llm_ledger` | P1 R1 | Sequence and partitioned `llm_calls` with 6 partitions, `llm_cost_daily`, `user_daily_usage`, `ai_usage`, `kairos_jsonb_add`, partition and roll-up functions | |
+| 0002 | `platform_02_llm_ledger` | P1 R1, **as built** (applied, immutable) | Sequence and partitioned `llm_calls` with the four runtime columns (V2-1) and current week plus 6 partitions, `llm_cost_daily`, `user_daily_usage`, `ai_usage`, `kairos_jsonb_add`, partition and roll-up functions; no grants (0004 carries them) | `ops/provision-roles.sql` has run |
+| 0003 | `platform_00_dbos_datasource` | P1 R1 | `CREATE EXTENSION IF NOT EXISTS pg_trgm`; schema `dbos`, `dbos.transaction_completion`, grants; a `DO` block that fails the deploy if any object in `public` is not owned by `kairos_migrator` | Roles provisioned; S-P1 passed (Postgres 18, PITR, `uuidv7()`, lz4) |
+| 0004 | `platform_01_control_plane` | P1 R1 | `ops_flags`, `feature_flags` (with `detail`), `ops_audit` and their triggers and functions, `dbos_executors`, `heartbeat_executor`, `dbos_orphaned_executors`, `rate_limits`, `rate_limits_purge`, `metrics_minute`; seed `feature_flags` (section 15); **the grant block for the objects of 0002** (below this table) | |
 | 0005 | `identity_01_expand` | P1 R1 | Identity M1.1 to M1.8: validators, new columns, `employments`, `autopilot_settings`, `saved_searches`, `auth_rate_limit`; FK swaps of `facts.resume_profile_id` and `resumes.resume_profile_id`; generated `document_hash` columns (rewrites two small tables); `NOT VALID` checks; data backfills B-1 to B-4 | Identity M0 preflight returns zero violations (identity 8.3) |
-| 0006 | `catalog_00_enum_below_bar` | P1 R1, **last file of the release** | `ALTER TYPE match_status ADD VALUE IF NOT EXISTS 'below_bar'` | No migration of R1 uses the value (R-13) |
+| 0006 | `catalog_00_enum_below_bar` | P1 R1, **last file of the release**, `-- kairos:no-transaction` | `ALTER TYPE match_status ADD VALUE IF NOT EXISTS 'below_bar'` | No migration of R1 uses the value (R-13) |
 | 0007 | `billing_01_subscriptions_events` | P2 | Subscriptions columns and checks, `stripe_events` store-then-process columns (status default `processed` during the window), `effective_plan()` | Billing M1 pre-checks pass |
 | 0008 | `catalog_01_companies` | P2 | Companies columns; host backfill B-5; `api_host`, `apply_host` `SET NOT NULL`; checks; indexes; storage parameters | Every company maps to one allowlisted host pair (pre-check) |
 | 0009 | `billing_02_ledger_balances` | P2 | `LOCK TABLE credit_ledger, applications IN SHARE MODE`; ledger constraints and indexes; `credit_balances` with backfill B-9 and both triggers; `credit_ledger_archive`, `archive_user_ledger`, archive and immutability triggers; grants | Billing M2 pre-checks pass |
@@ -2595,8 +2711,9 @@ Numbers give the apply order; the journal index is assigned when the file is mer
 | 0011 | `platform_03_links_erasure` | P2 | `action_tokens`, `deletion_tasks`, `deletion_tasks_guard` | Pulled forward from P6 (platform P18) |
 | 0012 | `apps_01_expand` | P2 | 23 `applications` columns (constant defaults, no rewrite), `id` default `uuidv7()`; `submission_attempts`, `application_events` with all their constraints and indexes; early `NOT VALID` checks; triggers including status guard **v1**; applier functions; `applier_payload_v` (needs 0007 and 0008); grants | |
 | 0013 | `apps_02_backfill` | P2 | Backfill B-8 (applications 8.3) then `VALIDATE` of the early checks | |
-| 0014 | `apps_03_indexes` | P2 | The 16 new `applications` indexes (plain build while the table is small; `CONCURRENTLY` script above 1 million rows) | |
+| 0014 | `apps_03_indexes` | P2, `-- kairos:no-transaction` | The 16 new `applications` indexes with `CREATE INDEX CONCURRENTLY IF NOT EXISTS` (always concurrent, so the file is the same in every environment) | |
 | 0015 | `billing_03_offer_pause` | P2 | `offer_pause_candidates` | |
+| 0015a | `platform_05_ops_views` | P2 end (revision 2) | The four `ops_*_v` views and `ops_archive_status()` of `06-infrastructure.md` 6.8, owned by `kairos_migrator`; `GRANT SELECT` on them and on `metrics_minute`, `llm_cost_daily` to `kairos_metrics`; `EXECUTE` on `ops_archive_status()` to `kairos_metrics` | `kairos_metrics` provisioned; the tables the views read exist (0009 to 0015) |
 | 0016 | `messaging_02_constraints` | P3 start | `inbound_emails_link_reason_ck`, `_classified_ck`, `_offer_needs_rule_ck`; validate length checks | BullMQ `classify-email` drained; backfill B-13 done |
 | 0017 | `identity_02_triggers_routines` | P3 start | Identity 5.2 to 5.8: same-owner, provenance and actor guards, version bumps, revision functions, slot routines | Code that sets `kairos.actor` on every user path has run in production for 3 days with zero `facts_actor_required` errors (identity M2a) |
 | 0018 | `catalog_02_intake` | P3 | `jobs`: `source` check, `closed_by`, `description_purged_at`, `next_check_at`, `description_text` nullable, `id` default `uuidv7()`; `form_questions` with `form_questions_derive`, `scan_target_v`, `store_form_questions`; `board_requests`; `matches`: `source`, `selection`, `prerank_score`, `scorer_version`, `must_have_hits`, `llm_call_id`, `scored_at`, `status_changed_at`, `passed_filters` default `true`, `id` default `uuidv7()`, `NOT VALID` checks, `matches_status_guard` | Skip and queue routes set `kairos.actor = 'user'` (shipped in P2) |
@@ -2604,7 +2721,7 @@ Numbers give the apply order; the journal index is assigned when the file is mer
 | 0020 | `platform_04_verifier_caches` | P3 | `verified_claims`, `tailor_cache`, `eval_runs` | |
 | 0021 | `billing_04_contract` | P3 | `stripe_events.status` default `received`; `processed_at` default dropped | Old inline webhook path deleted; cut-over stable 7 days |
 | 0022 | `identity_03_validate` | P3 end | `VALIDATE` of every identity `NOT VALID` constraint | Backfills B-1 to B-4 complete |
-| 0023 | `catalog_03_matching` | P4 | `jobs` hint, family, card, ghost and freshness columns; `job_ghost_evidence`, `ghost_reports`, `user_match_state` with backfill B-7; `matches.family_id`; `job_fresh_at`, `job_ghost_verdict_v`, `refresh_ghost_verdicts`; matching indexes (built first by `catalog-indexes.sql` with `CONCURRENTLY`); `jobs` checks `NOT VALID`; `matches_shadow` (`LIKE matches INCLUDING DEFAULTS`) | |
+| 0023 | `catalog_03_matching` | P4 | `jobs` hint, family, card, ghost and freshness columns; `job_ghost_evidence`, `ghost_reports`, `user_match_state` with backfill B-7; `matches.family_id`; `job_fresh_at`, `job_ghost_verdict_v`, `refresh_ghost_verdicts`; matching indexes (+ idx: a no-transaction companion file); `jobs` checks `NOT VALID`; `matches_shadow` (`LIKE matches INCLUDING DEFAULTS`) | |
 | 0024 | `catalog_04_validate` | P4 end | Validate jobs, companies and matches checks after backfills B-6 and B-10 | Every open job has `hints_version >= 1` and a `family_id` |
 | 0025 | `apps_05_guard_v2` | P5 window | Status guard **v2** (`draft_state = 'ready'` gate) | `PREPARE_V2` at 100% for 14 days |
 | 0026 | `apps_06_guard_v3` | P5, before Autopilot opens | Status guard **v3** (verification gate) | Verifier enforcing 14 days; shadow audit at or below 1% false accept; I-7 clean 14 days |
@@ -2614,28 +2731,49 @@ Numbers give the apply order; the journal index is assigned when the file is mer
 | 0030 | `identity_04_contract` | After P7 | Drop `session_user_id_idx`, `facts_user_idx`, `resume_revisions_resume_idx`; null `resume_profiles.source_text` where ciphertext exists (batched script first) | Seven days with no scan of the dropped indexes (`pg_stat_user_indexes`) |
 | 0031 | `messaging_03_contract` | After P7 | Recreate `inbound_emails_hidden_no_body_ck` without `text_body`; drop `text_body` | Zero rows with `text_body IS NOT NULL` |
 | 0032 | `identity_05_drop_source_text` | One release after 0030 | Drop `resume_profiles.source_text` | Previous release reads only ciphertext |
-| 0033 | `identity_06_multi_slot` | Phase 2 | Drop `resumes_user_uq` | The release that enables `resume_slots_multi` |
+| 0033 | `identity_06_multi_slot` | Phase 2 | Drop `resumes_user_uq` | The release that enables `RESUME_SLOTS_MULTI` |
+
+Grant block of 0004 for the objects of 0002. Until it runs, the default privileges of 4.1 give `kairos_api` and `kairos_worker` full DML on the four tables; both files ship in release P1 R1, so no deployed code runs with the wider grant.
+
+```sql
+REVOKE ALL ON llm_calls, llm_cost_daily, user_daily_usage, ai_usage FROM kairos_api, kairos_worker;
+GRANT INSERT, SELECT (id) ON llm_calls TO kairos_api;                         -- RETURNING id (ledger.ts)
+GRANT SELECT, INSERT, UPDATE (user_hash) ON llm_calls TO kairos_worker;        -- the erasure scrub nulls user_hash
+GRANT USAGE ON SEQUENCE llm_calls_id_seq TO kairos_api, kairos_worker;
+GRANT SELECT ON llm_cost_daily TO kairos_api, kairos_readonly;
+GRANT SELECT, INSERT, UPDATE ON llm_cost_daily TO kairos_worker;
+GRANT SELECT, INSERT, UPDATE ON user_daily_usage TO kairos_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON user_daily_usage TO kairos_worker;
+GRANT SELECT ON user_daily_usage TO kairos_readonly;
+GRANT SELECT, INSERT, UPDATE ON ai_usage TO kairos_api;
+GRANT SELECT, DELETE ON ai_usage TO kairos_worker;
+REVOKE ALL ON FUNCTION llm_calls_ensure_partitions(int), llm_calls_partition_rolled_up(text), llm_calls_drop_old_partitions(int),
+                       llm_cost_rollup_day(date), kairos_jsonb_add(jsonb, jsonb) FROM PUBLIC;   -- in case 0002 ran before provisioning
+GRANT EXECUTE ON FUNCTION llm_calls_ensure_partitions(int), llm_calls_partition_rolled_up(text), llm_calls_drop_old_partitions(int),
+                          llm_cost_rollup_day(date) TO kairos_worker;
+GRANT EXECUTE ON FUNCTION kairos_jsonb_add(jsonb, jsonb) TO kairos_api, kairos_worker;
+```
 
 ### 14.4 Data backfills
 
-Schema and data changes are separate statements; backfills that need TypeScript run as idempotent scripts in batches of 500 to 5,000 rows, select only rows that still need work, write an `ops_audit` row, and report remaining rows.
+Schema and data changes are separate statements. Backfills that need TypeScript run as DBOS workflows `backfill:<name>:<batch>` on the worker (`06-infrastructure.md` 3.7, V2-13): batches of 1,000 rows (500 for encryption), one batch a second per worker, throttled while primary CPU is above 60%, resumable from a cursor in `ops_flags` key `backfill:<name>` (`detail.value` holds the last primary key processed), selecting only rows that still need work, writing an `ops_audit` row per run and reporting remaining rows. SQL backfills inside a migration are allowed only while the table is below 100,000 rows (every one listed here ships before the paid beta).
 
 | Id | Backfill | Where | Rule |
 |---|---|---|---|
-| B-1 | `resume_profiles.source_hash` | `server/scripts/backfill-resume-sources.ts` after 0005 | TypeScript normalizer (the same one the parser uses) |
+| B-1 | `resume_profiles.source_hash` | Workflow `backfill:resume_sources` after 0005 | TypeScript normalizer (the same one the parser uses) |
 | B-2 | `facts.confirmed_at`, `asserted_by`, legacy `source_span_hash` | SQL in 0005 | identity 8.4 M1.5; hash assigned to the oldest duplicate only |
 | B-3 | `resumes.resume_profile_id` adoption, `resume_revisions.resume_version` | SQL in 0005 | identity 8.4 M1.7 |
 | B-4 | Default saved search "My matches" for finished onboarding | SQL in 0005 | identity 8.4 M1.8 |
 | B-5 | `companies.api_host`, `apply_host`, `api_region`, `inactive_reason` | SQL in 0008 | Greenhouse: `boards-api.greenhouse.io`, apply host the most common host of the company's `jobs.apply_url` (default `job-boards.greenhouse.io`); Lever: `eu` when any job URL is on `jobs.eu.lever.co`, else `us`; Ashby fixed; inactive rows get `owner` |
-| B-6 | Job hint columns, `content_hash`, `description_hash`, `simhash`, families, `raw = NULL` | `server/scripts/backfill-jobs.ts` in P4 | `normalizePosting` in TypeScript, never SQL; `family_id = id`, then `assignFamily` over open jobs by `first_seen_at` |
+| B-6 | Job hint columns, `content_hash`, `description_hash`, `simhash`, families, `raw = NULL` | Workflow `backfill:jobs_hints` in P4 | `normalizePosting` in TypeScript, never SQL; `family_id = id`, then `assignFamily` over open jobs by `first_seen_at` |
 | B-7 | `user_match_state` rows | SQL in 0023 | One row per user with preferences; `prefs_version = profiles.preferences_version`, `rescored_facts_version = profiles.facts_version`, `cursor_at = now() - interval '1 day'` |
 | B-8 | Applications: `company_id`, approval facts, failure codes, `draft_state`, `terminal_at`, one attempt per sent row, `stage`, history events | SQL in 0013 | applications 8.3 statements 1 to 8 |
 | B-9 | `credit_balances` | SQL in 0009 under `LOCK ... IN SHARE MODE` | `balance = SUM(delta)`, `in_flight = count(approved, submitting)` |
-| B-10 | Legacy `matches` | SQL in 0024 | `source = 'manual_url'`, `selection = 'import'` where the job is `manual_url`; gate-failing imports with `skipped` and no application become `below_bar`; pipeline rows with `passed_filters = false` and no application are deleted (C-1); `new` rows with a null score become `expired`; `family_id` from the job |
+| B-10 | Legacy `matches` | SQL in 0024 under `set_config('kairos.actor', 'migration:catalog_04_validate', true)`, which `matches_status_guard` admits (V2-14) | `source = 'manual_url'`, `selection = 'import'` where the job is `manual_url`; gate-failing imports with `skipped` and no application become `below_bar`; pipeline rows with `passed_filters = false` and no application are deleted (C-1); `new` rows with a null score become `expired`; `family_id` from the job |
 | B-11 | `subscriptions.created_at`, `past_due_since`; `stripe_events.received_at`, `outcome` | SQL in 0007 | billing M1 |
 | B-12 | `contact_messages.received_on`, `message_hash` (earlier same-day duplicates keep a null hash) | SQL in 0010 | messaging 10.1 |
-| B-13 | `inbound_emails` classification markers; sender and subject truncation; body encryption | `server/scripts/backfill-inbound.ts` in P2 | messaging 10.3 |
-| B-14 | `resume_profiles.source_text_enc` | `encrypt-sources` job in P3 | Dual write from P3; backfill; reads prefer ciphertext |
+| B-13 | `inbound_emails` classification markers; sender and subject truncation; body encryption | Workflow `backfill:inbound` in P2 | messaging 10.3 |
+| B-14 | `resume_profiles.source_text_enc` | Workflow `backfill:encrypt_sources` in P3 | Dual write from P3; backfill; reads prefer ciphertext |
 
 ### 14.5 Zero-downtime order
 
@@ -2644,7 +2782,7 @@ The order every change follows, and why each step is safe for the running code:
 1. **Expand**: add nullable or constant-default columns (metadata-only on Postgres 18), new tables, new indexes, `NOT VALID` constraints, triggers that old code satisfies. The previous release keeps working because it never reads the new columns and never violates the new rules.
 2. **Dual write**: ship code that writes both the old and the new shape (encryption: plaintext and ciphertext; webhooks: inline and store-then-process paths sharing the `stripe_events` primary key).
 3. **Backfill** in batches, idempotent, outside peak hours.
-4. **Validate** constraints (`SHARE UPDATE EXCLUSIVE`, does not block writes); for tables above 1 million rows, from the ops script outside the migrator.
+4. **Validate** constraints (`SHARE UPDATE EXCLUSIVE`, does not block writes); on a large table each `VALIDATE` in a migration file of its own.
 5. **Switch reads** behind a flag (`billing_cache_reads`, `WORKSPACE_API`, `MATCHING_V2` by cohort, `LIFECYCLE_V2` 1% to 100%); the recorded contract suite runs against a restored dump after every step.
 6. **Contract** one release later: drop old indexes and columns, tighten `NOT NULL` and `RESTRICT`, after the gate of 14.3.
 
@@ -2656,7 +2794,7 @@ The overlap with BullMQ: an entity is never processed by both engines, because t
 
 | Step | Rollback |
 |---|---|
-| Expand migrations (0002 to 0027) | Redeploy the previous image; the schema stays (every addition is compatible with old code). A defect in a new object is fixed forward by a new migration; `down` files exist for the FK swaps of 0005 (two `ALTER` pairs) and are never needed for data |
+| Expand migrations (0002 to 0027, including 0015a) | Redeploy the previous image; the schema stays (every addition is compatible with old code). A defect in a new object is fixed forward by a new migration; `down` files exist for the FK swaps of 0005 (two `ALTER` pairs) and are never needed for data |
 | Guard triggers (0017, 0018, 0025, 0026) | `CREATE OR REPLACE FUNCTION` with the previous version, or `DROP TRIGGER`; the rule stays enforced in code |
 | Flags | `feature_flags.enabled = false` (instant, audited) |
 | Backfills | Idempotent; re-run after a fix |
@@ -2668,9 +2806,9 @@ The overlap with BullMQ: an entity is never processed by both engines, because t
 
 | Seed | Rows | Where | Idempotency |
 |---|---|---|---|
-| `feature_flags` | `LIFECYCLE_V2`, `PREPARE_V2`, `WORKSPACE_API`, `MATCHING_V2`, `CLOUD_APPLY_V2`, `AUTOPILOT`, all `enabled = false`, `updated_by = 'migration:platform_01'`, plus `resume_slots_multi` added by the phase-2 migration | 0003 (platform 9.2) | `ON CONFLICT (key) DO NOTHING`; each insert audited by trigger |
+| `feature_flags` | `LIFECYCLE_V2`, `PREPARE_V2`, `WORKSPACE_API`, `MATCHING_V2`, `CLOUD_APPLY_V2`, `AUTOPILOT`, all `enabled = false`, `updated_by = 'migration:platform_01'`, plus `RESUME_SLOTS_MULTI` (the identity draft's `resume_slots_multi`, upper-cased as `feature_flags_key_ck` requires) added by the phase-2 migration. No `prompt_canary:` or `prompt_shadow:` row is seeded: a missing row means no canary | 0004 (platform 9.2) | `ON CONFLICT (key) DO NOTHING`; each insert audited by trigger |
 | `ops_flags` | None (a missing row means off) | | |
-| `llm_calls` partitions | Current week plus 6 | 0004 `llm_calls_ensure_partitions(6)`, then the daily `partitions` schedule | Function is idempotent |
+| `llm_calls` partitions | Current week plus 6 | 0002 `llm_calls_ensure_partitions(6)` (as built), then the daily `partitions` schedule | Function is idempotent |
 | `companies` | About 2,000 public boards | New `server/src/db/seed.ts`, script `db:seed` (`tsx --env-file=.env src/db/seed.ts`), reading `server/data/companies.seed.json` (`[{ name, ats, boardToken, region?, priority? }]`) | `INSERT ... ON CONFLICT (ats, board_token) DO UPDATE SET name, priority`; hosts come from the catalog module's `hostsFor(ats, region)`, so `companies_hosts_ck` can never be violated by a seed; `discovered_by = 'seed'` |
 | Plans | None: limits and prices live only in `shared/src/plans.ts` | | |
 | Development and test fixtures | 4 users (Free, Starter, Pro, Max) with profiles, one slot, 45 facts (30 confirmed), a base resume, preferences, `subscriptions` rows; credits only through `credit_ledger` rows (never by writing `credit_balances`); 200 jobs on the five real ATS hosts with synthetic ids; drafts in each status | `server/test/fixtures/seed-dev.ts`, used by Testcontainers and local development only | Truncate-and-load; never run against production (refuses when `NODE_ENV=production`) |
@@ -2696,7 +2834,7 @@ The overlap with BullMQ: an entity is never processed by both engines, because t
 | Contact form | `contact_messages` | Not readable by `kairos_readonly` | 12 months; erased by email |
 | Pseudonymous telemetry | `llm_calls.user_hash` (HMAC), `user_daily_usage`, `ai_usage` | No content | 90 to 97 days; scrubbed at erasure |
 | Workflow checkpoints | `kairos_dbos` | Ids only (seeded-PII scan in CI) | 2 or 14 days after completion |
-| Backups | PITR, weekly dumps (no unlogged tables) | Encrypted at rest | About 28 days; tombstone replay |
+| Backups | PITR; daily core and weekly full dumps (no unlogged tables); money journal (user ids, application ids, enums, no content) | Encrypted at rest; dumps encrypted with `age`, and ciphertext columns stay ciphertext inside them | PITR about 28 days, core dump 7, full dump 28, journal 35 days; tombstone replay |
 
 ### 16.2 Erasure workflow
 
@@ -2704,19 +2842,19 @@ Entry point: the account deletion request (Better Auth `deleteUser` with its `be
 
 | Step | Where | Statement or action | Records |
 |---|---|---|---|
-| 0 | api, in the request | Delete the user's `session` rows (immediate sign-out everywhere); turn Autopilot off under rule A1; upsert `deletion_tasks` with `user_hash`, `llm_user_hash`, `contact_email_enc`, `storage_id`, `stripe_customer_id` (platform 4.11); write the R2 tombstone `tombstones/<user_hash>.json`; set `tombstone_written_at`; enqueue the workflow; answer 202 | `deletion_tasks` row `requested` |
+| 0 | api, in the request | Delete the user's `session` rows (immediate sign-out everywhere); turn Autopilot off under rule A1; upsert `deletion_tasks` with `user_hash`, `llm_user_hash`, `contact_email_enc`, `storage_id`, `stripe_customer_id` (platform 4.11); write the tombstone `<user_hash>.json` to the R2 bucket `kairos-tombstones` (kept forever, `06-infrastructure.md` X15); set `tombstone_written_at`; enqueue the workflow; answer 202 | `deletion_tasks` row `requested` |
 | 1 | worker | Cancel the Stripe subscription and delete the Stripe customer unless an open invoice or dispute requires keeping it (idempotency key `erase:<user_hash>`); `UPDATE deletion_tasks SET stripe_done_at = now(), stripe_customer_id = NULL` | `stripe_done_at` |
 | 2 | worker | Wait while `SELECT 1 FROM submission_attempts WHERE user_id = $1 AND state = 'open'` returns a row (at most 15 minutes, then the leaseSweeper has closed it) | |
 | 3 | worker | `SELECT archive_user_ledger($1)` (keeps `application_id` in the archive, R-17) | archive rows |
 | 4 | worker, loop | `lockCreditBalance(tx, $1)`; `DELETE FROM applications WHERE id IN (SELECT id FROM applications WHERE user_id = $1 ORDER BY id LIMIT 500)` until zero rows (cascades attempts, events, verification results, reminders, rehearsals; `SET NULL` on ledger, inbound mail, saved answers, offer pauses) | counts |
 | 5 | worker, one transaction | `DELETE FROM "user" WHERE id = $1` (the archive trigger is a no-op now; the cascade removes every remaining row of every domain); `UPDATE deletion_tasks SET stage = 'db_deleted', db_deleted_at = now()` | `db_deleted_at` |
-| 6 | worker | Delete R2 prefixes `uploads/`, `resumes/`, `renders/`, `applier-failures/` of `storage_id`; `SET r2_done_at = now(), storage_id = NULL` | `r2_done_at` |
+| 6 | worker | Delete the user's objects (keys under the user's prefix, `storage_id`) in the buckets `kairos-uploads`, `kairos-renders` and `kairos-failures`; `SET r2_done_at = now(), storage_id = NULL` | `r2_done_at` |
 | 7 | worker | Decrypt `contact_email_enc`; `DELETE FROM contact_messages WHERE lower(email) = lower($email)`; `SET contact_done_at = now(), contact_email_enc = NULL` | `contact_done_at` |
 | 8 | worker | `UPDATE llm_calls SET user_hash = NULL WHERE user_hash = $llm_user_hash AND created_at >= now() - interval '98 days'`; `SET llm_scrubbed_at = now(), llm_user_hash = NULL` | `llm_scrubbed_at` |
 | 9 | worker | `UPDATE deletion_tasks SET stage = 'complete', completed_at = now()` (the checks refuse it while any store is undone) | `complete` |
 | Verify | worker | Identity R-12 counts for every user-owned table return zero; platform T-7 full-schema scan in the drill | page on any row |
 
-Outside the database: `kairos_dbos` checkpoints of the user's workflows hold ids only and are deleted by `dbos-retention` within 14 days (`deletion_tasks.dbos_retention_due_at`); PITR and weekly dumps age out within about 28 days, and the restore runbook replays every tombstone so a restore never resurrects a deleted user; Postmark keeps outbound message metadata for its retention period and receives no reply bodies from Kairos; Sentry and logs carry no personal content by design (ids only); Anthropic requests run under the zero-data-retention addendum (architecture P8 gate). A deletion task that does not reach `complete` within 24 hours pages once.
+Outside the database: `kairos_dbos` checkpoints of the user's workflows hold ids only and are deleted by `dbos-retention` within 14 days (`deletion_tasks.dbos_retention_due_at`); PITR and the core and full dumps age out within about 28 days and the money journal (pseudonymous ids, no content, never rewritten) within 35 days, and the restore runbook replays every tombstone so a restore never resurrects a deleted user; Postmark keeps outbound message metadata for its retention period and receives no reply bodies from Kairos; Sentry and logs carry no personal content by design (ids only); Anthropic requests run under the zero-data-retention addendum (architecture P8 gate). A deletion task that does not reach `complete` within 24 hours pages once.
 
 ### 16.3 Data-subject rights
 
@@ -2727,7 +2865,7 @@ Statutory references are given for orientation and are to be confirmed by counse
 | Access and portability | `server/scripts/export-user.ts <userId>`: JSON of every row the user owns in the tables of 16.1 (decrypting encrypted columns), plus R2 uploads; run by an operator with an `ops_audit` row (`user.export`); self-service export is a later feature (FR-60) | Within 30 days (GDPR); DPDP timelines per its rules [verify] |
 | Correction | Profile, preferences, fact and resume routes (the user edits directly); contact form for anything else | Immediate (self-service) |
 | Erasure | Section 16.2; a single slot can be deleted alone through `delete_resume_slot` | Database within minutes; backups within about 28 days |
-| Withdrawal of consent | Autopilot off (`autopilot_settings.enabled = false`, consent version recorded at opt-in); notification opt-outs (`profiles.notify_*`, `action_tokens` purpose `unsubscribe`); account deletion | Immediate |
+| Withdrawal of consent | Autopilot off (`autopilot_settings.enabled = false`, consent version recorded at opt-in); notification opt-outs (`profiles.mail_opt_out`, `action_tokens` purpose `unsubscribe`); account deletion | Immediate |
 | Restriction and objection | Pause automation (Autopilot off, saved searches `off`); offer pause undo | Immediate |
 | Grievance | Contact form topic `support`, triage state in `contact_messages`; alert for `new` rows older than 3 days | Per the privacy notice [verify] |
 | Nomination (DPDP section 14) | Not supported in v1 (open question Q-DB-12) | |
@@ -2740,10 +2878,10 @@ The domain test lists (identity T-1 to T-19, catalog per table, applications T-1
 
 | Id | Test | Pass criterion |
 |---|---|---|
-| T-DB-1 | Grant matrix of section 4.2 for all 55 tables, the views and every function, for the four runtime roles | Exactly the matrix; the applier can use only its two views and six functions plus `ops_flags` |
+| T-DB-1 | Grant matrix of section 4.2 for all 55 tables, the views, the sequence and every function, for the six runtime roles | Exactly the matrix; the applier can use only `scan_target_v`, its seven functions and `ops_flags`, and `SELECT` on `applier_payload_v` fails; `kairos_metrics` reads only its two tables and four views; no function is executable by `PUBLIC` except the `CHECK` validators |
 | T-DB-2 | Cross-domain lock order: 1,000 random interleavings per user of subscription sync, fact edit, slot create, `PUT /api/resume`, `approveCore`, `recordOutcome`, withdraw, Autopilot off, offer-pause apply, `classifyEmail`, with `deadlock_timeout = 200ms` | Zero `40P01`; balances equal the ledger recount |
 | T-DB-3 | Foreign-key index check (11.4) | Zero rows |
-| T-DB-4 | Migration replay: restore the skeleton seed, apply 0002 to 0033 one release at a time, run the recorded contract suite and the 41 existing tests after each | Green after every step; checksums of untouched columns equal |
+| T-DB-4 | Migration replay: restore the skeleton seed with the as-built 0000 to 0002, apply 0003 to 0033 (with 0015a) one release at a time, run the recorded contract suite and the 41 existing tests after each | Green after every step; checksums of untouched columns equal |
 | T-DB-5 | Erasure drill: a user with rows in every user-owned table and R2 objects; run 16.2; scan every text, jsonb and bytea column of `kairos` for the user id, email and seeded markers | `complete` within the run; no match anywhere; `credit_ledger_archive` rows keep `application_id` |
 | T-DB-6 | `matches_status_guard` matrix: every pair of the five statuses for each actor (`user`, `autopilot`, `ops`, unset) | Exactly the pairs of 8.3 and 10 |
 | T-DB-7 | `job_ghost_verdict_v` against TypeScript `ghostVerdict` on all 32 evidence combinations; `refresh_ghost_verdicts` with and without ids | Identical verdicts; idempotent |
@@ -2753,6 +2891,10 @@ The domain test lists (identity T-1 to T-19, catalog per table, applications T-1
 | T-DB-11 | Hot-query plans on a seeded growth-size dataset (10,000 users, 1 million applications, 600,000 open jobs, 4 million matches) for the queries named in 11.2 | Named index used; no sequential scan on any table above 10,000 rows |
 | T-DB-12 | Checkpoint budget: 1,000 scripted approvals measure `dbos.writes_per_submission` | Within 10% of 55; alert logic fires at 80 |
 | T-DB-13 | Restore drill: PITR to a point, replay tombstones, start processes | Deleted users stay deleted; orphan sweeper waits one heartbeat round; no workflow re-sends an application |
+| T-DB-14 | `applications_row_version_bu`: change each watched column alone; change only `lease_session_id`, `lease_expires_at`, `current_attempt_id`, `updated_at`; run `claim_cloud_attempt` (which also adds 1 itself) | Exactly +1 for each watched change and for the claim; 0 for the others |
+| T-DB-15 | `get_applier_payload` as `kairos_applier`: the claimed attempt with its worker; a wrong worker; a settled attempt; an extension attempt; an attempt id of another application | One row for the first case, zero rows for every other case |
+| T-DB-16 | Flag catalogues: every key named in 03 16.2, 05 16.2 and 06 3.7 and 13.4; typos; `llm_shed_level` 4; `prompt_pin:` with a string; `model_pin:fit-scorer` = `claude-opus-5-5`; `alerts_muted` without `expires_at`; `prompt_shadow:` at 6% | Named keys accepted; every bad case refused by `ops_flags_key_ck`, `ops_flags_value_ck`, `feature_flags_key_ck` or `feature_flags_shadow_ck` |
+| T-DB-17 | `profiles.mail_opt_out`: consume the same unsubscribe token twice; an unknown kind; a digest run for an opted-out user | One array element; unknown kind refused; no email, `next_digest_at` advanced |
 
 ---
 
@@ -2790,6 +2932,9 @@ The domain test lists (identity T-1 to T-19, catalog per table, applications T-1
 | Q-DB-13 | Spam thresholds 5 and 8 (messaging Q-2) | Tune on 14 days of beta mail |
 | Q-DB-14 | `md5` for `document_hash` (identity Q-6) | Keep (change detection only) |
 | Q-DB-15 | `rehearsal_turns` answers kept 30 days in plain text (applications Q-3) | Keep |
+| Q-DB-16 | `05-api.md` 12.1 lists three opt-out kinds; this design adds `reminders` as a fourth `mail_opt_out` value | Keep four; 05-api adds a settings toggle for reminders (no new link kind needed, though `action_tokens` already admits it) |
+| Q-DB-17 | `get_applier_payload` trusts the worker identity string the applier passes | Accept: attempt ids are uuidv7 values that only `claim_cloud_attempt` returns; the identity check is defence in depth |
+| Q-DB-18 | Should eval sends be recorded in `llm_calls`? | No: the runner records spend in `eval_runs.cost_usd`; production `llm_calls` never holds `budget_class = 'eval'` (nightly check) |
 
 ---
 
@@ -2797,16 +2942,18 @@ The domain test lists (identity T-1 to T-19, catalog per table, applications T-1
 
 **Databases and schemas.** `kairos` (schema `public`; schema `dbos` holds `dbos.transaction_completion`), `kairos_dbos` (DBOS-owned; read-only views in schema `kairos_ops`: `queue_depth_v`, `version_mix_v`, `stuck_workflows_v`).
 
-**Roles.** `kairos_migrator`, `kairos_api`, `kairos_worker`, `kairos_applier`, `kairos_readonly`; `dbos_migrator`, `dbos_api`, `dbos_worker`, `dbos_applier`.
+**Roles.** `kairos_migrator`, `kairos_api`, `kairos_worker`, `kairos_applier`, `kairos_readonly`, `kairos_metrics`, `kairos_backup`; `dbos_migrator`, `dbos_api`, `dbos_worker`, `dbos_applier`. Provisioning script `ops/provision-roles.sql`.
 
 **Tables (55).** identity-profile: `user`, `session`, `account`, `verification`, `auth_rate_limit`, `profiles`, `resume_profiles`, `employments`, `facts`, `saved_answers`, `resumes`, `resume_revisions`, `autopilot_settings`, `saved_searches`. catalog-matching: `companies`, `jobs`, `form_questions`, `job_ghost_evidence`, `ghost_reports`, `board_requests`, `matches`, `user_match_state`. applications: `applications`, `submission_attempts`, `verification_results`, `application_events`, `reminders`, `rehearsal_sessions`, `rehearsal_turns`. billing: `subscriptions`, `credit_ledger`, `credit_balances`, `credit_ledger_archive`, `stripe_events`, `offer_pause_candidates`. messaging: `inbound_emails`, `forwarding_verifications`, `email_sends`, `notifications`, `contact_messages`. platform: `llm_calls` (partitions `llm_calls_<IYYY>w<IW>`, `llm_calls_default`), `llm_cost_daily`, `user_daily_usage`, `ai_usage`, `verified_claims`, `tailor_cache`, `eval_runs`, `ops_flags`, `feature_flags`, `action_tokens`, `deletion_tasks`, `ops_audit`, `dbos_executors`, `metrics_minute`, `rate_limits`. Transient: `matches_shadow` (P4 only).
 
-**Views.** `applier_payload_v`, `scan_target_v`, `job_ghost_verdict_v`.
+**Views.** `scan_target_v` (applier), `applier_payload_v` (internal; read through `get_applier_payload`), `job_ghost_verdict_v`, `ops_submission_health_v`, `ops_billing_integrity_v`, `ops_funnel_v`, `ops_cost_per_submitted_v` (`kairos_metrics`).
+
+**Migrations.** As built: `0000_init`, `0001_resume_workspace`, `0002_platform_02_llm_ledger`. Planned names in order: `platform_00_dbos_datasource`, `platform_01_control_plane`, `identity_01_expand`, `catalog_00_enum_below_bar`, `billing_01_subscriptions_events`, `catalog_01_companies`, `billing_02_ledger_balances`, `messaging_01_expand`, `platform_03_links_erasure`, `apps_01_expand`, `apps_02_backfill`, `apps_03_indexes`, `billing_03_offer_pause`, `platform_05_ops_views`, `messaging_02_constraints`, `identity_02_triggers_routines`, `catalog_02_intake`, `apps_04_verification`, `platform_04_verifier_caches`, `billing_04_contract`, `identity_03_validate`, `catalog_03_matching`, `catalog_04_validate`, `apps_05_guard_v2`, `apps_06_guard_v3`, `apps_07_engagement`, `apps_08_contract`, `catalog_05_contract`, `identity_04_contract`, `messaging_03_contract`, `identity_05_drop_source_text`, `identity_06_multi_slot`. File headers `-- kairos:no-transaction`, `-- kairos:contract <reason>`.
 
 **Postgres enums.** `application_status` (`draft`, `approved`, `submitting`, `submitted`, `failed`, `refunded`, `withdrawn`), `ats_provider` (`greenhouse`, `lever`, `ashby`), `billing_interval` (`week`, `month`, `quarter`), `credit_reason` (`plan_grant`, `free_grant`, `submission`, `refund_failed_submit`, `admin_adjustment`, `expiry`), `email_kind` (`confirmation`, `rejection`, `interview`, `offer`, `assessment`, `other`), `fact_kind` (`role`, `project`, `skill`, `metric`, `education`, `certification`), `match_status` (`new`, `queued`, `skipped`, `expired`, `below_bar` server only), `plan_id` (`free`, `starter`, `pro`, `max`), `submit_channel` (`extension`, `cloud`).
 
-**Text sets with `CHECK`** (column: values): `profiles.onboarding_step`; `profiles.forwarding_state`; `resume_profiles.source_kind`, `parse_status`; `facts.asserted_by`, `employments.asserted_by` (`user`, `import`, `model`); `resume_revisions.reason` (`save`, `pre_ai`, `pre_autopilot`, `restore`, `import`, `fact_change`), `created_by`; `saved_answers.proposed_by`; `autopilot_settings.paused_reason` (`failure_spike`, `owner_freeze`, `plan_change`); `saved_searches.frequency` (`off`, `daily`, `weekly`); `companies.api_region`, `discovered_by`, `inactive_reason`; `jobs.source` (`board`, `manual_url`), `closed_by`, `seniority_hint`, `sponsorship_hint`, `ghost_verdict` (`none`, `possible`, `likely`); `form_questions.source`; `job_ghost_evidence.kind`, `evidence_class`; `ghost_reports.reason`; `board_requests.status`; `matches.source` (`pipeline`, `manual_url`), `selection` (`ranked`, `explore`, `express`, `backfill`, `rebalance`, `rescore`, `import`); `applications.draft_state` (`pending`, `ready`, `failed`, `needs_facts`, `stale`, `expired`), `approved_by` (`user`, `autopilot`), `failure_code` (10 codes), `stage` (`applied`, `in_review`, `assessment`, `interviewing`, `offer`, `rejected`); `submission_attempts.phase` (`claimed`, `navigating`, `filling`, `submit_seen`, `reported`), `state` (`open`, `submitted`, `failed`, `needs_check`); `verification_results.run_kind`, `item_kind`, `verdict`, `rule`, `check_source`, `outcome`; `application_events.kind` (16 kinds), `actor`; `reminders.kind`, `cancel_reason`; `rehearsal_sessions.end_reason`; `subscriptions.status`, `pause_source`; `stripe_events.status`, `outcome`; `offer_pause_candidates.state`, `skip_reason`; `inbound_emails.hidden_reason`, `linked_by`; `forwarding_verifications.provider`; `email_sends.kind`, `status`; `notifications.kind`; `contact_messages.topic`, `status`; `llm_calls.workspace`, `status`; `ai_usage.feature`; `verified_claims.verdict`, `check_source`; `eval_runs.kind`, `workspace`; `action_tokens.purpose` (`resend`, `offer_pause_undo`, `unsubscribe`); `deletion_tasks.stage`, `requested_by`; `dbos_executors.service`, `state`; the `ops_flags.key` catalogue.
+**Text sets with `CHECK`** (column: values): `profiles.onboarding_step`; `profiles.forwarding_state`; `resume_profiles.source_kind`, `parse_status`; `facts.asserted_by`, `employments.asserted_by` (`user`, `import`, `model`); `resume_revisions.reason` (`save`, `pre_ai`, `pre_autopilot`, `restore`, `import`, `fact_change`), `created_by`; `saved_answers.proposed_by`; `autopilot_settings.paused_reason` (`failure_spike`, `owner_freeze`, `plan_change`); `saved_searches.frequency` (`off`, `daily`, `weekly`); `companies.api_region`, `discovered_by`, `inactive_reason`; `jobs.source` (`board`, `manual_url`), `closed_by`, `seniority_hint`, `sponsorship_hint`, `ghost_verdict` (`none`, `possible`, `likely`); `form_questions.source`; `job_ghost_evidence.kind`, `evidence_class`; `ghost_reports.reason`; `board_requests.status`; `matches.source` (`pipeline`, `manual_url`), `selection` (`ranked`, `explore`, `express`, `backfill`, `rebalance`, `rescore`, `import`); `applications.draft_state` (`pending`, `ready`, `failed`, `needs_facts`, `stale`, `expired`), `approved_by` (`user`, `autopilot`), `failure_code` (10 codes), `stage` (`applied`, `in_review`, `assessment`, `interviewing`, `offer`, `rejected`); `submission_attempts.phase` (`claimed`, `navigating`, `filling`, `submit_seen`, `reported`), `state` (`open`, `submitted`, `failed`, `needs_check`); `verification_results.run_kind`, `item_kind`, `verdict`, `rule`, `check_source`, `outcome`; `application_events.kind` (16 kinds), `actor`; `reminders.kind`, `cancel_reason`; `rehearsal_sessions.end_reason`; `subscriptions.status`, `pause_source`; `stripe_events.status`, `outcome`; `offer_pause_candidates.state`, `skip_reason`; `inbound_emails.hidden_reason`, `linked_by`; `forwarding_verifications.provider`; `email_sends.kind`, `status`; `notifications.kind`; `contact_messages.topic`, `status`; `llm_calls.workspace`, `status`; `ai_usage.feature`; `verified_claims.verdict`, `check_source`; `eval_runs.kind`, `workspace`; `action_tokens.purpose` (`resend`, `offer_pause_undo`, `unsubscribe`); `deletion_tasks.stage`, `requested_by`; `dbos_executors.service`, `state`; `profiles.mail_opt_out` elements (`digest`, `outcome_report`, `autopilot_summary`, `reminders`); `llm_calls.call_kind` (`primary`, `retry`, `repair`, `tier_up`, `truth_repair`, `shadow`, `canary`, `audit`, `nightly`), `budget_class` (`pipeline`, `interactive`, `ops`, `eval`); `eval_runs.kind` (`ci`, `model_candidate`, `weekly_canary`, `nightly`, `manual`, `shadow_audit`); `feature_flags.key` (upper-case phase flags `LIFECYCLE_V2`, `PREPARE_V2`, `WORKSPACE_API`, `MATCHING_V2`, `CLOUD_APPLY_V2`, `AUTOPILOT`, `RESUME_SLOTS_MULTI`; `prompt_canary:<agentId>`, `prompt_shadow:<agentId>`); the `ops_flags.key` catalogue: `pause_polling`, `pause_scoring`, `pause_drafting`, `pause_cloud_apply`, `llm_batch_paused`, `llm_paused`, `approvals_frozen`, `autopilot_frozen`, `verification_full_log`, `ap2_verified`, `llm_shed_level`, `alerts_muted`, `extension_only:<ats>`, `host_backoff:<host>`, `agent_disabled:<agentId>`, `prompt_pin:<agentId>`, `model_pin:<agentId>`, `backfill:<name>`, `matching.<key>`, `catalog.<key>` (typed values in `detail.value`).
 
-**Key columns and identifiers used across documents.** `"user".id` (text) and every `user_id`; `applications.id`, `revision`, `row_version`, `attempt_no`, `current_attempt_id`, `resume_base_revision_id`, `facts_snapshot_hash`, `company_id`; `submission_attempts.id`; `jobs.id`, `family_id`, `visible_at`, `last_seen_at`, `hints_version`, `content_hash`, `card_version`; `companies.api_host`, `apply_host`, `last_success_at`; `matches.id`, `status`, `prerank_score`, `llm_call_id`; `user_match_state.cursor_at`, `next_match_at`, `prefs_version`, `rescored_facts_version`; `profiles.preferences_version`, `facts_version`, `forwarding_address`, `applications_paused_at`, `timezone`; `resume_profiles.id`, `source_hash`; `resumes.id`, `version`, `document_hash`; `credit_balances.balance`, `in_flight`; `credit_ledger.application_id`, `stripe_invoice_id`; `stripe_events.id`, `stripe_customer_id`, `redrives`; `inbound_emails.id`, `provider_message_id`; `email_sends (kind, entity_id)`; `notifications (user_id, kind, entity_id)`; `action_tokens.token_hash`, `entity_id`; `deletion_tasks.user_hash`; `llm_calls.id`, `user_hash`; `dbos_executors.executor_id`; workflow ids derived from them (`queue:<matchId>`, `prepare:<applicationId>:<revision>`, `reverify:<applicationId>:<rowVersion>`, `apply:<applicationId>:<attemptNo>`, `settle:<attemptId>`, `mail:<MessageID>`, `classify:<inboundEmailId>`, `stripe:<eventId>[:<redrives>]`, `parse:<slotId>:<hash8>[:r<n>]`, `backfill:<userId>:<preferencesVersion>`, `rescore:<userId>:<factsVersion>`, `erasure:<userHash>`). Transaction setting `kairos.actor` (`user`, `autopilot`, `ops`, `migration:<name>`, unset). Queue partition keys: `poll` by `companies.api_host`, `cloud-apply` by `companies.apply_host`, `stripe` by `stripe_events.stripe_customer_id`, `score`, `prepare`, `autopilot` by `user_id`.
+**Key columns and identifiers used across documents.** `"user".id` (text) and every `user_id`; `applications.id`, `revision`, `row_version`, `attempt_no`, `current_attempt_id`, `resume_base_revision_id`, `facts_snapshot_hash`, `company_id`; `submission_attempts.id`; `jobs.id`, `family_id`, `visible_at`, `last_seen_at`, `hints_version`, `content_hash`, `card_version`; `companies.api_host`, `apply_host`, `last_success_at`; `matches.id`, `status`, `prerank_score`, `llm_call_id`; `user_match_state.cursor_at`, `next_match_at`, `prefs_version`, `rescored_facts_version`; `profiles.preferences_version`, `facts_version`, `forwarding_address`, `applications_paused_at`, `timezone`, `mail_opt_out`; `resume_profiles.id`, `source_hash`; `resumes.id`, `version`, `document_hash`; `credit_balances.balance`, `in_flight`; `credit_ledger.application_id`, `stripe_invoice_id`; `stripe_events.id`, `stripe_customer_id`, `redrives`; `inbound_emails.id`, `provider_message_id`; `email_sends (kind, entity_id)`; `notifications (user_id, kind, entity_id)`; `action_tokens.token_hash`, `entity_id`; `deletion_tasks.user_hash`; `llm_calls.id`, `user_hash`, `call_kind`, `budget_class`, `provider_request_id`, `trace_id`, `batch_id`; `eval_runs.id`, `kind`, `baseline_run_id`, `judge_version`; `dbos_executors.executor_id`; workflow ids derived from them (`queue:<matchId>`, `prepare:<applicationId>:<revision>`, `reverify:<applicationId>:<rowVersion>`, `apply:<applicationId>:<attemptNo>`, `settle:<attemptId>`, `mail:<MessageID>`, `classify:<inboundEmailId>`, `stripe:<eventId>[:<redrives>]`, `parse:<slotId>:<hash8>[:r<n>]`, `backfill:<userId>:<preferencesVersion>`, `rescore:<userId>:<factsVersion>`, `erasure:<userHash>`). Transaction setting `kairos.actor` (`user`, `autopilot`, `ops`, `migration:<name>`, unset). Queue partition keys: `poll` by `companies.api_host`, `cloud-apply` by `companies.apply_host`, `stripe` by `stripe_events.stripe_customer_id`, `score`, `prepare`, `autopilot` by `user_id`.
 
-**Functions other code calls.** `facts_snapshot_hash`, `ensure_resume_revision`, `snapshot_resume`, `prune_resume_revisions`, `resume_remove_facts`, `resume_dangling_citations`, `create_resume_slot`, `delete_resume_slot`, `next_digest_at`, `kairos_actor`, `job_fresh_at`, `refresh_ghost_verdicts`, `effective_plan`, `ensure_credit_balance`, `archive_user_ledger`, `claim_cloud_attempt`, `mark_browser_launched`, `mark_attempt_phase`, `record_attempt_result`, `store_form_questions`, `heartbeat_executor`, `dbos_orphaned_executors`, `ops_flag_on`, `feature_enabled`, `feature_bucket`, `kairos_jsonb_add`, `llm_calls_ensure_partitions`, `llm_calls_drop_old_partitions`, `llm_calls_partition_rolled_up`, `llm_cost_rollup_day`, `rate_limits_purge`.
+**Functions other code calls.** `facts_snapshot_hash`, `ensure_resume_revision`, `snapshot_resume`, `prune_resume_revisions`, `resume_remove_facts`, `resume_dangling_citations`, `create_resume_slot`, `delete_resume_slot`, `next_digest_at`, `kairos_actor`, `job_fresh_at`, `refresh_ghost_verdicts`, `effective_plan`, `ensure_credit_balance`, `archive_user_ledger`, `claim_cloud_attempt`, `get_applier_payload`, `mark_browser_launched`, `mark_attempt_phase`, `record_attempt_result`, `store_form_questions`, `heartbeat_executor`, `dbos_orphaned_executors`, `ops_flag_on`, `feature_enabled`, `feature_bucket`, `kairos_jsonb_add`, `llm_calls_ensure_partitions`, `llm_calls_drop_old_partitions`, `llm_calls_partition_rolled_up`, `llm_cost_rollup_day`, `rate_limits_purge`, `ops_archive_status`. Triggers other documents rely on: `applications_row_version_bu` (owns `row_version`), `matches_status_guard_bu`, `applications_guard_status_bu`, `applications_in_flight_aiud`, `credit_ledger_ai`, `facts_guard_biu`, `user_archive_ledger_bd`.

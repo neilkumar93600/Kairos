@@ -1,0 +1,442 @@
+/* Landing v3 mid-page chapter, 3. The three checks, the signature (docs/DESIGN.md "Landing v3 mid-page chapter" > 3
+   and "Signature moment"). Prefixed ens-, scoped under .lp. No glass in this section: the stage is art, the sheet,
+   notes and slips are paper.
+   The server HTML is the final frame. Every start state lives under .ens-track[data-armed], which ScrollStage writes
+   only when motion is full and the viewport is tall; each beat's start state is keyed to :not([data-reached~="n"]) and
+   its transitions to [data-reached~="n"], so arming never plays a beat backwards. The rise (four transform values on the
+   sheet) is written by held-stage.tsx; everything else is a time-based transition on --ease-out.
+   Captions are a sticky conveyor: each caption parks in one slot beside the stage (from 1024) or directly under it
+   (below 1024) while its block scrolls, and the next caption pushes it out, so the column is never empty while the
+   stage holds a state. The last caption parks for as long as the stage does and releases with it. */
+@layer theme, base, components, utilities;
+
+@layer components {
+  /* ===== Track: captions (DOM first) and the sticky stage (visually first). No clip or transform on any ancestor. =====
+     --stage-h is the stage's rendered height, --slot the caption's parking line. Below 1024 the stage shrinks on short
+     phones and tablets so the parked caption (with the Approve button) always fits under it. */
+  .lp .ens-track {
+    --stage-top: calc(var(--nav-h) + 8px);
+    --stage-h: min(52svh, calc(100svh - var(--nav-h) - 290px), calc((100vw - 2 * var(--gutter)) * 4 / 3));
+    --stage-w: calc(var(--stage-h) * 3 / 4);
+    --slot: calc(var(--stage-top) + var(--stage-h) + 16px);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  @media (min-width: 768px) {
+    .lp .ens-track {
+      --stage-top: calc(var(--nav-h) + 16px);
+      --stage-h: min(480px, calc(100svh - var(--nav-h) - 340px));
+      --stage-w: calc(var(--stage-h) * 4 / 3);
+    }
+  }
+  .lp .ens-steps { list-style: none; margin: 0; padding: 0; inline-size: var(--stage-w); justify-self: center; }
+  .lp .ens-step { display: grid; align-content: start; min-block-size: 60svh; padding-block: 24px; }
+  .lp .ens-step__inner {
+    position: sticky; inset-block-start: var(--slot);
+    display: grid; justify-items: start; align-content: start; gap: 16px; max-inline-size: 520px;
+  }
+  .lp .ens-step__inner > p, .lp .ens-step__inner > h3 { margin: 0; }
+  .lp .ens-step__inner > .lp-body-sm { max-inline-size: 38ch; text-wrap: pretty; }
+
+  /* Below 1024 the stage and the last caption release together. The last caption parks until its block's content
+     bottom meets it (it fills the slot to the viewport's bottom edge, so that is when the track's bottom reaches
+     100svh + 8px); the stage's margin box is stretched to end there too. The captions' negative margin keeps them
+     24 px under the stage. If the caption is taller than the slot, the stage simply releases first. */
+  @media (max-width: 1023px) {
+    .lp .ens-track { --stage-mb: calc(100svh + 16px - var(--stage-top) - var(--stage-h)); }
+    .lp .ens-steps { margin-block-start: calc(24px - var(--stage-mb)); }
+    .lp .ens-step:last-child { min-block-size: calc(100svh - var(--slot) - 16px + 8svh + 48px); }
+    .lp .ens-step:last-child .ens-step__inner { min-block-size: calc(100svh - var(--slot) - 16px); }
+  }
+
+  /* Below 1024 a caption pushed out of the slot slides under the stage: each line fades as it crosses the stage's
+     lower edge (a view timeline inset to the slot; opacity only), so nothing shows in the gap or the corners. Not the
+     last caption: it leaves with the stage, never under it, and the slot line stays put after the stage releases. */
+  @supports (animation-timeline: view()) {
+    @media (max-width: 1023px) and (min-height: 641px) {
+      html[data-motion="full"] .lp .ens-step:not(:last-child) > .ens-step__inner > * {
+        animation: ens-under linear both; animation-timeline: view(block var(--slot) 0px); animation-range: exit 0% exit 50%;
+      }
+    }
+  }
+  @keyframes ens-under { to { opacity: 0; } }
+
+  /* Captions: the active line is Ink and the others Deep Ash, only while armed (otherwise all Ink). */
+  .lp .ens-track[data-armed] .ens-step__line { color: var(--faint); transition: color var(--dur-colour) var(--ease-out); }
+  .lp .ens-track[data-armed][data-active="0"] [data-step="0"] .ens-step__line,
+  .lp .ens-track[data-armed][data-active="1"] [data-step="1"] .ens-step__line,
+  .lp .ens-track[data-armed][data-active="2"] [data-step="2"] .ens-step__line { color: var(--ink); }
+
+  /* ===== The press: Ghost button, Paper White with the Stone border; Espresso stays on the hero CTA ===== */
+  /* Margins, not gap: the status region stays rendered while empty (a live region that appears with its text is often
+     not announced), and an empty row must not leave a gap. */
+  .lp .ens-press { display: grid; justify-items: start; margin-block-start: 8px; }  /* 24 px under the body */
+  .lp .ens-press__status { margin: 0; max-inline-size: 34ch; color: var(--faint); text-wrap: pretty; }
+  .lp .ens-press > * + * { margin-block-start: 12px; }
+  .lp .ens-press > .ens-press__status:empty { margin-block-start: 0; }
+  .lp .ens-approve {
+    position: relative; isolation: isolate; overflow: clip; gap: 8px; min-block-size: 44px; padding: 0 20px 0 18px;
+    background: var(--surface); border-color: var(--rule); color: var(--ink);
+    font: 500 15px / 1.2 var(--font-ui);
+  }
+  /* Pending: a Bone fill sweeps across the pill under the label (no spinner, no underline); done keeps it, so the
+     result reads as a Bone status pill with the lime dot, not as a dimmed control. */
+  .lp .ens-approve::before {
+    content: ""; position: absolute; inset: 0; z-index: -1; background: var(--sunk);
+    transform: scaleX(0); transform-origin: left center;
+  }
+  .lp .ens-approve[data-state="pending"]::before { transform: scaleX(1); transition: transform 600ms var(--ease-in-out); }
+  .lp .ens-approve[data-state="done"]::before { transform: none; }
+  .lp .ens-approve[data-state="done"] { opacity: 1; cursor: default; }  /* landing.css dims aria-disabled to 0.5 */
+  .lp .ens-approve__icon { flex: none; transition: translate 300ms var(--ease-out); }
+  /* Hover: the border goes Ink and the nib moves as if it starts to write; the sheet's empty seal answers it (solid ink
+     ring, turned upright), so the press is tied to the paper before the click. Colour only under reduced motion. */
+  @media (hover: hover) and (pointer: fine) {
+    .lp .ens-approve:not([aria-disabled="true"]):hover { background: var(--surface); border-color: var(--ink); }
+    html[data-motion="full"] .lp .ens-approve:not([aria-disabled="true"]):hover .ens-approve__icon { translate: 3px -1px; }
+    .lp .ens-track:has(.ens-approve:not([aria-disabled="true"]):hover) .ens-stage:not([data-approved]) .ens-seal { border: 1px solid var(--ink); }
+    html[data-motion="full"] .lp .ens-track:has(.ens-approve:not([aria-disabled="true"]):hover) .ens-stage:not([data-approved]) .ens-seal { rotate: 0deg; }
+  }
+  .lp .ens-press__more { display: inline-flex; align-items: center; gap: 8px; min-block-size: 44px; }
+  .lp .ens-press__more svg { flex: none; transition: translate 300ms var(--ease-out); }
+  @media (hover: hover) and (pointer: fine) {
+    html[data-motion="full"] .lp .ens-press__more:hover svg { translate: 0 3px; }
+  }
+  /* Below 1024 the sticky stage covers the top of the viewport: a focus scroll keeps the button below it
+     (approve-sample.tsx also re-checks after the browser's own scroll). */
+  @media (max-width: 1023px) and (min-height: 641px) {
+    .lp .ens-approve { scroll-margin-block: var(--slot) 24px; }
+  }
+
+  /* ===== Stage: the writing-desk painting, 3:4 below 768 and 4:3 (the painting's own ratio) from 768 ===== */
+  .lp .ens-stage {
+    container: ens-stage / inline-size;
+    position: sticky; inset-block-start: var(--stage-top); z-index: 1;
+    order: -1; align-self: start; justify-self: center;
+    inline-size: var(--stage-w); aspect-ratio: 3 / 4; margin-block-end: var(--stage-mb, 24px);
+    border-radius: var(--r-media); overflow: clip; isolation: isolate;
+    background: var(--art-placeholder); --grain-o: 0.08;
+  }
+  .lp .ens-stage__art { position: absolute; inset: 0; }  /* next/image fill wants a relative or absolute parent */
+  .lp .ens-stage__art > img { object-fit: cover; object-position: 95% 50%; }
+  .lp .ens-overlay { position: absolute; inset: 0; z-index: 1; perspective: 1100px; perspective-origin: 60% 46%; }  /* the painted horizon: the desk plane recedes to it */
+
+  /* Geometry in stage percentages, three sets: portrait (below 768), landscape compact (stage under 800 px) and
+     landscape roomy (stage 800 px and up, the 1440 column). Each lands on the painted resume, notes and desk edge. */
+  .lp .ens-overlay {
+    --sh-l: 9%; --sh-w: 62%; --sh-b: 23%;
+    --n-w: 88px; --n0-l: 72%; --n0-t: 60%; --n1-l: 73%; --n1-t: 72%;
+    --s0-l: 2%; --s0-t: 78%; --s1-l: 4%; --s1-t: 89%;
+    --slip-from: 64px -40px;
+    --b1: 200ms;  /* beat 1 waits for the step 1 rules to fade out of the rows they share */
+    /* Threads before measurement (scripts off): chip-row-to-pin boxes, read from the measured geometry per set. */
+    --th0-l: 70.6%; --th0-t: 30%; --th0-w: 14.6%; --th0-h: 32.1%;
+    --th1-l: 70.6%; --th1-t: 41.5%; --th1-w: 15.7%; --th1-h: 32.5%;
+  }
+  @media (min-width: 768px) {
+    .lp .ens-stage { aspect-ratio: 4 / 3; }
+    .lp .ens-stage__art > img { object-position: 50% 50%; }
+    .lp .ens-overlay {
+      --sh-l: 33%; --sh-w: 49%; --sh-b: 23%;  /* right edge at 82 percent, clear of the notes */
+      --n-w: max(16%, 88px); --n0-l: 82%; --n0-t: 58%; --n1-l: 83%; --n1-t: 70%;
+      --s0-l: 37%; --s0-t: 78%; --s1-l: 40%; --s1-t: 86%;
+      --slip-from: 80px -48px;
+      --th0-l: 81.7%; --th0-t: 40.8%; --th0-w: 8.5%; --th0-h: 19.7%;
+      --th1-l: 81.7%; --th1-t: 49.3%; --th1-w: 9.5%; --th1-h: 23.3%;
+    }
+    @container ens-stage (min-width: 800px) {
+      .lp .ens-overlay {
+        --sh-l: 45%; --sh-w: 34%; --sh-b: 23%;
+        --s0-l: 39%; --s0-t: 78%; --s1-l: 41%; --s1-t: 85%;
+        --slip-from: 120px -56px;
+        --th0-l: 78.7%; --th0-t: 42.3%; --th0-w: 11.6%; --th0-h: 18%;
+        --th1-l: 78.7%; --th1-t: 52.8%; --th1-w: 12.7%; --th1-h: 19.4%;
+      }
+    }
+  }
+
+  /* ===== The sheet: the hero's open draft, paper. Sized by its content and standing on its bottom edge (y 77 percent),
+     so it is never taller than what it holds. The step 1 rules span the copy and foot rows and show only while armed
+     before step 2; the final frame (server, scripts off, reduced motion) never shows them. ===== */
+  .lp .ens-sheet {
+    position: absolute; z-index: 2;
+    inset-inline-start: var(--sh-l); inline-size: var(--sh-w); inset-block: auto var(--sh-b);
+    display: grid; grid-template: "head" auto "fit" auto "body" auto "foot" auto / minmax(0, 1fr);
+    padding: 12px; border-radius: 16px;
+    background: var(--surface); color: var(--ink); box-shadow: var(--edge), var(--sh-over-art);
+    font: 400 12px / 1.35 var(--font-ui);
+    transform-origin: 50% 100%;
+  }
+  .lp .ens-sheet :where(p) { margin: 0; }
+  .lp .ens-sheet__head { grid-area: head; }
+  .lp .ens-sheet__head > .lp-chip--sample { float: inline-end; margin-inline-start: 8px; }
+  /* The role line is as tall as the chip, so the company line below it always gets the full width. */
+  .lp .ens-sheet__role { font: 500 13px / 22px var(--font-ui); letter-spacing: -0.01em; }
+  .lp .ens-sheet__co { color: var(--faint); }
+  .lp .ens-fit { grid-area: fit; display: flex; align-items: center; gap: 6px; margin-block-start: 6px; font-variant-numeric: tabular-nums; }
+  .lp .ens-sheet__label { margin-block-start: 8px; padding-block-start: 6px; border-block-start: 1px solid var(--hairline); }
+  .lp .ens-copy { grid-area: body; }
+  .lp .ens-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; align-items: start; margin-block-start: 6px; }
+  .lp .ens-line__text { position: relative; text-wrap: pretty; }
+  .lp .ens-cite { min-block-size: 20px; padding-inline: 8px; font-size: 12px; }
+  /* The uncited line: struck text and, where its fact would be, an empty dashed chip (it wraps under when narrow). */
+  .lp .ens-line--uncited { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+  .lp .ens-line--uncited .ens-line__text { white-space: nowrap; }
+  .lp .ens-line--uncited .ens-struck { color: var(--faint); }
+  .lp .ens-cite--none { margin-inline-start: auto; background: transparent; border: 1px dashed var(--rule); color: var(--faint); }
+  .lp .ens-status { display: flex; align-items: center; gap: 6px; margin-block-start: 6px; font: 500 12px / 1.3 var(--font-ui); }
+
+  /* The ink strike over a line (Highlighter rebuilt as a 1.5 px rule at 55 percent of the text height). It draws by
+     scaleX from the left (compositor), not clip-path. */
+  .lp .ens-struck { position: relative; display: inline-block; }
+  .lp .ens-strike {
+    position: absolute; inset-inline: -1px; inset-block-start: 55%; block-size: 1.5px; background: var(--ink);
+    transform-origin: left center;
+  }
+
+  /* Step 1: the hard rules the posting passes. The rows share the copy and foot rows' height, so the sheet is full.
+     Above the copy rows, so the write-in covers (Paper White) never hide them. */
+  .lp .ens-rules {
+    position: relative; z-index: 1;
+    grid-column: 1; grid-row: body-start / foot-end;
+    display: grid; grid-template-rows: auto repeat(4, minmax(0, 1fr));
+    visibility: hidden; opacity: 0;
+  }
+  .lp .ens-rule {
+    display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; column-gap: 8px;
+    min-block-size: 28px; font-variant-numeric: tabular-nums;
+  }
+  .lp .ens-rule + .ens-rule { border-block-start: 1px solid var(--hairline); }
+  .lp .ens-rule__k { color: var(--faint); }
+  .lp .ens-rule__v { justify-self: end; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .lp .ens-tick { display: grid; place-items: center; inline-size: 10px; block-size: 10px; }
+  .lp .ens-tick > :is(.lp-dot, .lp-square-open) { grid-area: 1 / 1; }
+  .lp .ens-tick > .lp-square-open { opacity: 0; }
+
+  /* Foot: "Waiting for your approval" beside an empty dashed seal; once approved, the signature and the Kairos seal. */
+  .lp .ens-foot {
+    grid-area: foot; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    margin-block-start: 8px; padding-block-start: 8px; border-block-start: 1px solid var(--hairline);
+  }
+  .lp .ens-foot__word { display: flex; align-items: center; gap: 6px; min-inline-size: 0; font: 500 12px / 1.3 var(--font-ui); }
+  .lp .ens-stage[data-approved] .ens-foot__word { font-size: 13px; }
+  .lp .ens-seal {
+    flex: none; display: grid; place-items: center; inline-size: 28px; block-size: 28px; border-radius: var(--r-pill);
+    border: 1px dashed var(--rule); color: var(--ink); rotate: -8deg;
+    transition: rotate 300ms var(--ease-out), border-color var(--dur-colour) var(--ease-out);
+  }
+  /* A double ink ring on Bone around the mark, like a pressed seal; it settles in once (no scale, no overshoot). */
+  .lp .ens-stage[data-approved] .ens-seal {
+    border: 1px solid var(--ink); background: var(--sunk);
+    box-shadow: inset 0 0 0 2px var(--sunk), inset 0 0 0 3px var(--ink);
+  }
+  html[data-motion="full"] .lp .ens-stage[data-approved] .ens-seal { animation: ens-seal 500ms var(--ease-out) 300ms both; }
+  @keyframes ens-seal { from { opacity: 0; rotate: -32deg; } }
+  @media (max-width: 767px) {
+    .lp .ens-foot__word { align-items: flex-start; }
+    .lp .ens-foot__word > :is(.lp-dot, .lp-square-open) { margin-block-start: 4px; }
+  }
+
+  /* Roomy stage (700 px and up, the 1280 and 1440 columns): the sheet's type steps up to the spec sizes. */
+  @container ens-stage (min-width: 700px) {
+    .lp .ens-sheet { padding: 16px; }
+    .lp .ens-sheet__role { font-size: 15px; }
+    .lp .ens-sheet__co { font-size: 13px; }
+    .lp :is(.ens-fit, .ens-rule) { font-size: 14px; }
+    .lp .ens-line__text { font-size: 14px; line-height: 1.4; }
+    .lp .ens-stage[data-approved] .ens-foot__word { font-size: 14px; }
+    .lp .ens-sheet__label { margin-block-start: 10px; padding-block-start: 8px; }
+    .lp .ens-line { margin-block-start: 8px; }
+    .lp .ens-foot { margin-block-start: 10px; padding-block-start: 10px; }
+    .lp .ens-seal { inline-size: 36px; block-size: 36px; }
+  }
+
+  /* ===== Fact notes, pinned over the painted notes ===== */
+  .lp .ens-note {
+    position: absolute; z-index: 3; inline-size: var(--n-w); padding: 8px; border-radius: 8px;
+    background: var(--surface); color: var(--ink); box-shadow: var(--edge), var(--sh-over-art);
+    font: 400 12px / 1.3 var(--font-ui);
+  }
+  .lp .ens-note p { margin: 0; }
+  .lp .ens-note[data-note="0"] { inset-inline-start: var(--n0-l); inset-block-start: var(--n0-t); rotate: -2deg; }
+  .lp .ens-note[data-note="1"] { inset-inline-start: var(--n1-l); inset-block-start: var(--n1-t); rotate: 1.5deg; }
+  .lp .ens-note > .lp-pin { position: absolute; inset-block-start: -5px; inset-inline-start: calc(50% - 5px); }
+  .lp .ens-note__id { font-weight: 500; }
+  .lp .ens-note__topic { color: var(--faint); }
+  .lp .ens-note__ok { display: flex; align-items: center; gap: 6px; font-weight: 500; white-space: nowrap; }
+  .lp .ens-note__topic, .lp .ens-note__long { display: none; }
+  @container ens-stage (min-width: 800px) {
+    .lp .ens-note__topic { display: block; }
+    .lp .ens-note__long { display: inline; }
+    .lp .ens-note__short { display: none; }
+  }
+
+  /* ===== Threads: 1 px Charcoal quadratics from each cite chip's row to its pin. JS writes measured px boxes. ===== */
+  .lp .ens-thread {
+    position: absolute; z-index: 2; overflow: visible; pointer-events: none;
+  }
+  .lp .ens-thread[data-thread="0"] { inset-inline-start: var(--th0-l); inset-block-start: var(--th0-t); inline-size: var(--th0-w); block-size: var(--th0-h); }
+  .lp .ens-thread[data-thread="1"] { inset-inline-start: var(--th1-l); inset-block-start: var(--th1-t); inline-size: var(--th1-w); block-size: var(--th1-h); }
+  .lp .ens-thread path { fill: none; stroke: var(--icon); stroke-width: 1; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+
+  /* ===== Skipped slips, set aside at the desk's front edge ===== */
+  .lp .ens-slip {
+    position: absolute; z-index: 1; padding: 8px 12px; border-radius: 8px;
+    background: var(--surface); color: var(--ink); box-shadow: var(--edge), var(--sh-over-art);
+    font: 400 12px / 1.3 var(--font-ui);
+  }
+  .lp .ens-slip p { margin: 0; }
+  .lp .ens-slip[data-slip="0"] { inset-inline-start: var(--s0-l); inset-block-start: var(--s0-t); rotate: -6deg; }
+  .lp .ens-slip[data-slip="1"] { inset-inline-start: var(--s1-l); inset-block-start: var(--s1-t); rotate: -9deg; }
+  .lp .ens-slip__role { font-weight: 500; white-space: nowrap; }
+  .lp .ens-slip__reason { color: var(--faint); }
+
+  /* ===== The rise: will-change only while the track is near and the sheet has not stood up yet ===== */
+  .lp .ens-track[data-armed][data-live] .ens-stage:not([data-risen]) .ens-sheet { will-change: transform; }
+
+  /* ===== The beats (discrete, time-based). Start states and transitions exist only under [data-armed]. =====
+     Every selector here ends in a class, never `*`: a data-reached write then restyles only the elements named, not
+     the whole track. Write-ins are transforms (compositor): strikes scale from the left, cited lines are revealed by
+     a Paper White cover shrinking to the right. Only the two threads still draw by clip-path, never overlapping. */
+
+  /* Beat 0, the fit gate: the four rules tick (hollow square to lime dot, 120 ms apart); slip strikes draw, reasons
+     appear, the slips slide out from under the sheet to rest; the fit line rises. */
+  .lp .ens-track[data-armed]:not([data-reached~="1"]) .ens-rules { visibility: visible; opacity: 1; }
+  .lp .ens-track[data-armed]:not([data-reached~="0"]) .ens-tick > .lp-dot { opacity: 0; }
+  .lp .ens-track[data-armed]:not([data-reached~="0"]) .ens-tick > .lp-square-open { opacity: 1; }
+  .lp .ens-track[data-armed][data-reached~="0"] .ens-tick > :is(.lp-dot, .lp-square-open) { transition: opacity 200ms var(--ease-out) calc(var(--i, 0) * 120ms); }
+  .lp .ens-track[data-armed]:not([data-reached~="0"]) .ens-slip { translate: var(--slip-from); rotate: 0deg; }
+  .lp .ens-track[data-armed]:not([data-reached~="0"]) .ens-slip .ens-strike { transform: scaleX(0); }
+  .lp .ens-track[data-armed]:not([data-reached~="0"]) .ens-slip__reason { opacity: 0; }
+  .lp .ens-track[data-armed]:not([data-reached~="0"]) .ens-fit { opacity: 0; transform: translateY(8px); }
+  .lp .ens-track[data-armed][data-reached~="0"] .ens-slip {
+    transition: translate 400ms var(--ease-out) 480ms, rotate 400ms var(--ease-out) 480ms;
+  }
+  .lp .ens-track[data-armed][data-reached~="0"] .ens-slip .ens-strike { transition: transform 360ms var(--ease-out); }
+  .lp .ens-track[data-armed][data-reached~="0"] .ens-slip[data-slip="1"] .ens-strike { transition-delay: 120ms; }
+  .lp .ens-track[data-armed][data-reached~="0"] .ens-slip__reason { transition: opacity 200ms var(--ease-out) 360ms; }
+  .lp .ens-track[data-armed][data-reached~="0"] .ens-fit {
+    transition: opacity 300ms var(--ease-out) 600ms, transform 300ms var(--ease-out) 600ms;
+  }
+
+  /* Beat 1, the truth lock: the rules fade out of the rows they share with the copy (200 ms, --b1); then each cited
+     line writes, then its chip, note and thread; the uncited line writes, is struck, settles to Deep Ash, and its empty
+     dashed chip appears where a fact would be. Delays per element via --d, all after --b1. */
+  .lp .ens-line[data-line="0"] { --d-text: 0ms; --d-chip: 400ms; }
+  .lp .ens-line[data-line="1"] { --d-text: 500ms; --d-chip: 900ms; }
+  .lp .ens-line--uncited { --d-text: 1100ms; --d-chip: 1700ms; }
+  .lp .ens-note[data-note="0"] { --d: 300ms; }
+  .lp .ens-note[data-note="1"] { --d: 800ms; }
+  .lp .ens-thread[data-thread="0"] { --d: 500ms; }
+  .lp .ens-thread[data-thread="1"] { --d: 1000ms; }
+
+  /* The write-in cover exists only while armed, so the server HTML and reduced motion have no extra box. */
+  .lp .ens-track[data-armed] .ens-line__text::after {
+    content: ""; position: absolute; inset: 0 -2px; background: var(--surface);
+    transform: scaleX(0); transform-origin: right center;
+  }
+  .lp .ens-track[data-armed]:not([data-reached~="1"]) .ens-line__text::after { transform: none; }
+  .lp .ens-track[data-armed]:not([data-reached~="1"]) .ens-thread { clip-path: inset(0 100% 0 0); }
+  .lp .ens-track[data-armed]:not([data-reached~="1"]) .ens-line--uncited .ens-strike { transform: scaleX(0); }
+  .lp .ens-track[data-armed]:not([data-reached~="1"]) :is(.ens-cite, .ens-copy > .ens-sheet__label) { opacity: 0; }
+  .lp .ens-track[data-armed]:not([data-reached~="1"]) .ens-note { opacity: 0; translate: 0 8px; }
+  .lp .ens-track[data-armed]:not([data-reached~="1"]) .ens-status { opacity: 0; }
+  .lp .ens-track[data-armed]:not([data-reached~="1"]) .ens-line--uncited .ens-struck { color: var(--ink); }
+
+  .lp .ens-track[data-armed][data-reached~="1"] .ens-rules { transition: opacity 200ms var(--ease-out), visibility 0s linear 200ms; }
+  .lp .ens-track[data-armed][data-reached~="1"] .ens-copy > .ens-sheet__label { transition: opacity 200ms var(--ease-out) var(--b1); }
+  .lp .ens-track[data-armed][data-reached~="1"] .ens-thread { clip-path: inset(0 0 0 0); }
+  .lp .ens-track[data-armed][data-reached~="1"] .ens-line__text::after { transition: transform 400ms var(--ease-out) calc(var(--b1) + var(--d-text)); }
+  .lp .ens-track[data-armed][data-reached~="1"] .ens-cite { transition: opacity 200ms var(--ease-out) calc(var(--b1) + var(--d-chip)); }
+  .lp .ens-track[data-armed][data-reached~="1"] .ens-note {
+    transition: opacity 300ms var(--ease-out) calc(var(--b1) + var(--d)), translate 300ms var(--ease-out) calc(var(--b1) + var(--d));
+  }
+  .lp .ens-track[data-armed][data-reached~="1"] .ens-thread {
+    transition: clip-path 400ms var(--ease-out) calc(var(--b1) + var(--d)), opacity calc(var(--dur-rise) / 3) var(--ease-out);
+  }
+  .lp .ens-track[data-armed][data-reached~="1"] .ens-line--uncited .ens-struck {
+    transition: color var(--dur-colour) var(--ease-out) calc(var(--b1) + 1600ms);
+  }
+  .lp .ens-track[data-armed][data-reached~="1"] .ens-line--uncited .ens-strike { transition: transform 360ms var(--ease-out) calc(var(--b1) + 1600ms); }
+  .lp .ens-track[data-armed][data-reached~="1"] .ens-status { transition: opacity 200ms var(--ease-out) calc(var(--b1) + 2000ms); }
+  /* The threads are measured on the standing sheet: while it lies (progress under 0.2) they are not shown. */
+  .lp .ens-track[data-armed] .ens-stage:not([data-risen]) .ens-thread { opacity: 0; }
+
+  /* Beat 2, the hold: the foot rises in and waits for the visitor's press. */
+  .lp .ens-track[data-armed]:not([data-reached~="2"]) .ens-foot { opacity: 0; transform: translateY(8px); }
+  .lp .ens-track[data-armed][data-reached~="2"] .ens-foot {
+    transition: opacity 300ms var(--ease-out), transform 300ms var(--ease-out);
+  }
+
+  /* ===== Layout from 1024: a 12-column grid, stage in 8 (7 below 1280) columns, captions in the rest =====
+     The captions park level with the stage's top edge. The track is an inline-size container so --stage-h can be
+     computed from its column width (cqi), which the last caption needs to release with the stage: it parks for the
+     stage's full height, so its block's end meets it exactly when the stage's sticky range ends. */
+  @media (min-width: 1024px) {
+    .lp .ens-track {
+      container-type: inline-size;
+      --cols: 8;
+      --stage-top: calc(var(--nav-h) + 24px);
+      --stage-h: min(calc(((100cqi - 264px) * var(--cols) / 12 + (var(--cols) - 1) * 24px) * 3 / 4), calc(100svh - var(--nav-h) - 48px));
+      --slot: var(--stage-top);
+      grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: 24px;
+    }
+    .lp .ens-stage {
+      grid-column: 1 / 9; grid-row: 1; order: 0; justify-self: start; margin: 0; z-index: auto;
+      inline-size: min(100%, calc((100svh - var(--nav-h) - 48px) * 4 / 3));
+    }
+    .lp .ens-steps { grid-column: 9 / 13; grid-row: 1; inline-size: auto; justify-self: stretch; padding-inline-start: 32px; }
+    .lp .ens-step { min-block-size: 90svh; padding-block: 0 64px; }
+    /* The last caption parks for the stage's height plus a short hold (about 10svh after it lands). */
+    .lp .ens-step:last-child { min-block-size: calc(var(--stage-h) + 10svh); padding-block-end: 0; }
+    .lp .ens-step:last-child .ens-step__inner { min-block-size: var(--stage-h); }
+  }
+  @media (min-width: 1024px) and (max-width: 1279px) {
+    .lp .ens-track { --cols: 7; }
+    .lp .ens-stage { grid-column: 1 / 8; }
+    .lp .ens-steps { grid-column: 8 / 13; }
+  }
+
+  /* Short viewports and 200 percent zoom: not sticky; the complete final sheet sits above the captions. The engine does
+     not arm here (shortQuery), so the captions are all Ink. */
+  @media (max-height: 640px) {
+    .lp .ens-track { grid-template-columns: minmax(0, 1fr); --stage-w: min(100%, 640px); }
+    .lp .ens-stage, .lp .ens-steps { grid-column: 1; grid-row: auto; justify-self: center; inline-size: var(--stage-w); }
+    .lp .ens-stage { position: relative; inset-block-start: auto; order: -1; margin: 0 0 24px; }
+    .lp .ens-steps { padding: 0; margin: 0; }
+    .lp .ens-step, .lp .ens-step:last-child { min-block-size: auto; padding-block: 24px; }
+    .lp .ens-step__inner, .lp .ens-step:last-child .ens-step__inner { position: static; min-block-size: 0; }
+  }
+
+  /* Reduced motion below 1024: the stage would hold the top 60 percent of the screen while every caption slides under
+     it, so it is not sticky here: the final sheet sits above the captions, as on short viewports. From 1024 the stage
+     and the parked captions stay (sticky is not motion). */
+  @media (max-width: 1023px) {
+    html[data-motion="reduced"] .lp .ens-track { --stage-mb: 24px; }
+    html[data-motion="reduced"] .lp .ens-stage { position: relative; inset-block-start: auto; }
+    html[data-motion="reduced"] .lp .ens-steps { margin-block-start: 0; }
+    html[data-motion="reduced"] .lp :is(.ens-step, .ens-step:last-child) { min-block-size: auto; }
+    html[data-motion="reduced"] .lp :is(.ens-step__inner, .ens-step:last-child .ens-step__inner) { position: static; min-block-size: 0; }
+  }
+  @media (max-width: 1023px) and (prefers-reduced-motion: reduce) {
+    html:not([data-motion="full"]) .lp .ens-track { --stage-mb: 24px; }
+    html:not([data-motion="full"]) .lp .ens-stage { position: relative; inset-block-start: auto; }
+    html:not([data-motion="full"]) .lp .ens-steps { margin-block-start: 0; }
+    html:not([data-motion="full"]) .lp :is(.ens-step, .ens-step:last-child) { min-block-size: auto; }
+    html:not([data-motion="full"]) .lp :is(.ens-step__inner, .ens-step:last-child .ens-step__inner) { position: static; min-block-size: 0; }
+  }
+
+  /* Reduced motion backstop: the rise is never written (the stage does not arm), and if it were this wins. */
+  html[data-motion="reduced"] .lp .ens-sheet { transform: none !important; }
+  @media (prefers-reduced-motion: reduce) {
+    html:not([data-motion="full"]) .lp .ens-sheet { transform: none !important; }
+  }
+
+  @media (forced-colors: active) {
+    .lp :is(.ens-stage, .ens-sheet, .ens-note, .ens-slip) { border: 1px solid CanvasText; }
+    .lp :is(.ens-seal, .ens-cite--none) { border-color: CanvasText; }
+    .lp .ens-thread path { stroke: CanvasText; }
+    .lp .ens-strike { background: CanvasText; }
+    .lp .ens-line__text::after { display: none; }
+  }
+}

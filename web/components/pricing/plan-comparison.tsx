@@ -23,6 +23,9 @@ const rows: { label: string; value: (p: Plan) => Cell }[] = [
   { label: "Answer memory", value: (p) => yesNo(p.answerMemory) },
   { label: gateFeature("Cloud applier"), value: (p) => yesNo(p.cloudApplier) },
   { label: "Weekly outcome report", value: (p) => yesNo(p.outcomeReport) },
+  // ships with R4: the tracker is on every plan; Insights reuse the outcomeReport flag (resume suite PRD D10, 9.6).
+  { label: "Job tracker", value: () => yesNo(true) },
+  { label: "Tracker Insights", value: (p) => yesNo(p.outcomeReport) },
   {
     label: c.polling.label,
     value: (p) => ({ text: p.priorityPolling ? c.polling.priority : c.polling.standard }),

@@ -26,6 +26,7 @@ export interface Plan {
   /** Proposes answers to recurring questions after a submit, for the user to approve. */
   answerMemory: boolean;
   highlighted: boolean;
+  /** Shown on plan cards. The landing shows features[1] to [4]; /pricing shows every one after [0]. */
   features: string[];
   /** Per-feature daily AI allowance (F11). Enforced by the workspace routes from P3. */
   aiDailyAllowance: AiFeatureAllowance;
@@ -59,6 +60,8 @@ export const PLANS: readonly Plan[] = [
       "Fit gate with reasons on every match",
       "Truth-locked resume tailoring",
       "Edit everything before it sends",
+      // ships with R4 (resume suite PRD D10: the board, contacts and interviews are on every plan). Check before deploy.
+      "Job tracker with contacts and interviews",
       "Chrome extension apply",
       "Reply tracking by forwarding",
     ],
@@ -107,7 +110,8 @@ export const PLANS: readonly Plan[] = [
       "1,200 submitted applications per 30 days",
       "Everything in Starter",
       "Cloud applier: sends approved applications with your browser closed",
-      "Weekly outcome report and targeting suggestions",
+      // ships with R4 (tracker Insights, Pro and Max only, D10). The weekly outcome report is built.
+      "Tracker Insights and a weekly outcome report",
       "3 resume profiles",
     ],
     aiDailyAllowance: { resumeSuggestions: 120, jobTailor: 60, applicationDrafts: 120, jobImports: 40, rehearsalTurns: 20 },
@@ -131,6 +135,8 @@ export const PLANS: readonly Plan[] = [
       "3,000 submitted applications per 30 days",
       "Everything in Pro",
       "Priority polling: new postings checked every 5 minutes",
+      // ships with R4 (tracker Insights, Pro and Max only, D10)
+      "Tracker Insights",
       "10 resume profiles",
       "Priority support",
     ],

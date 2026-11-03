@@ -1,48 +1,48 @@
 /*
- * A1 centred art hero (07 A1, 08 1.2 and 5, 09 8). Unlayered and scoped under .lp, so it wins over landing.css.
- * Page y values in the specs include the nav. The navbar overlaps the hero by --nav-h (navbar.tsx), so the stage
- * starts at page y 0 and the spec values apply as written; --pill-top is measured from the nav's bottom edge.
+ * Landing v3 hero (docs/DESIGN.md "Landing v3", "Hero app mockup"). Unlayered and scoped under .lp, so it wins over
+ * landing.css. The navbar overlaps the hero by --nav-h (navbar.tsx), so the stage starts at page y 0 and --pill-top
+ * is measured from the nav's bottom edge.
+ *
+ * One anchor: the window's top edge. The painting box sits on it so the sun (49 percent down both Scene A crops)
+ * rises --sun-lift above the window at every width, and the painting's meadow fade ends on the window's last line,
+ * so the app is cut off by the meadow. The box is aspect-locked with a floor height, so the image is never cropped
+ * vertically (cover only trims the sides) and the 49 percent holds.
  */
 .lp .lp-hero {
-  --hero-h: min(100svh + 160px, 860px); /* page y where the hero block ends */
-  --art-top: 380px;                     /* page y where the painting starts */
-  --pill-top: 40px;                     /* nav to status pill */
+  --pill-top: 40px;
+  --app-gap: 64px;     /* CTA to window: the band where the sun glows */
+  --app-h: 300px;      /* fixed window height per breakpoint, so nothing moves (CLS) */
+  --app-fade: 56px;    /* its last px dissolve with the meadow */
+  --sun-lift: 16px;    /* sun centre above the window's top edge: its glow and the far ridges clear the edge */
+  --art-ratio: 4 / 5;  /* portrait crop below 768 */
+  --win: calc(100% - 2 * var(--gutter));
   position: relative;
 }
 @media (min-width: 768px) {
-  .lp .lp-hero { --hero-h: 900px; --art-top: 360px; --pill-top: 72px; }
+  .lp .lp-hero {
+    --pill-top: 72px; --app-gap: 56px; --app-h: 420px; --app-fade: 120px; --art-ratio: 2 / 1; --sun-lift: 28px;
+    /* About 1040 from 1280, else 92 percent of the main container. */
+    --win: min(1040px, 0.92 * min(100% - 2 * var(--gutter), var(--c-main)));
+  }
 }
 @media (min-width: 1024px) {
-  .lp .lp-hero { --hero-h: 920px; --art-top: 330px; --pill-top: 88px; }
+  .lp .lp-hero { --pill-top: 88px; --app-h: 400px; }
 }
 @media (min-width: 1280px) {
-  .lp .lp-hero { --hero-h: 1000px; --art-top: 340px; --pill-top: 96px; }
+  .lp .lp-hero { --pill-top: 96px; --app-gap: 64px; --app-h: 440px; --app-fade: 140px; }
 }
 
-/* Fixed height per breakpoint, so nothing below moves when the painting loads (08 9.1). min-, not block-size,
-   so 200 percent text zoom grows the box instead of clipping the copy. */
 .lp .lp-hero__stage {
   position: relative; isolation: isolate; overflow: clip;
-  min-block-size: var(--hero-h);
   padding-block-start: calc(var(--nav-h) + var(--pill-top));
 }
-/* Text scrim (09 6 rule 1), sized to the whole hero including the nav strip, as the spec measures it. */
+/* Text scrim (09 6 rule 1) behind the copy, sized to the whole hero including the nav strip. */
 .lp .lp-hero__stage::before {
   content: ""; position: absolute; z-index: -1; inset: 0; pointer-events: none;
   background: radial-gradient(60% 45% at 50% 30%, rgb(247 247 245 / 0.85), transparent 70%);
 }
 
-/* Full bleed, top and bottom dissolve into the canvas. The gradient placeholder (.lp-art) shows until decode. */
-.lp .lp-hero__art {
-  position: absolute; z-index: -2; inset: var(--art-top) 0 0;
-  mask-image: linear-gradient(to bottom, transparent 0%, #000 33%, #000 85%, transparent 100%);
-}
-/* ponytail: one flat painting, so one parallax layer; split into ridge layers when the layered source lands.
-   The layer overhangs by the parallax travel so no edge shows inside the mask. */
-.lp .lp-hero__layer { position: absolute; inset: -24px 0; --parallax: 24px; }
-.lp .lp-hero__layer img { object-fit: cover; object-position: 50% 60%; }
-
-/* Copy stack, centred on one axis (08 5.1). */
+/* Copy stack, centred on one axis (08 5.1). Unchanged from v2. */
 .lp .lp-hero__copy { display: flex; flex-direction: column; align-items: center; text-align: center; }
 .lp .lp-hero__h1 { max-inline-size: 720px; margin-block-start: 24px; }
 .lp .lp-hero__lead { margin-block-start: 20px; }
@@ -51,22 +51,53 @@
   .lp .lp-hero__cta { inline-size: auto; }
 }
 
-/* The one floating card. Below 768: in flow, 24 under the hero, full width minus gutters.
-   No translate here: .lp-float drives `translate`, so centring uses margins. */
-.lp .lp-hero__card { inline-size: calc(100% - 2 * var(--gutter)); margin: 24px auto 0; }
-@media (min-width: 768px) {
-  .lp .lp-hero__card {
-    position: absolute; z-index: 1; top: 620px; left: 50%;
-    inline-size: 320px; margin: 0 0 0 -160px;
-  }
+/* The valley: full bleed, as tall as the window. The painting, the window and the side cards are placed on it. */
+.lp .lp-hero__valley { position: relative; margin-block-start: var(--app-gap); }
+
+/* Painting: top at the window edge minus the lift, pulled up by 49 percent of its own height so the sun lands there.
+   Floor height = what the meadow must cover below the sun ((window + lift) / 0.51); at wide viewports the 2:1 ratio
+   wins and the box simply grows. Fades in behind the copy, fades out exactly where the window does. */
+.lp .lp-hero__art {
+  position: absolute; z-index: -2; inset-inline: 0; top: calc(-1 * var(--sun-lift));
+  aspect-ratio: var(--art-ratio); min-block-size: calc((var(--app-h) + var(--sun-lift)) / 0.51);
+  translate: 0 -49%;
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 38%,
+    #000 calc(49% + var(--sun-lift) + var(--app-h) - var(--app-fade)), transparent calc(49% + var(--sun-lift) + var(--app-h)));
 }
+/* ponytail: one flat painting, so one parallax layer; split into ridge layers when the layered source lands.
+   The layer overhangs by the parallax travel so no edge shows inside the mask. */
+.lp .lp-hero__layer { position: absolute; inset: -24px 0; --parallax: 24px; }
+.lp .lp-hero__layer img { object-fit: cover; object-position: 50% 49%; }
+
+/* The window (strong glass from .glass-strong; inside in hero/app-mockup.css). Fixed size per breakpoint. M3 entrance
+   via .lp-enter: rises 24 px and fades in once, transform and opacity only, none under Reduced (motion.css).
+   The mask sits on the window itself, not an ancestor, so the backdrop blur still reaches the painting. no-clip and
+   the wider mask keep the side shadow the border-box mask would cut. */
+.lp .lp-hero__app {
+  position: relative; z-index: 1; margin-inline: auto;
+  inline-size: var(--win); block-size: var(--app-h);
+  --dist-rise: 24px; --enter-delay: 120ms;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--app-fade)), transparent);
+  mask-size: calc(100% + 96px) 100%; mask-position: 50% 0; mask-repeat: no-repeat; mask-clip: no-clip;
+}
+
+/* Side cards, from 1024: strong glass, tilted with `rotate` (static, not motion), so the tilt never fights the float
+   (`translate`). They cover only empty window: the sent card the pane's right side under Approve (lines stop short
+   of it), the fit card the empty list under the three rows at every width (beside the rows it hid the rail icons). */
+.lp .lp-hero__side { display: none; }
 @media (min-width: 1024px) {
-  .lp .lp-hero__card { top: 600px; left: 40px; inline-size: 280px; margin: 0; }
+  .lp .lp-hero__side { display: block; position: absolute; z-index: 2; inline-size: 248px; }
+  .lp .lp-hero__side--fit { top: 254px; left: max(16px, calc(50% - var(--win) / 2 - 148px)); rotate: -2deg; }
+  .lp .lp-hero__side--sent { top: 150px; right: max(16px, calc(50% - var(--win) / 2 - 148px)); rotate: 1.5deg; }
 }
 @media (min-width: 1280px) {
-  /* x 112 at 1440: the left ridge's foot, clear of the copy column and the sun glint. */
-  .lp .lp-hero__card { top: 620px; left: max(var(--gutter), calc(50% - var(--c-wide) / 2 - 8px)); inline-size: 320px; }
+  .lp .lp-hero__side--fit { top: 272px; left: max(24px, calc(50% - var(--win) / 2 - 168px)); }
+  .lp .lp-hero__side--sent { right: max(24px, calc(50% - var(--win) / 2 - 168px)); }
 }
+@media (min-width: 1400px) {
+  .lp .lp-hero__side { inline-size: 272px; }
+}
+
 .lp .lp-hero__card-title { font: 500 15px / 20px var(--font-ui); color: var(--ink); }
 .lp .lp-hero__card-fit {
   display: flex; align-items: center; gap: 8px; margin-block-start: 8px;

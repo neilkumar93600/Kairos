@@ -1,39 +1,115 @@
-/* A3 problem trio (08 1.4). Prefixed en01-, scoped under .lp. */
+/* "What goes wrong", the clock rail (docs/DESIGN.md "Landing v3 mid-page chapter" > 2). Prefixed en01-, scoped
+   under .lp. Below 1024: the text (intro, items) then the panel. From 1024: text 5 of 12, panel 7 of 12.
+   The panel is the one glass surface and never moves (a moving backdrop-filter re-blurs every frame); only the rail,
+   the slips and the band inside it animate, each final frame being the default. */
 @layer theme, base, components, utilities;
 
 @layer components {
-  .lp .en01-cards {
-    list-style: none;
-    margin: var(--gap-intro) 0 0;
-    padding: 0;
-    display: grid;
-    gap: 16px;
-  }
-  .lp .en01-card {
-    display: grid;
-    grid-template-columns: 40px 40px 1fr;
-    grid-template-areas: "num icon title" ". . body";
-    column-gap: 12px;
-    align-items: center;
-    border-radius: 20px;  /* .glass-panel (globals.css) supplies fill, frost and edge */
-    padding: 20px;
-  }
-  .lp .en01-num { grid-area: num; font-variant-numeric: tabular-nums; }
-  .lp .en01-icon { grid-area: icon; display: block; width: 40px; height: 40px; color: var(--icon); }
-  .lp .en01-icon svg { display: block; width: 100%; height: 100%; }
-  .lp .en01-title { grid-area: title; margin: 0; color: var(--ink); }
-  .lp .en01-body { grid-area: body; margin: 4px 0 0; color: var(--body); }
+  .lp .en01 { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: var(--gap-intro); align-items: start; }
 
+  /* ===== Text column: intro, then the three reported problems ===== */
+  .lp .en01-items { display: grid; gap: 16px; margin: 40px 0 0; padding: 0; list-style: none; }
+  .lp .en01-item { display: flex; flex-direction: column; padding-block-start: 16px; border-block-start: 1px solid var(--border); }
+  .lp .en01-index { font-variant-numeric: tabular-nums; }
+  .lp .en01-title { margin: 8px 0 0; }
+  .lp .en01-body { margin: 4px 0 0; max-width: 34ch; text-wrap: pretty; }
+
+  @media (min-width: 768px) {
+    .lp .en01-items { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
   @media (min-width: 1024px) {
-    .lp .en01-cards { grid-template-columns: repeat(3, 1fr); gap: 24px; }
-    .lp .en01-card {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-start;
-      min-height: 380px;
-      padding: 24px;
+    .lp .en01 { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); column-gap: 48px; }
+    .lp .en01-items { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+    .lp .en01-item { padding-block-start: 24px; }
+  }
+  @media (min-width: 1280px) {
+    .lp .en01 { column-gap: 64px; }
+  }
+
+  /* ===== The panel: "Sent today", then the clock ===== */
+  .lp .en01-panel { border-radius: 20px; padding: 16px; color: var(--ink); }
+  .lp .en01-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-block-size: 26px; font: 500 15px / 1.3 var(--font-ui); }
+
+  /* Children of the clock: the rail, then slips 1 to 3 (nth-child 2 to 4). Slip i sits at
+     24 + (i - 1) * --gap; its pin is centred on the slip's first line (top + 24), which lands on a tick:
+     ticks every 24 px from 0 (pins at 48, 168, 288), every 22 px from 4 below 768 (pins at 48, 158, 268). */
+  .lp .en01-clock {
+    --tick: 22px; --tick-at: 4px; --gap: 110px; --clock-h: 330px; --rail-ink: var(--rule);
+    position: relative; block-size: var(--clock-h); margin-block-start: 16px;
+  }
+  /* The rail is 33 px wide so the pins' Linen rings stay inside the clip; its line sits at x 16 (12 + the 9 px
+     column's centre), the 4 px ticks to its right. */
+  .lp .en01-rail {
+    position: absolute; inset-block: 0; inset-inline-start: 0; inline-size: 33px;
+    background:
+      linear-gradient(var(--rail-ink), var(--rail-ink)) 16px 0 / 1px 100% no-repeat,
+      repeating-linear-gradient(to bottom, var(--rail-ink) 0 1px, transparent 1px var(--tick)) 17px var(--tick-at) / 4px 100% no-repeat;
+  }
+  .lp .en01-rail > .lp-pin { position: absolute; inset-inline-start: 11.5px; inset-block-start: 43px; }
+  .lp .en01-rail > .lp-pin:nth-child(2) { inset-block-start: calc(43px + var(--gap)); }
+  .lp .en01-rail > .lp-pin:nth-child(3) { inset-block-start: calc(43px + 2 * var(--gap)); }
+
+  .lp .en01-slip {
+    position: absolute; inset-block-start: 24px; inset-inline-start: 40px; inline-size: min(420px, 100% - 56px);
+    display: flex; flex-direction: column; gap: 4px; padding: 12px 16px; border-radius: 8px; background: var(--sunk);
+    rotate: -1deg;
+  }
+  .lp .en01-slip:nth-child(3) { inset-block-start: calc(24px + var(--gap)); rotate: 0.8deg; }
+  .lp .en01-slip:nth-child(4) { inset-block-start: calc(24px + 2 * var(--gap)); rotate: -0.5deg; }
+  .lp .en01-slip-title {
+    display: flex; align-items: center; gap: 12px; margin: 0; min-inline-size: 0;
+    font: 500 14px / 24px var(--font-ui); color: var(--ink);
+  }
+  .lp .en01-slip-status { display: flex; align-items: center; gap: 8px; margin: 0; font: 500 12px / 16px var(--font-ui); color: var(--ink); }
+
+  /* A dead Edit control: the draft could not be changed. */
+  /* Dead, not dimmed: the dashed Stone border says it cannot be used; the label stays Deep Ash at full colour (6.0:1). */
+  .lp .en01-edit {
+    display: inline-flex; align-items: center; min-block-size: 24px; margin-inline-start: auto; padding-inline: 10px;
+    border: 1px dashed var(--rule); border-radius: var(--r-pill); font: 500 12px / 1 var(--font-ui); color: var(--faint);
+  }
+
+  /* The marker band under "12" (Magic UI Highlighter's marker, no rough strokes, no colour). Full by default. */
+  .lp .en01-claim { position: relative; }
+  .lp .en01-claim::before {
+    content: ""; position: absolute; inset: -1px -3px; z-index: -1; border-radius: 4px;
+    background: rgb(27 6 36 / 0.12); transform-origin: left center;
+  }
+  @keyframes en01-mark { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+  /* One clock for the rail and its slips. The rail draws 1:1 with scroll, its front held 30vh above the viewport
+     bottom (Tracing Beam: the line follows the reading point), and each slip arrives on the same timeline as the
+     front reaches its pin, so no slip lands unpinned. Same keyframes as .lp-trace and .lp-reveal, re-ranged only. */
+  @supports (animation-timeline: view()) {
+    html[data-motion="full"] .lp .en01-clock { timeline-scope: --en01-rail; }
+    html[data-motion="full"] .lp .en01-clock > .en01-rail {
+      view-timeline: --en01-rail block; animation-timeline: --en01-rail;
+      animation-range: cover 30vh cover calc(30vh + var(--clock-h));
     }
-    .lp .en01-icon { width: 96px; height: 96px; margin: auto 0; align-self: center; }
-    .lp .en01-title { margin-top: 24px; }
+    html[data-motion="full"] .lp .en01-clock > .en01-slip {
+      animation-timeline: --en01-rail;
+      animation-range: cover calc(30vh + 20px + (var(--i) - 1) * var(--gap)) cover calc(30vh + 100px + (var(--i) - 1) * var(--gap));
+    }
+    /* The band sweeps just after slip 2 has landed. */
+    html[data-motion="full"] .lp .en01-claim::before {
+      animation: en01-mark linear both; animation-timeline: --en01-rail;
+      animation-range: cover calc(30vh + 110px + var(--gap)) cover calc(30vh + 170px + var(--gap));
+    }
+  }
+
+  @media (min-width: 768px) {
+    .lp .en01-panel { padding: 24px; }
+    .lp .en01-clock { --tick: 24px; --tick-at: 0px; --gap: 120px; --clock-h: 360px; }
+  }
+
+  html[data-motion="reduced"] .lp .en01-claim::before { animation: none !important; }
+  @media (prefers-reduced-motion: reduce) {
+    html:not([data-motion="full"]) .lp .en01-claim::before { animation: none !important; }
+  }
+
+  @media (forced-colors: active) {
+    .lp .en01-clock { --rail-ink: CanvasText; }
+    .lp .en01-rail { forced-color-adjust: none; }
+    .lp .en01-slip { border: 1px solid CanvasText; }
   }
 }

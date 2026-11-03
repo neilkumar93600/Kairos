@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { ArrowUpRight } from "@phosphor-icons/react";
-import type { ReactNode } from "react";
 import { useApplications } from "@/hooks/use-applications";
 import { useMatches } from "@/hooks/use-matches";
 import { useMe } from "@/hooks/use-me";
@@ -14,8 +13,6 @@ import { Skeleton } from "../../shared/skeleton";
 import { EmptyState } from "../../shared/empty-state";
 import { SetupChecklist } from "./setup-checklist";
 import { SubmittedChart } from "./submitted-chart";
-
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /**
  * One big figure, one link (Synthex layer): a small Deep Ash label over a large light numeral. `undefined` is still
@@ -36,7 +33,7 @@ function Figure({ label, value, href }: { label: string; value: number | null | 
       ) : value === null ? (
         <span className="text-sm text-body">Could not load</span>
       ) : (
-        <span className="text-[44px] leading-none font-light tracking-[-0.02em] text-ink tabular-nums lg:text-[52px] xl:text-[56px]">{value}</span>
+        <span className="text-[44px] leading-none font-light tracking-[-0.02em] text-ink tabular-nums lg:text-[52px] xl:text-[56px]">{value.toLocaleString("en-US")}</span>
       )}
     </Link>
   );
@@ -74,20 +71,10 @@ export function OverviewPanel() {
   const draftCount = drafts.error ? null : drafts.data?.length;
   const recent = [...(submitted.data ?? [])].sort((a, b) => (b.submittedAt ?? "").localeCompare(a.submittedAt ?? "")).slice(0, 5);
 
-  let next: { text: ReactNode; href: string; cta: string } | null = null;
-  if (draftCount) next = { text: `${plural(draftCount, "draft is", "drafts are")} waiting for your approval`, href: "/queue", cta: "Review drafts" };
-  else if (newMatches) next = { text: `${plural(newMatches, "new match", "new matches")} to look at`, href: "/matches", cta: "See matches" };
-
+  // The next step now lives in GreetingHeader, beside the page title.
   return (
     <div className="flex max-w-5xl flex-col gap-6">
       <SetupChecklist me={me.data} />
-
-      {next ? (
-        <div className="flex flex-wrap items-center justify-between gap-4 glass-panel rounded-card p-6">
-          <p className="font-display text-xl tracking-[-0.02em] text-ink">{next.text}</p>
-          <ButtonLink href={next.href}>{next.cta}</ButtonLink>
-        </div>
-      ) : null}
 
       <div className="glass-panel grid grid-cols-2 gap-1 rounded-card p-3 lg:grid-cols-4">
         <Figure label="Credits available" value={me.data.credits.available} href="/billing" />
