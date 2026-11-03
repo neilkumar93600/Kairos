@@ -1,11 +1,11 @@
-import { Queue, type ConnectionOptions } from "bullmq";
-import { Redis } from "ioredis";
-import { baseEnv } from "../lib/env";
+import { Queue, type ConnectionOptions, type WorkerOptions } from "bullmq";
+import { redis } from "../lib/redis";
 
 /** Queue names. The worker service consumes all but `cloud-apply`, which the applier service consumes. */
 export const QUEUES = {
   pollBoards: "poll-boards",
   scoreMatches: "score-matches",
+  scoreUser: "score-user",
   tailorApplication: "tailor-application",
   parseResume: "parse-resume",
   classifyEmail: "classify-email",
@@ -19,6 +19,8 @@ export interface JobData {
   "poll-boards": { companyId: string } | { schedule: true };
   /** userIds and attempt are set on the delayed follow-up for pairs a retryable model failure skipped. */
   "score-matches": { jobId: string; userIds?: string[]; attempt?: number };
+  /** Drains one chunk of the user's scoring lane (jobs/score-matches.ts). */
+  "score-user": { userId: string };
   "tailor-application": { applicationId: string };
   "parse-resume": { resumeProfileId: string };
   "classify-email": { inboundEmailId: string };
@@ -31,9 +33,66 @@ export interface JobData {
 
 export type QueueName = keyof JobData;
 
-/** Each queue and worker gets its own connection; BullMQ needs maxRetriesPerRequest: null. */
+export interface QueueConfig {
+  /** Jobs one worker process runs at once; QUEUE_CONCURRENCY overrides it per environment (the applier: APPLIER_CONCURRENCY). */
+  concurrency: number;
+  attempts: number;
+  /** First retry delay; each next one doubles. */
+  backoffMs: number;
+  /**
+   * Longer than the job's own run bound. BullMQ renews the lock while the job runs, so this is how long a missed
+   * renewal (a blocked event loop, a Redis blip) is tolerated before another worker takes the job as stalled.
+   */
+  lockDurationMs: number;
+  /** Starts per window across every worker of the queue (BullMQ limiter). */
+  limiter?: { max: number; duration: number };
+}
+
+const MINUTE = 60_000;
+const STANDARD = { attempts: 3, backoffMs: 10_000, lockDurationMs: 30_000 };
+
+/**
+ * One row per queue (platform-06 and scale-06 in BullMQ form). cloud-apply has no limiter: its 240 starts a minute are
+ * counted by the apply gate (jobs/apply-gate.ts), which counts real starts only, not runs parked for a busy host.
+ */
+export const QUEUE_CONFIG: Record<QueueName, QueueConfig> = {
+  "poll-boards": { ...STANDARD, concurrency: 8 },
+  // The fan-out only: database reads, no model call.
+  "score-matches": { ...STANDARD, concurrency: 2 },
+  // Model calls, one chunk of one user per job. 1,200 a minute never binds (03-fit-scoring 4); a safety net.
+  "score-user": { ...STANDARD, concurrency: 4, limiter: { max: 1200, duration: MINUTE } },
+  "tailor-application": { ...STANDARD, concurrency: 4 },
+  "parse-resume": { ...STANDARD, concurrency: 2 },
+  "classify-email": { ...STANDARD, concurrency: 4 },
+  // 45 s goto + 15 s load + 120 s fill, plus the claim and the result write.
+  "cloud-apply": { ...STANDARD, concurrency: 2, lockDurationMs: 4 * MINUTE },
+  "cost-rollup": { ...STANDARD, concurrency: 1 },
+  "ledger-watch": { ...STANDARD, concurrency: 1 },
+  // Partitions, sweeps and reconcilers (jobs/schedules.ts); 4, so a slow daily task never holds up the minute ones.
+  maintenance: { ...STANDARD, concurrency: 4 },
+};
+
+/** Every queue the worker consumes, with its concurrency: the table's, or QUEUE_CONCURRENCY's. Refuses unknown names. */
+export function workerConcurrency(overrides: Record<string, number>): Partial<Record<QueueName, number>> {
+  const consumed = (Object.keys(QUEUE_CONFIG) as QueueName[]).filter((name) => name !== QUEUES.cloudApply);
+  for (const name of Object.keys(overrides)) {
+    if (!(consumed as string[]).includes(name)) throw new Error(`QUEUE_CONCURRENCY names ${name}, which the worker does not consume`);
+  }
+  return Object.fromEntries(consumed.map((name) => [name, overrides[name] ?? QUEUE_CONFIG[name].concurrency]));
+}
+
+/** The BullMQ Worker options of one queue, on the process's shared connection. */
+export function workerOptions(name: QueueName, concurrency: number): WorkerOptions {
+  const c = QUEUE_CONFIG[name];
+  return { connection: redisConnection(), concurrency, lockDuration: c.lockDurationMs, ...(c.limiter ? { limiter: c.limiter } : {}) };
+}
+
+/**
+ * One Redis connection per process (platform-68), shared by every Queue and Worker; each Worker adds only its own
+ * blocking connection. BullMQ leaves a shared client open, so each entry point quits it last.
+ */
 export function redisConnection(): ConnectionOptions {
-  return new Redis(baseEnv().REDIS_URL, { maxRetriesPerRequest: null, family: 0 });
+  return redis();
 }
 
 const queues = new Map<QueueName, Queue>();
@@ -41,11 +100,12 @@ const queues = new Map<QueueName, Queue>();
 export function queue<N extends QueueName>(name: N): Queue<JobData[N]> {
   let q = queues.get(name);
   if (!q) {
+    const c = QUEUE_CONFIG[name];
     q = new Queue(name, {
       connection: redisConnection(),
       defaultJobOptions: {
-        attempts: 3,
-        backoff: { type: "exponential", delay: 10_000 },
+        attempts: c.attempts,
+        backoff: { type: "exponential", delay: c.backoffMs },
         removeOnComplete: { age: 24 * 3600, count: 5000 },
         removeOnFail: { age: 7 * 24 * 3600 },
       },

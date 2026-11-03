@@ -1,10 +1,10 @@
 import { Redis } from "ioredis";
-import { env } from "./env";
+import { baseEnv } from "./env";
 
 let client: Redis | undefined;
 
-/** Shared connection for health checks and rate limits. BullMQ needs maxRetriesPerRequest: null. */
+/** The process's one Redis connection: queues, workers, rate limits and health checks. BullMQ needs maxRetriesPerRequest: null. */
 export function redis(): Redis {
-  client ??= new Redis(env().REDIS_URL, { maxRetriesPerRequest: null, family: 0 });
+  client ??= new Redis(baseEnv().REDIS_URL, { maxRetriesPerRequest: null, family: 0 });
   return client;
 }

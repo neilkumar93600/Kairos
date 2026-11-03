@@ -1,0 +1,50 @@
+import { describe, expect, it } from "vitest";
+import { QUEUE_CONFIG, QUEUES, workerConcurrency, workerOptions } from "../src/jobs/queues";
+import { parseEnv } from "../src/lib/env";
+
+/** WP-45: the per-queue table (platform-06 in BullMQ form, scale-06). */
+
+describe("queue config table", () => {
+  it("has one row per queue", () => {
+    expect(Object.keys(QUEUE_CONFIG).sort()).toEqual(Object.values(QUEUES).sort());
+  });
+
+  it("holds a cloud apply's lock longer than the run itself can take (45 s goto, 15 s load, 120 s fill)", () => {
+    expect(QUEUE_CONFIG["cloud-apply"].lockDurationMs).toBeGreaterThan(45_000 + 15_000 + 120_000);
+  });
+
+  it("puts the table's concurrency, lock, limiter and job options on the worker and the queue", () => {
+    const opts = workerOptions("score-user", 6);
+    expect(opts).toMatchObject({ concurrency: 6, lockDuration: QUEUE_CONFIG["score-user"].lockDurationMs, limiter: { max: 1200, duration: 60_000 } });
+    expect(workerOptions("poll-boards", 3).limiter).toBeUndefined();
+  });
+});
+
+describe("worker concurrency", () => {
+  it("is the table's value unless QUEUE_CONCURRENCY names the queue", () => {
+    const c = workerConcurrency({ "score-user": 8 });
+    expect(c["score-user"]).toBe(8);
+    expect(c["poll-boards"]).toBe(QUEUE_CONFIG["poll-boards"].concurrency);
+    expect(c["cloud-apply"]).toBeUndefined(); // the applier's own APPLIER_CONCURRENCY
+  });
+
+  it("refuses an override for a queue the worker does not run, so a typo never silently does nothing", () => {
+    expect(() => workerConcurrency({ "score-users": 8 })).toThrow(/score-users/);
+    expect(() => workerConcurrency({ "cloud-apply": 4 })).toThrow(/cloud-apply/);
+  });
+
+  it("QUEUE_CONCURRENCY parses name=n pairs and refuses anything else", () => {
+    const base = {
+      DATABASE_URL: "postgres://u:p@localhost:5432/db",
+      REDIS_URL: "redis://localhost:6379",
+      BETTER_AUTH_SECRET: "x".repeat(32),
+      BETTER_AUTH_URL: "http://localhost:3000",
+      WEB_ORIGIN: "http://localhost:3000",
+      INBOUND_WEBHOOK_SECRET: "y".repeat(16),
+    };
+    expect(parseEnv(base).QUEUE_CONCURRENCY).toEqual({});
+    expect(parseEnv({ ...base, QUEUE_CONCURRENCY: "score-user=8, poll-boards=2" }).QUEUE_CONCURRENCY).toEqual({ "score-user": 8, "poll-boards": 2 });
+    expect(() => parseEnv({ ...base, QUEUE_CONCURRENCY: "score-user=0" })).toThrow(/QUEUE_CONCURRENCY/);
+    expect(() => parseEnv({ ...base, QUEUE_CONCURRENCY: "score-user" })).toThrow(/QUEUE_CONCURRENCY/);
+  });
+});

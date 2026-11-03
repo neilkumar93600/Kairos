@@ -209,6 +209,26 @@ const envSchema = z.object({
   R2_BUCKET_BACKUPS: z.preprocess(emptyToUndefined, z.string().optional()),
   R2_BACKUPS_ACCESS_KEY_ID: z.preprocess(emptyToUndefined, z.string().optional()),
   R2_BACKUPS_SECRET_ACCESS_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+
+  /**
+   * worker only (WP-45). Per-queue job concurrency of one worker process over jobs/queues.ts QUEUE_CONFIG, as
+   * "score-user=8,poll-boards=4". The worker's Postgres pool follows the total (scale-v12).
+   */
+  QUEUE_CONCURRENCY: z
+    .string()
+    .default("")
+    .transform((raw, ctx) => {
+      const out: Record<string, number> = {};
+      for (const pair of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
+        const m = pair.match(/^([a-z-]+)=(\d{1,3})$/);
+        if (!m || Number(m[2]) < 1) {
+          ctx.addIssue({ code: "custom", message: `"${pair}" is not queue-name=n with n at least 1` });
+          return z.NEVER;
+        }
+        out[m[1]!] = Number(m[2]);
+      }
+      return out;
+    }),
 }).superRefine((e, ctx) => {
   // Without a token the mailer logs emails instead of sending them. Fine locally; in production
   // that would put sign-up and reset codes in the logs, so refuse to boot.
