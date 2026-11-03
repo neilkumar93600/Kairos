@@ -90,6 +90,21 @@ export const contactMessageSchema = z.object({
 });
 export type ContactMessage = z.infer<typeof contactMessageSchema>;
 
+/** Where a newsletter form sits on the marketing site (WP-50). */
+export const NEWSLETTER_SOURCES = ["popup", "blog-index", "blog-post", "about"] as const;
+export type NewsletterSource = (typeof NEWSLETTER_SOURCES)[number];
+
+/**
+ * POST /api/newsletter (WP-50). `email` is trimmed and lower-cased before the format check, so one address is one row.
+ * `website` is the honeypot: a hidden field people leave empty; the api drops a request that fills it.
+ */
+export const newsletterSignupSchema = z.object({
+  email: z.string().trim().toLowerCase().max(254).pipe(z.email()),
+  source: z.enum(NEWSLETTER_SOURCES),
+  website: z.string().max(2048).optional(),
+});
+export type NewsletterSignup = z.infer<typeof newsletterSignupSchema>;
+
 /* ---- Resume workspace (docs/superpowers/specs/2026-10-23-resume-workspace, section 6) ---- */
 
 export const RESUME_SECTION_KINDS = ["summary", "skills", "experience", "projects", "education", "certifications", "custom"] as const;
