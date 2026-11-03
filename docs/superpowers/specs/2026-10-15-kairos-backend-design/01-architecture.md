@@ -1,6 +1,6 @@
 # Kairos backend architecture: ADR-001 and the target design
 
-Revision 2, 2026-10-23. Status: Proposed, awaiting owner approval. This revision replaces the 2026-10-16 draft of this file, which selected the evolved monolith under an earlier judge scoreboard and assumed OpenRouter. It applies the final scoreboard (postgres-durable first, weighted 7.35) and the owner decisions of 2026-10-23 (Anthropic API only, Starter at 1,000 applications, freehire items F1 to F11, and the binding resume workspace contract).
+**Revision 3, 2026-10-30. Status: Accepted 2026-10-30 as the CTO-recommended default under the owner's delegation ("write all backend code"); the owner may revisit.** Revision 3 is section A.11 plus dated amendments marked in B.4.2, B.5, B.12, B.13, B.14 and the open questions; it adopts path (c), the hybrid, and everything else in Revision 2 stands. Revision 2 (2026-10-23, then Proposed) replaced the 2026-10-16 draft of this file, which selected the evolved monolith under an earlier judge scoreboard and assumed OpenRouter. It applies the final scoreboard (postgres-durable first, weighted 7.35) and the owner decisions of 2026-10-23 (Anthropic API only, Starter at 1,000 applications, freehire items F1 to F11, and the binding resume workspace contract).
 
 Scope: the backend (`server/`), additive types in `shared/`, Railway and vendor configuration, and the backend routes and payloads that the new resume builder and tailor screens in `web/` consume. `extension/` is frozen and is not modified; `extension/dist/filler.js` stays the cloud applier's filler byte for byte. Every route, request shape, response shape, status code and error code that `web/lib/api.ts`, `web/hooks/*.ts` and `extension/src/lib/api.ts` use today stays backward compatible; new capabilities appear only as new routes or optional response fields.
 
@@ -12,7 +12,7 @@ Evidence tags: **[V]** verified in a research file from vendor documentation; **
 
 How to read this document:
 
-- **Part A** is the decision record (ADR-001): context, options, decision, consequences, how every judge must-fix for the winner is resolved, which ideas are grafted from the other options, and how each owner decision of 2026-10-23 lands.
+- **Part A** is the decision record (ADR-001): context, options, decision, consequences, how every judge must-fix for the winner is resolved, which ideas are grafted from the other options, and how each owner decision of 2026-10-23 lands. **A.11 is Revision 3 (2026-10-30): path (c), the hybrid, which supersedes the parts of A.6 and Part B it names.**
 - **Part B** is the target architecture that the downstream specifications implement: diagrams, stack, processes, the durable execution engine, the application lifecycle and state machine, Autopilot, matching, the resume workspace backend, the agent runtime, the data model outline, cross-cutting concerns, cost and capacity, migration, risks and the invariant map.
 - **Part C** fixes the inventories (data domains, workers, agents) that drive the rest of the plan.
 
@@ -24,11 +24,11 @@ How to read this document:
 
 | Field | Value |
 |---|---|
-| Status | Proposed. It becomes Accepted when the owner approves the spec README |
-| Date | 2026-10-23 (revision 2; revision 1 dated 2026-10-16 is superseded in full) |
+| Status | **Accepted (Revision 3), 2026-10-30**, as the CTO-recommended default under the owner's delegation ("write all backend code"); the owner may revisit. Revision 2 was Proposed |
+| Date | 2026-10-30 (revision 3, A.11); 2026-10-23 (revision 2); revision 1 dated 2026-10-16 is superseded in full |
 | Deciders | Owner (Gray Matter Labs); chief architect step of the spec workflow |
 | Supersedes | The skeleton's implicit architecture in `docs/02-trd.md` ("Backend", "Data flow"); revision 1 of this file |
-| Related | `cost-model.md` (volumes and token counts, still binding); `anthropic-models.md` (model per agent and prices, binding); the resume workspace README sections 3, 6, 7 and 8 (binding contract); downstream specs `02-*` onward implement Part B and must not contradict Part C |
+| Related | the master `README.md` of this directory (index, precedence, capacity table); `docs/superpowers/plans/2026-10-30-backend-completion/` (CTO review, decisions, work packages); `docs/superpowers/specs/2026-10-29-resume-suite/README.md` (the PRD, authoritative for the resume, revision and event tables); `cost-model.md` (volumes and token counts only; its prices are superseded, 2026-10-30); `anthropic-models.md` (model per agent and prices, binding); the resume workspace README sections 3, 6, 7 and 8 (binding contract); downstream specs `02-*` onward implement Part B and must not contradict Part C |
 | Reversibility | High for the durable engine (every engine call sits behind `server/src/durable/`, so a pg-boss swap is a one-folder change); medium for the data model (additive migrations only); none for the frozen HTTP contracts |
 
 ### A.2 Context
@@ -145,6 +145,8 @@ The close second, the evolved monolith (7.00), was considered for an override an
 
 ### A.6 Decision
 
+> *[Amended 2026-10-30, ADR-001 Revision 3, A.11]* Points 1 and 2 below (Postgres 18 and DBOS for every workflow) are superseded by Revision 3: BullMQ stays, and DBOS is a seam for money and sending only. Points 3 to 8 stand.
+
 **We adopt option postgres-durable, hardened with every must-fix in A.8 and the grafts in A.9.** No override: the top weighted option wins.
 
 In the context of a pre-launch, solo-operated, fit-first job application agent with frozen clients, a Claude-only model policy, opt-in Autopilot and a $0.01 cost ceiling, facing high-severity money and duplicate-send defects and an O(jobs x users) scoring loop, we decided for one TypeScript codebase with three process types (api, worker, applier) that run DBOS Transact durable workflows and queues checkpointed into Postgres, Postgres 18 as the only stateful store, a pre-ranked matching pipeline driven by deterministic scores before any model call, and an Anthropic agent runtime with a deterministic claims check and an independent verifier role, and against an outbox in front of BullMQ, a hosted workflow engine and bounded-context services, to achieve one failure domain, exactly-once money effects in database transactions, native per-user and per-host fairness and the shortest safe path to a paid beta, accepting that DBOS is young (gated by spike S-D1 with a pg-boss fallback), that checkpoints share the primary until a measured trigger moves them, and that the verifier shares the drafter's model family (mitigated in B.9.6).
@@ -181,7 +183,7 @@ What we will revisit, and when:
 
 | Revisit | Trigger (measured) | Action |
 |---|---|---|
-| Durable engine | S-D1 fails, or more than 2 orphaned-workflow incidents in a month that the sweeper did not heal within 15 minutes | Swap `server/src/durable/` to pg-boss 12.38.0 with the typed state machine already defined by `draft_state` and attempt phases |
+| Durable engine | S-D1 fails, or more than 2 orphaned-workflow incidents in a month that the sweeper did not heal within 15 minutes | Swap `server/src/durable/` to a Postgres outbox drained by BullMQ with the typed state machine already defined by `draft_state` and attempt phases (Revision 3, A.11; this row named pg-boss 12.38.0 before) |
 | Second Postgres for checkpoints and telemetry | Primary CPU above 60% for 7 days, or DBOS checkpoint writes above 400 per second sustained, or 25,000 registered users, whichever comes first | Move `kairos_dbos`, `llm_calls`, `llm_cost_daily` and `metrics_minute` to an "ops" Postgres instance |
 | Read replica | `/api/matches` or `/api/applications` read p95 above 300 ms with primary CPU above 70% for a week | Railway read replica for GET routes |
 | Embeddings for pre-rank and fact retrieval | F1 pre-rank recall below 0.85 against scorer labels (S-F1) for two consecutive weekly evals | In-process local embeddings (transformers.js, no new provider) or Voyage AI after owner approval as a new sub-processor |
@@ -282,6 +284,79 @@ Considered and not adopted:
 | C. F11 per-feature daily allowance | B.8.10 | Refused, never degraded; one status code (429 `rate_limited`) because the binding web contract names it |
 | D. Resume workspace contract | B.8 | Seven routes implemented exactly, plus `GET /api/resume/pdf` from README section 7.3 |
 | Autopilot | B.6.3, B.6.4 | Opt-in; Pro and Max send hands-off through the cloud applier; Starter pre-approves into the extension queue; Free has none |
+
+### A.11 Revision 3 (2026-10-30): path (c), the hybrid
+
+Revision 3 amends this ADR after a verified gap review of the running code against Revision 2 (`docs/superpowers/plans/2026-10-30-backend-completion/`: the CTO review `README.md`, `decisions.md`, `work-packages.md`, `ciso.md`, `gap-map.md`). It changes how the target design is reached and which engine carries which workflow. It does not change the target data model, the invariants, the agent roster or any frozen contract. Where this section and A.6 or Part B differ, this section wins; the sections it changes carry a dated pointer back here.
+
+| Field | Value |
+|---|---|
+| Status | **Accepted 2026-10-30 as the CTO-recommended default under the owner's delegation ("write all backend code"); the owner may revisit.** |
+| Decision | Path (c), hybrid: keep the Express API, Better Auth and BullMQ; add durable guarantees only where a lost step costs money or sends twice |
+| Deciders | Owner (delegated); CTO review run `wf_eac5a5ef-3a0` (49 work packages, 7 decisions) |
+| Supersedes | A.6 points 1 and 2 (Postgres 18 and DBOS for every workflow), the phase sequencing of B.14, the queue and workflow catalogs of B.5.3 and B.5.4 as the build target for everything outside the durable seam, and B.5.9 as the fallback (below) |
+| Unchanged | A.6 points 3 to 8, Part B outside the rows below, Part C, every invariant (B.16), the truth lock, approve-before-send, exactly-once credits, the frozen web and extension contract |
+| Reversibility | High: the seam is one folder (`server/src/durable/`); lifting an item from the deferral list needs its own ADR (below) |
+
+**Why Revision 2 could not be built as written.** The skeleton is wired and tested: 7,363 lines in 107 files under `server/src` (measured 2026-10-30), 332 passing unit tests, the phase-A gateway, and the approved resume-suite PRD (D7) that builds R1 to R4 on today's Express server. By a hand count of about 1,080 spec items, about 5% are built and wired and about 20% are partial or diverging. Phase P1 bundled Postgres 18, a driver swap, roles, DBOS, observability, backups and infrastructure as code into two weeks it cannot hold, and the live risks (an unsandboxed applier, uncapped model spend, an offer email that pauses billing, sign-in from Vercel) would have stayed open until P1 to P5. Paid beta by the original plan was about 6 to 7 months away, with R1 to R4 built twice (once per D7, once ported to DBOS).
+
+**The three paths, and what each costs [L: estimates]**
+
+| Path | Cost |
+|---|---|
+| (a) ADR-001 as written, P0 to P8 | Heaviest operations load for a solo founder; paid beta in about 6 to 7 months; R1 to R4 built twice; live risks open until P1 to P5 |
+| (b) Evolve Express and BullMQ only | Fastest; but approve-then-enqueue stays two writes healed only by sweepers, and settlement after a crash in the middle of a submit depends on hand-written phase logic: acceptable for a closed beta, weaker at 10,000 users and for Autopilot |
+| **(c) Hybrid (chosen)** | Two queue systems run for a while and the single-store simplicity of A.6 point 1 (no Redis, one backup story) waits. That is a deliberate trade to ship safely first: secure closed beta in about 4 to 5 weeks, R1 server-side import in about 8 to 10, the paid-beta gate in about 16 to 20, Autopilot after that |
+
+**The decision, in three steps**
+
+1. **Now, on today's stack.** Postgres-backed reconcilers and sweepers (B.5.8 becomes the primary liveness path: stuck `submitting`, approved without a job, draft without lines, unclassified mail, missing grants, `llm_calls` partitions) and BullMQ worker and queue hardening (per-queue concurrency and limiter, per-host and per-user limits, pool sizing, browser recycling, a Redis `noeviction` check). These close the lost-enqueue and stuck-row holes within weeks and stay useful under any engine.
+2. **After the Railway half of spike S-D1 passes.** A DBOS seam in `server/src/durable/` for the money and sending workflows only, behind a per-user flag (`LIFECYCLE_V2` in B.14), with the 1,000-approval chaos test of B.14 P2 as its exit:
+
+   | In the seam | Workflow (B.5.4) |
+   |---|---|
+   | Approve | `approveApplications`, `resendApplication` (the request workflows around `approveCore`) |
+   | Cloud send | `applyCloud` (the `cloud-apply` queue; the browser step keeps `retriesAllowed: false`) |
+   | Settlement | `settleAttempt` |
+   | Stripe | `ingestStripeEvent`, `processStripeEvent` |
+   | Offer pause | the offer-pause executor and its undo |
+
+3. **Everything else stays on BullMQ.** Polling, candidate paging, scoring, parsing, prepare and re-verify, classification, notify and the batch agents keep their state-conditional logic (rule D1) as BullMQ jobs with deterministic job ids. Prepare is rebuilt as the v2 pipeline on BullMQ; rendering leaves it (amendment in `workers/04`).
+
+**Fallback trigger (replaces B.5.9).** The seam is built only if the Railway half of S-D1 passes on staging: executor ids stable across a redeploy, the DBOS datasource working through PgBouncer in transaction mode, and 50 forced crashes across api, worker and applier during scripted approvals and settlements, with every application terminal within 10 minutes, zero duplicate attempts, zero double charges, and checkpoint writes within 25% of the seam estimate in the README's capacity table. If it fails after one round of fixes inside its 3-day time box, or if after launch more than 2 orphaned-workflow incidents in a month are not healed by the sweeper within 15 minutes, the seam is reimplemented as a **Postgres outbox drained by BullMQ**: the state change and an `outbox` row with the deterministic key (`apply:<applicationId>:<attemptNo>`, `settle:<attemptId>`, `stripe:<eventId>`) are one transaction; a drain job enqueues the BullMQ job under that key and marks the row; the effect and its completion mark share a transaction; the reconcilers remain the safety net. The business design does not change, because every pipeline already persists its progress in business columns (`draft_state`, attempt phases, `stripe_events.status`). Expected effort is about 1.5 engineer-weeks, mostly tests. pg-boss (the Revision 2 swap) is no longer the pre-agreed fallback, because it would add a third queue engine beside BullMQ and DBOS.
+
+**What is deferred, each with the trigger that brings it back.** The register is kept in the README; each item gets its own ADR and package when its trigger fires (WP-40).
+
+| Item | Trigger |
+|---|---|
+| The DBOS versions of the worker, applier, queue catalog, workflow catalog and schedules (B.5.3 and B.5.4 outside the seam) | A measured load or operations problem that BullMQ hardening cannot fix |
+| Redis and BullMQ decommission (B.14 P7) | Same as above; deferred, not cancelled |
+| Grafana, OpenTelemetry and LLM spans | Sustained multi-replica load, or SLO burn that `metrics_minute` cannot explain |
+| Interview rehearsal F9 and `interview-coach` (a PRD non-goal) | Owner decision |
+| The `outcome-analyst` weekly email; the reply-classifier model fallback | Owner decision (email); `other` above 30% of replies (classifier) |
+| Extra ATS adapters F8; the dormant embeddings stage | F1 recall below 0.85 (A.7) for embeddings; owner decision for F8 |
+| Multi-currency (billing-64) | Demand data from the paid beta |
+| Read replica, HA and a second Postgres | 25,000 users or primary CPU above 60% for 7 days (A.7) |
+| Plans beyond 50,000 users; the full runbook catalogue; Anthropic usage reconciliation, model drift checks and canary evals | Owner decision after the paid-beta gate |
+
+**Decisions in force with this revision** (owner-delegated CTO defaults, `decisions.md`)
+
+| Decision | Value |
+|---|---|
+| Architecture path | (c) hybrid, this section |
+| Scale target for the next 12 months | 10,000 registered users and 3,500 daily actives; 300 requests per second sustained, 600 tested ceiling; read p95 300 ms, write p95 500 ms, auth p95 800 ms; zero duplicate sends or charges under chaos. Plan, do not build, 100,000 users at 2,000 requests per second. "10K-1M requests per millisecond" is retired (taken literally it is 1,200 to 120,000 times the demand derived from the product) |
+| Cloud channel | Owner only (`OWNER_USER_IDS`) until the applier containment package (WP-04) is accepted; Pro and Max use the extension meanwhile |
+| Schema authority | The resume-suite PRD is authoritative for `resumes`, revisions, imports, the tracker tables and `application_events`, and for render at approval; one numbering lane for migrations 0003 and up, allocated by the data lane only, Postgres 17-compatible DDL until PG18 is confirmed |
+| Spent daily AI allowance | 429 `rate_limited` with `details.reason = "daily_allowance"` and `resetsAt`; 402 stays "not enough credits". Pipeline spend caps 0.05, 0.20, 0.25 and 0.50 USD a day by plan (B.7.4); interactive allowances from `plans.ts` |
+| Sign-in | Email with OTP, and Google. Other providers are hidden until configured (WP-38) |
+| Tax and currency | **USD with Stripe Tax on** (WP-47): `automatic_tax`, billing-address and tax-id collection, and the customer portal configured as code. The owner registers where thresholds require, with an accountant. Rejected: a merchant of record (about 5% in fees and a billing migration away from today's Stripe code) and no tax collection (limits the market and leaves a compliance risk if non-US users pay anyway). Multi-currency waits for demand data |
+
+**Consequences of Revision 3**
+
+- Easier: the wired code keeps shipping; the live risks close in the first waves; the PRD's R1 to R4 are built once, on the stack D7 names; the durable guarantee sits exactly on the steps where a lost step is money or a double send.
+- Harder: two queue systems (BullMQ and the DBOS seam) are operated for a while, with Redis a single point of failure until the deferral list is revisited; some Revision 2 items are rebuilt in BullMQ form (WP-45, WP-41, WP-22) instead of taken from the DBOS catalog; the single-store consequence of A.7 ("one store to back up, restore, erase and secure; no queue memory to size") no longer holds.
+- Unchanged risk: the same-family verifier, Anthropic availability and ATS blocking (B.13 R4, R8, R6) are not touched by the path.
+- Open for the owner: the open questions at the end of this file keep their stated defaults; this revision closes question 7 (spent allowance) and records the tax decision.
 
 ---
 
@@ -443,6 +518,8 @@ Scheduled workflows are registered (`DBOS.registerScheduled`) only in the worker
 
 #### B.4.2 Connection budget at growth
 
+> *[Amended 2026-10-30, ADR-001 Revision 3, A.11]* The 108 below assumed a self-run PgBouncer with pools of 15, 25 and 4. Railway-managed PgBouncer cannot size pools per role, so the governing figures are 118 (base) and 134 (growth) worst case from `06-infrastructure.md` 9.2, held in the master capacity table of the README. Under Revision 3 the 60 direct DBOS connections exist only when the seam runs (before it, the growth worst case is 74). The 108-row table is kept as the original arithmetic.
+
 | Client | Pools | Connections |
 |---|---|---|
 | api application pool, through PgBouncer | 3 replicas x 10 | 30 client |
@@ -458,6 +535,8 @@ Scheduled workflows are registered (`DBOS.registerScheduled`) only in the worker
 `max_connections = 200` is set on the Railway Postgres service (start parameter; confirmed in S-P1). DBOS system-database pool sizes come from env (`DBOS_SYS_POOL_SIZE`). The budget is load-tested in phases P1 and P8; an alert fires at 80%.
 
 ### B.5 Durable execution with DBOS Transact
+
+> *[Amended 2026-10-30, ADR-001 Revision 3, A.11]* Scope. Under path (c) this section governs the **durable seam only**: `approveApplications`, `resendApplication`, `applyCloud`, `settleAttempt`, `ingestStripeEvent`, `processStripeEvent` and the offer-pause executor, in `server/src/durable/`, behind the per-user flag `LIFECYCLE_V2` and gated by the Railway half of spike S-D1. The other queues and workflows of B.5.3 and B.5.4 are built on BullMQ with the same state-conditional logic (rule D1), the same deterministic ids as BullMQ job ids and the same sweepers (B.5.8); the DBOS forms of those are on the deferral list in A.11. The spike S-D1 local results (`_research/spike-s-d1-local.md`) are folded into B.5.2, B.5.3, B.5.5 and B.5.7 below.
 
 #### B.5.1 Rules
 
@@ -478,10 +557,11 @@ Scheduled workflows are registered (`DBOS.registerScheduled`) only in the worker
 All three processes run one DBOS application named `kairos` against one system database, `kairos_dbos`, on the same Postgres server as `kairos`. Each process dequeues only its own queues through `listenQueues` [V], so the applier never pulls scoring work and the worker never needs Chromium. Enqueueing across process types is an ordinary `DBOS.startWorkflow(fn, { queueName })` from the workflow body; no `DBOSClient` hop is needed.
 
 ```ts
-// server/src/durable/dbos.ts (specification-level code)
-import { DBOS } from "@dbos-inc/dbos-sdk";
+// server/src/durable/dbos.ts (specification-level code; S-D1 corrections applied 2026-10-30)
+import dbosSdk from "@dbos-inc/dbos-sdk";                  // CommonJS package: default import (S-D1; named ESM imports fail under tsx)
+const { DBOS } = dbosSdk;
 import { WORKFLOW_SET_VERSION } from "./version";
-import { queuesFor, type ProcessRole } from "./queues";
+import { queuesFor, registerQueues, type ProcessRole } from "./queues";
 
 export async function launchDurable(role: ProcessRole): Promise<void> {
   DBOS.setConfig({
@@ -494,35 +574,38 @@ export async function launchDurable(role: ProcessRole): Promise<void> {
   registerAllWorkflows();                                    // every process registers every workflow (B.2 rule 8)
   if (role === "worker") registerSchedules();                // schedules only on the worker
   await DBOS.launch();
+  await registerQueues(role);                                // queues are database-backed: DBOS.registerQueue(name, options) after launch (S-D1); onConflict update_if_latest_version
   startExecutorHeartbeat(role);                              // B.5.5
 }
 ```
 
 #### B.5.3 Queue catalog
 
+> *[Amended 2026-10-30, ADR-001 Revision 3, A.11]* Spike S-D1 (DBOS 5.3.0): there is no `partitionQueue` option; any `partition*` limit (`partitionConcurrency`, `partitionWorkerConcurrency`, `partitionRateLimit`) partitions the queue, and every enqueue must then pass a partition key (the key named in each row). `concurrency` is a deprecated alias of `globalConcurrency`. Queues are registered after launch (B.5.2). Only `cloud-apply` and `settle` and the `stripe` queue are built on DBOS under Revision 3; every other row is the specification for the BullMQ per-queue configuration table of WP-45 (BullMQ limiter, per-host concurrency, per-user job-id fairness), and the DBOS options in it are the intended values, not code.
+
 | Queue | Dequeued by | Options | Enqueued by | Priority |
 |---|---|---|---|---|
-| `poll` | worker | `partitionQueue: true` (key = ATS API host), `partitionConcurrency: 4`, `workerConcurrency: 4` | `pollTick` schedule | priority companies 10, others 50 |
-| `candidates` | worker | `concurrency: 4`, `workerConcurrency: 2` | `candidateTick` schedule; preference save; first resume parsed | Max 10, Pro 20, Starter 30, Free 40 |
-| `score` | worker | `partitionQueue: true` (key = user id), `partitionConcurrency: 1`, `concurrency: 24`, `rateLimit: { limitPerPeriod: 1200, periodSec: 60 }`, `priorityEnabled: true` | `candidatePage` | Max 10, Pro 20, Starter 30, Free 40; backfill +5 |
-| `prepare` | worker | `partitionQueue: true` (user id), `partitionConcurrency: 2`, `concurrency: 32`, `workerConcurrency: 8`, `priorityEnabled: true` | `queueMatch` request workflow; retry route; Autopilot | user-initiated 10, Autopilot 50 |
-| `reverify` | worker | `concurrency: 8` | `PATCH` with verifier unavailable; approval with changed facts; cut-over | 20 |
-| `autopilot` | worker | `partitionQueue: true` (user id), `partitionConcurrency: 1`, `concurrency: 8` | `scoreUser` (match at or above the Autopilot bar); `prepareApplication` (draft ready) | none |
-| `cloud-apply` | applier | `partitionQueue: true` (key = ATS apply host), `partitionConcurrency: 8`, `workerConcurrency: 4`, `rateLimit: { limitPerPeriod: 240, periodSec: 60 }`, `priorityEnabled: true` | `approveApplications`, `resendApplication`, `autopilotApprove` | user-approved Max 10, Pro 20; Autopilot 40 (with `delaySeconds`, B.6.3) |
-| `scan-form` | applier | `workerConcurrency: 1`, `concurrency: 4` | `prepareApplication` for Lever and Ashby jobs without `form_questions` | none |
-| `settle` | worker | `concurrency: 8` | `applyCloud` final step; `leaseSweeper` | none |
-| `email` | worker | `concurrency: 8` | `ingestInboundEmail` request workflow | none |
-| `stripe` | worker | `partitionQueue: true` (key = Stripe customer id), `partitionConcurrency: 1`, `concurrency: 4` | `ingestStripeEvent` request workflow; `billingReconcile` | none |
-| `parse` | worker | `workerConcurrency: 1`, `concurrency: 4` | resume paste and upload routes (request workflow) | none |
-| `notify` | worker | `concurrency: 4` | sends: Autopilot hourly email, digests, reminders, resend offers, receipts | none |
-| `batch-llm` | worker | `concurrency: 2` | backfill scoring, nightly re-scores, catalog re-analysis | none |
+| `poll` | worker | partition key = ATS API host, `partitionConcurrency: 4`, `workerConcurrency: 4` | `pollTick` schedule | priority companies 10, others 50 |
+| `candidates` | worker | `globalConcurrency: 4`, `workerConcurrency: 2` | `candidateTick` schedule; preference save; first resume parsed | Max 10, Pro 20, Starter 30, Free 40 |
+| `score` | worker | partition key = user id, `partitionConcurrency: 1`, `globalConcurrency: 24`, `rateLimit: { limitPerPeriod: 1200, periodSec: 60 }`, `priorityEnabled: true` | `candidatePage` | Max 10, Pro 20, Starter 30, Free 40; backfill +5 |
+| `prepare` | worker | partition key = user id, `partitionConcurrency: 2`, `globalConcurrency: 32`, `workerConcurrency: 8`, `priorityEnabled: true` | `queueMatch` request workflow; retry route; Autopilot | user-initiated 10, Autopilot 50 |
+| `reverify` | worker | `globalConcurrency: 8` | `PATCH` with verifier unavailable; approval with changed facts; cut-over | 20 |
+| `autopilot` | worker | partition key = user id, `partitionConcurrency: 1`, `globalConcurrency: 8` | `scoreUser` (match at or above the Autopilot bar); `prepareApplication` (draft ready) | none |
+| `cloud-apply` | applier | partition key = ATS apply host, `partitionConcurrency: 8`, `workerConcurrency: 4`, `rateLimit: { limitPerPeriod: 240, periodSec: 60 }`, `priorityEnabled: true` | `approveApplications`, `resendApplication`, `autopilotApprove` | user-approved Max 10, Pro 20; Autopilot 40 (with `delaySeconds`, B.6.3) |
+| `scan-form` | applier | `workerConcurrency: 1`, `globalConcurrency: 4` | `prepareApplication` for Lever and Ashby jobs without `form_questions` | none |
+| `settle` | worker | `globalConcurrency: 8` | `applyCloud` final step; `leaseSweeper` | none |
+| `email` | worker | `globalConcurrency: 8` | `ingestInboundEmail` request workflow | none |
+| `stripe` | worker | partition key = Stripe customer id, `partitionConcurrency: 1`, `globalConcurrency: 4` | `ingestStripeEvent` request workflow; `billingReconcile` | none |
+| `parse` | worker | `workerConcurrency: 1`, `globalConcurrency: 4` | resume paste and upload routes (request workflow) | none |
+| `notify` | worker | `globalConcurrency: 4` | sends: Autopilot hourly email, digests, reminders, resend offers, receipts | none |
+| `batch-llm` | worker | `globalConcurrency: 2` | backfill scoring, nightly re-scores, catalog re-analysis | none |
 
 #### B.5.4 Workflow catalog
 
 | Workflow | Type | Started by | Workflow id (idempotency key) | Steps (each ids-only) | Timeout |
 |---|---|---|---|---|---|
 | `queueMatch` | request (api) | `POST /api/matches/:id/queue` | `queue:<matchId>` | tx: company cap, insert draft `ON CONFLICT (user_id, job_id) DO NOTHING`, match `queued`, event `drafted`; then enqueue `prepareApplication` | 5 s |
-| `prepareApplication` | queue `prepare` | `queueMatch`, retry route, Autopilot | `prepare:<applicationId>:<revision>` | tx `loadAndPlan`; step `ensureFormQuestions` (child `scanForm` on the applier when needed); step `generateAndVerify`; step `renderPdf`; tx `markReady`; enqueue `autopilotApprove` when Autopilot applies | 10 min |
+| `prepareApplication` | queue `prepare` | `queueMatch`, retry route, Autopilot | `prepare:<applicationId>:<revision>` | tx `loadAndPlan`; step `ensureFormQuestions` (child `scanForm` on the applier when needed); step `generateAndVerify`; tx `markReady` (no `renderPdf` step since Rev 3: the snapshot is rendered at approval); enqueue `autopilotApprove` when Autopilot applies | 10 min |
 | `reverifyDraft` | queue `reverify` | `PATCH` fallback, approval facts change, cut-over | `reverify:<applicationId>:<rowVersion>` | step `reverifyAndStore`; tx `markReady` or record drops | 5 min |
 | `approveApplications` | request (api) | `POST /api/applications/approve` | `approve:<sha256(userId, sorted ids, channel, minuteBucket)>` | tx `approveCore(actor = user)`; enqueue `applyCloud` per cloud id | 5 s |
 | `resendApplication` | request (api) | `POST /api/applications/:id/resend`, signed link POST | `resend:<applicationId>:<attemptNo + 1>` | tx `approveCore(actor = user, mode = resend)`; enqueue `applyCloud` when cloud | 5 s |
@@ -553,7 +636,7 @@ Synchronous routes that need no workflow (each is idempotent by the database and
 1. Every process upserts `dbos_executors(executor_id, service, last_seen_at)` every 15 seconds.
 2. Every 60 seconds the sweeper lists `PENDING` workflows (`DBOS.listWorkflows({ status: "PENDING" })`) whose executor has not been seen for 90 seconds.
 3. For each, it calls `DBOS.cancelWorkflow(id)` then `DBOS.resumeWorkflow(id)` on itself; resume restarts the workflow from its last completed step [V]. Workflows on the `cloud-apply` queue are re-enqueued to the applier instead (the browser step's replay guard makes this safe).
-4. If spike S-D1 shows that DBOS 5.3 exposes a supported recovery call for other executors' workflows, that call replaces step 3; the behavior is the same.
+4. Spike S-D1 (local half) showed that DBOS 5.3.0 has no public recovery call for other executors' workflows (`recoverPendingWorkflows` exists only on the internal executor): cancel then resume (step 3) is the procedure. *[Amended 2026-10-30, S-D1]*
 
 State reconcilers (B.5.8) are the second line: they re-derive missing work from business rows, so even a lost checkpoint costs minutes, never an application.
 
@@ -565,7 +648,7 @@ State reconcilers (B.5.8) are the second line: they re-derive missing work from 
 | A step added, removed or reordered in a workflow | Wrap the new path in `DBOS.patch("<yyyymmdd>-<slug>")`, keep the old path; deprecate after 14 days, remove after 28 [V] | Hash updated together with the patch marker |
 | An incompatible rewrite | Bump `WORKFLOW_SET_VERSION` | On deploy, the `dbos-version-migrate` schedule forks every non-terminal workflow of the old version onto the new one from its first step (`DBOS.forkWorkflow(id, 0, { applicationVersion })`) and cancels the original; every workflow is state-conditional (rule D1), so re-running from step 1 is safe |
 
-**Retention.** The `dbos-retention` schedule (daily) removes terminal workflows older than 2 days on `poll`, `candidates`, `score`, `notify`, `batch-llm` and schedules, and older than 14 days on every other queue and request workflow, using the SDK's garbage-collection function if spike S-D1 confirms it in 5.3; otherwise it deletes terminal rows from the DBOS `workflow_status` table in batches of 5,000 (step outputs cascade) [verify table and column names in S-D1].
+**Retention.** The `dbos-retention` schedule (daily) removes terminal workflows older than 2 days on `poll`, `candidates`, `score`, `notify`, `batch-llm` and schedules, and older than 14 days on every other queue and request workflow, by `DBOS.listWorkflows({ completedBefore, status })` followed by `DBOS.deleteWorkflows(ids, true)` in batches (spike S-D1: there is no garbage-collection call; `deleteWorkflows` removes `workflow_status`, `operation_outputs` and `workflow_input` rows). *[Amended 2026-10-30, S-D1]*
 
 #### B.5.6 Step data rule (privacy)
 
@@ -579,7 +662,7 @@ Checkpoints are durable copies of step inputs and outputs. DBOS stores them in `
 
 #### B.5.7 Checkpoint write budget
 
-DBOS writes about three status rows per workflow (enqueue, start, finish), one row per step, one row per child enqueue, and one `transaction_completion` row in `kairos` per datasource transaction [est, measured in S-D1].
+DBOS writes about 6 fixed rows per workflow (status insert and updates, input row, output row), 1 per step, 1 per child enqueue, and 2 per datasource transaction (a `transaction_completion` insert, then its delete when the workflow finishes) [measured in the local half of S-D1, 2026-10-23; this paragraph said "about three status rows" before]. *[Amended 2026-10-30]* **The table below is the Revision 2 estimate for the whole catalog (about 751,000 writes a day, 37 per submitted application) and is superseded:** the corrected whole-catalog figures are about 1.11 million a day (55 per application) in `06-infrastructure.md` 9.3 and about 1.33 million (66 per application) once `queueMatch` is counted (`workers/06-approval-autopilot.md` 9). Under Revision 3 only the seam checkpoints, an upper bound of about 294,000 a day (about 15 per submitted application). The README's master capacity table names the governing figure and WP-22 measures it.
 
 | Workflow type | Runs per day at growth | Writes per run | Writes per day |
 |---|---|---|---|
@@ -597,7 +680,7 @@ DBOS writes about three status rows per workflow (enqueue, start, finish), one r
 | **Total** | | | **about 751,000 a day: 8.7 per second on average, about 35 per second at peak** |
 | **Per submitted application (20,200 a day)** | | | **about 37 writes** |
 
-The coordination-layer unit metric is `checkpoint writes per submitted application`, computed hourly by the `metrics` schedule; target 40, alert above 60 for a day. The system database's hot size stays under 3 GB with the retention windows above. Postgres write capacity on 4 vCPU is well above this load; the A.7 trigger moves `kairos_dbos` to a second instance before checkpoints matter.
+The coordination-layer unit metric is `checkpoint writes per submitted application`, computed hourly by the `metrics` schedule; target 40, alert above 60 for a day (Revision 2; the A-DUR-4 values of `06-infrastructure.md` are target 60 and alert 80 for the whole catalog, and WP-22 sets the seam's thresholds from its first measurement). The system database's hot size stays under 3 GB with the retention windows above. Postgres write capacity on 4 vCPU is well above this load; the A.7 trigger moves `kairos_dbos` to a second instance before checkpoints matter.
 
 #### B.5.8 Reconcilers and invariant checks
 
@@ -611,6 +694,7 @@ Every check runs as a worker schedule and is idempotent; repairs go through the 
 | Stuck attempt | 1 min (`leaseSweeper`) | Open attempt with `heartbeat_at < now() - 90 s` or `started_at < now() - 8 min`; expired explicit extension claims | Settle by stored phase (B.6.8) |
 | Unclassified inbound email | 5 min | `classified_at IS NULL AND received_at < now() - 10 min` | Enqueue `classifyEmail` |
 | Stripe event received but not processed | 5 min | `stripe_events.status = 'received' AND received_at < now() - 10 min` | Enqueue `processStripeEvent`; page after 30 minutes |
+| Approved without a rendered file | 5 min | *[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 6.1, 7.6, 12)]* `status = 'approved' AND resume_file_key IS NULL AND approved_at < now() - 5 min` and no live `render:<id>:<attemptNo>` job | Enqueue `render-snapshot` |
 | Orphaned workflows | 1 min | B.5.5 | Resume or re-enqueue |
 | Ledger drift | Nightly | `credit_balances.balance <> SUM(credit_ledger.delta)` or `in_flight <> count(approved, submitting)` | Page and set `approvals_frozen` |
 | Negative balance | Hourly | `credit_balances.balance < 0` | Page (approvals already skip that user) |
@@ -621,6 +705,8 @@ Every check runs as a worker schedule and is idempotent; repairs go through the 
 | Sign-up without profile | 5 min | `user` rows older than 5 minutes with no `profiles` or `credit_balances` row | Create them through the idempotent sign-up body |
 
 #### B.5.9 The escape hatch: pg-boss with a typed state machine
+
+> *[Amended 2026-10-30, ADR-001 Revision 3, A.11]* Replaced. The Revision 3 fallback is a Postgres outbox drained by BullMQ, with the trigger written in A.11. The pg-boss text below is kept as the historical alternative; it is no longer the pre-agreed swap.
 
 If spike S-D1 fails (recovery, executor identity, version rule, retention or connection behavior), `server/src/durable/` is reimplemented on pg-boss 12.38.0 [V: Node 22.12 or later, Postgres 13 or later, transactional job creation with a Drizzle adapter]. The business design does not change: every pipeline already persists its progress in business columns (`draft_state`, attempt phases, `stripe_events.status`, `classified_at`), the request workflows become one transaction that creates the pg-boss job inside the same transaction, and the step memoization that DBOS provides is replaced by the state-conditional checks of rule D1. Expected effort: about 1.5 engineer-weeks, mostly tests.
 
@@ -659,7 +745,7 @@ sequenceDiagram
   W->>W: checkClaims (deterministic containment)
   W->>AN: claim-verifier (Haiku 5.5), escalation for uncertain claims (Sonnet 5.5)
   W->>PG: tx: verified lines, answers, letter, verification, facts hash
-  W->>W: renderPdf (Typst, cached by content hash), draft_state ready
+  W->>W: draft_state ready (Rev 3: no render in prepare; the snapshot is rendered at approval, B.6.4)
   alt human approval (default)
     U->>API: PATCH /api/applications/:id (checkClaims + synchronous verifier)
     U->>API: POST /api/applications/approve
@@ -867,6 +953,8 @@ RETURNING id, attempt_no;
 INSERT INTO application_events (application_id, user_id, kind, actor) SELECT id, $user, 'approved', $actorKind FROM ...;
 ```
 
+> *[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 6.1, 7.6, 12)]* The same transaction also freezes the sent resume: `applications.resume_snapshot` is set from the application's tailored resume (document, template, accent, page size, base revision id) and that tailored `resumes` row becomes read-only (PRD 6.1). The `INSERT INTO application_events` above resolves `tracker_item_id` through `tracker_items_application_uq` (`02-database.md` 7.3.4). A resend (`failed` to `approved`) reuses the stored snapshot and file; it never re-freezes. Approval never waits on the renderer (PRD 7.6): after the commit the workflow body enqueues the BullMQ job `render-snapshot` (id `render:<applicationId>:<attemptNo>`), which renders the snapshot with Typst, stores it under `snapshots/<userId>/<content hash>.pdf`, sets `resume_file_key` with a conditional update and, for a cloud row, then enqueues `applyCloud`. If rendering still fails after the job's retries, the attempt ends `failed` with `render_failed`: nothing is charged and the in-flight credit is released. The approved-without-job reconciler of B.5.8 also re-enqueues a render when `status = 'approved' AND resume_file_key IS NULL` for more than 5 minutes.
+
 After the transaction commits as a checkpointed step, the workflow body enqueues `applyCloud` with id `apply:<applicationId>:<attemptNo>` for each cloud row. The route response stays `{ approved: string[] }` and gains the optional field `skipped: { id, reason }[]`.
 
 FR-26 and FR-29 describe 422 `required_answers_missing` and 422 `cover_letter_required` on this route. Both codes would be new on a frozen route, so the information travels in `skipped`; the open questions list asks whether to enable the 422 codes when the review screen is next changed.
@@ -880,8 +968,8 @@ FR-26 and FR-29 describe 422 `required_answers_missing` and 422 `cover_letter_re
 | `loadAndPlan` | datasource transaction | Require `status = 'draft'` and `draft_state IN ('pending','failed','stale')`; load the job card, the user's **confirmed** facts only (fixes D-03), the base resume document for the user's resume profile (B.8.2), saved answers, plan; classify every form question deterministically: `profile`, `sensitive` (Greenhouse `compliance` and `demographic_questions` blocks plus the sensitive label patterns of FR-25), `saved_answer`, `free_text`; compute `facts_snapshot_hash` | `{ questionPlanHash, factCount, hasBaseResume }` |
 | `ensureFormQuestions` | step, or child workflow `scanForm` on the applier | Greenhouse: `?questions=true` API; Lever and Ashby: browser scan once per job (`form_questions`), else `questions_unknown` | `{ source }` |
 | `generateAndVerify` | one step | In memory: `resume-tailor` produces suggestions against the base resume document (or fact-only lines for users without one); `answer-drafter` answers `free_text` questions in one call; `cover-letter-writer` when the plan has `coverLetters` and the form has a letter field. Then the deterministic truth lock (ids exist, owned, confirmed), `checkClaims`, `claim-verifier` on every item, `claim-verifier-escalation` for `uncertain` items within the cap, one repair call per drafting agent with the dropped claims as "do not claim", and the same three layers on the repaired items. Finally, in one transaction: write `resume_lines`, `resume_line_entries`, `resume_base_revision_id`, `answers` (profile answers `source: "profile"`, saved answers `"saved_answer"`, model answers `"generated"`), `cover_letter`, `verification`, `verification_results`. If fewer than 3 resume lines survive: `draft_state = 'needs_facts'` and nothing else stored | `{ stored: boolean, contentHash, droppedCount }` |
-| `renderPdf` | step | Render the tailored document with Typst (B.8.7), round-trip the text layer, upload to R2 under a content-hash key (reuse when it exists) | `{ pdfKey }` |
-| `markReady` | datasource transaction | `draft_state = 'ready'`, `resume_pdf_key`, `facts_snapshot_hash`, `prepared_at`; event `verified` | `{ ready: true }` |
+| ~~`renderPdf`~~ | removed | *[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 6.1, 7.6, 12)]* Prepare no longer renders. The snapshot is frozen and rendered at approval (B.6.4); the Review screen previews through the on-demand `GET /api/resumes/:id/export?format=pdf`, which uses the content-hash cache of B.8.7. Its text-layer round trip and timeouts move with the renderer | n/a |
+| `markReady` | datasource transaction | `draft_state = 'ready'`, `facts_snapshot_hash`, `prepared_at`; event `verified` (revision 2 also set `resume_pdf_key` here; that column is now `resume_file_key`, set at approval) | `{ ready: true }` |
 | Autopilot hand-off | workflow body | Enqueue `autopilotApprove:<applicationId>:<revision>` when the draft was created by Autopilot | |
 
 Store-nothing rule: verified items are written only at the end of `generateAndVerify`, after every layer; a draft that cannot be verified keeps empty content and a `draft_issue` (INV-2, INV-7). A crash inside `generateAndVerify` re-runs the step; model calls repeat (about $0.002), but no unverified text was ever stored or checkpointed.
@@ -908,7 +996,7 @@ UPDATE applications a
 RETURNING a.id, a.answers, a.resume_lines, a.cover_letter, a.resume_pdf_key, a.job_id;
 ```
 
-`$session` is the Better Auth session id behind the bearer token. Each item gains `resumePdfUrl` (already optional in the shared `FillPayload` type): a presigned R2 URL valid for 10 minutes. The status stays `approved`, so viewing the queue never strands an application.
+`$session` is the Better Auth session id behind the bearer token. Each item gains `resumePdfUrl` (already optional in the shared `FillPayload` type): a presigned R2 URL valid for 10 minutes (`05-api.md` A-15 replaces this with an API-origin URL). *[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 6.1, 7.6, 12)]* An item is returned only once `resume_file_key` is set, so the extension never receives a row whose file is not rendered; the query above gains `AND resume_file_key IS NOT NULL` for rows approved after the cut-over. The status stays `approved`, so viewing the queue never strands an application.
 
 Report acceptance rules (all inside `recordOutcome`, B.6.9):
 
@@ -1388,7 +1476,7 @@ Tokens must match `^[A-Za-z0-9_.-]{1,100}$` and ids their ATS format. Flow:
 - **Round trip.** `unpdf` extracts the text layer; every printed line must appear in order. A failure is a render error, never a silent PDF.
 - **Cache.** Rendered files are stored in R2 under `renders/{userId}/{sha256(template, density, document)}.pdf` and reused; edits that do not change printed content cost nothing.
 - **Parity with the web print.** The web's v1 PDF is the browser print of the same template. Spike S-T1 renders 20 fixture resumes both ways and requires identical text layers, identical page counts and line breaks within one line per page; golden files in CI keep them aligned.
-- **Application PDFs.** Tailored edits live in the application draft (`resume_lines`, each labelled with its section title, as `toDraftLines` in the web sends them). The renderer rebuilds the tailored document from the base revision the draft started from (`applications.resume_base_revision_id`): lines are placed by line id; a line id not in the base document goes to the entry named by `resume_line_entries[lineId]` when the client or the prepare pipeline sent it (optional `resumeLineEntries` on `PATCH`, an additive optional field in `updateApplicationSchema`), otherwise to the entry of the nearest preceding known line in the same section (the anchor rule; `visibleLines` emits lines in document order). The applier and the extension upload this PDF; `GET /api/applications/:id/pdf` lets the user download it.
+- **Application PDFs.** *[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 6.1, 7.6, 12)]* The next bullet describes revision 2, where tailored edits lived in the draft and the PDF was rendered in prepare. Under the PRD the tailored copy is its own `resumes` row (`kind = 'tailored'`), the sent file is the render of the frozen `applications.resume_snapshot` at approval (B.6.4), `resume_lines` is derived from the tailored document on every save, and the renderer is generalised from one template id to the registry (PRD 7.1). Rendering volume therefore follows submitted applications (about 20,000 a day at growth, deduplicated by content hash) rather than the 750 a day that worker spec 05 sized for. Revision 2 text: Tailored edits live in the application draft (`resume_lines`, each labelled with its section title, as `toDraftLines` in the web sends them). The renderer rebuilds the tailored document from the base revision the draft started from (`applications.resume_base_revision_id`): lines are placed by line id; a line id not in the base document goes to the entry named by `resume_line_entries[lineId]` when the client or the prepare pipeline sent it (optional `resumeLineEntries` on `PATCH`, an additive optional field in `updateApplicationSchema`), otherwise to the entry of the nearest preceding known line in the same section (the anchor rule; `visibleLines` emits lines in document order). The applier and the extension upload this PDF; `GET /api/applications/:id/pdf` lets the user download it.
 
 #### B.8.8 `POST /api/applications/:id/drafts`
 
@@ -2329,7 +2417,7 @@ Deploy: GitHub Actions on push to `main` runs typecheck, lint (boundary rules, t
 
 ### B.12 Cost and capacity at 10,000 users
 
-Volumes, token counts and funnel ratios come from `cost-model.md` (still binding); prices from `anthropic-models.md` (Haiku 5.5: input $0.10, output $0.50, cache read $0.01, cache write $0.125 per million tokens; Sonnet 5.5: $2.00, $10.00, $0.10, $2.50; Message Batches 50% off). The model applies a **1.3 tokenizer factor** to Anthropic calls (the cost model notes Haiku 5.5 produces about 30% more tokens for the same text) and the cost model's 5% retry overhead. There is no gateway fee.
+Volumes, token counts and funnel ratios come from `cost-model.md` (binding for those only; its prices are superseded, 2026-10-30); prices from `anthropic-models.md` (Haiku 5.5: input $0.10, output $0.50, cache read $0.01, cache write $0.125 per million tokens; Sonnet 5.5: $2.00, $10.00, $0.10, $2.50; Message Batches 50% off). The model applies a **1.3 tokenizer factor** to Anthropic calls (the cost model notes Haiku 5.5 produces about 30% more tokens for the same text) and the cost model's 5% retry overhead. There is no gateway fee.
 
 Per-call derivation, for example `fit-scorer`: static 900 tokens at 95% cache reads (900 x (0.95 x 0.01 + 0.05 x 0.125) = 14.2 micro-dollars), profile block 900 at 90% (19.4), variable 700 at $0.10 (70.0), output 120 at $0.50 (60.0): 163.6 micro-dollars x 1.3 = **$0.00021**. The same method gives `resume-tailor` $0.00082, `claim-verifier` $0.0005 per draft, `claim-verifier-escalation` $0.0045 on Sonnet, and `resume-writer` $0.0084 for a line or entry scope and $0.036 for a whole-resume review on Sonnet.
 
@@ -2448,7 +2536,7 @@ Every stream except polling and enrichment grows linearly with eligible users: p
 
 | Id | Risk | Likelihood | Impact | How it is retired | Fallback |
 |---|---|---|---|---|---|
-| R1 | DBOS recovery, executor identity, versioning or retention misbehave on Railway | Medium | High | Spike S-D1 as a hard gate; `durable/` seam; orphan sweeper; state reconcilers; chaos test at P2 exit | pg-boss swap (B.5.9) |
+| R1 | DBOS recovery, executor identity, versioning or retention misbehave on Railway | Medium | High | Spike S-D1 as a hard gate for the seam (A.11); `durable/` seam; orphan sweeper; state reconcilers; chaos test at P2 exit | Postgres outbox drained by BullMQ (A.11; was pg-boss, B.5.9) |
 | R2 | Duplicate employer submission after an applier crash, or from two tabs on one extension session | Low (cloud), Medium (tabs) | High | Attempt protocol, `mark_browser_launched` replay guard, decision table, 50-crash test, S-AP2; explicit claim routes for a future extension; duplicate-report alert | "Already sent" note in the receipt; support runbook |
 | R3 | Cost overrun from builder usage or ineffective caching | Medium | Medium | Allowances, envelopes, alarms; S-A1 measures caching | Haiku `resume-writer`; tighter allowances in `plans.ts` |
 | R4 | Same-family verifier accepts drafter inventions | Medium | High | `checkClaims`, role separation, self-preference eval set, Sonnet escalation, weekly shadow audit, 7-day shadow week | Stricter `checkClaims`; `autopilot_frozen`; escalate all claims of an affected prompt version |
@@ -2483,6 +2571,8 @@ Every stream except polling and enrichment grows linearly with eligible users: p
 | S-G1 | Gmail forwarding sample | Capture a real confirmation; pin sender, subject and code format | Parser test passes on the sample | 0.5 day | P6 |
 
 ### B.14 Phased migration from the skeleton
+
+> *[Amended 2026-10-30, ADR-001 Revision 3, A.11]* The phase table below is the Revision 2 plan and is kept for its content and exit criteria. Under Revision 3 the work is re-sequenced into the waves and work packages of `docs/superpowers/plans/2026-10-30-backend-completion/work-packages.md`; the README of this directory maps every phase P0 to P8 to those packages. Differences that matter: BullMQ is not drained by phase (its queues are hardened, WP-45, and P7 is deferred); the durable engine carries only the seam (A.11); P1 is split across WP-12, WP-13, WP-15 and WP-22; Autopilot (WP-36) opens only after the paid-beta gate (WP-37); the cloud channel stays owner-only until WP-04 is accepted; and the resume suite R1 to R4 is built on today's Express server (PRD D7) with the numbering lane of `02-database.md` 14.3.
 
 Principles: every phase is additive migrations plus flag-guarded code; each verified flow (polling, fit gate, tailoring, review, approve, extension and cloud submit, single charge) keeps its verified code path until the new path has run beside it and matched; each phase ends with a written exit check; the recorded contract suite guards the frozen clients and the workspace contract throughout; nothing under `extension/` changes, and nothing under `web/` changes except what the separate frontend plan builds. BullMQ and Redis keep running the skeleton's six queues until each is drained by the phase that replaces it. Estimates are for one engineer.
 
@@ -2614,7 +2704,7 @@ Draining rule: stop producing into the old queue (flag), wait until its waiting 
 4. **Late confirmation.** A `submitted` report after an `unconfirmed`, `timeout` or `no_report` failure is charged even if the balance goes below zero (approvals then return 402 until the next grant). Confirm.
 5. **Return to draft and draft expiry.** Unsent extension approvals return to draft after 14 days; unapproved drafts are cleared after 30 days. Confirm both windows.
 6. **Approval refusals (FR-26, FR-29).** Missing required answers and missing cover letters are reported through the optional `skipped` field instead of new 422 codes on the frozen approve route. Enable the 422 codes when the review screen is next changed?
-7. **Spent AI allowance status code (F11).** The design answers 429 `rate_limited` everywhere because the binding web contract names it; freehire uses 402. Keep 429?
+7. **Spent AI allowance status code (F11).** The design answers 429 `rate_limited` everywhere because the binding web contract names it; freehire uses 402. Keep 429? *Closed 2026-10-30 (Revision 3, A.11): 429 `rate_limited` with `details.reason = "daily_allowance"` and `resetsAt`; 402 stays "not enough credits"; the resume-suite PRD wording was amended to match.*
 8. **Free-credit abuse (D-25).** The +25 grant stays at sign-up; Free approvals skip with `free_grant_used` when another account with the same normalized email already submitted on Free. Confirm.
 9. **Cloud challenge threshold (OQ-11).** An ATS moves to extension-only above a 30% challenge rate over 24 hours with at least 20 attempts. Confirm.
 10. **Backups and erasure window.** Deleted data leaves backups within about 28 days (Railway PITR range and weekly dumps), with tombstone replay after any restore; the privacy notice states this. Confirm with counsel.

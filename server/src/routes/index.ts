@@ -1,5 +1,6 @@
 import { Router } from "express";
-import type { AuthGateway } from "../lib/auth";
+import { configuredProviders, type AuthGateway } from "../lib/auth";
+import { env } from "../lib/env";
 import { requireAuth } from "../middleware/require-auth";
 import { apiLimiter } from "../middleware/rate-limit";
 import { applicationsRouter } from "./applications";
@@ -20,6 +21,9 @@ export function apiRouter(gateway: AuthGateway) {
   router.use(apiLimiter);
 
   router.use("/contact", contactRouter);
+  router.get("/auth-providers", (_req, res) => {
+    res.set("cache-control", "public, max-age=300").json({ providers: configuredProviders(env()) });
+  });
 
   const authed = requireAuth(gateway);
   router.use("/me", authed, meRouter);
