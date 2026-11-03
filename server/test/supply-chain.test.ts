@@ -34,7 +34,7 @@ describe("exact dependency pins", () => {
 });
 
 describe("Dockerfiles", () => {
-  const files = ["server/Dockerfile", "server/Dockerfile.applier"];
+  const files = ["server/Dockerfile", "server/Dockerfile.applier", "ops/pgbackup/Dockerfile"];
 
   for (const file of files) {
     it(`${file} pins every base image by digest`, () => {

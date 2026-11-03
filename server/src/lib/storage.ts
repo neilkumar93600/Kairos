@@ -107,10 +107,14 @@ export function createStorage(config: StorageConfig, makeClient: (endpoint: stri
   }
 
   return {
-    /** Writes one object. The caller validated the bytes (magic bytes and size for uploads, WP-17) and builds the key with userKey. */
-    async put(key: string, body: Uint8Array | string, contentType: string): Promise<void> {
+    /**
+     * Writes one object. The caller validated the bytes (magic bytes and size for uploads, WP-17) and builds the key with
+     * userKey. A stream needs its length (a backup dump, WP-13). ponytail: one PUT, so at most 5 GiB per object on R2;
+     * the backup manifest warns from 4 GiB, and a multipart upload replaces this when a dump nears it.
+     */
+    async put(key: string, body: Uint8Array | string | Readable, contentType: string, contentLength?: number): Promise<void> {
       const { client, Bucket, Key } = locate(key);
-      await client.send(new PutObjectCommand({ Bucket, Key, Body: body, ContentType: contentType }));
+      await client.send(new PutObjectCommand({ Bucket, Key, Body: body, ContentType: contentType, ContentLength: contentLength }));
     },
 
     /** Streams one object, or null when it does not exist. */
