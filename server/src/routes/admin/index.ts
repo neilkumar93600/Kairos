@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client";
 import { companies, metricsMinute, opsAudit, opsFlags } from "../../db/schema";
@@ -7,6 +7,7 @@ import { env } from "../../lib/env";
 import { HttpError, notFound } from "../../lib/errors";
 import { getFlags, schemaFor, setFlag } from "../../lib/flags";
 import { SLOS, sloWindow } from "../../lib/slo";
+import { keysetBefore, pageParams, slicePage } from "../../lib/pagination";
 import { parseParam, validateBody } from "../../middleware/validate";
 import { currentUser } from "../../middleware/require-auth";
 
@@ -60,43 +61,38 @@ adminRouter.get("/info", async (_req, res) => {
 });
 
 const companyId = z.uuid();
-const companyColumns = { id: companies.id, name: companies.name, ats: companies.ats, boardToken: companies.boardToken, active: companies.active, lastPolledAt: companies.lastPolledAt };
+const companyColumns = { id: companies.id, inactiveReason: companies.inactiveReason, name: companies.name, ats: companies.ats, boardToken: companies.boardToken, active: companies.active, lastPolledAt: companies.lastPolledAt };
 
-/**
- * Companies, inactive first: an imported board waits here until the owner activates it.
- * ponytail: capped at 200 rows with no cursor; the ~2,000-company seed of WP-23 needs lib/pagination.ts (WP-30) wired in.
- */
+/** Companies, inactive first: an imported board waits here until the owner activates it. Paged by cursor (nextCursor). */
 adminRouter.get("/companies", async (req, res) => {
   const filter = parseParam(z.object({ active: z.enum(["true", "false"]).optional() }), req.query);
   const active = filter.active === undefined ? undefined : filter.active === "true";
+  const { limit, after } = pageParams(req.query, 200, "admin-companies", ["bool", "text"]);
   const rows = await db()
     .select(companyColumns)
     .from(companies)
-    .where(active === undefined ? undefined : eq(companies.active, active))
-    .orderBy(companies.active, companies.name)
-    .limit(200);
-  res.json({ companies: rows });
+    .where(and(active === undefined ? undefined : eq(companies.active, active), after && keysetBefore([companies.active, companies.name], ["boolean", "text"], companies.id, after, "asc")))
+    .orderBy(companies.active, companies.name, companies.id)
+    .limit(limit + 1);
+  const page = slicePage(rows, limit, "admin-companies", (r) => [r.active, r.name], (r) => r.id);
+  res.json({ companies: page.rows, nextCursor: page.nextCursor });
 });
 
-/**
- * ponytail: WP-42 adds companies.inactive_reason with CHECK companies_active_reason_ck. Once it merges, this update must also
- * set inactive_reason: null on activate, 'owner' on deactivate (and the list below can use companies_review_idx), or the
- * CHECK rejects the write. The coordinator makes that one-line change at merge.
- */
 async function setActive(id: string, active: boolean, actor: string) {
   return db().transaction(async (tx) => {
     const [before] = await tx.select(companyColumns).from(companies).where(eq(companies.id, id)).for("update");
     if (!before) throw notFound("Company");
     if (before.active === active) return { ...before, changed: false };
-    await tx.update(companies).set({ active }).where(eq(companies.id, id));
+    // companies_active_reason_ck: an active company has no reason, an inactive one has a code; the owner's stop is "owner".
+    await tx.update(companies).set({ active, inactiveReason: active ? null : "owner" }).where(eq(companies.id, id));
     await tx.insert(opsAudit).values({
       actor,
       action: active ? "company_activate" : "company_deactivate",
       target: `company:${id}`,
-      before: { active: before.active },
-      after: { active },
+      before: { active: before.active, inactiveReason: before.inactiveReason },
+      after: { active, inactiveReason: active ? null : "owner" },
     });
-    return { ...before, active, changed: true };
+    return { ...before, active, inactiveReason: active ? null : "owner", changed: true };
   });
 }
 
