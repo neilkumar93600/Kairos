@@ -20,6 +20,7 @@ import { claimViolations, defaultResume, profileContactFrom, truthLockViolations
 import { suggestEdits } from "../services/resume-writer";
 import { metered } from "../services/allowance";
 import { planFor } from "../services/submissions";
+import { gatewayCtx } from "../llm/wire";
 
 /** The structured base resume and the Resume Writer (spec 2026-10-23-resume-workspace, section 6). Mounted at /api/resume. */
 export const resumeRouter = Router();
@@ -158,6 +159,7 @@ resumeRouter.post("/suggestions", writerLimiter, validateBody(suggestionRequestS
           if (!fact) throw new Error("Fact insert returned no row");
           return fact;
         },
+        callCtx: gatewayCtx({ userId: me.id, plan, ...(body.jobId ? { jobId: body.jobId } : {}), feature: "resumeSuggestions" }),
       },
     ),
   );

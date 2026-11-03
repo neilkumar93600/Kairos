@@ -15,6 +15,7 @@ import { renderResumeText } from "../services/resume-doc";
 import { suggestEdits } from "../services/resume-writer";
 import { metered } from "../services/allowance";
 import { planFor } from "../services/submissions";
+import { gatewayCtx } from "../llm/wire";
 import { loadResume, userFacts, visibleJob, writerLimiter } from "./resume";
 
 /** Pasted-link job import. Mounted at /api/jobs. */
@@ -127,6 +128,7 @@ jobsRouter.post("/:jobId/tailor", writerLimiter, async (req, res) => {
         createFact: async () => {
           throw new Error("tailor never saves a note");
         },
+        callCtx: gatewayCtx({ userId: me.id, plan, jobId, feature: "jobTailor", budgetClass: "interactive" }),
       },
     ),
   );

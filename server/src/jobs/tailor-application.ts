@@ -5,6 +5,9 @@ import { db } from "../db/client";
 import { applications, companies, facts, jobs, profiles, savedAnswers, user } from "../db/schema";
 import { logger } from "../lib/logger";
 import { tailorResume } from "../services/tailor";
+import { topFacts } from "../services/job-fit";
+import { planFor } from "../services/submissions";
+import { gatewayCtx } from "../llm/wire";
 import type { JobData } from "./queues";
 
 /** Prepares a draft for review: truth-locked resume lines plus answers from the profile and saved answers. */
@@ -27,11 +30,10 @@ export async function processTailorApplication(job: Job<JobData["tailor-applicat
       .select({ id: facts.id, kind: facts.kind, text: facts.text })
       .from(facts)
       .where(and(eq(facts.userId, row.app.userId), eq(facts.confirmed, true)));
-    const tailored = await tailorResume(userFacts, {
-      title: row.job.title,
-      companyName: row.companyName,
-      descriptionText: row.job.descriptionText,
-    });
+    const posting = { title: row.job.title, companyName: row.companyName, descriptionText: row.job.descriptionText };
+    const ctx = gatewayCtx({ userId: row.app.userId, plan: await planFor(db(), row.app.userId), applicationId: row.app.id, jobId: row.job.id });
+    // The 60 confirmed facts the posting needs most (llm-agents-59), never the whole fact bank.
+    const tailored = await tailorResume(topFacts(userFacts, `${posting.title}\n${posting.descriptionText}`, 60), posting, ctx);
     kept = tailored.kept;
     if (tailored.rejected.length) logger.info({ applicationId: row.app.id, rejected: tailored.rejected.length }, "truth lock dropped lines");
   }

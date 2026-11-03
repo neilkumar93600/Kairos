@@ -8,6 +8,14 @@ import { env } from "../lib/env";
  */
 export const gatewayEnabled = (): boolean => env().LLM_GATEWAY === "anthropic";
 
+/**
+ * The context a caller hands a service: the gateway's call context while LLM_GATEWAY=anthropic, undefined on legacy.
+ * A service takes the gateway path whenever it is given a context, so this keeps the switch in one place while every
+ * caller still passes its user, plan and ids (llm-agents-02): per-user caps, user_daily_usage, user_hash and the stable
+ * fence nonce all key off ctx.userId.
+ */
+export const gatewayCtx = (ctx: AgentCallContext): AgentCallContext | undefined => (gatewayEnabled() ? ctx : undefined);
+
 /** Builds a call context from the pieces services have at hand. */
 export function serviceCtx(input: {
   userId?: string;

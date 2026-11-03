@@ -18,6 +18,7 @@ import { gatewayEnabled } from "../llm/wire";
 import type { AgentCallContext } from "../agents/types";
 import { chatJson } from "./llm";
 import type { ProfileFact } from "./resume-doc";
+import { topFacts } from "./job-fit";
 
 export interface WriterContext {
   resume: ResumeInput;
@@ -216,14 +217,16 @@ export async function suggestEdits(
   const factCreated = req.note
     ? await deps.createFact({ kind: noteKind(req.note, req.scope === "resume" ? null : (view[0]?.kind ?? null)), text: req.note })
     : null;
+  // The model sees at most 60 confirmed facts, the ones the target job needs most (resume-22); any confirmed fact stays citable.
   const confirmed = ctx.facts.filter((f) => f.confirmed);
+  const shown = topFacts(confirmed, ctx.job ? `${ctx.job.title}\n${ctx.job.descriptionText}` : null, 60);
   const citable = new Map([...confirmed, ...(factCreated ? [factCreated] : [])].map((f) => [f.id, f]));
   const max = req.scope === "line" ? 3 : 15;
 
   const parts = [
     `Task: ${SCOPE[req.scope]} At most ${max} suggestions.`,
     req.refine ? `Style: ${REFINE[req.refine]}` : "",
-    `Facts (confirmed, cite by id):\n${confirmed.map(factLine).join("\n") || "(none)"}`,
+    `Facts (confirmed, cite by id):\n${shown.map(factLine).join("\n") || "(none)"}`,
     factCreated
       ? `The user's own words, saved as fact ${factCreated.id}. Cite it only for what it says; the user confirms it before a line citing it is kept.\n${untrusted("note", factLine(factCreated), 700)}`
       : "",
@@ -241,7 +244,7 @@ export async function suggestEdits(
             refine: req.refine ?? null,
             // Clipped to the input schema (the gateway refuses anything longer); the render cuts the view deeper.
             resumeView: renderView(view).slice(0, 12_000),
-            facts: confirmed.slice(0, 60).map((f) => ({ id: f.id, kind: f.kind, text: f.text })),
+            facts: shown.map((f) => ({ id: f.id, kind: f.kind, text: f.text })),
             noteFact: factCreated ? { id: factCreated.id, kind: factCreated.kind, text: factCreated.text.slice(0, 400) } : null,
             job: ctx.job ? { title: ctx.job.title.slice(0, 200), company: ctx.job.company.slice(0, 200), descriptionText: ctx.job.descriptionText.slice(0, 20_000) } : null,
             maxSuggestions: max,

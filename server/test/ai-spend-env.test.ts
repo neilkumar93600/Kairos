@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseEnv } from "../src/lib/env";
 
 /** WP-06 env keys, in their own file so the role split of WP-04 (env.test.ts) merges cleanly. */
@@ -16,5 +16,22 @@ describe("AI spend env", () => {
     expect(parseEnv(base).LLM_SHED_LEVEL).toBe(0);
     expect(parseEnv({ ...base, LLM_SHED_LEVEL: "2" }).LLM_SHED_LEVEL).toBe(2);
     expect(() => parseEnv({ ...base, LLM_SHED_LEVEL: "4" })).toThrow(/LLM_SHED_LEVEL/);
+  });
+});
+
+describe("gatewayCtx", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("hands services the caller's context only while LLM_GATEWAY=anthropic", async () => {
+    vi.resetModules();
+    const legacy = await import("../src/llm/wire");
+    expect(legacy.gatewayCtx({ userId: "u", plan: "pro" })).toBeUndefined();
+    vi.stubEnv("LLM_GATEWAY", "anthropic");
+    vi.resetModules();
+    const live = await import("../src/llm/wire");
+    expect(live.gatewayCtx({ userId: "u", plan: "pro", jobId: "j" })).toEqual({ userId: "u", plan: "pro", jobId: "j" });
   });
 });
