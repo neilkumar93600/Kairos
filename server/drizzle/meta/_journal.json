@@ -78,13 +78,6 @@
       "when": 1793717522663,
       "tag": "0010_facts_import_indexes",
       "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "7",
-      "when": 1793717524710,
-      "tag": "0011_drop_resumes_user_uq",
-      "breakpoints": true
     }
   ]
 }
