@@ -198,6 +198,18 @@ describe("the gateway path (LLM_GATEWAY=anthropic)", () => {
     expect((await draftCoverLetter({ job, facts }, { callCtx: { userId: "u1" } })).text).toBe("I built a billing API at Acme.");
   });
 
+  // WP-07 acceptance: an invented percentage, tool or employer is dropped on every path (legacy cases are above).
+  it.each([
+    ["a percentage", "I cut billing latency 40% at Acme."],
+    ["a tool", "I built a billing API at Acme with Pulumi."],
+    ["an employer", "I built a billing API at Initech."],
+  ])("drops %s from a gateway cover letter and 422s it as a gateway answer", async (_kind, text) => {
+    useReply({ paragraphs: [{ text: "I built a billing API at Acme.", factIds: ["f1"] }, { text, factIds: ["f1"] }] });
+    expect((await draftCoverLetter({ job, facts }, { callCtx: { userId: "u1" } })).text).toBe("I built a billing API at Acme.");
+    useReply({ text, factIds: ["f1"] });
+    await expect(draftAnswer({ label: "Why us?", job, facts }, { callCtx: { userId: "u1" } })).rejects.toMatchObject({ status: 422, code: "truth_lock" });
+  });
+
   it.each(["Veteran status", "Desired salary", "Do you require visa sponsorship?", "Email", "LinkedIn profile"])(
     "never sends %s to the model",
     async (label) => {

@@ -166,6 +166,22 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       expect((await tdb.select({ n: count() }).from(schema.resumes))[0]!.n).toBe(0);
     });
 
+    it("422s a changed line adding a percentage, tool or employer, naming the rule (WP-07 acceptance)", async () => {
+      const f = await fact("Built the billing service at Nordbeam", true);
+      for (const [text, rule] of [
+        ["Built the billing service at Nordbeam, cutting costs 40%", "number_not_in_facts"],
+        ["Built the billing service at Nordbeam on Kubernetes", "skill_not_in_facts"],
+        ["Built the billing service at Initech", "entity_not_in_facts"],
+      ] as const) {
+        const body = doc(f);
+        body.sections[0]!.entries[0]!.lines[0]!.text = text;
+        const res = await request(app).put("/api/resume").send(body);
+        expect(res.status, text).toBe(422);
+        expect(res.body.error).toMatchObject({ code: "truth_lock", details: { lineIds: ["l1"], reasons: { l1: rule } } });
+      }
+      expect((await tdb.select({ n: count() }).from(schema.resumes))[0]!.n).toBe(0);
+    });
+
     it("does not re-check a line that is unchanged from the stored document", async () => {
       const f = await fact("Built billing", true);
       const legacy = doc(f);
@@ -229,6 +245,10 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       expect(ok.status).toBe(200);
       expect(ok.body.application.coverLetter).toBe(letter);
 
+      for (const invented of ["I cut billing costs by 40% at Nordbeam.", "I built the billing service at Nordbeam with Pulumi."]) {
+        const res = await request(app).patch(`/api/applications/${app1.id}`).send({ coverLetter: `${letter}\n\n${invented}` });
+        expect(res.status, invented).toBe(422);
+      }
       const bad = await request(app)
         .patch(`/api/applications/${app1.id}`)
         .send({ coverLetter: `${letter}\n\nAt Initech I cut costs by 40%.` });
