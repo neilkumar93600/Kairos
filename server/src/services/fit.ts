@@ -5,6 +5,7 @@ import { runAgent } from "../llm/gateway";
 import { fitScorer } from "../agents/fit-scorer/spec";
 import { gatewayEnabled, serviceCtx } from "../llm/wire";
 import type { AgentCallContext } from "../agents/types";
+import { dropSensitiveLines, redactContact } from "../llm/redact";
 import { chatJson } from "./llm";
 
 export interface FitJob {
@@ -110,7 +111,7 @@ export async function scoreFit(
         role: "system",
         content: `You judge how well a candidate fits a job. Reply as JSON {"score": 0-100, "reasons": [1-4 short reasons]}. Use only facts in the candidate summary. Penalize missing must-have requirements.\n\n${UNTRUSTED_RULES}`,
       },
-      { role: "user", content: `Candidate:\n${profileSummary}\n\nJob:\n${untrusted("job", posting, 6300)}` },
+      { role: "user", content: `Candidate:\n${redactContact(dropSensitiveLines(profileSummary))}\n\nJob:\n${untrusted("job", posting, 6300)}` },
     ],
   });
 }

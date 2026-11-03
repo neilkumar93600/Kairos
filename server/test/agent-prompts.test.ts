@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UNTRUSTED_RULES } from "../src/ai/untrusted";
+import { renderFitScorer } from "../src/agents/fit-scorer/render";
 
 const chatJson = vi.hoisted(() => vi.fn());
 vi.mock("../src/services/llm", () => ({ chatJson }));
@@ -33,6 +34,18 @@ describe("agent prompts", () => {
     expect(system(c)).toContain(UNTRUSTED_RULES);
     expectFenced(user(c), description, "job");
     expectFenced(user(c), "Engineer at Globex", "job");
+  });
+
+  it("fit-score sends the candidate summary without contact details or personal-details lines, on both paths", async () => {
+    const summary = "- (role) Built billing at Nordbeam\n- (other) Reach me at jane@example.com, +1 415 555 0132, github.com/jane/site\n- (other) Visa Status: H-1B";
+    const job = { title: "Engineer", companyName: "Globex", location: null, remote: true, descriptionText: description, salaryMaxUsd: null };
+    chatJson.mockResolvedValue({ score: 80, reasons: ["ok"] });
+    await scoreFit(job, summary);
+    const gateway = renderFitScorer({ profileSummary: summary, job }, { userId: "u1" }).userBlock!.text;
+    for (const sent of [user(lastCall()), gateway]) {
+      expect(sent).toContain("Built billing at Nordbeam");
+      for (const leak of ["jane@example.com", "555 0132", "github.com/jane", "H-1B"]) expect(sent, leak).not.toContain(leak);
+    }
   });
 
   it("tailor fences the posting and states the untrusted rules", async () => {
