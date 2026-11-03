@@ -31,6 +31,8 @@ export interface TenantEntry {
   request: (ids: TenantIds) => { path: string; body?: object };
   foreign?: number;
   why?: string;
+  /** A session-fresh route (05-api 5.2): test/fresh-matrix.test.ts holds this flag against how routes/index.ts mounts it. */
+  fresh?: true;
 }
 
 export type MatrixEntry = PublicEntry | TenantEntry;
@@ -46,6 +48,7 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "ALL /api/auth/*splat": { public: "Better Auth: sign-in and the caller's own session; it checks its own origins and limits" },
   "POST /api/webhooks/stripe": { public: "Stripe: the signature is the credential, and the event names its own customer" },
   "POST /api/webhooks/inbound-email": { public: "Postmark inbound: the token is the credential; mail is filed by forwarding address" },
+  "POST /api/webhooks/postmark-events": { public: "Postmark delivery events: the token is the credential; it only adds or lifts address-hash suppressions" },
   "POST /api/contact": { public: "the public contact form: stores a message and reads nothing back" },
   "GET /api/auth-providers": { public: "the configured sign-in methods; no user data" },
 
@@ -88,6 +91,7 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "GET /api/applications/:id": { request: (t) => ({ path: `/api/applications/${t.applicationId}` }) },
   "PATCH /api/applications/:id": { request: (t) => ({ path: `/api/applications/${t.applicationId}`, body: { coverLetter: null } }) },
   "POST /api/applications/approve": {
+    fresh: true,
     request: (t) => ({ path: "/api/applications/approve", body: { applicationIds: [t.applicationId], channel: "extension" } }),
     foreign: 200,
     why: "approves the caller's own drafts among the ids sent; another user's id is left out ({ approved: [] })",
@@ -97,8 +101,8 @@ export const MATRIX: Record<string, MatrixEntry> = {
 
   "GET /api/credits": own("/api/credits"),
   "GET /api/inbox": own("/api/inbox"),
-  "POST /api/billing/checkout": own("/api/billing/checkout", { plan: "starter", interval: "month" }),
-  "POST /api/billing/portal": own("/api/billing/portal"),
+  "POST /api/billing/checkout": { ...own("/api/billing/checkout", { plan: "starter", interval: "month" }), fresh: true },
+  "POST /api/billing/portal": { ...own("/api/billing/portal"), fresh: true },
 
   "GET /api/extension/queue": own("/api/extension/queue"),
   "POST /api/extension/report": {
@@ -111,13 +115,16 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "GET /api/files/*key": { request: (t) => ({ path: `/api/files/${t.fileKey}` }) },
 
   // WP-27: ADMIN_USER_IDS is empty in the matrix run, so every signed-in caller is a non-admin and gets the 404 of a route
-  // that does not exist. The admin behaviour itself (fresh session, audit rows) is test/admin.int.test.ts.
-  "GET /api/admin/flags": own("/api/admin/flags"),
-  "PUT /api/admin/flags/:key": own("/api/admin/flags/approvals_frozen", { value: true }),
-  "GET /api/admin/info": own("/api/admin/info"),
-  "GET /api/admin/companies": own("/api/admin/companies"),
-  "POST /api/admin/companies/:id/activate": own("/api/admin/companies/00000000-0000-4000-8000-000000000001/activate"),
-  "POST /api/admin/companies/:id/deactivate": own("/api/admin/companies/00000000-0000-4000-8000-000000000001/deactivate"),
+  // that does not exist. The admin behaviour itself (a 15-minute session, audit rows) is test/ops.int.test.ts, and test/fresh-matrix.test.ts holds the `fresh` flags.
+  "GET /api/admin/flags": { ...own("/api/admin/flags"), fresh: true },
+  "PUT /api/admin/flags/:key": { ...own("/api/admin/flags/approvals_frozen", { value: true }), fresh: true },
+  "GET /api/admin/info": { ...own("/api/admin/info"), fresh: true },
+  "GET /api/admin/companies": { ...own("/api/admin/companies"), fresh: true },
+  "POST /api/admin/companies/:id/activate": { ...own("/api/admin/companies/00000000-0000-4000-8000-000000000001/activate"), fresh: true },
+  "POST /api/admin/companies/:id/deactivate": { ...own("/api/admin/companies/00000000-0000-4000-8000-000000000001/deactivate"), fresh: true },
+  // WP-44: every statement filters by the caller's user id; read-all touches only the caller's unread rows.
+  "GET /api/notifications": own("/api/notifications"),
+  "POST /api/notifications/read": own("/api/notifications/read", { all: true }),
 };
 
 type Layer = { route?: { path: string | string[]; methods: Record<string, boolean> }; handle: { stack?: Layer[] }; mountPath?: string | string[] };

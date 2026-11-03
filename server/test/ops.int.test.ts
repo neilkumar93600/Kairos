@@ -32,11 +32,12 @@ const LINE = { id: "l1", section: "Experience", text: "Built the billing service
 const ANSWER = { fieldKey: "first_name", label: "First name", value: "Test", source: "profile" as const };
 
 const users = new Map<string, SessionUser>();
+const signedInAt = new Map<string, Date>();
 const byBearer: AuthGateway = {
   handler: async () => new Response(null, { status: 404 }),
   getSession: async (headers) => {
     const user = users.get(headers.get("authorization")?.replace(/^Bearer /, "") ?? "");
-    return user ? { user, sessionId: `s-${user.id}` } : null;
+    return user ? { user, sessionId: `s-${user.id}`, createdAt: signedInAt.get(user.id) ?? new Date() } : null;
   },
 };
 
@@ -48,6 +49,7 @@ describe.skipIf(!hasTestDb)("ops flags, admin routes and invariants against Post
 
   async function signIn(id: string, createdAt = new Date()) {
     users.set(id, { id, email: `${id}@test.local`, name: "Test User", emailVerified: true });
+    signedInAt.set(id, createdAt);
     await db.insert(schema.session).values({ id: `s-${id}`, token: randomUUID(), userId: id, expiresAt: new Date(Date.now() + 86_400_000), createdAt });
   }
   const as = (id: string) => ({ authorization: `Bearer ${id}` });
@@ -75,6 +77,7 @@ describe.skipIf(!hasTestDb)("ops flags, admin routes and invariants against Post
     await resetDb(db);
     resetFlagCache();
     users.clear();
+    signedInAt.clear();
     // The owner's id is fixed by ADMIN_USER_IDS, so seed that exact id.
     owner = await seedUser(db, { id: OWNER_ID, credits: 5 });
     member = await seedUser(db, { id: MEMBER_ID, credits: 5 });
@@ -99,11 +102,10 @@ describe.skipIf(!hasTestDb)("ops flags, admin routes and invariants against Post
     });
 
     it("asks an admin with a 20-minute-old sign-in to sign in again", async () => {
-      await db.delete(schema.session).where(eq(schema.session.userId, owner));
-      await signIn(owner, new Date(Date.now() - 20 * 60_000));
+      signedInAt.set(owner, new Date(Date.now() - 20 * 60_000));
       const res = await request(app).get("/api/admin/flags").set(as(owner));
       expect(res.status).toBe(403);
-      expect(res.body.error.code).toBe("reauth_required");
+      expect(res.body.error).toMatchObject({ code: "reauth_required", details: { maxAgeSec: 900 } });
     });
 
     it("sets a flag and writes its audit row in the same call; refuses an unknown flag and a wrong value", async () => {
@@ -122,14 +124,14 @@ describe.skipIf(!hasTestDb)("ops flags, admin routes and invariants against Post
     });
 
     it("activates an imported company, writes the audit row, and is a no-op the second time", async () => {
-      const [company] = await db.insert(schema.companies).values({ name: "Imported Co", ats: "lever", boardToken: "imported", active: false }).returning();
+      const [company] = await db.insert(schema.companies).values({ name: "Imported Co", ats: "lever", boardToken: "imported", active: false, inactiveReason: "import_pending", discoveredBy: "import" }).returning();
       const listed = await request(app).get("/api/admin/companies?active=false").set(as(owner));
       expect(listed.body.companies.map((c: { id: string }) => c.id)).toEqual([company!.id]);
 
       const first = await request(app).post(`/api/admin/companies/${company!.id}/activate`).set(as(owner));
       expect(first.body).toMatchObject({ active: true, changed: true });
       expect((await db.select().from(schema.companies).where(eq(schema.companies.id, company!.id)))[0]?.active).toBe(true);
-      expect(await audit()).toMatchObject([{ actor: owner, action: "company_activate", target: `company:${company!.id}`, before: { active: false }, after: { active: true } }]);
+      expect(await audit()).toMatchObject([{ actor: owner, action: "company_activate", target: `company:${company!.id}`, before: { active: false, inactiveReason: "import_pending" }, after: { active: true, inactiveReason: null } }]);
 
       expect((await request(app).post(`/api/admin/companies/${company!.id}/activate`).set(as(owner))).body.changed).toBe(false);
       const off = await request(app).post(`/api/admin/companies/${company!.id}/deactivate`).set(as(owner));
