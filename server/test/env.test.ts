@@ -97,4 +97,28 @@ describe("parseEnv", () => {
     expect(parseEnv(base).TRUSTED_PROXY_HOPS_DIRECT).toBe(0);
     expect(parseEnv({ ...base, TRUSTED_PROXY_HOPS_DIRECT: "1" }).TRUSTED_PROXY_HOPS_DIRECT).toBe(1);
   });
+
+  // WP-14: each bucket has its own token, so half a bucket is a deploy mistake, caught at boot instead of the first upload.
+  const r2 = {
+    R2_ENDPOINT: "https://acct.r2.cloudflarestorage.com",
+    R2_BUCKET_SNAPSHOTS: "kairos-snapshots",
+    R2_SNAPSHOTS_ACCESS_KEY_ID: "key-id",
+    R2_SNAPSHOTS_SECRET_ACCESS_KEY: "key-secret",
+  };
+
+  it("runs with no R2 variables at all (storage then refuses each call)", () => {
+    expect(parseEnv(base).R2_ENDPOINT).toBeUndefined();
+    expect(parseEnv({ ...base, ...r2 }).R2_BUCKET_SNAPSHOTS).toBe("kairos-snapshots");
+  });
+
+  it("takes a bucket's name and both key halves together, and R2_ENDPOINT with any of them", () => {
+    expect(() => parseEnv({ ...base, ...r2, R2_SNAPSHOTS_SECRET_ACCESS_KEY: "" })).toThrow(/R2_SNAPSHOTS_SECRET_ACCESS_KEY: required with R2_BUCKET_SNAPSHOTS/);
+    expect(() => parseEnv({ ...base, R2_RENDERS_ACCESS_KEY_ID: "key-id" })).toThrow(/R2_BUCKET_RENDERS: required with R2_RENDERS_ACCESS_KEY_ID/);
+    expect(() => parseEnv({ ...base, ...r2, R2_ENDPOINT: "" })).toThrow(/R2_ENDPOINT: required with an R2 bucket/);
+  });
+
+  it("refuses a plain http R2_ENDPOINT in production (a local MinIO is fine elsewhere)", () => {
+    expect(() => parseEnv({ ...prod, ...r2, R2_ENDPOINT: "http://minio.internal:9000" })).toThrow(/R2_ENDPOINT: must be https in production/);
+    expect(parseEnv({ ...base, ...r2, R2_ENDPOINT: "http://localhost:9000" }).R2_ENDPOINT).toBe("http://localhost:9000");
+  });
 });
