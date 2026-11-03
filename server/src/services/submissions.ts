@@ -4,13 +4,16 @@ import type { Db } from "../db/client";
 import { applications, subscriptions } from "../db/schema";
 import { env } from "../lib/env";
 import { conflict, forbidden, notFound, paymentRequired } from "../lib/errors";
-import { PAID_STATUSES } from "./billing-events";
+import { effectivePlan } from "./billing-events";
 import { availableCreditsNow, chargeSubmission } from "./credits";
 
+/** The user's effective plan: past_due keeps the paid plan for 7 days, then counts as Free. */
 export async function planFor(db: Db, userId: string): Promise<PlanId> {
-  const [row] = await db.select({ plan: subscriptions.plan, status: subscriptions.status }).from(subscriptions).where(eq(subscriptions.userId, userId));
-  if (!row || !PAID_STATUSES.includes(row.status)) return "free";
-  return row.plan;
+  const [row] = await db
+    .select({ plan: subscriptions.plan, status: subscriptions.status, pastDueSince: subscriptions.pastDueSince })
+    .from(subscriptions)
+    .where(eq(subscriptions.userId, userId));
+  return row ? effectivePlan(row) : "free";
 }
 
 /**
@@ -42,7 +45,9 @@ export async function approveApplications(db: Db, userId: string, ids: string[],
         ),
       )
       .returning({ id: applications.id });
-    if (updated.length > available) throw paymentRequired(`You have ${available} credits left for ${updated.length} applications`);
+    if (updated.length > available) {
+      throw paymentRequired(`You have ${available} credits left for ${updated.length} applications`, { available, requested: updated.length });
+    }
     return updated.map((u) => u.id);
   });
 }

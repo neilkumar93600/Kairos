@@ -71,4 +71,22 @@ describe("parseEnv", () => {
     expect(parseEnv(base).OWNER_USER_IDS).toEqual([]);
     expect(parseEnv({ ...base, OWNER_USER_IDS: " a1 ,b2,," }).OWNER_USER_IDS).toEqual(["a1", "b2"]);
   });
+
+  it("STRIPE_GRANT_COUPONS is empty by default (no $0 invoice grants) and splits a comma list", () => {
+    expect(parseEnv(base).STRIPE_GRANT_COUPONS).toEqual([]);
+    expect(parseEnv({ ...base, STRIPE_GRANT_COUPONS: "" }).STRIPE_GRANT_COUPONS).toEqual([]);
+    expect(parseEnv({ ...base, STRIPE_GRANT_COUPONS: " BETA100 ,founders," }).STRIPE_GRANT_COUPONS).toEqual(["BETA100", "founders"]);
+  });
+
+  it("reads STRIPE_WEBHOOK_SECRET_PREVIOUS for a secret roll", () => {
+    expect(parseEnv(base).STRIPE_WEBHOOK_SECRET_PREVIOUS).toBeUndefined();
+    expect(parseEnv({ ...base, STRIPE_WEBHOOK_SECRET_PREVIOUS: "whsec_old" }).STRIPE_WEBHOOK_SECRET_PREVIOUS).toBe("whsec_old");
+  });
+
+  // A live key without a webhook secret takes real money while every webhook answers 400: no plan, no credits.
+  it("refuses production with a live Stripe key but no webhook secret", () => {
+    expect(() => parseEnv({ ...prod, STRIPE_SECRET_KEY: "sk_live_x" })).toThrow(/STRIPE_WEBHOOK_SECRET: required in production with a live STRIPE_SECRET_KEY/);
+    expect(parseEnv({ ...prod, STRIPE_SECRET_KEY: "sk_live_x", STRIPE_WEBHOOK_SECRET: "whsec_x" }).STRIPE_SECRET_KEY).toBe("sk_live_x");
+    expect(parseEnv({ ...prod, STRIPE_SECRET_KEY: "sk_test_x" }).STRIPE_SECRET_KEY).toBe("sk_test_x");
+  });
 });

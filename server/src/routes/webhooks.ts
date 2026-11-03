@@ -1,15 +1,16 @@
 import express, { Router, type NextFunction, type Request, type Response } from "express";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { and, eq, isNull, or } from "drizzle-orm";
-import type Stripe from "stripe";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client";
-import { creditLedger, inboundEmails, profiles, stripeEvents, subscriptions } from "../db/schema";
+import { inboundEmails, profiles, stripeEvents, subscriptions, user } from "../db/schema";
 import { env } from "../lib/env";
 import { HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
 import { enqueue } from "../jobs/queues";
-import { processStripeEvent } from "../services/billing-events";
-import { INLINE_REQUEST, stripe } from "../services/stripe";
+import { couponIdsOf, fetchStripeState, processStripeEvent } from "../services/billing-events";
+import { grantPlanCredits } from "../services/credits";
+import { INLINE_REQUEST, stripe, verifyStripeEvent } from "../services/stripe";
 
 /** Provider webhooks. Mounted at /api/webhooks BEFORE express.json(), because Stripe signs the raw body. */
 export const webhooksRouter = Router();
@@ -20,38 +21,43 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(digest(a), digest(b));
 }
 
-webhooksRouter.post("/stripe", express.raw({ type: "application/json" }), async (req, res) => {
-  const secret = env().STRIPE_WEBHOOK_SECRET;
-  const signature = req.header("stripe-signature");
-  if (!secret || !signature) throw new HttpError(400, "bad_signature", "Missing Stripe signature");
+// 1 MB: a real event is under 100 KB, but an invoice with many lines can pass Express's 100 KB default.
+webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
+  const { STRIPE_WEBHOOK_SECRET, STRIPE_WEBHOOK_SECRET_PREVIOUS } = env();
+  const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  const event = verifyStripeEvent(body, req.header("stripe-signature"), [STRIPE_WEBHOOK_SECRET, STRIPE_WEBHOOK_SECRET_PREVIOUS]);
 
-  let event: Stripe.Event;
-  try {
-    event = stripe().webhooks.constructEvent(req.body as Buffer, signature, secret);
-  } catch {
-    throw new HttpError(400, "bad_signature", "Invalid Stripe signature");
-  }
+  // Stripe first, outside the transaction, so a slow Stripe never pins a pooled connection; a failure is a 500 Stripe retries.
+  const fetched = await fetchStripeState(event, {
+    retrieveSubscription: (id) => stripe().subscriptions.retrieve(id, {}, INLINE_REQUEST),
+    listInvoiceLines: (id) => stripe().invoices.listLineItems(id, { limit: 100 }, INLINE_REQUEST).autoPagingToArray({ limit: 1000 }),
+    invoiceCouponIds: async (id) => couponIdsOf(await stripe().invoices.retrieve(id, { expand: ["discounts"] }, INLINE_REQUEST)),
+  });
 
   // One transaction: if any effect fails, the event row rolls back too and Stripe's retry processes it again.
-  // ponytail: the Stripe re-fetch runs inside the transaction (bounded by INLINE_REQUEST); move it before the transaction if webhook volume grows.
+  // ponytail: no per-customer ordering, so two events for one customer can commit their snapshots out of order; the
+  // stripe_event_created guard and the customer-partitioned queue come with store-then-process (billing-12, billing-19).
   const outcome = await db().transaction((tx) =>
-    processStripeEvent(event, {
+    processStripeEvent(event, fetched, {
       recordEvent: async (id, type) => (await tx.insert(stripeEvents).values({ id, type }).onConflictDoNothing().returning()).length > 0,
-      retrieveSubscription: (id) => stripe().subscriptions.retrieve(id, {}, INLINE_REQUEST),
+      userExists: async (id) => (await tx.select({ id: user.id }).from(user).where(eq(user.id, id))).length > 0,
+      userForCustomer: async (customerId) =>
+        (await tx.select({ userId: subscriptions.userId }).from(subscriptions).where(eq(subscriptions.stripeCustomerId, customerId)))[0]?.userId ?? null,
       saveSubscription: async ({ userId, values }) => {
         // An unpaid state only overwrites the row when it is about the subscription the row tracks (or none yet),
         // so a late event for an old, cancelled subscription cannot drop a user who has since subscribed again.
         const tracksThis = or(isNull(subscriptions.stripeSubscriptionId), eq(subscriptions.stripeSubscriptionId, values.stripeSubscriptionId));
+        // The grace anchor is set on entering past_due and kept while it lasts, so repeated events never extend it.
+        const pastDueSince = values.status === "past_due" ? sql`coalesce(${subscriptions.pastDueSince}, now())` : null;
         await tx
           .update(subscriptions)
-          .set({ ...values, updatedAt: new Date() })
+          .set({ ...values, pastDueSince, updatedAt: new Date() })
           .where(and(eq(subscriptions.userId, userId), values.plan === "free" ? tracksThis : undefined));
       },
-      grantCredits: async ({ userId, delta, stripeInvoiceId }) => {
-        await tx.insert(creditLedger).values({ userId, delta, reason: "plan_grant", stripeInvoiceId }).onConflictDoNothing();
-      },
+      grantCredits: async (grant) => void (await grantPlanCredits(tx, grant)),
     }),
   );
+  logger.info({ eventId: event.id, type: event.type, outcome }, "stripe event");
   res.json(outcome === "duplicate" ? { received: true, duplicate: true } : { received: true });
 });
 

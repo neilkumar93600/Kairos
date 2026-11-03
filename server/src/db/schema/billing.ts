@@ -43,6 +43,8 @@ export const subscriptions = pgTable("subscriptions", {
   cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
   pausedUntil: timestamp("paused_until", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Set on entering past_due and kept while it lasts, cleared on leaving it: the 7-day grace anchor of effectivePlan. */
+  pastDueSince: timestamp("past_due_since", { withTimezone: true }),
 });
 
 /** Stripe event ids we already handled, so a redelivered webhook is a no-op. */

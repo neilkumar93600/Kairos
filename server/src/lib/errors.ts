@@ -13,5 +13,6 @@ export class HttpError extends Error {
 
 export const notFound = (what: string) => new HttpError(404, "not_found", `${what} not found`);
 export const forbidden = (message = "Not allowed") => new HttpError(403, "forbidden", message);
-export const paymentRequired = (message: string) => new HttpError(402, "payment_required", message);
+export const paymentRequired = (message: string, details?: { available: number; requested: number }) =>
+  new HttpError(402, "payment_required", message, details);
 export const conflict = (message: string) => new HttpError(409, "conflict", message);

@@ -50,6 +50,16 @@ export async function chargeSubmission(tx: Tx, userId: string, applicationId: st
   return inserted.length === 1;
 }
 
+/** Grants a paid invoice's credits. Idempotent: credit_ledger_invoice_uq allows one row per Stripe invoice. */
+export async function grantPlanCredits(tx: Tx, grant: { userId: string; delta: number; stripeInvoiceId: string }): Promise<boolean> {
+  const inserted = await tx
+    .insert(creditLedger)
+    .values({ ...grant, reason: "plan_grant" })
+    .onConflictDoNothing()
+    .returning({ id: creditLedger.id });
+  return inserted.length === 1;
+}
+
 /** Returns a credit when a submission we charged for turns out to have failed (e.g. the employer bounced it). */
 export async function refundSubmission(tx: Tx, userId: string, applicationId: string, note: string): Promise<boolean> {
   const inserted = await tx
