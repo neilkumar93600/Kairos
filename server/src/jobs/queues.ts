@@ -10,6 +10,7 @@ export const QUEUES = {
   parseResume: "parse-resume",
   classifyEmail: "classify-email",
   cloudApply: "cloud-apply",
+  costRollup: "cost-rollup",
 } as const;
 
 export interface JobData {
@@ -19,6 +20,7 @@ export interface JobData {
   "parse-resume": { resumeProfileId: string };
   "classify-email": { inboundEmailId: string };
   "cloud-apply": { applicationId: string };
+  "cost-rollup": { schedule: true };
 }
 
 export type QueueName = keyof JobData;

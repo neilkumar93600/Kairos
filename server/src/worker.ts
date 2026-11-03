@@ -2,6 +2,7 @@ import { Worker, type Job } from "bullmq";
 import { closeDb } from "./db/client";
 import { logger } from "./lib/logger";
 import { processClassifyEmail } from "./jobs/classify-email";
+import { processCostRollup } from "./jobs/cost-rollup";
 import { processParseResume } from "./jobs/parse-resume";
 import { processPollBoards } from "./jobs/poll-boards";
 import { closeQueues, queue, QUEUES, redisConnection } from "./jobs/queues";
@@ -15,6 +16,7 @@ const handlers: Record<string, { run: (job: Job) => Promise<unknown>; concurrenc
   [QUEUES.tailorApplication]: { run: processTailorApplication, concurrency: 4 },
   [QUEUES.parseResume]: { run: processParseResume, concurrency: 2 },
   [QUEUES.classifyEmail]: { run: processClassifyEmail, concurrency: 4 },
+  [QUEUES.costRollup]: { run: processCostRollup, concurrency: 1 },
 };
 
 const workers = Object.entries(handlers).map(([name, h]) => {
@@ -25,6 +27,8 @@ const workers = Object.entries(handlers).map(([name, h]) => {
 
 // One scheduler job a minute decides which boards are due.
 await queue("poll-boards").upsertJobScheduler("schedule-board-polls", { every: 60_000 }, { name: "poll-boards", data: { schedule: true } });
+// The spend roll-up the per-agent and global budget scopes read (03-agent-runtime 8.4).
+await queue("cost-rollup").upsertJobScheduler("cost-rollup", { every: 60_000 }, { name: "cost-rollup", data: { schedule: true } });
 logger.info({ queues: Object.keys(handlers) }, "worker started");
 
 async function shutdown(signal: string) {
