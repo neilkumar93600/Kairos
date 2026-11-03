@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { chromium } from "playwright-core";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
 import type { SessionUser } from "../src/lib/auth";
 import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from "./helpers/test-db";
@@ -15,6 +18,9 @@ import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from ".
 const OWNER = randomUUID();
 if (hasTestDb) process.env.DATABASE_URL = testDbUrl("containment");
 process.env.OWNER_USER_IDS = OWNER;
+// The fake browsers below ignore the filler; it only has to exist.
+process.env.FILLER_SCRIPT_PATH = join(tmpdir(), "kairos-containment-filler.js");
+writeFileSync(process.env.FILLER_SCRIPT_PATH, "window.__kairosFill = async () => ({});");
 process.env.STRIPE_SECRET_KEY = "sk_test_containment";
 delete process.env.ANTHROPIC_API_KEY;
 
@@ -27,7 +33,8 @@ const { createApp } = await import("../src/app");
 const { closeDb, db: globalDb } = await import("../src/db/client");
 const schema = await import("../src/db/schema");
 const { stripe } = await import("../src/services/stripe");
-const { processCloudApply } = await import("../src/jobs/cloud-apply");
+const { closeBrowser, processCloudApply } = await import("../src/jobs/cloud-apply");
+const { FAILURE_MESSAGES } = await import("../src/services/submissions");
 const { processClassifyEmail } = await import("../src/jobs/classify-email");
 const { processPollBoards } = await import("../src/jobs/poll-boards");
 const { atsAdapters } = await import("../src/services/ats");
@@ -108,7 +115,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       expect(enqueue).toHaveBeenCalledWith("cloud-apply", { applicationId: id }, `apply-${id}`);
     });
 
-    it("the worker refuses a non-owner's already-approved cloud row: no browser, marked failed, no credit", async () => {
+    it("the worker refuses a non-owner's already-approved cloud row at claim (plan_lapsed): no browser, marked failed, no credit", async () => {
       const userId = await signIn();
       const id = await draftFor(userId);
       await tdb.update(schema.applications).set({ status: "approved", channel: "cloud" }).where(eq(schema.applications.id, id));
@@ -120,7 +127,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       expect(launch).not.toHaveBeenCalled();
       const [row] = await tdb.select().from(schema.applications).where(eq(schema.applications.id, id));
       expect(row?.status).toBe("failed");
-      expect(row?.failureReason).toBe("The cloud applier is not open yet");
+      expect(row?.failureReason).toBe(FAILURE_MESSAGES.plan_lapsed);
       const ledger = await tdb.select().from(schema.creditLedger).where(eq(schema.creditLedger.userId, userId));
       expect(ledger.map((l) => l.reason)).not.toContain("submission");
     });
@@ -129,14 +136,14 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       const userId = await signIn(OWNER);
       const id = await draftFor(userId);
       await tdb.update(schema.applications).set({ status: "approved", channel: "cloud" }).where(eq(schema.applications.id, id));
-      vi.spyOn(chromium, "launch").mockRejectedValue(new Error("browser stub"));
+      vi.spyOn(chromium, "launch").mockRejectedValue(new Error("browser stub at /opt/secret/path"));
 
       await processCloudApply({ data: { applicationId: id } } as never);
 
-      // Past the gate: the run fails later (no filler bundle or browser in tests), not with the gate's message.
+      // Past the gate: the launch fails, which is recorded as a catalog reason, never the exception text.
       const [row] = await tdb.select().from(schema.applications).where(eq(schema.applications.id, id));
       expect(row?.status).toBe("failed");
-      expect(row?.failureReason).not.toBe("The cloud applier is not open yet");
+      expect(row?.failureReason).toBe(FAILURE_MESSAGES.applier_error);
     });
 
     it("the extension channel stays open to everyone", async () => {
@@ -144,6 +151,112 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       const id = await draftFor(userId);
       const res = await request(app).post("/api/applications/approve").send({ applicationIds: [id], channel: "extension" });
       expect(res.status).toBe(200);
+    });
+  });
+
+  describe("WP-04: the applier records coded outcomes and charges only a submit", () => {
+    afterEach(async () => {
+      await closeBrowser();
+    });
+
+    /**
+     * A stand-in for Chromium: CI has Postgres but no browser. The real page behaviour is covered by
+     * cloud-apply.browser.test.ts; this checks what reaches the database for a given page outcome.
+     */
+    function fakeBrowser(opts: { frames?: string[]; fill?: () => Promise<unknown> }) {
+      const fill = vi.fn(opts.fill ?? (async () => ({})));
+      const page = {
+        on: () => {},
+        url: () => "https://job-boards.greenhouse.io/x/jobs/1",
+        title: async () => "Apply",
+        $: async () => null,
+        goto: async () => ({ status: () => 200 }),
+        waitForLoadState: async () => {},
+        frames: () => (opts.frames ?? []).map((u) => ({ url: () => u, frameElement: async () => ({ evaluate: async () => true }) })),
+        evaluate: async (fn: unknown) => (typeof fn === "string" ? undefined : fill()),
+      };
+      const context = { route: async () => {}, on: () => {}, newPage: async () => page, close: async () => {} };
+      vi.spyOn(chromium, "launch").mockResolvedValue({ newContext: async () => context, on: () => {}, close: async () => {} } as never);
+      return fill;
+    }
+
+    async function approvedCloudRow() {
+      const userId = await signIn(OWNER);
+      const id = await draftFor(userId);
+      await tdb.update(schema.applications).set({ status: "approved", channel: "cloud" }).where(eq(schema.applications.id, id));
+      return { userId, id };
+    }
+    const rowOf = async (id: string) => (await tdb.select().from(schema.applications).where(eq(schema.applications.id, id)))[0]!;
+    const charges = async (userId: string) =>
+      (await tdb.select().from(schema.creditLedger).where(eq(schema.creditLedger.userId, userId))).filter((l) => l.reason === "submission");
+    const jobOf = async (id: string) => (await tdb.select({ jobId: schema.applications.jobId }).from(schema.applications).where(eq(schema.applications.id, id)))[0]!.jobId;
+
+    it("a visible challenge fails the run with zero ledger rows and the filler never runs (INV-8)", async () => {
+      const { userId, id } = await approvedCloudRow();
+      const fill = fakeBrowser({ frames: ["https://www.google.com/recaptcha/api2/bframe?k=key"] });
+
+      await expect(processCloudApply({ data: { applicationId: id } } as never)).resolves.toEqual({ submitted: false });
+
+      expect(fill).not.toHaveBeenCalled();
+      const row = await rowOf(id);
+      expect(row.status).toBe("failed");
+      expect(row.failureReason).toBe(FAILURE_MESSAGES.challenge);
+      expect(await charges(userId)).toHaveLength(0);
+    });
+
+    it("an error after the filler starts is stored as the unconfirmed catalog reason, never the exception text", async () => {
+      const { userId, id } = await approvedCloudRow();
+      fakeBrowser({ fill: async () => Promise.reject(new Error("page.evaluate: Execution context was destroyed at https://evil.example/?token=abc")) });
+
+      await processCloudApply({ data: { applicationId: id } } as never);
+
+      const row = await rowOf(id);
+      expect(row.status).toBe("failed");
+      expect(row.failureReason).toBe(FAILURE_MESSAGES.unconfirmed);
+      expect(await charges(userId)).toHaveLength(0);
+    });
+
+    it("a page's submitted report is pinned to the claimed row, charged once, with receipt rows from the stored answers", async () => {
+      const { userId, id } = await approvedCloudRow();
+      fakeBrowser({
+        fill: async () => ({
+          applicationId: randomUUID(),
+          outcome: "submitted",
+          submittedAt: "2001-01-01T00:00:00.000Z",
+          filledFields: [{ fieldKey: "first_name", label: "<b>page label</b>", value: "page value" }],
+        }),
+      });
+
+      await expect(processCloudApply({ data: { applicationId: id } } as never)).resolves.toEqual({ submitted: true });
+
+      const row = await rowOf(id);
+      expect(row.status).toBe("submitted");
+      expect(row.submittedAt!.getFullYear()).toBeGreaterThan(2001);
+      expect(row.receipt?.filledFields).toEqual([{ fieldKey: "first_name", label: "First name", value: "Test" }]);
+      expect(await charges(userId)).toHaveLength(1);
+    });
+
+    it("a posting closed since approval fails at claim without a browser", async () => {
+      const { userId, id } = await approvedCloudRow();
+      await tdb.update(schema.jobs).set({ closedAt: new Date() }).where(eq(schema.jobs.id, await jobOf(id)));
+      const launch = vi.spyOn(chromium, "launch");
+
+      await processCloudApply({ data: { applicationId: id } } as never);
+
+      expect(launch).not.toHaveBeenCalled();
+      expect((await rowOf(id)).failureReason).toBe(FAILURE_MESSAGES.posting_closed);
+      expect(await charges(userId)).toHaveLength(0);
+    });
+
+    it("a stored apply URL off the allowlist is refused before any page opens", async () => {
+      const { id } = await approvedCloudRow();
+      await tdb.update(schema.jobs).set({ applyUrl: "http://169.254.169.254/latest/meta-data/" }).where(eq(schema.jobs.id, await jobOf(id)));
+      const fill = fakeBrowser({});
+
+      await processCloudApply({ data: { applicationId: id } } as never);
+
+      expect(fill).not.toHaveBeenCalled();
+      expect((await rowOf(id)).failureReason).toBe(FAILURE_MESSAGES.applier_error);
     });
   });
 
