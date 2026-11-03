@@ -19,7 +19,20 @@ describe("parseEnv", () => {
     expect(() => parseEnv({ ...base, NODE_ENV: "production" })).toThrow(/POSTMARK_SERVER_TOKEN: required in production/);
   });
 
-  const prod = { ...base, NODE_ENV: "production", POSTMARK_SERVER_TOKEN: "pm-token", BETTER_AUTH_URL: "https://kairos.app", WEB_ORIGIN: "https://kairos.app" };
+  const prod = {
+    ...base, NODE_ENV: "production", POSTMARK_SERVER_TOKEN: "pm-token", BETTER_AUTH_URL: "https://kairos.app", WEB_ORIGIN: "https://kairos.app",
+    USER_HASH_KEY: Buffer.alloc(32, 9).toString("base64"),
+  };
+
+  it("refuses production without USER_HASH_KEY, which keys the erasure hashes (WP-25)", () => {
+    expect(() => parseEnv({ ...prod, USER_HASH_KEY: "" })).toThrow(/USER_HASH_KEY: required in production \(erasure hashes\)/);
+  });
+
+  it("reads retention overrides and refuses a malformed one (WP-25)", () => {
+    expect(parseEnv({ ...base, RETENTION_DAYS: "inbound_body=90, contact_messages=400" }).RETENTION_DAYS).toEqual({ inbound_body: 90, contact_messages: 400 });
+    expect(parseEnv(base).RETENTION_DAYS).toEqual({});
+    expect(() => parseEnv({ ...base, RETENTION_DAYS: "inbound_body=0" })).toThrow(/rule_name=days/);
+  });
 
   it("accepts production with an email token", () => {
     expect(parseEnv(prod).NODE_ENV).toBe("production");

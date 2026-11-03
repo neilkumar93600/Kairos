@@ -161,6 +161,7 @@ describe("DATA_KEKS at boot", () => {
     WEB_ORIGIN: "https://kairos.app",
     INBOUND_WEBHOOK_SECRET: "y".repeat(16),
     POSTMARK_SERVER_TOKEN: "pm-token",
+    USER_HASH_KEY: Buffer.alloc(32, 9).toString("base64"),
   };
 
   it("parses a valid list into the key ring", () => {

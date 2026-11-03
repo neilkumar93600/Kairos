@@ -64,7 +64,8 @@ The script refuses a `RESTORE_DATABASE_URL` equal to `DATABASE_URL`, so a shell 
    ```
 
    How to read the report: R-DR-1 step 5. After a dump restore expect more `ledger.skipped` (users who signed up after the dump: their accounts are gone, their ledger rows are listed) and more `applications.missing` (drafts created after the dump: lost, the user re-creates them; a missing application the journal shows as `submitted` was sent, so tell the user).
-4. Matches, drafts and the catalog after the dump are lost; `jobs` comes back by polling (the full dump has it as of Sunday).
+4. Replay the tombstones (R-DR-1 step 5b) against `$RESTORE_DATABASE_URL`, dry run then `--apply`: every account erased since the dump comes back with it.
+5. Matches, drafts and the catalog after the dump are lost; `jobs` comes back by polling (the full dump has it as of Sunday).
 
 ## 5. Cut over (15 minutes)
 

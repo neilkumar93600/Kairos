@@ -227,3 +227,17 @@ GRANT UPDATE (read_at) ON notifications TO kairos_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON email_suppressions TO kairos_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON email_sends, notifications, action_tokens TO kairos_worker;
 GRANT SELECT, INSERT ON email_suppressions TO kairos_worker;
+
+-- Privacy (WP-25, migration 0015). The api runs the erasure transaction of Settings > Delete account
+-- (services/erasure.ts): it writes the task, the ledger archive and the erased-address hash, deletes the user's contact
+-- messages and the user row; it reads erased_emails and writes consent at sign-up. The worker finishes each task
+-- (jobs/erasure.ts), archives the ledger of unverified accounts it purges, and runs the operator scripts. Neither
+-- may rewrite or delete the archive or the erased-address list; kairos_readonly reads none of the four tables.
+GRANT SELECT, INSERT, UPDATE ON deletion_tasks, consent_records TO kairos_api, kairos_worker;
+GRANT SELECT, INSERT ON credit_ledger_archive, erased_emails TO kairos_api, kairos_worker;
+-- A deviation from 02-database 4.2 (the api never deletes contact rows): only the erasure transaction holds the account's
+-- address, so it deletes that address's messages by contact_messages.email_hash, and by the address for older rows. No
+-- other api path deletes them.
+GRANT DELETE ON contact_messages TO kairos_api;
+-- The erasure worker pseudonymises an erased admin's id in feature_flags.updated_by too (WP-25); nothing else changes.
+GRANT UPDATE (updated_by) ON feature_flags TO kairos_worker;

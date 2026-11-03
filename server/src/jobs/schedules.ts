@@ -1,6 +1,8 @@
 import type { Job, RepeatOptions } from "bullmq";
 import { processAlerts, processMetricsPrune, processMetricsSample } from "./alerts";
 import { processBackupCheck } from "./backup-check";
+import { processErasure, processOrphanUploads } from "./erasure";
+import { processRetention, processScrubApplications } from "./retention";
 import { processInvariantsHourly, processInvariantsNightly } from "./invariants";
 import { processJournalReconcile, processMoneyJournal } from "./money-journal";
 import { processMailRetention, processNotifyReconcile } from "./notify";
@@ -55,6 +57,12 @@ export const SCHEDULES: Schedule[] = [
   { queue: "maintenance", id: "journal-reconcile", repeat: { pattern: "40 * * * *", tz: "UTC" }, run: () => processJournalReconcile() },
   // The backup-age alert and the manifest warnings of the pgbackup cron service's dumps (WP-13, ops-65).
   { queue: "maintenance", id: "backup-check", repeat: { pattern: "20 * * * *", tz: "UTC" }, run: () => processBackupCheck() },
+  // Account erasure's stores outside Postgres, and the page for a task open 24 hours (WP-25, 02-database 16.2).
+  { queue: "maintenance", id: "erasure", repeat: { every: MINUTE }, run: () => processErasure() },
+  { queue: "maintenance", id: "orphan-uploads", repeat: { pattern: "55 3 * * *", tz: "UTC" }, run: () => processOrphanUploads() },
+  // Retention of reply bodies, contact messages, below-bar matches and closed jobs; the 7-day sensitive scrub (WP-25).
+  { queue: "maintenance", id: "retention", repeat: { pattern: "10 4 * * *", tz: "UTC" }, run: () => processRetention() },
+  { queue: "maintenance", id: "scrub-applications", repeat: { pattern: "40 4 * * *", tz: "UTC" }, run: () => processScrubApplications() },
   // Queue gauges, the alert evaluator, the invariant checks and the metrics prune (WP-27).
   { queue: "maintenance", id: "metrics-sample", repeat: { every: MINUTE }, run: () => processMetricsSample() },
   { queue: "maintenance", id: "alerts", repeat: { pattern: "*/5 * * * *", tz: "UTC" }, run: () => processAlerts() },

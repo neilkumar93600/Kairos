@@ -90,13 +90,13 @@ export default defineRailway((ctx) => {
     {
       LLM_GATEWAY: "anthropic",
       // DATABASE_UNPOOLED_URL is the migrator's direct URL: only the service that migrates holds it.
-      ...byHand("DATABASE_URL", "DATABASE_UNPOOLED_URL", ...SERVER, "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "KAIROS_EDGE_SECRET", ...r2("UPLOADS", "RENDERS", "SNAPSHOTS"), "POSTMARK_EVENTS_SECRET"),
+      ...byHand("DATABASE_URL", "DATABASE_UNPOOLED_URL", ...SERVER, "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "KAIROS_EDGE_SECRET", ...r2("UPLOADS", "RENDERS", "SNAPSHOTS", "TOMBSTONES"), "POSTMARK_EVENTS_SECRET"),
     },
     "node dist/migrate.js",
   );
   const worker = kairos("worker", "server/Dockerfile", WATCH, {
     LLM_GATEWAY: "anthropic",
-    ...byHand("DATABASE_URL", ...SERVER, "ANTHROPIC_KEY_BATCH", "HEARTBEAT_URL", ...r2("UPLOADS", "RENDERS", "SNAPSHOTS", "BACKUPS")),
+    ...byHand("DATABASE_URL", ...SERVER, "ANTHROPIC_KEY_BATCH", "HEARTBEAT_URL", ...r2("UPLOADS", "RENDERS", "SNAPSHOTS", "BACKUPS", "TOMBSTONES")),
   });
   // No secret at all: the applier refuses to boot with any of APPLIER_FORBIDDEN (server/src/lib/env.ts).
   const applier = kairos("applier", "server/Dockerfile.applier", [...WATCH, "extension/src/**"], {

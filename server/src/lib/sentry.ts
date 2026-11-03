@@ -144,6 +144,12 @@ const SIGNALS = {
   email_lease_exhausted: 1,
   /** 401 or 403 on Postmark's delivery-event webhook: someone guessing its token (WP-44). */
   postmark_events_token_rejected: 5,
+  /** An account erasure still open 24 hours after the request; deletion_tasks.last_error_code says which store (WP-25). */
+  erasure_overdue: 1,
+  /** An erasure found rows still keyed to the deleted user id: a table the cascade does not reach (WP-25). */
+  erasure_rows_remain: 1,
+  /** R2 prefixes of no live user, deleted by the orphan-upload reconciler (WP-25). */
+  orphan_uploads: 1,
 } as const;
 export type Signal = keyof typeof SIGNALS;
 

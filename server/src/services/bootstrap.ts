@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
+import { eq } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { profiles, subscriptions } from "../db/schema";
+import { consentRecords, erasedEmails, profiles, subscriptions, user } from "../db/schema";
 import { env } from "../lib/env";
 import { grantFreeCredits } from "./credits";
+import { emailHashIfKeyed } from "./erasure";
 
 function forwardingAddressFor(userId: string): string {
   const suffix = randomBytes(4).toString("hex");
@@ -10,19 +12,26 @@ function forwardingAddressFor(userId: string): string {
 }
 
 /**
- * What every new user gets, in one transaction: a profile, a free subscriptions row and the free grant. Each insert is
+ * What every new user gets, in one transaction: a profile, a free subscriptions row, the free grant (unless the address
+ * belonged to an erased account) and the sign-up consent record. Each insert is
  * a no-op when its row exists (the profile and plan keys, the one-free-grant index), so the sign-up hook and the
  * bootstrap-users reconciler can both run it, at once or again. Returns whether it wrote anything.
  */
 export async function bootstrapUser(db: Db, userId: string): Promise<boolean> {
   return db.transaction(async (tx) => {
+    const [account] = await tx.select({ email: user.email }).from(user).where(eq(user.id, userId));
+    const mailHash = account ? emailHashIfKeyed(account.email) : null;
     const profile = await tx
       .insert(profiles)
-      .values({ userId, forwardingAddress: forwardingAddressFor(userId), preferences: null })
+      .values({ userId, forwardingAddress: forwardingAddressFor(userId), preferences: null, normalizedEmailHash: mailHash })
       .onConflictDoNothing({ target: profiles.userId })
       .returning({ userId: profiles.userId });
     const plan = await tx.insert(subscriptions).values({ userId, plan: "free" }).onConflictDoNothing({ target: subscriptions.userId }).returning({ userId: subscriptions.userId });
-    const granted = await grantFreeCredits(tx, userId);
+    // An address an erased account used gets no second free grant (WP-25, CISO should-fix deletion).
+    const erased = mailHash ? (await tx.select().from(erasedEmails).where(eq(erasedEmails.emailHash, mailHash))).length > 0 : false;
+    const granted = erased ? false : await grantFreeCredits(tx, userId);
+    // The terms and privacy notice the sign-up form showed (api-auth-security-54).
+    await tx.insert(consentRecords).values({ userId, purpose: "terms_privacy", version: env().PRIVACY_NOTICE_VERSION }).onConflictDoNothing();
     return profile.length + plan.length > 0 || granted;
   });
 }

@@ -36,9 +36,15 @@ export const contactMessages = pgTable(
     email: text("email").notNull(),
     topic: text("topic").notNull(),
     message: text("message").notNull(),
+    /** WP-25: keyed hash of the normalized sender address, so erasure finds a +tag or dotted alias of the account's address. */
+    emailHash: text("email_hash"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  () => [check("contact_messages_topic_ck", sql`topic IN ('support','billing','partnership','press','other')`)],
+  (t) => [
+    check("contact_messages_topic_ck", sql`topic IN ('support','billing','partnership','press','other')`),
+    check("contact_messages_email_hash_ck", sql`email_hash ~ '^[0-9a-f]{64}$'`),
+    index("contact_messages_email_hash_idx").on(t.emailHash).where(sql`${t.emailHash} is not null`),
+  ],
 );
 
 // Outbound mail core (WP-44): _db/messaging.md 5.2 and 5.3, _db/platform.md 4.10. Ids use gen_random_uuid(), not

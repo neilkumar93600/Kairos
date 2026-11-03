@@ -169,3 +169,15 @@ The pgbackup service encrypts each dump to the public keys in `BACKUP_AGE_RECIPI
 **Routine rotation, yearly.** Prepend a new version on both services (`v2:<new>,v1:<old>`) and redeploy both. Remove `v1` 91 days later: the longest link (unsubscribe) lives 90 days. Links signed under `v1` stop working at once when it is removed.
 
 **Compromise.** Replace the whole value with a single new version (`v2:<new>`) on both services and redeploy. Every link mailed so far answers "This link has expired"; users act from the app instead. The outstanding `action_tokens` rows can no longer be presented and age out with the daily retention.
+
+## 10. `USER_HASH_KEY`: never rotate (WP-25)
+
+`USER_HASH_KEY` (api and worker, sealed, one value per environment, in the emergency kit with `DATA_KEKS`) is a single unversioned HMAC key. It keys the user hash of `deletion_tasks`, `credit_ledger_archive` and the R2 tombstones, the erased-address hashes of `erased_emails` and `contact_messages.email_hash`, `llm_calls.user_hash`, the per-email auth limits in `rate_limits`, and the `erased:<hash>` pseudonyms in `ops_audit`.
+
+**Do not rotate it.** A new value silently breaks all of these at once:
+
+- a restore's tombstone replay no longer recognises any account erased before the change, so it would come back (R-DR-1 step 5b);
+- every erased address can take a second free grant;
+- the ledger archive, `llm_calls` and the audit pseudonyms no longer join an erased user's other records.
+
+**Treat it like a signing key.** It keeps every one of those pseudonyms opaque. Whoever holds it can test candidate user ids and addresses against them, so a leak makes them reversible by dictionary: who was erased, and which address. A suspected leak is an incident (incident.md). Rotating it then means re-keying every table above in one migration, from the user ids and addresses that still exist; the hashes of erased users cannot be recomputed, so tombstones and erased addresses keyed under the old value stay matchable only by keeping the old key as well. Versioning is deliberately not built: plan it with that migration if it is ever needed.

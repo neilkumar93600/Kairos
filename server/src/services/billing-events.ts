@@ -64,6 +64,8 @@ export interface StripeEventDeps {
   userExists(userId: string): Promise<boolean>;
   /** The user whose subscriptions row holds this Stripe customer. */
   userForCustomer(customerId: string): Promise<string | null>;
+  /** True when the customer belonged to an erased account (deletion_tasks.stripe_customer_hash, WP-25). */
+  customerErased(customerId: string): Promise<boolean>;
   saveSubscription(row: SubscriptionRow): Promise<void>;
   grantCredits(grant: InvoiceGrant): Promise<void>;
 }
@@ -159,6 +161,8 @@ export async function fetchStripeState(event: Stripe.Event, deps: StripeFetchDep
  */
 async function resolveUser(metadataUserId: string | undefined, customerId: string | null, deps: StripeEventDeps): Promise<string | null> {
   const userId = metadataUserId || (customerId ? await deps.userForCustomer(customerId) : null);
+  // An erased account's customer is deleted at Stripe, whose cancellation events follow: ignored, never retried (billing-50).
+  if (!userId && customerId && (await deps.customerErased(customerId))) return null;
   if (!userId) throw anomaly("anomaly_no_user", `no user for customer ${customerId ?? "(none)"}`);
   return (await deps.userExists(userId)) ? userId : null;
 }

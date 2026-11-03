@@ -10,6 +10,7 @@ import { CLIENT_IP_HEADER } from "../middleware/client-ip";
 import { hit } from "../middleware/rate-limit";
 import { cancelBillingForDeletedUser } from "../services/billing-events";
 import { bootstrapUser } from "../services/bootstrap";
+import { emailHashIfKeyed, eraseUser, normalizeEmail, tombstoneStore } from "../services/erasure";
 import { INLINE_REQUEST, stripe } from "../services/stripe";
 import { env, type Env } from "./env";
 import { logger, logUserHash } from "./logger";
@@ -42,8 +43,10 @@ export async function limitByEmail(path: string, body: unknown): Promise<void> {
   const limits = EMAIL_LIMITS[path];
   const email = (body as { email?: unknown } | undefined)?.email;
   if (!limits || typeof email !== "string") return;
-  // Hashed, so the table never holds an address; case and a +tag do not open a new bucket.
-  const id = createHash("sha256").update(email.trim().toLowerCase().replace(/\+[^@]*@/, "@")).digest("base64url");
+  // A keyed hash of the normalized address (WP-25), so the table never holds an address nor a hash anyone can reverse
+  // with a list of addresses; case, a +tag and Gmail dots do not open a new bucket. Unkeyed only in development.
+  const normal = normalizeEmail(email);
+  const id = emailHashIfKeyed(normal) ?? createHash("sha256").update(normal).digest("hex");
   for (const [bucket, max, windowMs] of limits) {
     if ((await hit(`${bucket}:${id}`, windowMs)).count > max) {
       throw new APIError("TOO_MANY_REQUESTS", { message: "Too many attempts for this email. Try again later." });
@@ -113,21 +116,32 @@ function createAuth() {
       ? { google: { clientId: e.GOOGLE_CLIENT_ID!, clientSecret: e.GOOGLE_CLIENT_SECRET! } }
       : {},
     user: {
-      // Settings > Delete account. Stripe is cancelled first, then cascades remove the profile, applications, ledger and replies.
+      // Settings > Delete account. Stripe is cancelled first, then eraseUser (WP-25) archives the ledger, records the
+      // erasure and deletes the user row with its cascade; the erasure worker finishes Stripe, R2 and llm_calls. Better
+      // Auth's own deletes that follow find nothing left.
       deleteUser: {
         enabled: true,
         // A Stripe outage throws here, which aborts the deletion: billing must never outlive the account.
         beforeDelete: async (deleted) => {
-          if (!env().STRIPE_SECRET_KEY) return;
-          const [row] = await db()
-            .select({ stripeCustomerId: schema.subscriptions.stripeCustomerId })
-            .from(schema.subscriptions)
-            .where(eq(schema.subscriptions.userId, deleted.id));
-          const cancelled = await cancelBillingForDeletedUser(row?.stripeCustomerId ?? null, {
-            list: async (customer) => (await stripe().subscriptions.list({ customer, status: "all", limit: 100 }, INLINE_REQUEST)).data,
-            cancel: (id) => stripe().subscriptions.cancel(id, {}, INLINE_REQUEST),
-          });
-          if (cancelled) logger.info({ userHash: logUserHash(deleted.id), cancelled }, "subscriptions cancelled before account deletion");
+          if (env().STRIPE_SECRET_KEY) {
+            const [row] = await db()
+              .select({ stripeCustomerId: schema.subscriptions.stripeCustomerId })
+              .from(schema.subscriptions)
+              .where(eq(schema.subscriptions.userId, deleted.id));
+            const cancelled = await cancelBillingForDeletedUser(row?.stripeCustomerId ?? null, {
+              list: async (customer) => (await stripe().subscriptions.list({ customer, status: "all", limit: 100 }, INLINE_REQUEST)).data,
+              cancel: (id) => stripe().subscriptions.cancel(id, {}, INLINE_REQUEST),
+            });
+            if (cancelled) logger.info({ userHash: logUserHash(deleted.id), cancelled }, "subscriptions cancelled before account deletion");
+          }
+          try {
+            await eraseUser(db(), deleted.id, "user", tombstoneStore());
+          } catch (err) {
+            // Stripe is already cancelled; the account still exists and the user can retry. Loud, so it is seen.
+            logger.error({ err, userHash: logUserHash(deleted.id) }, "account erasure failed after the Stripe cancel");
+            throw err;
+          }
+          logger.info({ userHash: logUserHash(deleted.id) }, "account erased; the erasure worker finishes the other stores");
         },
       },
     },

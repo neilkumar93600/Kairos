@@ -139,6 +139,18 @@ describe("deleteUserObjects (erasure)", () => {
   });
 });
 
+describe("list and owners (WP-25: export, tombstone replay, orphan uploads)", () => {
+  it("lists one owner's names and every owner of a bucket, across pages", async () => {
+    const r2 = fakeR2(config, 2);
+    for (const [owner, name] of [["u1", "a.pdf"], ["u1", "b.pdf"], ["u1", "c.pdf"], ["u12", "a.pdf"], ["u3", "a.pdf"]]) {
+      await r2.storage.put(userKey("uploads", owner!, name!), "x", "application/pdf");
+    }
+    expect(await r2.storage.list("uploads", "u1")).toEqual(["a.pdf", "b.pdf", "c.pdf"]);
+    expect(await r2.storage.owners("uploads")).toEqual(["u1", "u12", "u3"]);
+    await expect(r2.storage.list("uploads", "../x")).rejects.toThrow(/unsafe owner/);
+  });
+});
+
 describe("storageConfig", () => {
   it("turns on only the buckets whose name and token are all set", () => {
     const e = parseEnv({
