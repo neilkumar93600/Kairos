@@ -178,6 +178,9 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       feature_flags: ["S", "S", ""],
       ops_audit: ["SI", "SI", ""],
       metrics_minute: ["SIU", "SIUD", ""],
+      tracker_items: ["SIUD", "SI", ""],
+      application_events: ["SI", "SI", "S"],
+      submission_attempts: ["SIU", "SIU", "cols"],
     };
     const ROLES = ["kairos_api", "kairos_worker", "kairos_readonly"] as const;
     const PRIVS = { S: "SELECT", I: "INSERT", U: "UPDATE", D: "DELETE" } as const;
@@ -237,6 +240,15 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       ["kairos_api", "delete from inbound_emails", false],
       ["kairos_api", "select llm_calls_drop_old_partitions(9999)", false],
       ["kairos_readonly", "insert into companies (name, ats, board_token) values ('x', 'greenhouse', 'x')", false],
+      ["kairos_readonly", "select resume_snapshot from applications limit 1", false],
+      ["kairos_readonly", "select verification from applications limit 1", false],
+      ["kairos_worker", "update tracker_items set stage = 'applied', updated_at = now() where false", true],
+      ["kairos_worker", "update tracker_items set notes = 'x' where false", false],
+      ["kairos_readonly", "select id, state, failure_code from submission_attempts limit 1", true],
+      ["kairos_readonly", "select evidence from submission_attempts limit 1", false],
+      ["kairos_api", "update application_events set kind = 'sent'", false],
+      ["kairos_worker", "delete from submission_attempts", false],
+      ["kairos_applier", "select notes from tracker_items limit 1", false],
     ] as const)("%s: %s -> allowed %s", async (role, query, allowed) => {
       if (allowed) await expect(asRole(role, query)).resolves.toBeDefined();
       else await expect(asRole(role, query)).rejects.toMatchObject({ code: expect.stringMatching(/^(42501|25006)$/) });

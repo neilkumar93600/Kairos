@@ -1,4 +1,5 @@
 import { Queue, type ConnectionOptions, type WorkerOptions } from "bullmq";
+import type { EMAIL_KINDS } from "../db/schema";
 import { redis } from "../lib/redis";
 
 /** Queue names. The worker service consumes all but `cloud-apply`, which the applier service consumes. */
@@ -13,6 +14,7 @@ export const QUEUES = {
   costRollup: "cost-rollup",
   ledgerWatch: "ledger-watch",
   maintenance: "maintenance",
+  notify: "notify",
 } as const;
 
 export interface JobData {
@@ -29,6 +31,8 @@ export interface JobData {
   "ledger-watch": { schedule: true };
   /** The job name picks the task (jobs/schedules.ts). */
   maintenance: { schedule: true };
+  /** One email of the notify ledger (jobs/notify.ts); rendered from the database at send time. */
+  notify: { kind: (typeof EMAIL_KINDS)[number]; entityId: string; userId: string | null };
 }
 
 export type QueueName = keyof JobData;
@@ -70,6 +74,9 @@ export const QUEUE_CONFIG: Record<QueueName, QueueConfig> = {
   "ledger-watch": { ...STANDARD, concurrency: 1 },
   // Partitions, sweeps and reconcilers (jobs/schedules.ts); 4, so a slow daily task never holds up the minute ones.
   maintenance: { ...STANDARD, concurrency: 4 },
+  // A send is one 10 s Postmark call (plus a 10 s search on a re-claim). Five attempts, as the email_sends ledger;
+  // 30 s, 60 s, 2 min... so a Postmark blip clears before the lease-only path matters (WP-44).
+  notify: { concurrency: 8, attempts: 5, backoffMs: 30_000, lockDurationMs: 60_000 },
 };
 
 /** Every queue the worker consumes, with its concurrency: the table's, or QUEUE_CONCURRENCY's. Refuses unknown names. */

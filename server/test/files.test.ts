@@ -19,7 +19,7 @@ const byBearer: AuthGateway = {
   handler: async () => new Response(null, { status: 404 }),
   getSession: async (headers) => {
     const id = headers.get("authorization")?.replace(/^Bearer /, "");
-    return id ? { sessionId: "s", user: { id, email: `${id}@test.local`, name: "U", emailVerified: true } } : null;
+    return id ? { sessionId: "s", createdAt: new Date(), user: { id, email: `${id}@test.local`, name: "U", emailVerified: true } } : null;
   },
 };
 const app = createApp({ auth: byBearer, corsOrigins: [], healthChecks: {} });

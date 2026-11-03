@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { chromium } from "playwright-core";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -69,7 +69,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
     enqueue.mockClear();
     fetchPostingFromBoard.mockReset();
     app = createApp({
-      auth: { handler: async () => new Response(null, { status: 404 }), getSession: async () => ({ user: me, sessionId: "s" }) },
+      auth: { handler: async () => new Response(null, { status: 404 }), getSession: async () => ({ user: me, sessionId: "s", createdAt: new Date() }) },
       corsOrigins: [],
       healthChecks: {},
     });
@@ -219,7 +219,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
 
     it("a posting closed since approval fails at claim without a browser", async () => {
       const { userId, id } = await approvedCloudRow();
-      await tdb.update(schema.jobs).set({ closedAt: new Date() }).where(eq(schema.jobs.id, await jobOf(id)));
+      await tdb.update(schema.jobs).set({ closedAt: new Date(), closedBy: "poll" }).where(eq(schema.jobs.id, await jobOf(id)));
       const launch = vi.spyOn(chromium, "launch");
 
       await processCloudApply({ data: { applicationId: id } } as never);
@@ -231,7 +231,16 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
 
     it("a stored apply URL off the allowlist is refused before any page opens", async () => {
       const { id } = await approvedCloudRow();
-      await tdb.update(schema.jobs).set({ applyUrl: "http://169.254.169.254/latest/meta-data/" }).where(eq(schema.jobs.id, await jobOf(id)));
+      // A row stored before jobs_apply_url_host_ck (WP-42) existed: the database now refuses the URL, the applier still must.
+      const jobId = await jobOf(id);
+      await tdb.transaction(async (tx) => {
+        const { rows } = await tx.execute<{ def: string }>(
+          sql`select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'jobs_apply_url_host_ck'`,
+        );
+        await tx.execute(sql`alter table jobs drop constraint jobs_apply_url_host_ck`);
+        await tx.update(schema.jobs).set({ applyUrl: "http://169.254.169.254/latest/meta-data/" }).where(eq(schema.jobs.id, jobId));
+        await tx.execute(sql.raw(`alter table jobs add constraint jobs_apply_url_host_ck ${rows[0]!.def.replace(/ NOT VALID$/, "")} not valid`));
+      });
       const fill = fakeBrowser({});
 
       await processCloudApply({ data: { applicationId: id } } as never);

@@ -9,6 +9,7 @@ import { startMetricsFlush } from "./lib/metrics";
 import { assertNoEviction, redis } from "./lib/redis";
 import { initSentry } from "./lib/sentry";
 import { closeQueues } from "./jobs/queues";
+import { csrfOrigins } from "./middleware/origin-guard";
 
 const e = env();
 initSentry("api");
@@ -20,8 +21,7 @@ await deadline(assertNoEviction(), 10_000);
 const app = createApp({
   auth: authGateway(),
   corsOrigins: [e.WEB_ORIGIN, ...(e.EXTENSION_ORIGIN ? [e.EXTENSION_ORIGIN] : [])],
-  // The same exact origins Better Auth trusts, minus the extension (it sends a bearer token, which skips the guard).
-  csrfOrigins: [new URL(e.WEB_ORIGIN).origin, ...e.CSRF_ALLOWED_ORIGINS],
+  csrfOrigins: csrfOrigins(e),
   edgeSecret: e.KAIROS_EDGE_SECRET,
   proxyHops: e.TRUSTED_PROXY_HOPS_DIRECT,
   sharedLimits: true,
