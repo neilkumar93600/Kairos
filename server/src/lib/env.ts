@@ -59,6 +59,8 @@ export const APPLIER_FORBIDDEN = [
   "USER_HASH_KEY",
   "DATA_KEKS",
   "LINK_SIGNING_KEY",
+  /** The migrator's direct URL (src/migrate.ts): kairos_migrator owns every table. */
+  "DATABASE_UNPOOLED_URL",
 ] as const;
 
 const applierSchema = z.object(applierShape);
