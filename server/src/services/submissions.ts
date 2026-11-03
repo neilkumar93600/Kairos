@@ -94,6 +94,22 @@ export async function claimForCloud(db: Db, applicationId: string): Promise<bool
 }
 
 /**
+ * The stuck-submitting sweep (ops-18 interim, until WP-29's leases): a cloud claim older than 10 minutes belongs to an
+ * applier that died mid-run (a run is bounded at about 4 minutes, its drain at 3). It settles the way the applier
+ * settles a click it cannot confirm: failed with the `unconfirmed` sentence, never resent. No ledger row is written:
+ * nothing was charged, and in-flight counts only approved and submitting, so the reserved credit is free again. One
+ * conditional update, so two workers settle each row once; a late report from a live applier then gets 409.
+ */
+export async function sweepStuckSubmitting(db: Db): Promise<string[]> {
+  const swept = await db
+    .update(applications)
+    .set({ status: "failed", failureReason: FAILURE_MESSAGES.unconfirmed, updatedAt: new Date() })
+    .where(and(eq(applications.status, "submitting"), eq(applications.channel, "cloud"), sql`${applications.updatedAt} < now() - interval '10 minutes'`))
+    .returning({ id: applications.id });
+  return swept.map((s) => s.id);
+}
+
+/**
  * Records what the extension or cloud applier saw. Only a successful submission costs a credit. submitted_at is
  * server time: the report's own clock is the browser's, or in the cloud the employer page's (applications-v01).
  */

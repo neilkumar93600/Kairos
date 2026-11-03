@@ -118,5 +118,22 @@ Railway cannot alert on log lines, so the processes count these and send Sentry 
 | `applier_internal_blocked` | 1 | An employer page tried to reach an internal address (metadata IP, private range) | Treat it as a possible attack on the applier (R-SEC-3). Find the line `applier request blocked` with `topLevel` and the application id, look at that posting, and stop cloud sends if the page is hostile |
 | `applier_nav_blocked` | 1 | A page navigated off the five ATS hosts | Usually a redirect after submit. If one ATS does it every time, tell the WP-04 owner; if it is a strange host, as above |
 | `admin_adjustment_row` | 1 | A `credit_ledger` row with reason `admin_adjustment` was written, which no code does | If you did not write it, treat it as a database compromise: export the evidence, then rotate the database credentials first |
+| `submitting_swept` | 1 | A cloud send stayed in `submitting` over 10 minutes: the applier died mid-run. The worker settled it as failed with the "could not confirm" sentence; nothing is resent and no credit is used | Read the applier's logs and Sentry around the claim time (an OOM kill, a crash, a deploy). If several in a row, stop cloud sends (`CLOUD_APPLIER_OPEN=0`) and work R-HEALTH-2 |
+| `signup_repaired` | 1 | A user's sign-up hook failed (profile, free plan or free grant missing); the worker finished it | Find `sign-up bootstrap failed` in the api logs at that time. A database blip needs nothing more; a repeated error is a bug to fix |
+| `llm_calls_default_rows` | 1 | `llm_calls_default` holds rows: a week had no partition, so the worker's daily `llm-partitions` job (03:00 UTC) has been failing | Fix the job's error first (its failures are Sentry issues on the `maintenance` queue). Then move the rows, below |
+
+**Moving rows out of `llm_calls_default`.** As the owner, in one transaction (the gateway's inserts wait for it):
+
+```sql
+begin;
+alter table llm_calls detach partition llm_calls_default;
+select llm_calls_ensure_partitions(6);
+-- Only for rows dated before the current week: create that week by hand, named after its Monday (ISO year and week).
+-- create table llm_calls_2026w49 partition of llm_calls for values from ('2026-11-30 00:00:00+00') to ('2026-12-07 00:00:00+00');
+insert into llm_calls select * from llm_calls_default;
+truncate llm_calls_default;
+alter table llm_calls attach partition llm_calls_default default;
+commit;
+```
 
 Unhandled errors (5xx on the api, a job whose retries ran out, a crash) are ordinary Sentry issues. The applier's events carry the error type and our stack frames, never a message: read the message in the applier's log line at the same time.

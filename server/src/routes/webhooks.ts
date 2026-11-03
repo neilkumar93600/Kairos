@@ -100,6 +100,11 @@ webhooksRouter.post("/inbound-email", requireInboundToken, express.json({ limit:
     .values({ userId: profile.userId, providerMessageId: mail.MessageID, sender: mail.From, subject: mail.Subject, textBody: capText(mail.TextBody) })
     .onConflictDoNothing()
     .returning({ id: inboundEmails.id });
-  if (stored) await enqueue("classify-email", { inboundEmailId: stored.id }, `classify-${stored.id}`);
+  // A redelivery queues the stored row again while it is unclassified: Postmark retries the 500 of an enqueue that
+  // failed after the insert (messaging-08). The job id makes a second add a no-op.
+  const [pending] = stored
+    ? [stored]
+    : await db().select({ id: inboundEmails.id }).from(inboundEmails).where(and(eq(inboundEmails.providerMessageId, mail.MessageID), isNull(inboundEmails.kind)));
+  if (pending) await enqueue("classify-email", { inboundEmailId: pending.id }, `classify-${pending.id}`);
   res.json({ stored: Boolean(stored) });
 });

@@ -1,4 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { getPlan } from "@auto-career/shared";
 import type { Db } from "../db/client";
 import { applications, creditLedger } from "../db/schema";
 
@@ -45,6 +46,19 @@ export async function chargeSubmission(tx: Tx, userId: string, applicationId: st
   const inserted = await tx
     .insert(creditLedger)
     .values({ userId, delta: -1, reason: "submission", applicationId })
+    .onConflictDoNothing()
+    .returning({ id: creditLedger.id });
+  return inserted.length === 1;
+}
+
+/**
+ * The one free grant (billing-46), its size from plans.ts. Exactly once per user: credit_ledger_one_free_grant_uq
+ * turns a second insert (a retried hook, the bootstrap reconciler, a racing worker) into a no-op.
+ */
+export async function grantFreeCredits(tx: Tx, userId: string): Promise<boolean> {
+  const inserted = await tx
+    .insert(creditLedger)
+    .values({ userId, delta: getPlan("free").applicationsPerCycle, reason: "free_grant" })
     .onConflictDoNothing()
     .returning({ id: creditLedger.id });
   return inserted.length === 1;

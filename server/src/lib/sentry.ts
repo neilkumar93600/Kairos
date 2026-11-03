@@ -79,8 +79,9 @@ export function captureJobFailure(queue: string, job: Pick<Job, "id" | "attempts
 }
 
 /**
- * Security signals (CISO mustFix 10) and the count, in one minute on one process, at which Sentry hears of one. Railway
- * cannot alert on log lines, so these are what the Sentry alert rules fire on (owner-actions/WP-11.md).
+ * Security signals (CISO mustFix 10), the maintenance alerts of WP-09, and the count, in one minute on one process, at
+ * which Sentry hears of one. Railway cannot alert on log lines, so these are what the Sentry alert rules fire on
+ * (owner-actions/WP-11.md, WP-09.md).
  * ponytail: per process and per minute, so an attack spread thinly across replicas stays under the bar; the
  * metrics_minute alert evaluator (WP-27) counts across replicas.
  */
@@ -95,6 +96,12 @@ const SIGNALS = {
   applier_nav_blocked: 1,
   /** A credit_ledger admin_adjustment row: no code writes one, so it is a manual write or an intruder's. */
   admin_adjustment_row: 1,
+  /** Rows in llm_calls_default: a week had no partition, so the daily partitions job has been failing (WP-09). */
+  llm_calls_default_rows: 1,
+  /** Cloud sends left in submitting over 10 minutes, settled as unconfirmed: an applier died mid-run (WP-09). */
+  submitting_swept: 1,
+  /** Users the bootstrap reconciler finished: their sign-up hook failed (WP-09). */
+  signup_repaired: 1,
 } as const;
 export type Signal = keyof typeof SIGNALS;
 
