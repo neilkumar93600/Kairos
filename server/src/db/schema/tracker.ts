@@ -60,8 +60,11 @@ export const trackerItems = pgTable(
   ],
 );
 
-/** F5 timeline kinds (02-database 7.3.4); the last five are the tracker's own (PRD 9.3). */
-export const APPLICATION_EVENT_KINDS = [
+/**
+ * The stored timeline kinds (02-database 7.3.4; the last five are the tracker's own, PRD 9.3). Richer than the API's
+ * APPLICATION_EVENT_KINDS (shared/src/types.ts): services/events.ts#toApiEvent maps each row to the shared contract.
+ */
+export const DB_EVENT_KINDS = [
   "drafted",
   "verified",
   "edited",
@@ -84,7 +87,7 @@ export const APPLICATION_EVENT_KINDS = [
   "interview_added",
   "note_added",
 ] as const;
-export type ApplicationEventKind = (typeof APPLICATION_EVENT_KINDS)[number];
+export type DbEventKind = (typeof DB_EVENT_KINDS)[number];
 export type EventActor = "user" | "autopilot" | "system" | "employer";
 
 /**
@@ -104,7 +107,7 @@ export const applicationEvents = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    kind: text("kind").$type<ApplicationEventKind>().notNull(),
+    kind: text("kind").$type<DbEventKind>().notNull(),
     actor: text("actor").$type<EventActor>().notNull(),
     /** The PRD's `source`. */
     source: text("source")
