@@ -1,6 +1,8 @@
 import { Worker, type Job } from "bullmq";
-import { closeDb } from "./db/client";
-import { setProcessRole } from "./lib/env";
+import { sql } from "drizzle-orm";
+import { closeDb, db } from "./db/client";
+import { baseEnv, setProcessRole } from "./lib/env";
+import { closeServer, onShutdown, serveHealth, startHeartbeat } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
 import { captureJobFailure, initSentry } from "./lib/sentry";
 import { processClassifyEmail } from "./jobs/classify-email";
@@ -39,11 +41,18 @@ await queue("poll-boards").upsertJobScheduler("schedule-board-polls", { every: 6
 await queue("cost-rollup").upsertJobScheduler("cost-rollup", { every: 60_000 }, { name: "cost-rollup", data: { schedule: true } });
 logger.info({ queues: Object.keys(handlers) }, "worker started");
 
-async function shutdown(signal: string) {
-  logger.info({ signal }, "worker shutting down");
-  await Promise.allSettled(workers.map((w) => w.close()));
-  await Promise.allSettled([closeQueues(), closeDb()]);
-  process.exit(0);
-}
-process.on("SIGTERM", () => void shutdown("SIGTERM"));
-process.on("SIGINT", () => void shutdown("SIGINT"));
+/** Postgres, the Redis connection of a consumer (ioredis "ready") and every consumer still running. */
+const checks = {
+  database: async () => void (await db().execute(sql`select 1`)),
+  redis: async () => {
+    if ((await workers[0]!.backend.client).status !== "ready") throw new Error("redis not ready");
+  },
+  consumers: async () => {
+    if (!workers.every((w) => w.isRunning())) throw new Error("a consumer stopped");
+  },
+};
+const health = serveHealth(baseEnv().PORT, checks);
+startHeartbeat(baseEnv().HEARTBEAT_URL, checks);
+
+// 30 s for jobs in flight (architecture D9); a job still running then is retried by BullMQ as stalled.
+onShutdown("worker", 30_000, () => Promise.all(workers.map((w) => w.close())), () => Promise.allSettled([closeServer(health), closeQueues(), closeDb()]));

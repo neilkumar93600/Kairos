@@ -1,23 +1,18 @@
 import { Router } from "express";
+import { healthStatus, type HealthCheck } from "../lib/lifecycle";
 
-export type HealthCheck = () => Promise<void>;
+export type { HealthCheck };
 
-/** GET /health: 200 when every dependency answers, 503 otherwise. Railway uses it as the healthcheck. */
-export function healthRouter(checks: Record<string, HealthCheck>) {
+/**
+ * GET /health (Railway's healthcheck, the direct uptime check) and GET /api/health (the same handler through the web's
+ * /api rewrite, so the second uptime check proves the Vercel path too). 200 when every dependency answers within 3 s,
+ * 503 otherwise or while draining. Status only: the failed check is in the log, not the response.
+ */
+export function healthRouter(checks: Record<string, HealthCheck>, isDraining: () => boolean = () => false) {
   const router = Router();
-  router.get("/health", async (_req, res) => {
-    const results = await Promise.all(
-      Object.entries(checks).map(async ([name, check]) => {
-        try {
-          await Promise.race([check(), new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000))]);
-          return [name, "ok"] as const;
-        } catch {
-          return [name, "down"] as const;
-        }
-      }),
-    );
-    const ok = results.every(([, status]) => status === "ok");
-    res.status(ok ? 200 : 503).json({ status: ok ? "ok" : "degraded", checks: Object.fromEntries(results) });
+  router.get(["/health", "/api/health"], async (_req, res) => {
+    const [status, body] = await healthStatus(checks, isDraining());
+    res.status(status).json(body);
   });
   return router;
 }

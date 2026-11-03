@@ -24,6 +24,8 @@ export interface AppDeps {
   proxyHops?: number;
   /** Rate-limit counters in Postgres, shared by replicas and kept across deploys. Off: in memory per app (tests). */
   sharedLimits?: boolean;
+  /** True once SIGTERM arrived (lib/lifecycle.ts): /health answers 503 draining. */
+  isDraining?: () => boolean;
 }
 
 const AUTH_BODY_MAX_BYTES = 64 * 1024;
@@ -59,7 +61,7 @@ export function createApp(deps: AppDeps) {
   app.use(httpLogger());
   app.use(cors({ origin: deps.corsOrigins, credentials: true, allowedHeaders: ["content-type", "authorization", "x-request-id"], exposedHeaders: ["x-request-id"] }));
 
-  app.use(healthRouter(deps.healthChecks));
+  app.use(healthRouter(deps.healthChecks, deps.isDraining));
   app.use("/api/auth", signalOn([429], "auth_rate_limited"), capAuthBody);
   app.all("/api/auth/*splat", toNodeHandler(deps.auth.handler));
   app.use("/api/webhooks/inbound-email", signalOn([401, 403], "inbound_token_rejected"));
