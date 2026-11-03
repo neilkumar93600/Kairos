@@ -64,6 +64,13 @@
       "when": 1793687798488,
       "tag": "0008_auth_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793703504493,
+      "tag": "0009_outbound_mail",
+      "breakpoints": true
     }
   ]
 }

@@ -182,3 +182,13 @@ END $$;
 -- kairos_metrics (Grafana): aggregates only, never a user id or free text. metrics_minute and the ops_*_v views join
 -- it when they exist (WP-27).
 GRANT SELECT ON llm_cost_daily TO kairos_metrics;
+
+-- Outbound mail and signed links (WP-44, 02-database 4.2). The api reads and marks notifications read, verifies and
+-- consumes signed links and records Postmark's bounce and complaint events; the worker claims and sends mail, mints
+-- links, writes notifications and runs the retention deletes. The api can change only read_at on a notification.
+GRANT SELECT, INSERT, UPDATE ON email_sends, action_tokens TO kairos_api;
+GRANT SELECT, INSERT ON notifications TO kairos_api;
+GRANT UPDATE (read_at) ON notifications TO kairos_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON email_suppressions TO kairos_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON email_sends, notifications, action_tokens TO kairos_worker;
+GRANT SELECT, INSERT ON email_suppressions TO kairos_worker;
