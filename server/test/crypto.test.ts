@@ -172,9 +172,10 @@ describe("DATA_KEKS at boot", () => {
     expect(() => parseEnv({ ...prod, DATA_KEKS: "v1:not-a-key" })).toThrow(/DATA_KEKS: entry 1/);
   });
 
-  // ponytail: optional until the first encrypted column ships (WP-12 makes it required in production).
-  it("boots without it (encrypt then fails closed, above)", () => {
-    expect(parseEnv(prod).DATA_KEKS).toBeUndefined();
+  // Required in production since WP-17 (resume_imports.source_text_enc is written on the request path).
+  it("refuses production without it, and boots without it elsewhere (encrypt then fails closed, above)", () => {
+    expect(() => parseEnv(prod)).toThrow(/DATA_KEKS: required in production/);
+    expect(parseEnv({ ...prod, NODE_ENV: "development" }).DATA_KEKS).toBeUndefined();
   });
 });
 

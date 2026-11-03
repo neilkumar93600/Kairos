@@ -19,7 +19,20 @@ describe("parseEnv", () => {
     expect(() => parseEnv({ ...base, NODE_ENV: "production" })).toThrow(/POSTMARK_SERVER_TOKEN: required in production/);
   });
 
-  const prod = { ...base, NODE_ENV: "production", POSTMARK_SERVER_TOKEN: "pm-token", BETTER_AUTH_URL: "https://kairos.app", WEB_ORIGIN: "https://kairos.app" };
+  const prod = {
+    ...base, NODE_ENV: "production", POSTMARK_SERVER_TOKEN: "pm-token", BETTER_AUTH_URL: "https://kairos.app", WEB_ORIGIN: "https://kairos.app",
+    DATA_KEKS: "v1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  };
+
+  it("refuses production without DATA_KEKS: resume imports store their source encrypted (WP-17)", () => {
+    expect(() => parseEnv({ ...prod, DATA_KEKS: "" })).toThrow(/DATA_KEKS: required in production/);
+  });
+
+  it("defaults the import limits conservatively and refuses out-of-range ones", () => {
+    expect(parseEnv(base)).toMatchObject({ IMPORT_MAX_PAGES: 10, IMPORT_MAX_CHARS: 40_000, IMPORT_DAILY_LIMIT: 20, IMPORT_OVER_SLOT_LIMIT: "refuse" });
+    expect(() => parseEnv({ ...base, IMPORT_MAX_PAGES: "0" })).toThrow(/IMPORT_MAX_PAGES/);
+    expect(() => parseEnv({ ...base, IMPORT_OVER_SLOT_LIMIT: "maybe" })).toThrow(/IMPORT_OVER_SLOT_LIMIT/);
+  });
 
   it("accepts production with an email token", () => {
     expect(parseEnv(prod).NODE_ENV).toBe("production");

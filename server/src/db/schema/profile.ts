@@ -193,11 +193,14 @@ export const resumeImports = pgTable(
     parseError: text("parse_error"),
     parserVersion: smallint("parser_version"),
     parsedAt: timestamp("parsed_at", { withTimezone: true }),
+    /** Bank facts this import found again ("Already in your profile", PRD 6.4); shown, never inserted twice. */
+    duplicateFactIds: uuid("duplicate_fact_ids").array().notNull().default(sql`'{}'::uuid[]`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("resume_imports_user_idx").on(t.userId),
+    check("resume_imports_duplicates_ck", sql`cardinality(duplicate_fact_ids) <= 200`),
     uniqueIndex("resume_imports_source_uq").on(t.resumeProfileId, t.sourceHash),
     index("resume_imports_pending_idx").on(t.updatedAt).where(sql`${t.parseStatus} in ('pending','parsing')`),
     check("resume_imports_kind_ck", sql`source_kind IN ('pdf','docx','linkedin_pdf','text')`),

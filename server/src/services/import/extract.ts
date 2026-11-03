@@ -48,7 +48,8 @@ export function runThread(req: ExtractRequest, timeoutMs: number = EXTRACT_LIMIT
       resourceLimits: { maxOldGenerationSizeMb: EXTRACT_LIMITS.heapMb, maxYoungGenerationSizeMb: 16, stackSizeMb: 4 },
       stdout: true,
       stderr: true,
-      env: {},
+      // No secrets in the thread. Source mode passes the temp dirs only, where tsx keeps its compile cache.
+      env: source ? { TMP: process.env.TMP, TEMP: process.env.TEMP, TMPDIR: process.env.TMPDIR } : {},
     });
     let done = false;
     const finish = (reply: ExtractReply) => {

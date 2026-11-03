@@ -112,6 +112,8 @@ const SIGNALS = {
   backup_stale: 1,
   /** The latest dump's manifest has a warning: a table shrank, the dump shrank, or it nears R2's 5 GiB put (WP-13). */
   backup_warning: 1,
+  /** Resume imports failed after their parse attempts (WP-17, A-PARSE): the parser or the model is down. 5 an hour. */
+  resume_parse_failed: 5,
 } as const;
 export type Signal = keyof typeof SIGNALS;
 

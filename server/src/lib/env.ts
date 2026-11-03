@@ -240,6 +240,16 @@ const envSchema = z.object({
       }
       return out;
     }),
+
+  // Resume imports (WP-17; owner-actions/WP-17.md). Conservative defaults until the owner sets them.
+  /** Pages of an uploaded PDF (a LinkedIn profile export included) read for text; later pages are ignored. */
+  IMPORT_MAX_PAGES: z.coerce.number().int().min(1).max(30).default(10),
+  /** Characters of extracted text kept from one file, cut at a line break. */
+  IMPORT_MAX_CHARS: z.coerce.number().int().min(5_000).max(60_000).default(40_000),
+  /** Imports (files and pasted text) one user may start in 24 hours, on top of the upload class's 10 an hour. */
+  IMPORT_DAILY_LIMIT: z.coerce.number().int().min(1).max(500).default(20),
+  /** An import into a resume profile beyond the plan's resumeProfiles count (after a downgrade): refuse (403) or allow. */
+  IMPORT_OVER_SLOT_LIMIT: z.enum(["refuse", "allow"]).default("refuse"),
 }).superRefine((e, ctx) => {
   // Without a token the mailer logs emails instead of sending them. Fine locally; in production
   // that would put sign-up and reset codes in the logs, so refuse to boot.
@@ -296,6 +306,9 @@ const envSchema = z.object({
   if (e.NODE_ENV === "production" && e.R2_ENDPOINT && !e.R2_ENDPOINT.startsWith("https://")) {
     ctx.addIssue({ code: "custom", path: ["R2_ENDPOINT"], message: "must be https in production" });
   }
+}).superRefine((e, ctx) => {
+  // WP-17 ships the first encrypted write on the request path (resume_imports.source_text_enc): no key, no import.
+  if (e.NODE_ENV === "production" && !e.DATA_KEKS) ctx.addIssue({ code: "custom", path: ["DATA_KEKS"], message: "required in production" });
 });
 
 /** Key names only, for the test that keeps APPLIER_FORBIDDEN complete as secrets are added. */

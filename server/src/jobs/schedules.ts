@@ -1,5 +1,6 @@
 import type { Job, RepeatOptions } from "bullmq";
 import { processBackupCheck } from "./backup-check";
+import { processBackfillSources, processStuckParses } from "./import-maintenance";
 import { processJournalReconcile, processMoneyJournal } from "./money-journal";
 import { processPartitions } from "./partitions";
 import type { QueueName } from "./queues";
@@ -52,6 +53,9 @@ export const SCHEDULES: Schedule[] = [
   { queue: "maintenance", id: "journal-reconcile", repeat: { pattern: "40 * * * *", tz: "UTC" }, run: () => processJournalReconcile() },
   // The backup-age alert and the manifest warnings of the pgbackup cron service's dumps (WP-13, ops-65).
   { queue: "maintenance", id: "backup-check", repeat: { pattern: "20 * * * *", tz: "UTC" }, run: () => processBackupCheck() },
+  // Resume imports whose parse job was lost or exhausted (R-3, WP-17), and plaintext sources moved to encrypted imports (B-14).
+  { queue: "maintenance", id: "stuck-parses", repeat: { every: 5 * MINUTE }, run: processStuckParses },
+  { queue: "maintenance", id: "backfill-sources", repeat: { pattern: "10 * * * *", tz: "UTC" }, run: processBackfillSources },
 ];
 
 /** The maintenance queue's processor: the scheduler id is the job name. */

@@ -1,6 +1,6 @@
 {
-  "id": "731e4a14-3fd3-403c-85f9-de58c1a429a3",
-  "prevId": "b0b00451-fec3-4c6d-9d5c-11ed3b48a450",
+  "id": "2fd014ab-ccae-4206-8f2f-100f8b733e23",
+  "prevId": "b6c87096-c0a0-4a0c-bde1-6729bbec8775",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1289,6 +1289,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "duplicate_fact_ids": {
+          "name": "duplicate_fact_ids",
+          "type": "uuid[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::uuid[]"
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1390,6 +1397,10 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
+        "resume_imports_duplicates_ck": {
+          "name": "resume_imports_duplicates_ck",
+          "value": "cardinality(duplicate_fact_ids) <= 200"
+        },
         "resume_imports_kind_ck": {
           "name": "resume_imports_kind_ck",
           "value": "source_kind IN ('pdf','docx','linkedin_pdf','text')"
