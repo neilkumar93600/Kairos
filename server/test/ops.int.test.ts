@@ -201,6 +201,9 @@ describe.skipIf(!hasTestDb)("ops flags, admin routes and invariants against Post
       const erased = `erased:${"ab".repeat(16)}`;
       await expect(db.update(schema.opsAudit).set({ actor: erased, target: "x" })).rejects.toThrow();
       await expect(db.update(schema.opsAudit).set({ actor: "erased:short" })).rejects.toThrow();
+      // Only a deleted user's rows: the live admin's actor cannot be hidden or forged.
+      await expect(db.update(schema.opsAudit).set({ actor: erased }).where(eq(schema.opsAudit.actor, owner))).rejects.toThrow();
+      await db.delete(schema.user).where(eq(schema.user.id, owner));
       await db.update(schema.opsAudit).set({ actor: erased }).where(eq(schema.opsAudit.actor, owner));
       expect((await audit())[0]?.actor).toBe(erased);
       await expect(db.update(schema.opsAudit).set({ actor: `erased:${"cd".repeat(16)}` })).rejects.toThrow();
