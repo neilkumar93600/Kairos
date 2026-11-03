@@ -110,26 +110,21 @@ Data flow for one application:
 | Environment | Web | Backend |
 | --- | --- | --- |
 | Local | `npm run dev:web` on :3000 | `npm run infra:up` (Postgres + Redis in Docker), `npm run dev:api`, `dev:worker`, `dev:applier` |
-| Preview | Vercel preview per pull request | Railway `staging` environment |
-| Production | Vercel production (`main`) | Railway `production` environment |
+| Staging | Vercel preview of `main` | Railway `staging` environment, deploys `main` |
+| Production | Vercel production (`release`) | Railway `production` environment, deploys `release` |
 
-CI (`.github/workflows/ci.yml`) runs on pushes to `main` and on every pull request: `npm ci`, typecheck, lint, tests, build for every workspace, then a no-push build of both Docker images.
+CI (`.github/workflows/ci.yml`) runs on pushes to `main` and on every pull request: `npm ci`, typecheck, lint, tests, build for every workspace, then a no-push build of both Docker images. After Railway deploys a commit to staging, `staging-gate.yml` checks health, runs `scripts/smoke.mjs` through the web and runs the contract suite. `promote.yml` (run by hand with a SHA) releases a commit that passed both: it applies that commit's `.railway/railway.ts` to production, then moves `release` to it.
 
 ### Railway setup
 
-1. Create a project in region US East. Add the Postgres and Redis plugins.
-2. Add three services from the GitHub repo, each with root directory `/` and config file path:
-   - `api` → `/server/railway/api.json` (Dockerfile `server/Dockerfile`, pre-deploy `node dist/migrate.js`, healthcheck `/health`)
-   - `worker` → `/server/railway/worker.json` (same image, `node dist/worker.js`)
-   - `applier` → `/server/railway/applier.json` (Dockerfile `server/Dockerfile.applier`, Playwright base image)
-3. Set variables from `server/.env.example` on each service. Reference the plugins: `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `REDIS_URL=${{Redis.REDIS_URL}}`.
-4. Give `api` a public domain (e.g. `api.kairos.app`). `worker` and `applier` stay private.
+Everything Railway runs is declared in `.railway/railway.ts` (Railway infrastructure as code; Railway stops reading the old `railway.json` files on 2026-12-01): project `kairos`, Postgres, Redis, and the services `api` (`server/Dockerfile`, pre-deploy `node dist/migrate.js`), `worker` (same image) and `applier` (`server/Dockerfile.applier`), with healthchecks, drains, restart policy, replicas, limits and heap sizes. `railway config plan` shows what an apply would change; `railway config apply` makes it so. Secrets are set by hand as sealed variables on the one service that needs them. The full first-time setup is `docs/superpowers/plans/2026-10-30-backend-completion/owner-actions/WP-15.md`.
 
 ### Vercel setup
 
 1. Import the repo, set the root directory to `web`. Vercel installs from the repo root because it is an npm workspace.
 2. Variables: `API_ORIGIN` (the Railway api URL), `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_EXTENSION_ID`.
 3. Set `BETTER_AUTH_URL` and `WEB_ORIGIN` on Railway to the Vercel production domain, since the browser reaches auth through the rewrite.
+4. Production branch `release`, so the web reaches production with the api, through `promote.yml`. Preview variables point at the Railway staging api.
 
 ## Key technical decisions and tradeoffs
 

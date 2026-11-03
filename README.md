@@ -35,13 +35,14 @@ auto-career/
 │   │   ├── worker.ts        entry: queues and schedules
 │   │   └── applier.ts       entry: cloud applier
 │   ├── drizzle/             SQL migrations
-│   ├── railway/             service configs: api.json, worker.json, applier.json
 │   ├── Dockerfile           api and worker image
 │   └── Dockerfile.applier   applier image (Playwright base)
 ├── extension/               Chrome MV3 extension; dist/filler.js is shared with the applier
 ├── shared/                  types, zod schemas and plans used by every package
 ├── docs/                    the six planning documents and pricing
-├── .github/                 CI, Dependabot, pull request template
+├── .railway/railway.ts      Railway services, databases, sizes and deploy settings (infrastructure as code)
+├── ops/                     database roles, Railway limits, the pinned Railway CLI installer
+├── .github/                 CI, Railway config, staging gate, promotion, Dependabot, pull request template
 └── docker-compose.yml       local Postgres 17 and Redis 7
 ```
 
@@ -85,6 +86,6 @@ CI runs the same commands on pushes to `main` and on every pull request, then bu
 ## Deploy
 
 - **Web:** Vercel, root directory `web`. Set `API_ORIGIN`, `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_EXTENSION_ID`.
-- **Backend:** Railway project with Postgres and Redis plugins and three services from this repo: `api` (`server/railway/api.json`, runs migrations before each deploy), `worker` (`server/railway/worker.json`) and `applier` (`server/railway/applier.json`). Variables are listed in `server/.env.example`.
+- **Backend:** Railway project `kairos` with environments `staging` (deploys `main`) and `production` (deploys `release`), each with Postgres, Redis and three services from this repo: `api` (runs migrations before each deploy), `worker` and `applier`. All of it is declared in `.railway/railway.ts`: pull requests get a plan, merging applies it to staging, and `promote.yml` applies it to production and releases a commit that passed the staging gate. Variables are listed in `server/.env.example`.
 
 Step-by-step instructions are in [`docs/02-trd.md`](docs/02-trd.md) under "Railway setup" and "Vercel setup".

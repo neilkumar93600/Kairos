@@ -19,7 +19,7 @@ Whatever the bad commit broke. Rolling back takes about a minute per service.
 ## Fix
 
 1. For each affected service: Deployments, the last good deployment, the three-dot menu, **Rollback** [verify the menu label]. Do the api first, then the worker, then the applier.
-2. Revert the bad commit on the deploy branch (`git revert <sha>`, push) so the next push does not ship it again. Rollback does not change the branch.
+2. Move the deploy branch back too, or the next deploy ships the bad commit again: Railway's Rollback does not change the branch. Production: run `promote.yml` with the last good SHA (Actions > Promote > Run workflow); it moves `release` back. It can also do step 1 on its own when a minute more does not matter. Staging: `git revert <sha>` on `main` and push.
 3. Note the SHAs and times in the incident note.
 
 ## Verify

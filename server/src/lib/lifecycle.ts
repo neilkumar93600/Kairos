@@ -81,7 +81,7 @@ export function closeServer(server: http.Server): Promise<void> {
  * The shutdown contract (06-infrastructure 1.6): on SIGTERM or SIGINT, mark draining and run `drain` (stop taking work,
  * finish what is in flight) for at most `deadlineMs`; then `close` the pools and flush Sentry. Exit 0, or 1 when the
  * deadline passed: BullMQ retries a stalled job. Railway's SIGKILL comes drainingSeconds after SIGTERM
- * (railway/*.json), at least 10 s after the deadline.
+ * (.railway/railway.ts), at least 10 s after the deadline (test/railway-iac.test.ts).
  */
 export function onShutdown(service: string, deadlineMs: number, drain: () => Promise<unknown>, close: () => Promise<unknown>): void {
   const run = async (signal: NodeJS.Signals) => {

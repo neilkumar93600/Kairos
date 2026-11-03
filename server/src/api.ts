@@ -39,5 +39,5 @@ server.keepAliveTimeout = 65_000;
 server.headersTimeout = 66_000;
 server.requestTimeout = 120_000;
 
-// 25 s for requests in flight (05-api 2.4); Railway's drainingSeconds is 60 (railway/api.json).
+// 25 s for requests in flight (05-api 2.4); Railway's drainingSeconds is 60 (.railway/railway.ts).
 onShutdown("api", 25_000, () => closeServer(server), () => Promise.allSettled([closeQueues(), closeDb(), redis().quit()]));
