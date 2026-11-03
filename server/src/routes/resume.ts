@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { and, desc, eq, isNotNull, notInArray, or } from "drizzle-orm";
-import { rateLimit } from "express-rate-limit";
 import { z } from "zod";
 import {
   resumeInputSchema,
@@ -15,6 +14,7 @@ import { applications, companies, facts, jobs, matches, profiles, resumeRevision
 import type { SessionUser } from "../lib/auth";
 import { asActor } from "../lib/actor";
 import { HttpError, notFound } from "../lib/errors";
+import { aiLimiter } from "../middleware/rate-limit";
 import { currentUser } from "../middleware/require-auth";
 import { validateBody } from "../middleware/validate";
 import { claimViolations, defaultResume, profileContactFrom, truthLockViolations, type ProfileFact } from "../services/resume-doc";
@@ -26,15 +26,8 @@ import { gatewayCtx } from "../llm/wire";
 /** The structured base resume and the Resume Writer (spec 2026-10-23-resume-workspace, section 6). Mounted at /api/resume. */
 export const resumeRouter = Router();
 
-// ponytail: in-memory per api instance, like apiLimiter. Each call is a Sonnet request, so 10 a minute per user.
-export const writerLimiter = rateLimit({
-  windowMs: 60_000,
-  limit: 10,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  keyGenerator: (req) => currentUser(req).id,
-  handler: (_req, _res, next) => next(new HttpError(429, "rate_limited", "Too many AI requests. Try again in a minute.")),
-});
+/** Each call is a Sonnet request: 10 a minute per user, counted in Postgres so replicas share it (middleware/rate-limit.ts). */
+export const writerLimiter = aiLimiter("ai_burst");
 
 const FACT_COLUMNS = { id: facts.id, kind: facts.kind, text: facts.text, sourceSpan: facts.sourceSpan, confirmed: facts.confirmed };
 
@@ -164,7 +157,7 @@ resumeRouter.post("/suggestions", writerLimiter, validateBody(suggestionRequestS
           if (!fact) throw new Error("Fact insert returned no row");
           return fact;
         },
-        callCtx: gatewayCtx({ userId: me.id, plan, ...(body.jobId ? { jobId: body.jobId } : {}), feature: "resumeSuggestions" }),
+        callCtx: gatewayCtx({ userId: me.id, plan, ...(body.jobId ? { jobId: body.jobId } : {}), feature: "resumeSuggestions", signal: res.locals.deadline }),
       },
     ),
   );

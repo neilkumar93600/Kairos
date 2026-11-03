@@ -73,7 +73,7 @@ const byBearer: AuthGateway = {
   handler: async () => new Response(null, { status: 404 }),
   getSession: async (headers) => {
     const user = users.get(headers.get("authorization")?.replace(/^Bearer /, "") ?? "");
-    return user ? { user, sessionId: `s-${user.id}` } : null;
+    return user ? { user, sessionId: `s-${user.id}`, createdAt: new Date() } : null;
   },
 };
 

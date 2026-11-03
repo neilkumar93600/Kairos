@@ -184,6 +184,12 @@ const envSchema = z.object({
   LLM_SHED_LEVEL: z.coerce.number().int().min(0).max(3).default(0),
   /** Kill switch for the scoring loop (true, 1, on): new postings are not scored while set. */
   PAUSE_SCORING: z.preprocess(emptyToUndefined, z.stringbool().default(false)),
+  /**
+   * api only. Enforce the 24 h session age on POST /api/applications/approve (05-api 5.2). Off until the web has a sign-in-again
+   * flow for reauth_required (frontend-handoff/WP-30.md); the cookie-cache bypass on that route is on regardless.
+   * Billing routes always enforce.
+   */
+  FRESH_SESSION_ENFORCE: z.preprocess(emptyToUndefined, z.stringbool().default(false)),
 
   /**
    * api and worker only: `v2:<base64 of 32 bytes>,v1:<...>`, the first encrypts (lib/crypto.ts, docs/runbook/keys.md).

@@ -69,7 +69,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
     enqueue.mockClear();
     fetchPostingFromBoard.mockReset();
     app = createApp({
-      auth: { handler: async () => new Response(null, { status: 404 }), getSession: async () => ({ user: me, sessionId: "s" }) },
+      auth: { handler: async () => new Response(null, { status: 404 }), getSession: async () => ({ user: me, sessionId: "s", createdAt: new Date() }) },
       corsOrigins: [],
       healthChecks: {},
     });

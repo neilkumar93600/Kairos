@@ -190,6 +190,23 @@ describe.skipIf(!hasTestDb)("Better Auth end to end", () => {
     expect((await agent.get("/api/me")).status).toBe(401);
   });
 
+  it("refuses a real session created 25 hours ago on a session-fresh route, and accepts it on an ordinary one", async () => {
+    const email = "stale@test.local";
+    const agent = request.agent(app);
+    expect((await signUp(agent, email)).status).toBe(200);
+    expect((await post(agent, "/email-otp/verify-email", { email, otp: lastCode(email, "otp-email-verification") })).status).toBe(200);
+    expect((await post(agent, "/sign-in/email", { email, password: PASSWORD })).status).toBe(200);
+    const user = await userByEmail(email);
+    const portal = () => agent.post("/api/billing/portal").set("origin", WEB).send({});
+    expect((await portal()).body.error?.code).not.toBe("reauth_required");
+
+    await tdb.update(schema.session).set({ createdAt: new Date(Date.now() - 25 * 3_600_000) }).where(eq(schema.session.userId, user!.id));
+    const stale = await portal();
+    expect(stale.status).toBe(403);
+    expect(stale.body.error).toMatchObject({ code: "reauth_required", details: { maxAgeSec: 86_400 } });
+    expect((await agent.get("/api/me")).status).toBe(200);
+  });
+
   // WP-03: Better Auth's limiter in auth_rate_limit keyed by the resolved client IP, and the per-email limits in rate_limits.
   it("caps sign-ups at 3 a day per client IP, whatever X-Forwarded-For prefix the caller sends", async () => {
     const from = (ip: string, i: number) =>

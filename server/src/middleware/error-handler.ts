@@ -36,6 +36,11 @@ function aiError(err: AgentError | LlmError): HttpError {
 
 /** Every error leaves as { error: { code, message, details?, requestId? } }. Unknown errors never leak internals. */
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
+  // A handler that failed after its deadline already got its 503 timeout (middleware/deadline.ts): nothing left to send.
+  if (res.writableEnded) {
+    logger.warn({ requestId: res.getHeader("x-request-id"), path: req.path, method: req.method }, "error after the response ended");
+    return;
+  }
   const requestId = res.getHeader("x-request-id");
   const rid = typeof requestId === "string" ? { requestId } : {};
   if (err instanceof AgentError || err instanceof LlmError) {
@@ -46,6 +51,8 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     err = aiError(err);
   }
   if (err instanceof HttpError) {
+    const retry = (err.details as { retryAfterSec?: unknown } | undefined)?.retryAfterSec;
+    if (typeof retry === "number" && Number.isFinite(retry) && !res.hasHeader("retry-after")) res.set("retry-after", String(retry));
     res.status(err.status).json({ error: { code: err.code, message: err.message, details: err.details, ...rid } });
     return;
   }
