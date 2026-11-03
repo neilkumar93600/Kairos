@@ -69,6 +69,30 @@ describe.skipIf(!hasTestDb)("billing routes against Postgres", () => {
     expect(session.mock.calls[0]?.[1]).toEqual({ ...INLINE, idempotencyKey: expect.stringMatching(new RegExp(`^checkout:${userId}:starter:month:\\d+$`)) });
   });
 
+  it("STRIPE_AUTOMATIC_TAX decides whether checkout asks Stripe for tax, a billing address and a tax id", async () => {
+    const { env } = await import("../src/lib/env");
+    vi.spyOn(stripeClient.customers, "create").mockResolvedValue({ id: "cus_A" } as never);
+    const session = vi.spyOn(stripeClient.checkout.sessions, "create").mockResolvedValue({ url: "https://checkout.test/s" } as never);
+    expect((await checkout()).status).toBe(200);
+    expect(session.mock.calls[0]?.[0]).not.toHaveProperty("automatic_tax");
+    expect(session.mock.calls[0]?.[0]).toMatchObject({ allow_promotion_codes: false, customer: "cus_A" });
+
+    env().STRIPE_AUTOMATIC_TAX = true;
+    try {
+      vi.spyOn(stripeClient.subscriptions, "list").mockResolvedValue({ data: [] } as never);
+      expect((await checkout()).status).toBe(200);
+    } finally {
+      env().STRIPE_AUTOMATIC_TAX = false;
+    }
+    expect(session.mock.calls[1]?.[0]).toMatchObject({
+      automatic_tax: { enabled: true },
+      billing_address_collection: "required",
+      tax_id_collection: { enabled: true },
+      customer_update: { address: "auto", name: "auto" },
+      allow_promotion_codes: false,
+    });
+  });
+
   it("a user with a live subscription is sent to the portal with 409, and no second checkout is created", async () => {
     await db.update(schema.subscriptions).set({ stripeCustomerId: "cus_live" }).where(eq(schema.subscriptions.userId, userId));
     const list = vi.spyOn(stripeClient.subscriptions, "list").mockResolvedValue({ data: [{ id: "sub_1", status: "past_due" }] } as never);

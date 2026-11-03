@@ -27,6 +27,21 @@ export const checkoutIdempotencyKey = (userId: string, plan: PlanId, interval: B
  */
 export const blocksCheckout = (status: string) => !["incomplete", "incomplete_expired", "canceled"].includes(status);
 
+/**
+ * Stripe Tax (decision 7): tax is computed on top of the tax-exclusive USD prices from the billing address, and a
+ * business can add its VAT or GST id. Checkout always passes an existing customer, so Stripe requires it may save the
+ * address and name onto that customer; the subscription keeps automatic tax on every renewal.
+ */
+export const checkoutTaxParams = (on: boolean): Partial<Stripe.Checkout.SessionCreateParams> =>
+  on
+    ? {
+        automatic_tax: { enabled: true },
+        billing_address_collection: "required",
+        tax_id_collection: { enabled: true },
+        customer_update: { address: "auto", name: "auto" },
+      }
+    : {};
+
 /** A Stripe failure is 503 billing_unavailable for the web. HttpErrors are not logged, so the cause is logged here. */
 async function viaStripe<T>(call: () => Promise<T>): Promise<T> {
   try {
@@ -82,6 +97,7 @@ billingRouter.post("/checkout", validateBody(checkoutSchema), async (req, res) =
         client_reference_id: me.id,
         subscription_data: { metadata: { userId: me.id } },
         allow_promotion_codes: false,
+        ...checkoutTaxParams(env().STRIPE_AUTOMATIC_TAX),
         success_url: `${env().WEB_ORIGIN}/billing?checkout=success`,
         cancel_url: `${env().WEB_ORIGIN}/pricing?checkout=cancelled`,
       },

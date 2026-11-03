@@ -78,6 +78,15 @@ describe("parseEnv", () => {
     expect(parseEnv({ ...base, STRIPE_GRANT_COUPONS: " BETA100 ,founders," }).STRIPE_GRANT_COUPONS).toEqual(["BETA100", "founders"]);
   });
 
+  // Checkout with automatic_tax fails until Stripe Tax is activated, so production keeps today's checkout until the owner flips it.
+  it("STRIPE_AUTOMATIC_TAX is off by default and reads 1/true as on", () => {
+    expect(parseEnv(base).STRIPE_AUTOMATIC_TAX).toBe(false);
+    expect(parseEnv({ ...base, STRIPE_AUTOMATIC_TAX: "" }).STRIPE_AUTOMATIC_TAX).toBe(false);
+    expect(parseEnv({ ...base, STRIPE_AUTOMATIC_TAX: "1" }).STRIPE_AUTOMATIC_TAX).toBe(true);
+    expect(parseEnv({ ...base, STRIPE_AUTOMATIC_TAX: "true" }).STRIPE_AUTOMATIC_TAX).toBe(true);
+    expect(() => parseEnv({ ...base, STRIPE_AUTOMATIC_TAX: "yes" })).toThrow(/STRIPE_AUTOMATIC_TAX/);
+  });
+
   it("reads STRIPE_WEBHOOK_SECRET_PREVIOUS for a secret roll", () => {
     expect(parseEnv(base).STRIPE_WEBHOOK_SECRET_PREVIOUS).toBeUndefined();
     expect(parseEnv({ ...base, STRIPE_WEBHOOK_SECRET_PREVIOUS: "whsec_old" }).STRIPE_WEBHOOK_SECRET_PREVIOUS).toBe("whsec_old");

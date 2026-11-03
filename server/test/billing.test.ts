@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blocksCheckout, checkoutIdempotencyKey } from "../src/routes/billing";
+import { blocksCheckout, checkoutIdempotencyKey, checkoutTaxParams } from "../src/routes/billing";
 import { availableCredits } from "../src/services/credits";
 import { creditsPerInvoice, planForPriceId } from "../src/services/stripe";
 
@@ -44,5 +44,22 @@ describe("checkout guards", () => {
     ["canceled", false],
   ])("a %s subscription blocks a new checkout: %s", (status, blocks) => {
     expect(blocksCheckout(status)).toBe(blocks);
+  });
+});
+
+describe("checkout tax (decision 7, STRIPE_AUTOMATIC_TAX)", () => {
+  it("adds nothing while the flag is off, so checkout works before Stripe Tax is activated", () => {
+    expect(checkoutTaxParams(false)).toEqual({});
+  });
+
+  // Stripe refuses automatic_tax and tax_id_collection with an existing customer unless Checkout may save the
+  // address and name onto it; every Kairos checkout passes a customer.
+  it("turns on automatic tax, a required billing address and tax id collection, saving both onto the customer", () => {
+    expect(checkoutTaxParams(true)).toEqual({
+      automatic_tax: { enabled: true },
+      billing_address_collection: "required",
+      tax_id_collection: { enabled: true },
+      customer_update: { address: "auto", name: "auto" },
+    });
   });
 });
