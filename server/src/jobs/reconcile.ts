@@ -1,6 +1,6 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { applications, creditLedger, inboundEmails, profiles, subscriptions, user } from "../db/schema";
+import { applications, creditLedger, inboundEmails, profiles, session, subscriptions, user, verification } from "../db/schema";
 import { logger } from "../lib/logger";
 import { signal } from "../lib/sentry";
 import { bootstrapUser } from "../services/bootstrap";
@@ -122,4 +122,30 @@ export async function processBootstrapUsers(): Promise<{ repaired: number }> {
     signal("signup_repaired", repaired);
   }
   return { repaired };
+}
+
+/**
+ * Daily at 03:30 UTC (R-1, R-2). Accounts left unverified for 14 days are deleted with everything that cascades from
+ * them, oldest first in batches of 500 until none is left: verification comes before any session (FR-3), so they hold
+ * no upload, subscription or Stripe customer, only the sign-up rows and the free grant. Sessions go 7 days after they
+ * expire and verification codes after 1. Plain deletes, so two workers delete each row once.
+ */
+export async function processAuthSweep(): Promise<{ users: number; sessions: number; verifications: number }> {
+  let users = 0;
+  for (;;) {
+    const oldest = db()
+      .select({ id: user.id })
+      .from(user)
+      .where(and(eq(user.emailVerified, false), sql`${user.createdAt} < now() - interval '14 days'`))
+      .orderBy(asc(user.createdAt))
+      .limit(500);
+    const purged = await db().delete(user).where(inArray(user.id, oldest)).returning({ id: user.id });
+    users += purged.length;
+    if (purged.length < 500) break;
+  }
+  const sessions = await db().delete(session).where(sql`${session.expiresAt} < now() - interval '7 days'`).returning({ id: session.id });
+  const codes = await db().delete(verification).where(sql`${verification.expiresAt} < now() - interval '1 day'`).returning({ id: verification.id });
+  const result = { users, sessions: sessions.length, verifications: codes.length };
+  logger.info(result, "auth sweep");
+  return result;
 }

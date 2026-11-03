@@ -221,4 +221,36 @@ describe.skipIf(!hasTestDb)("reconcilers against Postgres", () => {
       expect(await pieces(userId)).toEqual({ profiles: 1, plans: ["free"], grants: [FREE_GRANT] });
     });
   });
+
+  describe("session and verification sweep, and the unverified-account purge (R-1, R-2)", () => {
+    const DAY = 24 * 60 * MINUTE;
+    const ago = (ms: number) => new Date(Date.now() - ms);
+
+    it("deletes accounts unverified for 14 days with everything they own, expired sessions after 7 days, codes after 1", async () => {
+      const abandoned = await seedUser(db, { credits: 25 });
+      await db.update(schema.user).set({ emailVerified: false, createdAt: ago(15 * DAY) }).where(eq(schema.user.id, abandoned));
+      const recent = await seedUser(db);
+      await db.update(schema.user).set({ emailVerified: false, createdAt: ago(13 * DAY) }).where(eq(schema.user.id, recent));
+      const verified = await seedUser(db);
+      await db.update(schema.user).set({ createdAt: ago(30 * DAY) }).where(eq(schema.user.id, verified));
+
+      const session = (id: string, expiresAt: Date) =>
+        db.insert(schema.session).values({ id, token: id, userId: verified, expiresAt, createdAt: new Date(expiresAt.getTime() - 30 * DAY) });
+      await session("old", ago(8 * DAY));
+      await session("grace", ago(6 * DAY));
+      await session("live", new Date(Date.now() + DAY));
+      const code = (id: string, expiresAt: Date) => db.insert(schema.verification).values({ id, identifier: id, value: "x", expiresAt });
+      await code("old-code", ago(2 * DAY));
+      await code("new-code", ago(12 * 60 * MINUTE));
+
+      const results = await Promise.all([reconcile.processAuthSweep(), reconcile.processAuthSweep()]);
+      expect(results.reduce((t, r) => ({ users: t.users + r.users, sessions: t.sessions + r.sessions, verifications: t.verifications + r.verifications })))
+        .toEqual({ users: 1, sessions: 1, verifications: 1 });
+
+      expect((await db.select({ id: schema.user.id }).from(schema.user)).map((u) => u.id).sort()).toEqual([recent, verified].sort());
+      expect(await db.select().from(schema.creditLedger).where(eq(schema.creditLedger.userId, abandoned))).toEqual([]);
+      expect((await db.select({ id: schema.session.id }).from(schema.session)).map((r) => r.id).sort()).toEqual(["grace", "live"]);
+      expect((await db.select({ id: schema.verification.id }).from(schema.verification)).map((r) => r.id)).toEqual(["new-code"]);
+    });
+  });
 });

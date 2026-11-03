@@ -1,7 +1,14 @@
 import type { Job, RepeatOptions } from "bullmq";
 import { processPartitions } from "./partitions";
 import type { QueueName } from "./queues";
-import { processBootstrapUsers, processReconcileApply, processRedriveDrafts, processRedriveInbox, processSweepSubmitting } from "./reconcile";
+import {
+  processAuthSweep,
+  processBootstrapUsers,
+  processReconcileApply,
+  processRedriveDrafts,
+  processRedriveInbox,
+  processSweepSubmitting,
+} from "./reconcile";
 
 export interface Schedule {
   queue: QueueName;
@@ -35,6 +42,8 @@ export const SCHEDULES: Schedule[] = [
   { queue: "maintenance", id: "redrive-inbox", repeat: { every: 5 * MINUTE }, run: processRedriveInbox },
   // A sign-up whose hook failed gets its profile, plan and free grant (billing-67).
   { queue: "maintenance", id: "bootstrap-users", repeat: { every: MINUTE }, run: processBootstrapUsers },
+  // Accounts unverified for 14 days, expired sessions and verification codes (R-1, R-2).
+  { queue: "maintenance", id: "auth-sweep", repeat: { pattern: "30 3 * * *", tz: "UTC" }, run: processAuthSweep },
 ];
 
 /** The maintenance queue's processor: the scheduler id is the job name. */

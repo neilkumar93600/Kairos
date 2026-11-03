@@ -35,6 +35,10 @@ describe("job schedules", () => {
     expect(byId["bootstrap-users"]).toMatchObject({ queue: "maintenance", repeat: { every: 60_000 } });
   });
 
+  it("the auth sweep runs daily at 03:30 UTC", () => {
+    expect(byId["auth-sweep"]).toMatchObject({ queue: "maintenance", repeat: { pattern: "30 3 * * *", tz: "UTC" } });
+  });
+
   it("an unknown maintenance job fails instead of passing silently", async () => {
     await expect(processMaintenance({ name: "nope" } as never)).rejects.toThrow(/nope/);
   });
