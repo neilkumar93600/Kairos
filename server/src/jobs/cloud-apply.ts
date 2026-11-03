@@ -212,6 +212,14 @@ function getBrowser(): Promise<Browser> {
   return browser;
 }
 
+/** Launches Chromium at boot, so a sandbox that cannot start (spike S-AP4) shows in the log before any claim. */
+export async function warmBrowser(): Promise<void> {
+  await getBrowser().then(
+    (b) => logger.info({ version: b.version(), sandbox: applierEnv().APPLIER_CHROMIUM_SANDBOX }, "chromium launched"),
+    (err) => logger.error({ err }, "chromium failed to launch (with 'No usable sandbox', see S-AP4 in owner-actions/WP-04.md)"),
+  );
+}
+
 export async function closeBrowser(): Promise<void> {
   const b = await browser?.catch(() => undefined);
   browser = undefined;

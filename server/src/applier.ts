@@ -2,7 +2,7 @@ import { Worker } from "bullmq";
 import { closeDb } from "./db/client";
 import { applierEnv, setProcessRole } from "./lib/env";
 import { logger } from "./lib/logger";
-import { closeBrowser, processCloudApply } from "./jobs/cloud-apply";
+import { closeBrowser, processCloudApply, warmBrowser } from "./jobs/cloud-apply";
 import { QUEUES, redisConnection } from "./jobs/queues";
 
 // The applier opens hostile employer pages, so it runs on its own schema (envFor("applier")): no auth, Stripe,
@@ -20,6 +20,7 @@ const worker = new Worker(QUEUES.cloudApply, processCloudApply, {
 });
 worker.on("failed", (job, err) => logger.error({ jobId: job?.id, err }, "cloud apply failed"));
 logger.info({ concurrency: e.APPLIER_CONCURRENCY, sandbox: e.APPLIER_CHROMIUM_SANDBOX }, "applier started");
+void warmBrowser();
 
 async function shutdown(signal: string) {
   logger.info({ signal }, "applier shutting down");
