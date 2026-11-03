@@ -2,9 +2,9 @@ import { Worker } from "bullmq";
 import { sql } from "drizzle-orm";
 import { closeDb, db, sizeDbPool } from "./db/client";
 import { applierEnv, setProcessRole } from "./lib/env";
-import { closeServer, onShutdown, serveHealth, startHeartbeat } from "./lib/lifecycle";
+import { closeServer, deadline, onShutdown, serveHealth, startHeartbeat } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
-import { redis } from "./lib/redis";
+import { assertNoEviction, redis } from "./lib/redis";
 import { captureJobFailure, initSentry } from "./lib/sentry";
 import { closeBrowser, processCloudApply, warmBrowser } from "./jobs/cloud-apply";
 import { QUEUES, workerOptions } from "./jobs/queues";
@@ -17,6 +17,8 @@ const e = applierEnv();
 initSentry("applier");
 if (!e.APPLIER_CHROMIUM_SANDBOX) logger.warn("Chromium sandbox is off (APPLIER_CHROMIUM_SANDBOX=0): only with the signed S-AP4 risk acceptance");
 
+// A Redis that evicts loses approved sends silently: refuse to start (platform-68).
+await deadline(assertNoEviction(), 10_000);
 // One connection per run plus the health check (scale-v12).
 sizeDbPool(e.APPLIER_CONCURRENCY + 1);
 

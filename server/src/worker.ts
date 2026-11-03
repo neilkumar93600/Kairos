@@ -2,9 +2,9 @@ import { Worker, type Job } from "bullmq";
 import { sql } from "drizzle-orm";
 import { closeDb, db, sizeDbPool } from "./db/client";
 import { env, setProcessRole } from "./lib/env";
-import { closeServer, onShutdown, serveHealth, startHeartbeat } from "./lib/lifecycle";
+import { closeServer, deadline, onShutdown, serveHealth, startHeartbeat } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
-import { redis } from "./lib/redis";
+import { assertNoEviction, redis } from "./lib/redis";
 import { captureJobFailure, initSentry } from "./lib/sentry";
 import { processClassifyEmail } from "./jobs/classify-email";
 import { processCostRollup } from "./jobs/cost-rollup";
@@ -31,6 +31,8 @@ const handlers: Partial<Record<QueueName, (job: Job) => Promise<unknown>>> = {
   [QUEUES.maintenance]: processMaintenance,
 };
 
+// A Redis that evicts loses jobs silently: refuse to start (platform-68). 10 s, so a Redis that is down fails the boot too.
+await deadline(assertNoEviction(), 10_000);
 const concurrency = workerConcurrency(env().QUEUE_CONCURRENCY);
 // One connection per job slot plus the health check and the scheduler upserts (scale-v12).
 const slots = Object.keys(handlers).reduce((n, name) => n + concurrency[name as QueueName]!, 0);

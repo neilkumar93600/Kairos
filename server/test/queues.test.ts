@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { QUEUE_CONFIG, QUEUES, workerConcurrency, workerOptions } from "../src/jobs/queues";
 import { parseEnv } from "../src/lib/env";
+import { assertNoEviction } from "../src/lib/redis";
 
-/** WP-45: the per-queue table (platform-06 in BullMQ form, scale-06). */
+/** WP-45: the per-queue table (platform-06 in BullMQ form, scale-06) and the Redis boot check (platform-68). */
 
 describe("queue config table", () => {
   it("has one row per queue", () => {
@@ -46,5 +47,21 @@ describe("worker concurrency", () => {
     expect(parseEnv({ ...base, QUEUE_CONCURRENCY: "score-user=8, poll-boards=2" }).QUEUE_CONCURRENCY).toEqual({ "score-user": 8, "poll-boards": 2 });
     expect(() => parseEnv({ ...base, QUEUE_CONCURRENCY: "score-user=0" })).toThrow(/QUEUE_CONCURRENCY/);
     expect(() => parseEnv({ ...base, QUEUE_CONCURRENCY: "score-user" })).toThrow(/QUEUE_CONCURRENCY/);
+  });
+});
+
+describe("Redis eviction check", () => {
+  const server = (policy?: string) => ({ info: async () => `# Memory\r\nused_memory:1024\r\n${policy ? `maxmemory_policy:${policy}\r\n` : ""}` });
+
+  it("passes noeviction", async () => {
+    await expect(assertNoEviction(server("noeviction"))).resolves.toBeUndefined();
+  });
+
+  it.each(["allkeys-lru", "volatile-lru", "allkeys-random", "volatile-ttl"])("refuses to boot on %s: BullMQ would lose jobs", async (policy) => {
+    await expect(assertNoEviction(server(policy))).rejects.toThrow(new RegExp(`maxmemory-policy is ${policy}`));
+  });
+
+  it("refuses when the policy cannot be read", async () => {
+    await expect(assertNoEviction(server())).rejects.toThrow(/maxmemory-policy is unknown/);
   });
 });

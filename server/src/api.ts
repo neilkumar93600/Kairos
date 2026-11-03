@@ -3,9 +3,9 @@ import { createApp } from "./app";
 import { closeDb, db } from "./db/client";
 import { authGateway } from "./lib/auth";
 import { env } from "./lib/env";
-import { closeServer, isDraining, onShutdown } from "./lib/lifecycle";
+import { closeServer, deadline, isDraining, onShutdown } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
-import { redis } from "./lib/redis";
+import { assertNoEviction, redis } from "./lib/redis";
 import { initSentry } from "./lib/sentry";
 import { closeQueues } from "./jobs/queues";
 
@@ -14,6 +14,8 @@ initSentry("api");
 // Without it every web user shares the Vercel egress address in every IP limit, sign-in included (05-api 5.5).
 // ponytail: checked here, not in env.ts, so the worker and applier never need the secret; move into the api role schema with WP-04.
 if (e.NODE_ENV === "production" && !e.KAIROS_EDGE_SECRET) throw new Error("Invalid environment:\n  KAIROS_EDGE_SECRET: required on the api in production");
+// The api enqueues approvals and drafts: a Redis that evicts would drop them silently (platform-68).
+await deadline(assertNoEviction(), 10_000);
 const app = createApp({
   auth: authGateway(),
   corsOrigins: [e.WEB_ORIGIN, ...(e.EXTENSION_ORIGIN ? [e.EXTENSION_ORIGIN] : [])],
