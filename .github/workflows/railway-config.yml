@@ -54,8 +54,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
         run: |
-          { echo '<!-- railway-plan -->'; echo '### Railway plan: staging'; echo; echo '```'; cat plan.txt; echo '```'
-            echo; echo 'Merging applies exactly this plan to staging. Production gets the file with the code, through `promote.yml`.'; } > comment.md
+          # The pinned plan's own diff (values redacted), else what the CLI printed.
+          diff=$(jq -r '.diff // empty' railway-plan.json); [ -n "$diff" ] || diff=$(cat plan.txt)
+          { echo '<!-- railway-plan -->'; echo '### Railway plan: staging'; echo; echo '```diff'; echo "$diff"; echo '```'; echo
+            jq -r 'if .destructive then "**Destructive:** merging will not apply this plan. Apply it by hand after review.\n" else empty end' railway-plan.json
+            echo 'Merging applies exactly this plan to staging. Production gets the file with the code, through `promote.yml`.'; } > comment.md
           id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate --jq '.[] | select(.body | startswith("<!-- railway-plan -->")) | .id' | tail -n1)
           if [ -n "$id" ]; then gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@comment.md >/dev/null
           else gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file comment.md; fi
