@@ -3,7 +3,7 @@ import { is } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import * as schema from "../src/db/schema";
 import * as platform from "../src/db/schema/platform";
-import { PRIVACY_REGISTRY } from "../src/services/privacy-registry";
+import { AT_MERGE, PRIVACY_REGISTRY } from "../src/services/privacy-registry";
 
 // The privacy registry (WP-25) against the Drizzle schema: every table that holds a user id, or points at "user", says
 // how it is erased and exported. A new user-data table without an entry fails here; its SQL-only twin is caught by
@@ -51,8 +51,15 @@ describe("privacy registry", () => {
     }
   });
 
+  it("an at-merge entry moves into the registry once its table is on this branch, and never names a table twice", () => {
+    for (const e of Object.values(AT_MERGE).flat()) {
+      expect(byName.has(e.table), `${e.table} exists here: move its entry into PRIVACY_REGISTRY`).toBe(false);
+      expect(entry(e.table), e.table).toBeUndefined();
+    }
+  });
+
   it("explains every table it does not export or keeps", () => {
-    for (const e of PRIVACY_REGISTRY) if (e.export === false || e.erase === "keep") expect(e.why, e.table).toBeTruthy();
+    for (const e of [...PRIVACY_REGISTRY, ...Object.values(AT_MERGE).flat()]) if (e.export === false || e.erase === "keep") expect(e.why, e.table).toBeTruthy();
   });
 
   it("never exports credentials or keyed hashes", () => {

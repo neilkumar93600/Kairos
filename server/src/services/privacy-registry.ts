@@ -67,5 +67,27 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
   { table: "erased_emails", column: "email_hash", by: "hash", erase: "keep", export: false, why: "keyed hashes of erased addresses: blocks a second free grant" },
 ];
 
+/**
+ * Entries for tables other packages add on their own branches (as they reported them). They are not in
+ * PRIVACY_REGISTRY yet because their tables are not on this branch; at merge the coordinator moves each into
+ * PRIVACY_REGISTRY, and the coverage tests fail until it does. Retention of these tables stays with their owners
+ * (WP-44's mail-retention: email_sends 120 d, notifications 90 d, action_tokens 7 d after expiry).
+ */
+export const AT_MERGE: Record<string, readonly PrivacyEntry[]> = {
+  "WP-44": [
+    { table: "email_sends", column: "user_id", erase: "cascade", export: ALL },
+    { table: "notifications", column: "user_id", erase: "cascade", export: ALL },
+    { table: "action_tokens", column: "user_id", erase: "cascade", export: false, why: "single-use signed-link hashes: a credential, not the user's data" },
+    {
+      table: "email_suppressions",
+      column: "address_hash",
+      by: "hash",
+      erase: "keep",
+      export: false,
+      why: "the user's objection to mail (GDPR Art. 21, CAN-SPAM), honoured even if the address signs up again; holds a hash, no address or user id",
+    },
+  ],
+};
+
 /** Entries whose rows carry the user id directly: the ones erasure verifies are gone and export selects by id. */
 export const userKeyed = () => PRIVACY_REGISTRY.filter((e) => !e.by && !e.parent);
