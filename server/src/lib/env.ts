@@ -91,6 +91,8 @@ const envSchema = z.object({
 
   // AI spend controls (WP-06). The shed level is set by hand until ops_flags lands (WP-27); global spend raises it too.
   LLM_SHED_LEVEL: z.coerce.number().int().min(0).max(3).default(0),
+  /** Kill switch for the scoring loop (true, 1, on): new postings are not scored while set. */
+  PAUSE_SCORING: z.preprocess(emptyToUndefined, z.stringbool().default(false)),
 }).superRefine((e, ctx) => {
   // Without a token the mailer logs emails instead of sending them. Fine locally; in production
   // that would put sign-up and reset codes in the logs, so refuse to boot.

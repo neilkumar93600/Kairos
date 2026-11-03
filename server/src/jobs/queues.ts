@@ -15,7 +15,8 @@ export const QUEUES = {
 
 export interface JobData {
   "poll-boards": { companyId: string } | { schedule: true };
-  "score-matches": { jobId: string };
+  /** userIds and attempt are set on the delayed follow-up for pairs a retryable model failure skipped. */
+  "score-matches": { jobId: string; userIds?: string[]; attempt?: number };
   "tailor-application": { applicationId: string };
   "parse-resume": { resumeProfileId: string };
   "classify-email": { inboundEmailId: string };
@@ -49,10 +50,13 @@ export function queue<N extends QueueName>(name: N): Queue<JobData[N]> {
   return q as unknown as Queue<JobData[N]>;
 }
 
-/** Adds a job; the jobId makes enqueueing idempotent (the same application is never tailored twice at once). */
-export async function enqueue<N extends QueueName>(name: N, data: JobData[N], jobId?: string): Promise<void> {
+/**
+ * Adds a job; the jobId makes enqueueing idempotent (the same application is never tailored twice at once). delayMs
+ * holds it back that long (a delayed retry).
+ */
+export async function enqueue<N extends QueueName>(name: N, data: JobData[N], jobId?: string, delayMs?: number): Promise<void> {
   // BullMQ's generic name typing is stricter than we need here.
-  await (queue(name) as unknown as Queue).add(name, data, jobId ? { jobId } : undefined);
+  await (queue(name) as unknown as Queue).add(name, data, jobId || delayMs ? { ...(jobId ? { jobId } : {}), ...(delayMs ? { delay: delayMs } : {}) } : undefined);
 }
 
 export async function closeQueues(): Promise<void> {
