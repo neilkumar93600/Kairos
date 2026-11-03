@@ -88,6 +88,9 @@ const envSchema = z.object({
   APPLIER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
   /** Built by `npm run build -w @auto-career/extension`; the applier image copies it to /app/filler.js. */
   FILLER_SCRIPT_PATH: z.string().default("../extension/dist/filler.js"),
+
+  // AI spend controls (WP-06). The shed level is set by hand until ops_flags lands (WP-27); global spend raises it too.
+  LLM_SHED_LEVEL: z.coerce.number().int().min(0).max(3).default(0),
 }).superRefine((e, ctx) => {
   // Without a token the mailer logs emails instead of sending them. Fine locally; in production
   // that would put sign-up and reset codes in the logs, so refuse to boot.

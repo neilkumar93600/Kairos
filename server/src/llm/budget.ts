@@ -50,6 +50,25 @@ export function interactiveBackstopUsd(plan: PlanId | undefined): number {
   return p?.interactiveSpendBackstopUsd ?? 0.62;
 }
 
+/** The shed level global spend implies (9.5): $190 is level 1, $220 level 2, $260 level 3. */
+export function shedLevelFor(globalUsd: number): 0 | 1 | 2 | 3 {
+  return globalUsd >= SHED_LEVELS[2] ? 3 : globalUsd >= SHED_LEVELS[1] ? 2 : globalUsd >= SHED_LEVELS[0] ? 1 : 0;
+}
+
+/** Scoring and builder agents, the work 9.5 sheds by level. Drafting, tailoring and parsing are never shed. */
+const SCORING = new Set<string>(["fit-scorer"]);
+const BUILDER = new Set<string>(["resume-writer"]);
+
+/**
+ * What a shed level stops (9.5): level 1 low-stakes batch ops work; level 2 also Free and Starter scoring; level 3 all
+ * scoring and builder suggestions. User-initiated drafting, tailoring and parsing continue at every level.
+ */
+function shedRefuses(level: number, spec: AnyAgentSpec, plan: PlanId | undefined, budgetClass: string, workspace: string): boolean {
+  if (level >= 1 && budgetClass === "pipeline" && workspace === "batch" && spec.stakes === "low") return true;
+  if (level >= 2 && SCORING.has(spec.id) && (plan ?? "free") !== "pro" && plan !== "max") return true;
+  return level >= 3 && (SCORING.has(spec.id) || BUILDER.has(spec.id));
+}
+
 /** The registry erases the pair's input/output types at this boundary. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyAgentSpec = AgentSpec<any, any>;
@@ -94,34 +113,35 @@ export class Budget {
   }
 
   /**
-   * Order: per call, then shed level against the agent and budget class (9.5), then per user, then
-   * per agent, then global (9.3). `perCallCapUsd` is the tier-up cap when the call runs on the
-   * tier-up model (2.6); it defaults to the spec's own cap.
+   * Order: per call, then shed level against the agent and budget class (9.5), then per user, then per agent, then
+   * global (9.3). `perCallCapUsd` is the tier-up cap when the call runs on the tier-up model (2.6); it defaults to the
+   * spec's own cap. The call's budget class and workspace overrides (3.3: the drafts and tailor routes run as
+   * interactive work) pick the scope, as they pick the counter the ledger bumps.
    */
   async checkBudget(spec: AnyAgentSpec, est: { usd: number; model: ClaudeModel }, ctx: AgentCallContext, perCallCapUsd: number = spec.maxCostPerCallUsd): Promise<BudgetDecision> {
+    const budgetClass = ctx.budgetClass ?? spec.budgetClass;
+    const workspace = ctx.workspace ?? spec.workspace;
+
     // Scope 1: per call.
     if (est.usd > perCallCapUsd) return { ok: false, scope: "call", retryAfter: "now" };
 
-    // Scope 2: shed level (9.5). Level 1 pauses batch ops work; 2 halves Free/Starter scoring and
-    // stops rehearsal; 3 stops all scoring and builder suggestions. The coarse P1 gate uses the
-    // budget class: pipeline batch work sheds first, interactive user work last.
-    const shed = this.shedLevel();
-    if (shed >= 3 && spec.budgetClass === "pipeline") return { ok: false, scope: "shed", retryAfter: "now" };
-    if (shed >= 1 && spec.budgetClass === "pipeline" && spec.workspace === "batch" && spec.stakes === "low") {
-      return { ok: false, scope: "shed", retryAfter: "now" };
-    }
-
     const day = utCday();
     const snap = await this.snapshot(day);
+    const globalUsd = snap.globalUsd + this.processDelta;
+
+    // Scope 2: shed level (9.5), the higher of the env level and the one global spend implies.
+    if (shedRefuses(Math.max(this.shedLevel(), shedLevelFor(globalUsd)), spec, ctx.plan, budgetClass, workspace)) {
+      return { ok: false, scope: "shed", retryAfter: "now" };
+    }
 
     // Scope 3: per user, per day (pipeline cap from plans.ts; interactive backstop from 9.1).
     if (ctx.userId) {
       const spend = await this.userSpend(ctx.userId, day);
       const delta = this.processUserDelta.get(ctx.userId) ?? { pipelineUsd: 0, interactiveUsd: 0 };
-      if (spec.budgetClass === "pipeline") {
-        const cap = dailyPipelineCapUsd(ctx.plan) * (spec.workspace === "interactive" ? 1.5 : 1);
+      if (budgetClass === "pipeline") {
+        const cap = dailyPipelineCapUsd(ctx.plan) * (workspace === "interactive" ? 1.5 : 1);
         if (spend.pipelineUsd + delta.pipelineUsd >= cap) return { ok: false, scope: "user_pipeline", retryAfter: "next_utc_day" };
-      } else if (spec.budgetClass === "interactive") {
+      } else if (budgetClass === "interactive") {
         const backstop = interactiveBackstopUsd(ctx.plan);
         if (spend.interactiveUsd + delta.interactiveUsd >= backstop) {
           return { ok: false, scope: "user_interactive", retryAfter: "next_utc_day" };
@@ -129,14 +149,15 @@ export class Budget {
       }
     }
 
-    // Scope 4: per agent, per day.
+    // Scope 4: per agent, per day. A spent envelope stops batch work until 00:00 UTC; interactive work carries on to
+    // the global ceiling, because a user is waiting (9.4). ponytail: the page at 100% lands with WP-27's alerts.
     const agentSpend = (snap.agentUsd[spec.id] ?? 0) + (this.processAgentDelta[spec.id] ?? 0);
-    if (agentSpend >= spec.dailyEnvelopeUsd) {
-      return { ok: false, scope: "agent", retryAfter: spec.workspace === "batch" ? "next_utc_day" : "now" };
+    if (agentSpend >= spec.dailyEnvelopeUsd && workspace === "batch") {
+      return { ok: false, scope: "agent", retryAfter: "next_utc_day" };
     }
 
-    // Scope 5: global, per day.
-    if (snap.globalUsd + this.processDelta >= SHED_LEVELS[2]) {
+    // Scope 5: global, per day. A hard ceiling for every agent at the level-3 threshold.
+    if (globalUsd >= SHED_LEVELS[2]) {
       return { ok: false, scope: "global", retryAfter: "now" };
     }
 
