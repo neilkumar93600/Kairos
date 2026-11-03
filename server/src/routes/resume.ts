@@ -157,7 +157,7 @@ resumeRouter.post("/suggestions", writerLimiter, validateBody(suggestionRequestS
           if (!fact) throw new Error("Fact insert returned no row");
           return fact;
         },
-        callCtx: gatewayCtx({ userId: me.id, plan, ...(body.jobId ? { jobId: body.jobId } : {}), feature: "resumeSuggestions" }),
+        callCtx: gatewayCtx({ userId: me.id, plan, ...(body.jobId ? { jobId: body.jobId } : {}), feature: "resumeSuggestions", signal: res.locals.deadline }),
       },
     ),
   );

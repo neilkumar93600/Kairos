@@ -52,7 +52,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   }
   if (err instanceof HttpError) {
     const retry = (err.details as { retryAfterSec?: unknown } | undefined)?.retryAfterSec;
-    if (typeof retry === "number" && !res.hasHeader("retry-after")) res.set("retry-after", String(retry));
+    if (typeof retry === "number" && Number.isFinite(retry) && !res.hasHeader("retry-after")) res.set("retry-after", String(retry));
     res.status(err.status).json({ error: { code: err.code, message: err.message, details: err.details, ...rid } });
     return;
   }

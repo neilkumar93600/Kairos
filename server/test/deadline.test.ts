@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import express from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
@@ -59,5 +60,65 @@ describe("routeDeadline table", () => {
     expect(budget("PATCH", "/applications/abc")).toBe(15_000);
     expect(budget("GET", "/jobs/abc/fit")).toBe(30_000);
     expect(budget("GET", "/matches")).toBe(10_000);
+  });
+});
+
+describe("bodyPermit and disconnects", () => {
+  const fake = () => {
+    return new EventEmitter() as unknown as express.Response & EventEmitter;
+  };
+
+  it("a waiter that disconnects leaves the queue, and a holder that disconnects frees its permit", async () => {
+    const permit = bodyPermit(1, 50);
+    const [a, b, c] = [fake(), fake(), fake()];
+    const nexts: unknown[][] = [[], [], []];
+    const run = (res: express.Response, i: number) => permit({} as express.Request, res, (e?: unknown) => nexts[i]!.push(e));
+    run(a, 0); // holds
+    run(b, 1); // queued
+    b.emit("close"); // hangs up while queued
+    a.emit("close"); // releases: nobody is waiting, so nothing is granted to the dead request
+    expect(nexts[1]).toEqual([]);
+    run(c, 2); // the permit is free again
+    expect(nexts[2]).toEqual([undefined]);
+    c.emit("close");
+    await new Promise((r) => setTimeout(r, 80)); // b's timer must not fire a 503 into a closed request
+    expect(nexts[1]).toEqual([]);
+  });
+
+  it("many abandoned queued requests do not wedge the gate", async () => {
+    const permit = bodyPermit(1, 20);
+    const first = fake();
+    permit({} as express.Request, first, () => {});
+    for (let i = 0; i < 20; i++) {
+      const r = fake();
+      permit({} as express.Request, r, () => {});
+      r.emit("close");
+    }
+    first.emit("close");
+    const next = fake();
+    const got: unknown[] = [];
+    permit({} as express.Request, next, (e?: unknown) => got.push(e));
+    expect(got).toEqual([undefined]);
+  });
+});
+
+describe("deadline through the real /api mount", () => {
+  it("routeDeadline is mounted on the api router: a slow route answers 503 timeout with its budget", async () => {
+    const { createApp } = await import("../src/app");
+    const { ROUTE_DEADLINES } = await import("../src/middleware/deadline");
+    ROUTE_DEADLINES.unshift(["GET", /^\/me$/, 20]);
+    try {
+      const app = createApp({
+        auth: { handler: async () => new Response(null), getSession: async () => (await new Promise((r) => setTimeout(r, 120)), null) },
+        corsOrigins: [],
+        healthChecks: {},
+      });
+      const res = await request(app).get("/api/me");
+      expect(res.status).toBe(503);
+      expect(res.body.error.code).toBe("timeout");
+      expect(res.headers["retry-after"]).toBe("5");
+    } finally {
+      ROUTE_DEADLINES.shift();
+    }
   });
 });

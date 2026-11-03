@@ -96,13 +96,19 @@ export async function metered<T>(
   run: () => Promise<T>,
 ): Promise<T> {
   const grant = await consumeAllowance(req);
+  const refund = () => refundAllowance(grant).catch((e: unknown) => logger.warn({ err: e, userHash: logUserHash(req.userId), feature: req.feature }, "allowance refund failed"));
   try {
     const out = await run();
+    // The deadline (middleware/deadline.ts) already sent its 503 timeout: the caller got nothing for this unit.
+    if (res.headersSent) {
+      await refund();
+      return out;
+    }
     res.setHeader("Kairos-Allowance", allowanceHeader(grant));
     return out;
   } catch (err) {
-    if (refundable(err)) {
-      await refundAllowance(grant).catch((e: unknown) => logger.warn({ err: e, userHash: logUserHash(req.userId), feature: req.feature }, "allowance refund failed"));
+    if (refundable(err) || res.locals.deadline?.aborted) {
+      await refund();
     }
     throw err;
   }

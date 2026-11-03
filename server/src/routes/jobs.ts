@@ -5,7 +5,6 @@ import { importJobSchema } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, companies, jobs, matches, profiles } from "../db/schema";
 import { HttpError } from "../lib/errors";
-import { aiLimiter } from "../middleware/rate-limit";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
 import type { SessionUser } from "../lib/auth";
@@ -73,11 +72,8 @@ const dbIo: ImportIo = {
   },
 };
 
-/** Each import fetches a third-party board: 10 a minute per user, in Postgres like writerLimiter. */
-const importLimiter = aiLimiter("ai_import");
-
 /** Metered by the jobImports allowance (CISO mustFix 3): each import fetches a third-party board and stores a posting. */
-jobsRouter.post("/import", importLimiter, validateBody(importJobSchema), async (req, res) => {
+jobsRouter.post("/import", writerLimiter, validateBody(importJobSchema), async (req, res) => {
   const me = currentUser(req);
   const plan = await planFor(db(), me.id);
   res.json(await metered(res, { userId: me.id, plan, feature: "jobImports" }, () => importJob(me.id, req.body.url, dbIo)));
@@ -119,7 +115,7 @@ jobsRouter.post("/:jobId/tailor", writerLimiter, async (req, res) => {
   const confirmed = factRows.filter((f) => f.confirmed).map((f) => ({ id: f.id, kind: f.kind, text: f.text }));
   const posting = { title: job.title, companyName: job.company, descriptionText: job.descriptionText };
   // The tailor route is interactive work (03-agent-runtime 3.3); the 60 facts the posting needs most go in.
-  const ctx = gatewayCtx({ userId: me.id, plan, jobId, feature: "jobTailor", budgetClass: "interactive" });
+  const ctx = gatewayCtx({ userId: me.id, plan, jobId, feature: "jobTailor", budgetClass: "interactive", signal: res.locals.deadline });
   // No confirmed fact means nothing a line could cite: no model call and no unit taken.
   const { kept } = confirmed.length
     ? await metered(res, { userId: me.id, plan, feature: "jobTailor" }, () =>

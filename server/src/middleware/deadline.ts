@@ -12,7 +12,7 @@ declare global {
 }
 
 /** Handler budgets in ms (05-api 2.4): 10 s default, 15 s edits, 30 s PDFs and fit, 60 s model-backed routes. */
-export const DEADLINE = { default: 10_000, edit: 15_000, render: 30_000, ai: 60_000 } as const;
+export const DEADLINE = { default: 10_000, edit: 15_000, render: 30_000, ai: 60_000, billing: 40_000 } as const;
 
 /**
  * Non-default budgets by route, matched against the path inside the /api router. A new model-backed or rendering route
@@ -25,6 +25,9 @@ export const ROUTE_DEADLINES: [method: string, path: RegExp, ms: number][] = [
   ["POST", /^\/applications\/[^/]+\/drafts$/, DEADLINE.ai],
   ["GET", /^\/jobs\/[^/]+\/fit$/, DEADLINE.render],
   ["PATCH", /^\/applications\/[^/]+$/, DEADLINE.edit],
+  // Money paths: a 503 while the work goes on invites a retry. Billing makes up to four Stripe calls of 10 s each.
+  ["POST", /^\/applications\/approve$/, DEADLINE.render],
+  ["POST", /^\/billing\//, DEADLINE.billing],
 ];
 
 /** One mount for the whole api router: picks the budget from ROUTE_DEADLINES. */
@@ -54,32 +57,39 @@ export function deadline(ms: number = DEADLINE.default): RequestHandler {
 }
 
 /**
- * At most `max` requests hold the permit at once (a big body is read into memory); the rest get 503 service_unavailable
- * with Retry-After: 3 after waiting up to `waitMs`. Mount it before the body parser of an upload route.
+ * At most `max` requests hold the permit at once (a big body is read into memory); the rest wait up to `waitMs`, then get
+ * 503 service_unavailable with Retry-After: 3. A request that disconnects gives its permit back or leaves the queue, so
+ * clients that hang up never wedge the gate. Mount it before the body parser of an upload route.
  * ponytail: per replica, in memory; the limit exists to bound memory, which is per process.
  */
 export function bodyPermit(max: number, waitMs = 3_000): RequestHandler {
   let held = 0;
-  const waiting: (() => void)[] = [];
+  const queue: (() => void)[] = [];
   return (_req, res, next) => {
-    const take = () => {
+    let holding = false;
+    let timer: NodeJS.Timeout | undefined;
+    const grant = () => {
+      clearTimeout(timer);
+      holding = true;
       held++;
-      let released = false;
-      const release = () => {
-        if (released) return;
-        released = true;
-        held--;
-        waiting.shift()?.();
-      };
-      res.once("close", release);
       next();
     };
-    if (held < max) return take();
-    const slot = () => { clearTimeout(timer); take(); };
-    const timer = setTimeout(() => {
-      waiting.splice(waiting.indexOf(slot), 1);
+    // Registered before queueing, so a close at any point is seen: held -> release, queued -> leave the queue.
+    res.once("close", () => {
+      clearTimeout(timer);
+      if (holding) {
+        holding = false;
+        held--;
+        queue.shift()?.();
+      } else if (queue.includes(grant)) {
+        queue.splice(queue.indexOf(grant), 1);
+      }
+    });
+    if (held < max) return grant();
+    queue.push(grant);
+    timer = setTimeout(() => {
+      queue.splice(queue.indexOf(grant), 1);
       next(new HttpError(503, "service_unavailable", "The server is busy. Try again in a moment.", { retryAfterSec: 3 }));
     }, waitMs);
-    waiting.push(slot);
   };
 }

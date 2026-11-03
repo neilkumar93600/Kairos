@@ -36,7 +36,7 @@ const CORS_ALLOWED = ["content-type", "authorization", "idempotency-key", "if-ma
 const CORS_EXPOSED = ["x-request-id", "retry-after", "etag", "ratelimit", "ratelimit-policy", "kairos-allowance", "kairos-contract", "idempotent-replayed"];
 
 /** Date of the newest additive API change (05-api 2.1, "Kairos-Contract"); informational. Bump it with a shape addition. */
-export const CONTRACT_DATE = "2026-10-23";
+export const CONTRACT_DATE = "2026-11-03";
 
 const AUTH_BODY_MAX_BYTES = 64 * 1024;
 
@@ -62,6 +62,7 @@ export function createApp(deps: AppDeps) {
   const app = express();
   const limits = createLimiters(deps.sharedLimits ?? false);
   app.set("trust proxy", 1);
+  app.locals.sharedLimits = deps.sharedLimits ?? false; // read by aiLimiter (middleware/rate-limit.ts)
   app.disable("x-powered-by");
 
   app.use(requestId);

@@ -23,7 +23,7 @@ describe("CORS and contract headers", () => {
   });
 
   it("stamps every /api answer with Kairos-Contract, errors included", async () => {
-    expect((await request(app).get("/api/me")).headers["kairos-contract"]).toBe("2026-10-23");
-    expect((await request(app).get("/api/nope")).headers["kairos-contract"]).toBe("2026-10-23");
+    expect((await request(app).get("/api/me")).headers["kairos-contract"]).toBe("2026-11-03");
+    expect((await request(app).get("/api/nope")).headers["kairos-contract"]).toBe("2026-11-03");
   });
 });

@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { ipKeyGenerator, MemoryStore, rateLimit, type Options, type Store } from "express-rate-limit";
+import { ipKeyGenerator, rateLimit, type Options, type Store } from "express-rate-limit";
 import { getSessionCookie } from "better-auth/cookies";
 import { fromNodeHeaders } from "better-auth/node";
 import { sql } from "drizzle-orm";
@@ -52,52 +52,32 @@ const storeLog = {
   warn: (err: unknown, message?: string) => logger.warn({ err }, message ?? "rate limiter"),
 };
 
-/** Set by createLimiters: whether the AI-route limiters count in Postgres (05-api 6.2) or in memory (tests). */
-let aiShared = false;
-
-/** Picks Postgres or memory per call, because the AI routers are built at import time, before createLimiters runs. */
-class SwitchStore implements Store {
-  private readonly memory = new MemoryStore();
-  private readonly shared: PostgresStore;
-  constructor(prefix: string) {
-    this.shared = new PostgresStore(prefix);
-  }
-  private get store(): Store {
-    return aiShared ? this.shared : this.memory;
-  }
-  init(options: Options) {
-    this.memory.init(options);
-    this.shared.init(options);
-  }
-  increment(key: string) {
-    return this.store.increment(key);
-  }
-  decrement(key: string) {
-    return this.store.decrement(key);
-  }
-  resetKey(key: string) {
-    return this.store.resetKey(key);
-  }
-}
-
 /**
- * A model-backed route's per-minute cap, by user (class `ai_burst`, 10 a minute, 05-api 6.2). Each `bucket` counts
- * apart (the import route has its own); in production every replica shares the count.
+ * A model-backed route's per-minute cap, by user (class `ai_burst`, 10 a minute, 05-api 6.2); one bucket for every such
+ * route. The routers that use it are built at import time, before an app exists, so the choice between counting in
+ * Postgres (every replica shares it) and in memory (tests) is made per request from `app.locals.sharedLimits`, which
+ * createApp sets from the same flag as createLimiters.
  */
-export function aiLimiter(bucket: string, limit = 10) {
-  return rateLimit({
-    limit,
-    windowMs: 60_000,
-    identifier: bucket,
-    keyGenerator: byUser,
-    store: new SwitchStore(`${bucket}:`),
-    standardHeaders: "draft-8",
-    legacyHeaders: false,
-    passOnStoreError: true,
-    logger: storeLog,
-    handler: (_req, res, next) =>
-      next(new HttpError(429, "rate_limited", "Too many AI requests. Try again in a minute.", { reason: "user_limit", bucket, retryAfterSec: Number(res.getHeader("retry-after")) })),
-  });
+export function aiLimiter(bucket = "ai_burst", limit = 10) {
+  const make = (store: Store | undefined) =>
+    rateLimit({
+      limit,
+      windowMs: 60_000,
+      identifier: bucket,
+      keyGenerator: byUser,
+      store,
+      standardHeaders: "draft-8",
+      legacyHeaders: false,
+      passOnStoreError: true,
+      logger: storeLog,
+      handler: (_req, res, next) => {
+        const retry = Number(res.getHeader("retry-after"));
+        next(new HttpError(429, "rate_limited", "Too many AI requests. Try again in a minute.", { reason: "user_limit", bucket, ...(Number.isFinite(retry) ? { retryAfterSec: retry } : {}) }));
+      },
+    });
+  const inMemory = make(undefined);
+  const inPostgres = make(new PostgresStore(`${bucket}:`));
+  return (req: Request, res: Response, next: NextFunction) => (req.app.locals.sharedLimits ? inPostgres : inMemory)(req, res, next);
 }
 
 /** A session cookie or a bearer token, valid or not. */
@@ -113,7 +93,6 @@ const byUser = (req: Request) => currentUser(req).id;
  * limiters (aiLimiter below) follow the same switch; auth routes are limited by Better Auth (lib/auth.ts).
  */
 export function createLimiters(shared: boolean) {
-  aiShared = shared;
   const limiter = (bucket: string, limit: number, windowMs: number, byUserId: boolean, skip?: (req: Request, res: Response) => boolean) =>
     rateLimit({
       limit,
@@ -127,7 +106,8 @@ export function createLimiters(shared: boolean) {
       passOnStoreError: true,
       logger: storeLog,
       handler: (_req, res, next) => {
-        const details = { reason: byUserId ? "user_limit" : "ip_limit", bucket, retryAfterSec: Number(res.getHeader("retry-after")) };
+        const retry = Number(res.getHeader("retry-after"));
+        const details = { reason: byUserId ? "user_limit" : "ip_limit", bucket, ...(Number.isFinite(retry) ? { retryAfterSec: retry } : {}) };
         next(new HttpError(429, "rate_limited", "Too many requests. Try again later.", details));
       },
     });
