@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { resumeLineSchema, type ResumeLine } from "@auto-career/shared";
+import { resumeLineSchema, type ResumeInput, type ResumeLine, type ResumeSuggestion } from "@auto-career/shared";
 import { UNTRUSTED_RULES, untrusted } from "../ai/untrusted";
 import { runAgent } from "../llm/gateway";
 import { resumeTailor } from "../agents/resume-tailor/spec";
@@ -62,6 +63,7 @@ export async function tailorResume(
   callCtx?: AgentCallContext,
 ) {
   const factTexts = new Map(facts.map((f) => [f.id, f.text]));
+  if (facts.length === 0) return { kept: [], rejected: [] }; // nothing a line could cite, so no model call
   if (callCtx ?? gatewayEnabled()) {
     // The gateway path (LLM_GATEWAY=anthropic); the truth lock below still owns the final word.
     // Clipped to the input schema (60 facts; the gateway refuses more). Callers pass their best facts first.
@@ -90,4 +92,39 @@ export async function tailorResume(
     ],
   });
   return enforceTruthLock(result.lines, factTexts);
+}
+
+/**
+ * The tailor route's suggestions from resume-tailor's truth-locked lines (Haiku instead of the Sonnet writer, resume-34).
+ * A tailored line citing a fact that a base-resume line already cites rewrites that line (each base line once); any
+ * other line is an add to the section it names, under the entry whose heading it cites. Unchanged lines and sections
+ * the resume lacks are skipped.
+ * ponytail: maps v1's whole-resume lines onto the document; resume-tailor's suggestion mode (05-resume-workspace 6,
+ * WP-41) asks the model for rewrite, add and remove against the document directly, plus the needsFact questions.
+ */
+export function tailorSuggestions(resume: ResumeInput, lines: ResumeLine[], jobTitle: string, max = 15): ResumeSuggestion[] {
+  const sections = resume.sections.filter((s) => !s.hidden).map((s) => ({ ...s, entries: s.entries.filter((e) => !e.hidden) }));
+  const why = `Tailored toward ${jobTitle}`.slice(0, 300);
+  const claimed = new Set<string>();
+  const out: ResumeSuggestion[] = [];
+  for (const line of lines) {
+    if (out.length >= max) break;
+    const cites = new Set(line.factIds);
+    const base = sections
+      .flatMap((s) => s.entries.flatMap((e) => e.lines.map((l) => ({ sectionId: s.id, entryId: e.id, line: l }))))
+      .find((b) => !claimed.has(b.line.id) && b.line.factIds.some((id) => cites.has(id)));
+    if (base) {
+      claimed.add(base.line.id);
+      if (base.line.text.trim() !== line.text.trim()) {
+        out.push({ id: randomUUID(), sectionId: base.sectionId, entryId: base.entryId, lineId: base.line.id, before: base.line.text, action: "rewrite", after: line.text, why, factIds: line.factIds, needsFact: null });
+      }
+      continue;
+    }
+    const name = line.section.trim().toLowerCase();
+    const section = sections.find((s) => s.title.trim().toLowerCase() === name || s.kind === name);
+    if (!section) continue;
+    const entry = section.entries.find((e) => e.headingFactId !== null && cites.has(e.headingFactId));
+    out.push({ id: randomUUID(), sectionId: section.id, entryId: entry?.id ?? null, lineId: null, before: null, action: "add", after: line.text, why, factIds: line.factIds, needsFact: null });
+  }
+  return out;
 }

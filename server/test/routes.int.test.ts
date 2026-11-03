@@ -321,6 +321,21 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
     });
   });
 
+  describe("POST /api/jobs/:jobId/tailor", () => {
+    it("runs resume-tailor (Haiku) and maps its lines onto the base resume, metered by jobTailor (resume-34)", async () => {
+      const f = await fact("Built billing", true);
+      await tdb.insert(schema.resumes).values({ userId: me.id, document: doc(f) });
+      const app1 = await draft();
+      tailorResume.mockResolvedValue({ kept: [{ id: "t1", section: "Experience", text: "Built the billing service", factIds: [f] }], rejected: [] });
+      const res = await request(app).post(`/api/jobs/${app1.jobId}/tailor`);
+      expect(res.status).toBe(200);
+      expect(res.body.suggestions).toEqual([expect.objectContaining({ action: "rewrite", lineId: "l1", before: "Built billing", after: "Built the billing service", factIds: [f] })]);
+      expect(res.headers["kairos-allowance"]).toMatch(/^feature=jobTailor;used=1;limit=5;resets=/);
+      expect(tailorResume).toHaveBeenCalledTimes(1);
+      expect(tailorResume.mock.calls[0]![0]).toEqual([expect.objectContaining({ id: f })]);
+    });
+  });
+
   describe("POST /api/jobs/import", () => {
     it("422s unsupported_board without fetching anything", async () => {
       const res = await request(app).post("/api/jobs/import").send({ url: "https://example.com/jobs/123" });
