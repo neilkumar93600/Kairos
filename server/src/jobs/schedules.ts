@@ -56,7 +56,7 @@ export const SCHEDULES: Schedule[] = [
   // Stuck email claims, emails whose enqueue was lost, and the owner alert for given-up sends (WP-44, messaging-46).
   { queue: "maintenance", id: "notify-reconcile", repeat: { every: 5 * MINUTE }, run: processNotifyReconcile },
   // email_sends after 120 days, notifications after 90, signed links 7 days past expiry (WP-44).
-  { queue: "maintenance", id: "mail-retention", repeat: { pattern: "50 3 * * *", tz: "UTC" }, run: processMailRetention },
+  { queue: "maintenance", id: "mail-retention", repeat: { pattern: "35 3 * * *", tz: "UTC" }, run: processMailRetention },
 ];
 
 /** The maintenance queue's processor: the scheduler id is the job name. */

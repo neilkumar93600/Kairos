@@ -186,7 +186,10 @@ GRANT SELECT ON llm_cost_daily TO kairos_metrics;
 -- Outbound mail and signed links (WP-44, 02-database 4.2). The api reads and marks notifications read, verifies and
 -- consumes signed links and records Postmark's bounce and complaint events; the worker claims and sends mail, mints
 -- links, writes notifications and runs the retention deletes. The api can change only read_at on a notification.
-GRANT SELECT, INSERT, UPDATE ON email_sends, action_tokens TO kairos_api;
+-- The api sends no notify mail (the worker does), so it has no email_sends grant; on action_tokens it can mint a link
+-- and mark one used, nothing else.
+GRANT SELECT, INSERT ON action_tokens TO kairos_api;
+GRANT UPDATE (used_at) ON action_tokens TO kairos_api;
 GRANT SELECT, INSERT ON notifications TO kairos_api;
 GRANT UPDATE (read_at) ON notifications TO kairos_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON email_suppressions TO kairos_api;

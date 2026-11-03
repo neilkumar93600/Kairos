@@ -13,7 +13,7 @@ import { bootstrapUser } from "../services/bootstrap";
 import { INLINE_REQUEST, stripe } from "../services/stripe";
 import { env, type Env } from "./env";
 import { logger, logUserHash } from "./logger";
-import { sendEmail } from "./mailer";
+import { mailErrorCode, sendEmail } from "./mailer";
 
 const OTP_SUBJECTS = {
   "sign-in": "Your Kairos sign-in code",
@@ -48,6 +48,22 @@ export async function limitByEmail(path: string, body: unknown): Promise<void> {
     if ((await hit(`${bucket}:${id}`, windowMs)).count > max) {
       throw new APIError("TOO_MANY_REQUESTS", { message: "Too many attempts for this email. Try again later." });
     }
+  }
+}
+
+/**
+ * Sends a sign-in or verification code inline, on the transactional stream (never queued). An address Postmark holds
+ * inactive (406: bounced, complained, suppressed) answers 422 `email_undeliverable`, so the web can say "we cannot
+ * deliver to this address" instead of a generic failure; any other error stays a 500.
+ */
+export async function sendCode(to: string, subject: string, text: string, tag: string): Promise<void> {
+  try {
+    await sendEmail({ to, subject, text, tag });
+  } catch (err) {
+    if (mailErrorCode(err) === "postmark_406") {
+      throw new APIError("UNPROCESSABLE_ENTITY", { code: "email_undeliverable", message: "We cannot deliver email to this address. Check it, or use another." });
+    }
+    throw err;
   }
 }
 
@@ -138,12 +154,7 @@ function createAuth() {
         overrideDefaultEmailVerification: true,
         storeOTP: "hashed",
         async sendVerificationOTP({ email, otp, type }) {
-          await sendEmail({
-            to: email,
-            subject: OTP_SUBJECTS[type],
-            text: `Your code is ${otp}. It expires in 10 minutes. If you did not ask for it, ignore this email.`,
-            tag: `otp-${type}`,
-          });
+          await sendCode(email, OTP_SUBJECTS[type], `Your code is ${otp}. It expires in 10 minutes. If you did not ask for it, ignore this email.`, `otp-${type}`);
         },
       }),
       // The Chrome extension signs in with a one-time token from the web app, then uses a bearer token.

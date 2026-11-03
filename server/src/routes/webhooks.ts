@@ -127,6 +127,8 @@ const postmarkEvent = z.discriminatedUnion("RecordType", [
   }),
 ]);
 
+const HANDLED = new Set<unknown>(["SpamComplaint", "Bounce", "SubscriptionChange"]);
+
 function requireEventsToken(req: Request, _res: Response, next: NextFunction) {
   const secret = env().POSTMARK_EVENTS_SECRET;
   const token = typeof req.query.token === "string" ? req.query.token : "";
@@ -136,9 +138,15 @@ function requireEventsToken(req: Request, _res: Response, next: NextFunction) {
 }
 
 webhooksRouter.post("/postmark-events", requireEventsToken, express.json({ limit: "256kb", inflate: false }), async (req, res) => {
-  const parsed = postmarkEvent.safeParse(req.body);
   // Delivery, open and click events (and anything new) are acknowledged and ignored, so Postmark stops retrying them.
-  if (!parsed.success) return void res.json({ recorded: false });
+  const recordType = (req.body as { RecordType?: unknown } | undefined)?.RecordType;
+  if (!HANDLED.has(recordType)) return void res.json({ recorded: false });
+  // A type we act on but cannot read is a format change or a forged call: never a silent 200 that drops a complaint.
+  const parsed = postmarkEvent.safeParse(req.body);
+  if (!parsed.success) {
+    logger.warn({ recordType, issues: parsed.error.issues.map((i) => i.path.join(".")) }, "postmark delivery event of a handled type failed its shape check");
+    throw new HttpError(422, "invalid_body", "Unreadable delivery event");
+  }
   const e = parsed.data;
   const hash = addressHash(e.RecordType === "SubscriptionChange" ? e.Recipient : e.Email);
   if (e.RecordType === "SpamComplaint" || (e.RecordType === "SubscriptionChange" && e.SuppressSending && e.SuppressionReason === "SpamComplaint")) {

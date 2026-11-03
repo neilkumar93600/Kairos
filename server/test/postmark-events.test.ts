@@ -20,4 +20,14 @@ describe("POST /api/webhooks/postmark-events (WP-44)", () => {
     const res = await request(app).post("/api/webhooks/postmark-events?token=events-secret-0123456789").set("content-encoding", "gzip").set("content-type", "application/json").send("x");
     expect(res.status).toBe(415);
   });
+
+  it("answers 422 for a complaint it cannot read, so a dropped complaint shows up in Postmark's webhook log", async () => {
+    const res = await request(app).post("/api/webhooks/postmark-events?token=events-secret-0123456789").send({ RecordType: "SpamComplaint" });
+    expect(res.status).toBe(422);
+  });
+
+  it("acknowledges types it does not handle without reading them", async () => {
+    const res = await request(app).post("/api/webhooks/postmark-events?token=events-secret-0123456789").send({ RecordType: "Open" });
+    expect(res.body).toEqual({ recorded: false });
+  });
 });
