@@ -450,15 +450,30 @@ export function setProcessRole(next: ProcessRole): void {
   role = next;
 }
 
+export function resetEnvCache(): void {
+  cached = undefined;
+  cachedApplier = undefined;
+}
+
 /** Parses process.env once for the api and the worker. Throws in the applier, so no applier path reaches a secret. */
 export function env(): Env {
   if (role === "applier") throw new Error("env() is not available in the applier; use applierEnv() or baseEnv()");
+  if (process.env.NODE_ENV === "test") {
+    if (cached && (cached.DATABASE_URL !== process.env.DATABASE_URL || (process.env.STRIPE_SECRET_KEY && !cached.STRIPE_SECRET_KEY))) {
+      cached = undefined;
+    }
+  }
   cached ??= parseEnv(process.env);
   return cached;
 }
 
 /** The applier's own env (envFor('applier')), parsed once. */
 export function applierEnv(): ApplierEnv {
+  if (process.env.NODE_ENV === "test") {
+    if (cachedApplier && cachedApplier.DATABASE_URL !== process.env.DATABASE_URL) {
+      cachedApplier = undefined;
+    }
+  }
   cachedApplier ??= envFor("applier", process.env);
   return cachedApplier;
 }

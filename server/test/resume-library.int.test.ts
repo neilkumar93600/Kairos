@@ -109,7 +109,7 @@ describe.skipIf(!hasTestDb)("resume library and imports (R1)", () => {
     const first = (await request(app).get("/api/resumes")).body.resumes[0];
     const before = await tdb.select().from(schema.resumes).where(eq(schema.resumes.userId, me.id));
     const [company] = await tdb.insert(schema.companies).values({ name: "Sample Co", ats: "greenhouse", boardToken: "sample-co" }).returning();
-    const [job] = await tdb.insert(schema.jobs).values({ companyId: company!.id, externalId: "1", title: "Data Analyst", descriptionText: "SQL.", applyUrl: "https://example.com/a" }).returning();
+    const [job] = await tdb.insert(schema.jobs).values({ companyId: company!.id, externalId: "1", title: "Data Analyst", descriptionText: "SQL.", applyUrl: "https://job-boards.greenhouse.io/sample-co/jobs/1" }).returning();
     await tdb.insert(schema.applications).values({ userId: me.id, jobId: job!.id });
     for (const res of [
       await request(app).post("/api/resumes").send({ from: "duplicate", sourceId: first.id, name: "Second" }),

@@ -65,7 +65,7 @@ describe.skipIf(!hasTestDb)("Better Auth end to end", () => {
   beforeAll(async () => {
     tdb = await testDb("auth");
     await resetDb(tdb);
-    app = createApp({ auth: authGateway(), corsOrigins: [WEB], healthChecks: {} });
+    app = createApp({ auth: authGateway(), corsOrigins: [WEB], csrfOrigins: [WEB], healthChecks: {} });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.startsWith("https://oauth2.googleapis.com/token")) {
