@@ -18,3 +18,13 @@ updates:
     schedule:
       interval: weekly
       day: monday
+
+  # Refreshes the digest-pinned base images in server/Dockerfile*. The Playwright image is bumped by hand, in step
+  # with playwright-core (see the npm ignore above).
+  - package-ecosystem: docker
+    directory: /server
+    schedule:
+      interval: weekly
+      day: monday
+    ignore:
+      - dependency-name: mcr.microsoft.com/playwright
