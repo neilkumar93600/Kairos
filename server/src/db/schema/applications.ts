@@ -75,9 +75,13 @@ export const applications = pgTable(
     questions: jsonb("questions").$type<unknown[]>(),
     verification: jsonb("verification").$type<{ state: "none" | "pending" | "passed" | "failed" } & Record<string, unknown>>(),
     factsSnapshotHash: text("facts_snapshot_hash"),
-    /** The tailored resume document with its template, accent and page size, frozen by the approval (PRD 6.1, 7.6); written once. */
+    /**
+     * The tailored resume document with its template, accent and page size (PRD 6.1, 7.6), written by every approval in
+     * the approving transaction (a resend after failed writes a new one). applications_guard_snapshot keeps it fixed
+     * while the application is approved, submitting or submitted; return-to-draft clears it. The receipt reads it.
+     */
     resumeSnapshot: jsonb("resume_snapshot"),
-    /** R2 key of the rendered snapshot PDF, set once by the render job after approval. */
+    /** R2 key of the rendered snapshot PDF under snapshots/<user_id>/, set once per approval by the render job. */
     resumeFileKey: text("resume_file_key"),
     preparedAt: timestamp("prepared_at", { withTimezone: true }),
     /** A below_bar manual import the user chose to prepare; Autopilot never sends it. */
@@ -126,6 +130,7 @@ export const applications = pgTable(
         AND cover_letter IS NULL AND resume_file_key IS NULL AND resume_snapshot IS NULL)`,
     ),
     check("applications_scrub_ck", sql`content_scrubbed_at IS NULL OR status IN ('submitted','withdrawn')`),
+    check("applications_file_key_ck", sql`resume_file_key IS NULL OR starts_with(resume_file_key, 'snapshots/' || user_id || '/')`),
     check(
       "applications_snapshot_ck",
       sql`(status <> 'draft' OR (resume_snapshot IS NULL AND resume_file_key IS NULL))

@@ -218,6 +218,12 @@ describe.skipIf(!hasTestDb)("lifecycle expand: guards", () => {
       const [eu] = await db.insert(schema.companies).values({ name: "Eu", ats: "lever", boardToken: "eu", apiRegion: "eu" }).returning();
       expect(eu).toMatchObject({ apiHost: "api.eu.lever.co", applyHost: "jobs.eu.lever.co" });
       expect(await failure(() => db.insert(schema.companies).values({ name: "X", ats: "ashby", boardToken: "x", apiHost: "169.254.169.254" }))).toBe("23514");
+      // A move to Lever EU recomputes both hosts.
+      await db.update(schema.companies).set({ apiRegion: "eu" }).where(sql`${schema.companies.id} = ${eu!.id}`);
+      const [lever] = await db.insert(schema.companies).values({ name: "Us", ats: "lever", boardToken: "us" }).returning();
+      await db.update(schema.companies).set({ apiRegion: "eu" }).where(sql`${schema.companies.id} = ${lever!.id}`);
+      const [moved] = await db.select().from(schema.companies).where(sql`${schema.companies.id} = ${lever!.id}`);
+      expect(moved).toMatchObject({ apiHost: "api.eu.lever.co", applyHost: "jobs.eu.lever.co" });
     });
 
     it("an inactive company names its reason; a job's URL stays on the allowlist and its close names its closer", async () => {
@@ -234,8 +240,9 @@ describe.skipIf(!hasTestDb)("lifecycle expand: guards", () => {
 
     it("refreshJobHints fills the gate columns once (B-6), and a rerun writes nothing", async () => {
       const { job } = await jobFor();
-      expect(await refreshJobHints(db)).toBe(1);
-      expect(await refreshJobHints(db)).toBe(0);
+      expect(await refreshJobHints(db)).toEqual({ n: 1, lastId: job.id });
+      expect(await refreshJobHints(db)).toEqual({ n: 0, lastId: undefined });
+      expect((await refreshJobHints(db, 10, job.id)).n).toBe(0);
       const [row] = await db.select().from(schema.jobs).where(sql`${schema.jobs.id} = ${job.id}`);
       expect(row).toMatchObject({ titleLc: "engineer", seniorityHint: "unknown", hintsVersion: HINTS_VERSION });
       expect(row!.contentHash).toMatch(/^[0-9a-f]{64}$/);
@@ -319,6 +326,18 @@ describe.skipIf(!hasTestDb)("lifecycle expand: guards", () => {
       expect((await appOf(a.id)).rowVersion).toBe(1);
       expect(await update(a.id, { updatedAt: new Date() })).toBe("ok");
       expect((await appOf(a.id)).rowVersion).toBe(1);
+    });
+
+    it("keeps the sent snapshot fixed while its approval stands, under the owner's own key prefix", async () => {
+      const userId = await seedUser(db);
+      const a = await application(userId, { ...approvedSet, resumeSnapshot: { v: 1 } });
+      expect(await update(a.id, { resumeFileKey: `snapshots/${randomUUID()}/x.pdf` })).toBe("23514");
+      expect(await update(a.id, { resumeFileKey: `snapshots/${userId}/a.pdf` })).toBe("ok");
+      expect(await update(a.id, { resumeFileKey: `snapshots/${userId}/b.pdf` })).toBe("23514");
+      expect(await update(a.id, { resumeSnapshot: { v: 2 } })).toBe("23514");
+      expect(await update(a.id, { status: "failed", failureCode: "challenge", failureReason: "x" })).toBe("ok");
+      // A resend after a failure writes a new snapshot with its approval.
+      expect(await update(a.id, { status: "approved", resumeSnapshot: { v: 3 }, resumeFileKey: null })).toBe("ok");
     });
 
     it("refuses a snapshot on a draft and a lease on anything but an approved extension send", async () => {
@@ -406,6 +425,15 @@ describe.skipIf(!hasTestDb)("lifecycle expand: guards", () => {
       expect(await recordEvent(db, { userId, applicationId: later!.id, kind: "drafted", actor: "system", dedupeKey: "drafted" })).toBe(true);
       const [linked] = await db.select().from(schema.trackerItems).where(sql`${schema.trackerItems.id} = ${saved!.id}`);
       expect(linked!.applicationId).toBe(later!.id);
+    });
+
+    it("reuses an application's item after its posting's job_id was nulled", async () => {
+      const userId = await seedUser(db);
+      const a = await application(userId);
+      await recordEvent(db, { userId, applicationId: a.id, kind: "drafted", actor: "system" });
+      await db.update(schema.trackerItems).set({ jobId: null }).where(sql`${schema.trackerItems.applicationId} = ${a.id}`);
+      expect(await recordEvent(db, { userId, applicationId: a.id, kind: "approved", actor: "user" })).toBe(true);
+      expect(await db.select().from(schema.trackerItems).where(sql`${schema.trackerItems.userId} = ${userId}`)).toHaveLength(1);
     });
 
     it("writes nothing for another user's application or item", async () => {

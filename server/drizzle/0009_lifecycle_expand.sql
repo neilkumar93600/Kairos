@@ -7,7 +7,10 @@
 --   3. The 17 new indexes on jobs, matches and applications moved to 0012 (CONCURRENTLY IF NOT EXISTS).
 --   4. jobs_apply_url_host_ck moved to 0011, after the legacy apply URLs are rebuilt to the hosted forms.
 --   5. Every CHECK added to an existing table (companies, jobs, matches, applications) is NOT VALID: it holds every new
---      write at once; 0012 validates the ones over new or backfilled columns, owner-actions/WP-42.md the rest.
+--      write at once; 0012 validates the ones over new or backfilled columns. The five over legacy data
+--      (companies_name_ck, companies_board_token_ck, matches_score_ck, applications_json_ck, applications_text_ck) moved to
+--      the end of 0011, after the backfill's updates, which a legacy row breaking them would otherwise abort;
+--      owner-actions/WP-42.md validates them.
 --   6. The functions and triggers after the generated DDL are hand-written (spec texts cited at each).
 -- Postgres 17-compatible: gen_random_uuid() ids, no uuidv7() (PG18 is not confirmed).
 CREATE EXTENSION IF NOT EXISTS pg_trgm;--> statement-breakpoint
@@ -187,8 +190,6 @@ CREATE INDEX "companies_due_idx" ON "companies" USING btree ("next_poll_at") WHE
 CREATE INDEX "companies_domains_gin_idx" ON "companies" USING gin ("domains");--> statement-breakpoint
 CREATE INDEX "companies_name_lc_idx" ON "companies" USING btree (lower("name"));--> statement-breakpoint
 CREATE INDEX "companies_review_idx" ON "companies" USING btree ("created_at") WHERE "companies"."discovered_by" = 'import' AND NOT "companies"."active";--> statement-breakpoint
-ALTER TABLE "companies" ADD CONSTRAINT "companies_name_ck" CHECK (char_length(name) BETWEEN 1 AND 200) NOT VALID;--> statement-breakpoint
-ALTER TABLE "companies" ADD CONSTRAINT "companies_board_token_ck" CHECK (board_token ~ '^[A-Za-z0-9_.-]{1,100}$') NOT VALID;--> statement-breakpoint
 ALTER TABLE "companies" ADD CONSTRAINT "companies_counters_ck" CHECK (empty_streak >= 0 AND consecutive_errors >= 0) NOT VALID;--> statement-breakpoint
 ALTER TABLE "companies" ADD CONSTRAINT "companies_discovered_by_ck" CHECK (discovered_by IN ('seed','import')) NOT VALID;--> statement-breakpoint
 ALTER TABLE "companies" ADD CONSTRAINT "companies_active_reason_ck" CHECK ((active AND inactive_reason IS NULL) OR (NOT active AND inactive_reason IN ('board_not_found','import_pending','owner'))) NOT VALID;--> statement-breakpoint
@@ -202,7 +203,6 @@ ALTER TABLE "jobs" ADD CONSTRAINT "jobs_closed_coherent_ck" CHECK ((closed_at IS
 ALTER TABLE "jobs" ADD CONSTRAINT "jobs_seniority_hint_ck" CHECK (seniority_hint IN ('intern','entry','mid','senior','staff_plus','manager','unknown')) NOT VALID;--> statement-breakpoint
 ALTER TABLE "jobs" ADD CONSTRAINT "jobs_sponsorship_hint_ck" CHECK (sponsorship_hint IN ('no_sponsorship','sponsors')) NOT VALID;--> statement-breakpoint
 ALTER TABLE "jobs" ADD CONSTRAINT "jobs_card_ck" CHECK (card IS NULL OR (jsonb_typeof(card) = 'object' AND octet_length(card::text) <= 16384 AND card_version IS NOT NULL AND card_content_hash IS NOT NULL)) NOT VALID;--> statement-breakpoint
-ALTER TABLE "matches" ADD CONSTRAINT "matches_score_ck" CHECK (score IS NULL OR score BETWEEN 0 AND 100) NOT VALID;--> statement-breakpoint
 ALTER TABLE "matches" ADD CONSTRAINT "matches_prerank_ck" CHECK (prerank_score IS NULL OR prerank_score BETWEEN 0 AND 100) NOT VALID;--> statement-breakpoint
 ALTER TABLE "matches" ADD CONSTRAINT "matches_source_ck" CHECK (source IN ('pipeline','manual_url')) NOT VALID;--> statement-breakpoint
 ALTER TABLE "matches" ADD CONSTRAINT "matches_selection_ck" CHECK (selection IN ('ranked','explore','express','backfill','rebalance','rescore','import')) NOT VALID;--> statement-breakpoint
@@ -223,26 +223,20 @@ ALTER TABLE "applications" ADD CONSTRAINT "applications_autopilot_ck" CHECK (app
 ALTER TABLE "applications" ADD CONSTRAINT "applications_expired_ck" CHECK (draft_state <> 'expired' OR (status IN ('draft','withdrawn') AND resume_lines = '[]'::jsonb AND answers = '[]'::jsonb
         AND cover_letter IS NULL AND resume_file_key IS NULL AND resume_snapshot IS NULL)) NOT VALID;--> statement-breakpoint
 ALTER TABLE "applications" ADD CONSTRAINT "applications_scrub_ck" CHECK (content_scrubbed_at IS NULL OR status IN ('submitted','withdrawn')) NOT VALID;--> statement-breakpoint
+ALTER TABLE "applications" ADD CONSTRAINT "applications_file_key_ck" CHECK (resume_file_key IS NULL OR starts_with(resume_file_key, 'snapshots/' || user_id || '/')) NOT VALID;--> statement-breakpoint
 ALTER TABLE "applications" ADD CONSTRAINT "applications_snapshot_ck" CHECK ((status <> 'draft' OR (resume_snapshot IS NULL AND resume_file_key IS NULL))
         AND (resume_snapshot IS NULL OR octet_length(resume_snapshot::text) <= 400000)) NOT VALID;--> statement-breakpoint
-ALTER TABLE "applications" ADD CONSTRAINT "applications_json_ck" CHECK (jsonb_typeof(resume_lines) = 'array' AND jsonb_array_length(resume_lines) <= 200
-        AND jsonb_typeof(answers) = 'array' AND jsonb_array_length(answers) <= 200
-        AND (questions IS NULL OR (jsonb_typeof(questions) = 'array' AND jsonb_array_length(questions) <= 200))
-        AND (verification IS NULL OR (jsonb_typeof(verification) = 'object'
-             AND verification->>'state' IN ('none','pending','passed','failed') AND pg_column_size(verification) <= 16384))
-        AND (resume_line_entries IS NULL OR (jsonb_typeof(resume_line_entries) = 'object' AND pg_column_size(resume_line_entries) <= 16384))
-        AND (receipt IS NULL OR jsonb_typeof(receipt) = 'object')
-        AND (receipt_summary IS NULL OR jsonb_typeof(receipt_summary) = 'object')) NOT VALID;--> statement-breakpoint
-ALTER TABLE "applications" ADD CONSTRAINT "applications_text_ck" CHECK ((facts_snapshot_hash IS NULL OR facts_snapshot_hash ~ '^[0-9a-f]{64}$')
-        AND (resume_file_key IS NULL OR char_length(resume_file_key) <= 200)
-        AND (failure_reason IS NULL OR char_length(failure_reason) <= 500)
-        AND (lease_session_id IS NULL OR char_length(lease_session_id) <= 100)) NOT VALID;--> statement-breakpoint
 
 -- companies_fill_hosts: the poll and apply hosts follow from (ats, api_region) unless a writer sets them (B-5 rule:
 -- Greenhouse applies on job-boards.greenhouse.io, the host services/ats builds). companies_hosts_ck then allows only
--- the allowlisted pairs. Fires on UPDATE OF the host columns too, so 0011's backfill is one no-op update.
+-- the allowlisted pairs. A change of ats or region recomputes hosts the statement did not set (Lever EU, WP-23); an
+-- update of the host columns fires it too, so 0011's backfill is one no-op update.
 CREATE FUNCTION companies_fill_hosts() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  IF TG_OP = 'UPDATE' AND (NEW.ats, NEW.api_region) IS DISTINCT FROM (OLD.ats, OLD.api_region) THEN
+    IF NEW.api_host IS NOT DISTINCT FROM OLD.api_host THEN NEW.api_host := NULL; END IF;
+    IF NEW.apply_host IS NOT DISTINCT FROM OLD.apply_host THEN NEW.apply_host := NULL; END IF;
+  END IF;
   NEW.api_host := coalesce(NEW.api_host, CASE NEW.ats::text
     WHEN 'greenhouse' THEN 'boards-api.greenhouse.io'
     WHEN 'lever' THEN CASE NEW.api_region WHEN 'eu' THEN 'api.eu.lever.co' ELSE 'api.lever.co' END
@@ -253,7 +247,7 @@ BEGIN
     WHEN 'ashby' THEN 'jobs.ashbyhq.com' END);
   RETURN NEW;
 END $$;--> statement-breakpoint
-CREATE TRIGGER companies_fill_hosts_biu BEFORE INSERT OR UPDATE OF api_host, apply_host ON companies
+CREATE TRIGGER companies_fill_hosts_biu BEFORE INSERT OR UPDATE OF ats, api_region, api_host, apply_host ON companies
   FOR EACH ROW EXECUTE FUNCTION companies_fill_hosts();--> statement-breakpoint
 
 -- matches_status_guard (02-database 8.3, R-18): a user decision (queued, skipped) is never overridden; the system moves
@@ -341,6 +335,22 @@ BEGIN
 END $$;--> statement-breakpoint
 CREATE TRIGGER applications_guard_stage_bu BEFORE UPDATE OF stage ON applications
   FOR EACH ROW EXECUTE FUNCTION applications_guard_stage();--> statement-breakpoint
+
+-- applications_guard_snapshot (02-database 7.3.1 amended; PRD 6.1, 7.6): every approval writes the snapshot (a resend
+-- after failed writes a new one); while the application is approved, submitting or submitted it never changes, except
+-- that the render job sets resume_file_key once. Return-to-draft clears both (applications_snapshot_ck).
+CREATE FUNCTION applications_guard_snapshot() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.status IN ('approved','submitting','submitted') AND NEW.status <> 'draft'
+     AND (NEW.resume_snapshot IS DISTINCT FROM OLD.resume_snapshot
+          OR (OLD.resume_file_key IS NOT NULL AND NEW.resume_file_key IS DISTINCT FROM OLD.resume_file_key)) THEN
+    RAISE EXCEPTION 'the sent resume snapshot cannot change while its approval stands'
+      USING ERRCODE = '23514', CONSTRAINT = 'applications_snapshot_guard';
+  END IF;
+  RETURN NEW;
+END $$;--> statement-breakpoint
+CREATE TRIGGER applications_guard_snapshot_bu BEFORE UPDATE OF resume_snapshot, resume_file_key ON applications
+  FOR EACH ROW EXECUTE FUNCTION applications_guard_snapshot();--> statement-breakpoint
 
 -- applications_row_version (02-database 8.3, 05-api DB-1): the ETag moves by exactly one when a client-visible column
 -- changes, whatever the statement set; lease, pointer and timestamp-only updates keep it. Named to run last (8.4).

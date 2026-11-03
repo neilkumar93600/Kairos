@@ -48,4 +48,5 @@ ALTER TABLE "applications" VALIDATE CONSTRAINT "applications_lease_ck";--> state
 ALTER TABLE "applications" VALIDATE CONSTRAINT "applications_autopilot_ck";--> statement-breakpoint
 ALTER TABLE "applications" VALIDATE CONSTRAINT "applications_expired_ck";--> statement-breakpoint
 ALTER TABLE "applications" VALIDATE CONSTRAINT "applications_scrub_ck";--> statement-breakpoint
-ALTER TABLE "applications" VALIDATE CONSTRAINT "applications_snapshot_ck";
+ALTER TABLE "applications" VALIDATE CONSTRAINT "applications_snapshot_ck";--> statement-breakpoint
+ALTER TABLE "applications" VALIDATE CONSTRAINT "applications_file_key_ck";

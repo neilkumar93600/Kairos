@@ -2801,6 +2801,10 @@
         "applications_text_ck": {
           "name": "applications_text_ck",
           "value": "(facts_snapshot_hash IS NULL OR facts_snapshot_hash ~ '^[0-9a-f]{64}$')\n        AND (resume_file_key IS NULL OR char_length(resume_file_key) <= 200)\n        AND (failure_reason IS NULL OR char_length(failure_reason) <= 500)\n        AND (lease_session_id IS NULL OR char_length(lease_session_id) <= 100)"
+        },
+        "applications_file_key_ck": {
+          "name": "applications_file_key_ck",
+          "value": "resume_file_key IS NULL OR starts_with(resume_file_key, 'snapshots/' || user_id || '/')"
         }
       },
       "isRLSEnabled": false

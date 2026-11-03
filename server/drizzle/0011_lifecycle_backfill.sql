@@ -134,4 +134,22 @@ SELECT t.id, e.id, e.user_id, e.kind, e.actor, e.payload, e.dedupe_key, e.at
         SELECT id, user_id, 'withdrawn', 'user', '{"backfilled":true}'::jsonb, 'withdrawn', updated_at
           FROM applications WHERE status = 'withdrawn') e
   JOIN tracker_items t ON t.application_id = e.id
-ON CONFLICT (tracker_item_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING;
+ON CONFLICT (tracker_item_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING;--> statement-breakpoint
+
+-- Hand-moved from 0009: the five checks over legacy data, added only now so a legacy row that breaks one cannot abort
+-- the updates above. NOT VALID: they hold every new write; owner-actions/WP-42.md step 4 validates them.
+ALTER TABLE "companies" ADD CONSTRAINT "companies_name_ck" CHECK (char_length(name) BETWEEN 1 AND 200) NOT VALID;--> statement-breakpoint
+ALTER TABLE "companies" ADD CONSTRAINT "companies_board_token_ck" CHECK (board_token ~ '^[A-Za-z0-9_.-]{1,100}$') NOT VALID;--> statement-breakpoint
+ALTER TABLE "matches" ADD CONSTRAINT "matches_score_ck" CHECK (score IS NULL OR score BETWEEN 0 AND 100) NOT VALID;--> statement-breakpoint
+ALTER TABLE "applications" ADD CONSTRAINT "applications_json_ck" CHECK (jsonb_typeof(resume_lines) = 'array' AND jsonb_array_length(resume_lines) <= 200
+        AND jsonb_typeof(answers) = 'array' AND jsonb_array_length(answers) <= 200
+        AND (questions IS NULL OR (jsonb_typeof(questions) = 'array' AND jsonb_array_length(questions) <= 200))
+        AND (verification IS NULL OR (jsonb_typeof(verification) = 'object'
+             AND verification->>'state' IN ('none','pending','passed','failed') AND pg_column_size(verification) <= 16384))
+        AND (resume_line_entries IS NULL OR (jsonb_typeof(resume_line_entries) = 'object' AND pg_column_size(resume_line_entries) <= 16384))
+        AND (receipt IS NULL OR jsonb_typeof(receipt) = 'object')
+        AND (receipt_summary IS NULL OR jsonb_typeof(receipt_summary) = 'object')) NOT VALID;--> statement-breakpoint
+ALTER TABLE "applications" ADD CONSTRAINT "applications_text_ck" CHECK ((facts_snapshot_hash IS NULL OR facts_snapshot_hash ~ '^[0-9a-f]{64}$')
+        AND (resume_file_key IS NULL OR char_length(resume_file_key) <= 200)
+        AND (failure_reason IS NULL OR char_length(failure_reason) <= 500)
+        AND (lease_session_id IS NULL OR char_length(lease_session_id) <= 100)) NOT VALID;
