@@ -39,6 +39,11 @@ describe("job schedules", () => {
     expect(byId["auth-sweep"]).toMatchObject({ queue: "maintenance", repeat: { pattern: "30 3 * * *", tz: "UTC" } });
   });
 
+  it("the money journal runs at second 15 of every minute, its reconcile hourly (WP-13)", () => {
+    expect(byId["money-journal"]).toMatchObject({ queue: "maintenance", repeat: { pattern: "15 * * * * *", tz: "UTC" } });
+    expect(byId["journal-reconcile"]).toMatchObject({ queue: "maintenance", repeat: { pattern: "40 * * * *", tz: "UTC" } });
+  });
+
   it("an unknown maintenance job fails instead of passing silently", async () => {
     await expect(processMaintenance({ name: "nope" } as never)).rejects.toThrow(/nope/);
   });

@@ -1,4 +1,5 @@
 import type { Job, RepeatOptions } from "bullmq";
+import { processJournalReconcile, processMoneyJournal } from "./money-journal";
 import { processPartitions } from "./partitions";
 import type { QueueName } from "./queues";
 import {
@@ -44,6 +45,10 @@ export const SCHEDULES: Schedule[] = [
   { queue: "maintenance", id: "bootstrap-users", repeat: { every: MINUTE }, run: processBootstrapUsers },
   // Accounts unverified for 14 days, expired sessions and verification codes (R-1, R-2).
   { queue: "maintenance", id: "auth-sweep", repeat: { pattern: "30 3 * * *", tz: "UTC" }, run: processAuthSweep },
+  // The money journal to R2 (WP-13, ops-39): second 15 of each minute, when the minute before has settled; the hourly
+  // reconcile merges late commits and fills gaps.
+  { queue: "maintenance", id: "money-journal", repeat: { pattern: "15 * * * * *", tz: "UTC" }, run: () => processMoneyJournal() },
+  { queue: "maintenance", id: "journal-reconcile", repeat: { pattern: "40 * * * *", tz: "UTC" }, run: () => processJournalReconcile() },
 ];
 
 /** The maintenance queue's processor: the scheduler id is the job name. */

@@ -102,6 +102,16 @@ const SIGNALS = {
   submitting_swept: 1,
   /** Users the bootstrap reconciler finished: their sign-up hook failed (WP-09). */
   signup_repaired: 1,
+  /** The money journal's cursor is over 10 minutes behind, or gone: the 2-minute RPO no longer holds (WP-13). */
+  journal_stalled: 1,
+  /** Rows that committed after their journal window was written; the reconcile merged them (WP-13). */
+  journal_late_rows: 1,
+  /** Journal windows nobody wrote, written by the reconcile (WP-13). Expected once, the first hour after deploy. */
+  journal_gaps_filled: 1,
+  /** No core dump in 26 hours, no full dump in 8 days, or the backups bucket is unreadable (WP-13). */
+  backup_stale: 1,
+  /** The latest dump's manifest has a warning: a table shrank, the dump shrank, or it nears R2's 5 GiB put (WP-13). */
+  backup_warning: 1,
 } as const;
 export type Signal = keyof typeof SIGNALS;
 
