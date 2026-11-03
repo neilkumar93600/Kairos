@@ -49,6 +49,13 @@ const envSchema = z.object({
 
   STRIPE_SECRET_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
   STRIPE_WEBHOOK_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** The old signing secret during a roll; Stripe signs with both for up to 24 hours. Remove it once the roll is done. */
+  STRIPE_WEBHOOK_SECRET_PREVIOUS: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** Comma-separated coupon ids whose $0 invoices still grant credits (a beta coupon). Empty: a $0 invoice never grants. */
+  STRIPE_GRANT_COUPONS: z
+    .string()
+    .default("")
+    .transform((raw) => raw.split(",").map((id) => id.trim()).filter(Boolean)),
   STRIPE_PRICES: z
     .string()
     .default("{}")
@@ -125,6 +132,10 @@ const envSchema = z.object({
   if (e.NODE_ENV === "production" && e.LLM_GATEWAY === "anthropic") {
     if (!e.ANTHROPIC_KEY_INTERACTIVE) ctx.addIssue({ code: "custom", path: ["ANTHROPIC_KEY_INTERACTIVE"], message: "required in production when LLM_GATEWAY=anthropic" });
     if (!e.USER_HASH_KEY) ctx.addIssue({ code: "custom", path: ["USER_HASH_KEY"], message: "required in production when LLM_GATEWAY=anthropic" });
+  }
+  // A live key takes real money; without the webhook secret every event answers 400, so nobody gets a plan or credits.
+  if (e.NODE_ENV === "production" && e.STRIPE_SECRET_KEY?.startsWith("sk_live_") && !e.STRIPE_WEBHOOK_SECRET) {
+    ctx.addIssue({ code: "custom", path: ["STRIPE_WEBHOOK_SECRET"], message: "required in production with a live STRIPE_SECRET_KEY" });
   }
 });
 
