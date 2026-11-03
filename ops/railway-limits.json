@@ -5,5 +5,8 @@
     "api": { "replicas": { "production": 2, "staging": 1 }, "vcpu": 1, "memoryGB": 1, "heapMB": 768, "healthcheckTimeout": 60, "drainingSeconds": 60, "overlapSeconds": 20, "restart": "ALWAYS" },
     "worker": { "replicas": { "production": 3, "staging": 1 }, "vcpu": 2, "memoryGB": 2, "heapMB": 1536, "healthcheckTimeout": 120, "drainingSeconds": 60, "overlapSeconds": 0, "restart": "ALWAYS" },
     "applier": { "replicas": { "production": 6, "staging": 1 }, "vcpu": 2, "memoryGB": 4, "heapMB": 1024, "healthcheckTimeout": 120, "drainingSeconds": 180, "overlapSeconds": 0, "restart": "ALWAYS" }
+  },
+  "cron": {
+    "pgbackup": { "replicas": { "production": 1, "staging": 1 }, "vcpu": 2, "memoryGB": 4, "heapMB": 512, "schedule": "10 2 * * *", "start": "node dist/pgbackup.js auto", "restart": "NEVER" }
   }
 }

@@ -39,6 +39,9 @@ const envSchema = z.object({
   HEARTBEAT_URL_BACKUP: z.preprocess((v) => (v === "" ? undefined : v), z.string().url().optional()),
 });
 
+/** Every variable the service reads; .railway/railway.ts gives it exactly these (server/test/railway-iac.test.ts). */
+export const PGBACKUP_ENV_KEYS = [...Object.keys(envSchema.shape), "R2_ENDPOINT", "R2_BUCKET_BACKUPS", "R2_BACKUPS_ACCESS_KEY_ID", "R2_BACKUPS_SECRET_ACCESS_KEY"];
+
 export interface BackupEnv {
   url: string;
   recipients: string[];
@@ -171,14 +174,24 @@ async function backup(kind: BackupKind, env: BackupEnv, store: Storage): Promise
   }
 }
 
-/** core|full|auto (core, and full too on Sundays UTC). */
+/**
+ * What a run dumps. auto: the core dump, plus the full dump on Sundays (UTC) or whenever the last full dump is missing
+ * or over 7.5 days old, so the first run after setup and the night after a failed Sunday make one without a hand edit.
+ */
+export function kindsFor(mode: string, now: number, latestFull: Pick<Manifest, "finishedAt"> | null): BackupKind[] {
+  if (mode === "core" || mode === "full") return [mode];
+  if (mode !== "auto") throw new Error(`unknown mode ${mode}: core, full or auto`);
+  const fullDue = new Date(now).getUTCDay() === 0 || !latestFull || now - Date.parse(latestFull.finishedAt) > 7.5 * 24 * 3600_000;
+  return fullDue ? ["core", "full"] : ["core"];
+}
+
+/** core|full|auto (kindsFor). */
 async function main(mode = "auto"): Promise<void> {
-  if (mode !== "core" && mode !== "full" && mode !== "auto") throw new Error(`unknown mode ${mode}: core, full or auto`);
+  kindsFor(mode, Date.now(), null); // an unknown mode fails before anything connects
   process.umask(0o077);
   const env = parseBackupEnv(process.env);
   const store = backupsStorage();
-  const kinds: BackupKind[] = mode !== "auto" ? [mode] : new Date().getUTCDay() === 0 ? ["core", "full"] : ["core"];
-  for (const kind of kinds) await backup(kind, env, store);
+  for (const kind of kindsFor(mode, Date.now(), await readLatest(store, "full"))) await backup(kind, env, store);
   if (env.heartbeat) {
     await fetch(env.heartbeat, { signal: AbortSignal.timeout(10_000) }).catch((err: Error) => logger.warn({ err }, "backup heartbeat failed"));
   }
