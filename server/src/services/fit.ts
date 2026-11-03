@@ -22,9 +22,9 @@ export interface HardFilterResult {
   reasons: string[];
 }
 
-const SENIOR_TITLE = /\b(senior|sr\.?|staff|principal|lead|head of|director|vp|manager)\b/i;
-const JUNIOR_TITLE = /\b(junior|jr\.?|entry|new grad|graduate|associate|intern|internship)\b/i;
-const NO_SPONSORSHIP =
+export const SENIOR_TITLE = /\b(senior|sr\.?|staff|principal|lead|head of|director|vp|manager)\b/i;
+export const JUNIOR_TITLE = /\b(junior|jr\.?|entry|new grad|graduate|associate|intern|internship)\b/i;
+export const NO_SPONSORSHIP =
   /(unable to sponsor|not (?:able to )?sponsor|cannot sponsor|can't sponsor|no (?:visa )?sponsorship|sponsorship is not available|must be (?:a )?(?:u\.?s\.? )?citizen)/i;
 
 function titleMatchesRole(title: string, roles: string[]): boolean {

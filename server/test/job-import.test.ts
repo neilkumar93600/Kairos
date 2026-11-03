@@ -100,6 +100,9 @@ describe("job upsert values", () => {
     expect(v.insert.source).toBe("manual_url");
     expect(v.update).not.toHaveProperty("source");
     expect(v.update).not.toHaveProperty("externalId");
+    // Through normalizePosting (WP-42): the gate columns, and a reopen clears closed_by with closed_at.
+    expect(v.insert).toMatchObject({ titleLc: "software engineer", locationLc: "remote", hintsVersion: 1 });
+    expect(v.update).toMatchObject({ closedAt: null, closedBy: null, titleLc: "software engineer" });
   });
 
   it("derives a readable company name", () => {

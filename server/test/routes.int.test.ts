@@ -65,7 +65,7 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
     const [company] = await tdb.insert(schema.companies).values({ name: "Acme", ats: "greenhouse", boardToken: `acme-${randomUUID().slice(0, 8)}` }).returning();
     const [job] = await tdb
       .insert(schema.jobs)
-      .values({ companyId: company!.id, externalId: "1", title: "Engineer", descriptionText: "Build APIs.", applyUrl: "https://example.com/apply" })
+      .values({ companyId: company!.id, externalId: "1", title: "Engineer", descriptionText: "Build APIs.", applyUrl: "https://job-boards.greenhouse.io/acme/jobs/1" })
       .returning();
     const [application] = await tdb.insert(schema.applications).values({ userId: me.id, jobId: job!.id, ...over }).returning();
     return application!;

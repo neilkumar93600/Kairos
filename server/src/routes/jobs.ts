@@ -29,7 +29,7 @@ const dbIo: ImportIo = {
     // ponytail: an unpolled board never learns that this posting closed; add a close-only poll (CISO mustFix 3) when imports matter.
     const [created] = await db()
       .insert(companies)
-      .values({ ats, boardToken, name, active: false })
+      .values({ ats, boardToken, name, active: false, inactiveReason: "import_pending", discoveredBy: "import" })
       .onConflictDoNothing({ target: [companies.ats, companies.boardToken] })
       .returning({ id: companies.id, name: companies.name });
     if (created) return created;
@@ -63,7 +63,7 @@ const dbIo: ImportIo = {
   async ensureMatch({ userId, jobId, passed, reasons }) {
     const [created] = await db()
       .insert(matches)
-      .values({ userId, jobId, passedFilters: passed, reasons, status: passed ? "new" : "skipped" })
+      .values({ userId, jobId, passedFilters: passed, reasons, status: passed ? "new" : "skipped", source: "manual_url", selection: "import" })
       .onConflictDoNothing({ target: [matches.userId, matches.jobId] })
       .returning({ id: matches.id });
     if (created) return created.id;
