@@ -2,7 +2,7 @@
 # Image for the Railway "api" and "worker" services (same image, different start command).
 # Build context is the repo root: docker build -f server/Dockerfile .
 
-FROM node:22-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da AS base
+FROM node:26-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS base
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 COPY shared/package.json shared/
@@ -29,7 +29,7 @@ RUN npm ci --omit=dev --ignore-scripts --workspace @auto-career/server --include
       node_modules/esbuild node_modules/@esbuild node_modules/tsx node_modules/sharp node_modules/@img \
       node_modules/sentry node_modules/@sentry/bundler-plugins node_modules/oxc-parser node_modules/@oxc-parser
 
-FROM node:22-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da AS runtime
+FROM node:26-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS runtime
 # tini is PID 1 so SIGTERM reaches node and orphaned child processes are reaped; ca-certificates for TLS.
 RUN apt-get update && apt-get install -y --no-install-recommends tini ca-certificates && rm -rf /var/lib/apt/lists/*
 # Stack traces (logs and Sentry) name src/*.ts lines through dist/*.js.map; no source-map upload needed.
