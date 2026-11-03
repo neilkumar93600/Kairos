@@ -3,8 +3,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import type { Db } from "../src/db/client";
 import { closeTestDbs, hasTestDb, resetDb, testDb, testDbUrl } from "./helpers/test-db";
 
-// database-88, llm-agents-v04, ops-50: the daily partitions schedule. Migration 0002 created partitions once, up to
-// about 2026-12-14; without this job every later llm_calls row lands in llm_calls_default and nothing is ever dropped.
+// database-88, llm-agents-v04, ops-50: the daily partitions schedule. Migration 0002 created partitions once, through
+// about 2026-12-07; without this job every later llm_calls row lands in llm_calls_default and nothing is ever dropped.
 process.env.DATABASE_URL = testDbUrl("partitions");
 
 const signal = vi.fn();
