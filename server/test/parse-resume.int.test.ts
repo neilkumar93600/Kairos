@@ -51,4 +51,46 @@ describe.skipIf(!hasTestDb)("processParseResume", () => {
     for (const leak of leaks) expect(sent, leak).not.toContain(leak);
     for (const line of kept) expect(sent).toContain(line);
   });
+
+  it("re-parse after a confirm keeps confirmed facts and replaces only this import's unconfirmed ones (resume-63)", async () => {
+    const billing = "Built the billing service at Nordbeam in TypeScript";
+    const [other] = await tdb.insert(schema.resumeProfiles).values({ userId, name: "Other", sourceText: resumeText }).returning();
+    const seeded = await tdb
+      .insert(schema.facts)
+      .values([
+        { userId, resumeProfileId: resumeId, kind: "role", text: "Billing service at Nordbeam (edited)", sourceSpan: billing, confirmed: true },
+        { userId, resumeProfileId: resumeId, kind: "skill", text: "Old unconfirmed import", confirmed: false },
+        { userId, resumeProfileId: other!.id, kind: "skill", text: "Another import's fact", confirmed: false },
+        { userId, kind: "skill", text: "A fact the user added", confirmed: false },
+      ])
+      .returning();
+    chatJson.mockResolvedValue({
+      facts: [
+        { kind: "role", text: billing, sourceSpan: billing },
+        { kind: "skill", text: "Fixed race conditions", sourceSpan: "Fixed race conditions in the payout scheduler" },
+      ],
+    });
+
+    expect(await run()).toEqual({ facts: 1 });
+    const rows = await tdb.select().from(schema.facts).where(eq(schema.facts.userId, userId));
+    expect(rows.map((f) => [f.text, f.confirmed]).sort()).toEqual(
+      [
+        ["A fact the user added", false],
+        ["Another import's fact", false],
+        ["Billing service at Nordbeam (edited)", true],
+        ["Fixed race conditions", false],
+      ].sort(),
+    );
+    expect(rows.find((f) => f.confirmed)!.id).toBe(seeded[0]!.id);
+  });
+
+  it("moves the onboarding step forward only (resume-64)", async () => {
+    chatJson.mockResolvedValue({ facts: [{ kind: "skill", text: "TypeScript", sourceSpan: "TypeScript" }] });
+    const step = async () => (await tdb.select().from(schema.profiles).where(eq(schema.profiles.userId, userId)))[0]!.onboardingStep;
+    await run();
+    expect(await step()).toBe("confirm-facts");
+    await tdb.update(schema.profiles).set({ onboardingStep: "done" }).where(eq(schema.profiles.userId, userId));
+    await run();
+    expect(await step()).toBe("done");
+  });
 });
