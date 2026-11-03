@@ -28,3 +28,18 @@ export const AGENTS = {
 export function getAgent<K extends RegisteredAgent>(id: K): (typeof AGENTS)[K] {
   return AGENTS[id];
 }
+
+/**
+ * Agents with a written spec but no build (WP-49). Disabled by construction: they have no AgentSpec, getAgent only
+ * accepts RegisteredAgent, so nothing can call them. The satisfies clause makes every AgentId either registered or
+ * listed here, never both; the package that builds one adds its spec.ts to AGENTS and deletes its line here.
+ * `spec` is relative to docs/superpowers/specs/2026-10-15-kairos-backend-design/.
+ */
+export const PLANNED_AGENTS = {
+  "jd-analyst": { spec: "agents/02-jd-analyst.md", landsIn: "WP-41" },
+  "claim-verifier": { spec: "agents/08-claim-verifier.md", landsIn: "WP-26" },
+  "claim-verifier-escalation": { spec: "agents/09-claim-verifier-escalation.md", landsIn: "WP-26" },
+  "reply-classifier": { spec: "agents/10-reply-classifier.md", landsIn: "WP-40" },
+  "outcome-analyst": { spec: "agents/11-outcome-analyst.md", landsIn: "WP-40" },
+  "interview-coach": { spec: "agents/12-interview-coach.md", landsIn: "WP-40" },
+} as const satisfies Record<Exclude<AgentId, RegisteredAgent>, { spec: string; landsIn: string }>;
