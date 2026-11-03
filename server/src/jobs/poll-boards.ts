@@ -1,17 +1,20 @@
 import type { Job } from "bullmq";
-import { and, eq, isNull, lt, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { db, type Db } from "../db/client";
 import { companies, jobs } from "../db/schema";
 import { logger } from "../lib/logger";
 import { atsAdapters, BoardNotFoundError } from "../services/ats";
-import { enqueue, type JobData } from "./queues";
+import { enqueue, queue, type JobData } from "./queues";
 
 const STANDARD_INTERVAL_MIN = 30;
 const PRIORITY_INTERVAL_MIN = 5;
 
-/** Finds companies due for a poll and fans out one job each. Runs every minute via a job scheduler. */
-async function scheduleDuePolls(): Promise<number> {
-  const due = await db()
+/** The most polls one minute's tick keeps queued, counting those still waiting from earlier ticks. */
+const MAX_PENDING_POLLS = 500;
+
+/** Companies due for a poll: priority boards first, then the longest unpolled, never polled first (scale-v06). */
+export async function dueCompanies(database: Db, limit: number): Promise<string[]> {
+  const due = await database
     .select({ id: companies.id })
     .from(companies)
     .where(
@@ -24,11 +27,24 @@ async function scheduleDuePolls(): Promise<number> {
         ),
       ),
     )
-    .limit(500);
+    .orderBy(desc(companies.priority), sql`${companies.lastPolledAt} asc nulls first`)
+    .limit(limit);
+  return due.map((c) => c.id);
+}
+
+/**
+ * Fans out one job per due company; runs every minute via a job scheduler. Bounded by the backlog (scale-v06): polls
+ * still waiting from earlier ticks leave less room, so a slow minute never piles up more than MAX_PENDING_POLLS.
+ */
+async function scheduleDuePolls(): Promise<number> {
+  const due = await dueCompanies(db(), MAX_PENDING_POLLS);
+  if (due.length === 0) return 0;
+  const room = MAX_PENDING_POLLS - (await queue("poll-boards").getJobCountByTypes("wait", "delayed"));
+  const picked = due.slice(0, Math.max(0, room));
   // jobId per company and minute keeps a slow poll from being queued twice.
   const minute = Math.floor(Date.now() / 60_000);
-  await Promise.all(due.map((c) => enqueue("poll-boards", { companyId: c.id }, `poll-${c.id}-${minute}`)));
-  return due.length;
+  await Promise.all(picked.map((id) => enqueue("poll-boards", { companyId: id }, `poll-${id}-${minute}`)));
+  return picked.length;
 }
 
 /**
