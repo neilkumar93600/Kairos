@@ -26,9 +26,11 @@ type Row = typeof resumes.$inferSelect;
 const SENT = ["approved", "submitting", "submitted"] as const;
 const DEFAULTS = { templateId: "kairos-single-v1", accent: null, pageSize: "letter", level: "mid", headline: null } as const;
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** One of the caller's resumes, or a 404 (also for an id that is not a uuid). */
 export async function ownResume(userId: string, id: string, tx: Db | Tx = db()): Promise<Row> {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw notFound("Resume");
+  if (!UUID.test(id)) throw notFound("Resume");
   const [row] = await tx.select().from(resumes).where(and(eq(resumes.id, id), eq(resumes.userId, userId), isNull(resumes.archivedAt)));
   if (!row) throw notFound("Resume");
   return row;
@@ -349,7 +351,7 @@ export async function listRevisions(userId: string, id: string) {
 
 async function ownRevision(userId: string, id: string, revId: string) {
   await ownResume(userId, id);
-  if (!/^[0-9a-f-]{36}$/i.test(revId)) throw notFound("Revision");
+  if (!UUID.test(revId)) throw notFound("Revision");
   const [rev] = await db().select().from(resumeRevisions).where(and(eq(resumeRevisions.id, revId), eq(resumeRevisions.resumeId, id)));
   if (!rev) throw notFound("Revision");
   return rev;

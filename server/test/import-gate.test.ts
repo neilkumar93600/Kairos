@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { DOCX_LIMITS, FileRejected, decodeXmlText, docxText, documentXmlToText } from "../src/services/import/docx";
+import { DOCX_LIMITS, FileRejected, decodeXmlText, docxText, documentXmlToText, stripBlocks } from "../src/services/import/docx";
 import { pdfText } from "../src/services/import/pdf";
 import { ImportRejected, IMPORT_MAX_BYTES, extractFile, runThread, sniff } from "../src/services/import/extract";
 import { capChars, contactIn, isLinkedInExport, normalizeSource, sourceHash } from "../src/services/import/source";
@@ -100,6 +100,18 @@ describe("DOCX reader", () => {
     expect(reasonOf(() => docxText(big))).not.toBeNull();
   });
 
+  it("strips blocks in linear time: 2 MB of unterminated openers reads in well under a second (Security-reviewer-B)", () => {
+    for (const opener of ["<mc:Fallback>", "<w:delText>"]) {
+      const xml = `<w:document><w:body>${opener.repeat(150_000)}<w:p><w:r><w:t>Kept</w:t></w:r></w:p></w:body></w:document>`;
+      const started = performance.now();
+      expect(documentXmlToText(xml)).toBe("Kept\n");
+      expect(performance.now() - started, opener).toBeLessThan(1000);
+      const bomb = zip([{ name: "[Content_Types].xml", data: DOCX_TYPES }, { name: "word/document.xml", data: xml, stored: true }]);
+      expect(docxText(bomb)).toBe("Kept\n");
+    }
+    expect(stripBlocks("a<x:b>1</x:b>c<x:bc>2</x:bc><x:b/>d", "x:b")).toBe("ac<x:bc>2</x:bc><x:b/>d");
+  });
+
   it("never throws anything but FileRejected on 300 random mutations of a valid DOCX", () => {
     const good = docx(RESUME_LINES);
     for (let i = 0; i < 300; i++) {
@@ -161,7 +173,16 @@ describe("extractFile: the thread and its limits", () => {
   });
 
   it("kills a thread that runs past its time limit", async () => {
-    expect(await runThread({ kind: "pdf", bytes: pdf(RESUME_LINES), maxPages: 10 }, 1)).toEqual({ ok: false, reason: "timeout" });
+    expect(await runThread({ kind: "pdf", bytes: pdf(RESUME_LINES), maxPages: 10, maxChars: 1000 }, 1)).toEqual({ ok: false, reason: "timeout" });
+  });
+
+  it("never sends back more than its character budget, however large the text layer (Security-reviewer-B)", async () => {
+    const line = "Automated the weekly carrier scorecard in Python, saving 6 hours a week";
+    for (const [kind, bytes] of [["pdf", pdf(Array.from({ length: 60 }, () => line))], ["docx", zip([{ name: "[Content_Types].xml", data: DOCX_TYPES }, { name: "word/document.xml", data: documentXml(Array.from({ length: 5000 }, () => line)), stored: true }])]] as const) {
+      const reply = await runThread({ kind, bytes, maxPages: 10, maxChars: 500 });
+      expect(reply.ok, kind).toBe(true);
+      if (reply.ok) expect(reply.text.length, kind).toBeLessThanOrEqual(500);
+    }
   });
 
   it("spot-checks the api's heap after the corpus: the process is still here and answering", async () => {

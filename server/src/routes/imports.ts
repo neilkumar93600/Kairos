@@ -10,7 +10,7 @@ import { HttpError, notFound } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { currentUser } from "../middleware/require-auth";
 import { hit } from "../middleware/rate-limit";
-import { extractFile, IMPORT_MAX_BYTES } from "../services/import/extract";
+import { busy, extractFile, hasSlot, IMPORT_MAX_BYTES } from "../services/import/extract";
 import { countImport, createImport, sourceAad } from "../services/import/imports";
 import { contactIn } from "../services/import/source";
 import { planFor } from "../services/submissions";
@@ -26,12 +26,15 @@ export const importsRouter = Router();
 const multipart = express.raw({ type: "multipart/form-data", limit: IMPORT_MAX_BYTES + 64 * 1024 });
 const DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
-importsRouter.post("/", multipart, async (req, res) => {
+// A file upload on a replica whose extraction slots are all taken is refused before its body is read.
+const slotFirst: express.RequestHandler = (req, _res, next) => next(req.is("multipart/form-data") && !hasSlot() ? busy() : undefined);
+
+importsRouter.post("/", slotFirst, multipart, async (req, res) => {
   const me = currentUser(req);
   const plan = await planFor(db(), me.id);
   if (req.is("multipart/form-data")) {
     // The platform's own multipart reader (undici), over a body already capped above.
-    const form = await new Response(new Uint8Array(req.body as Buffer), { headers: { "content-type": req.headers["content-type"]! } }).formData().catch(() => {
+    const form = await new Response(req.body as unknown as BodyInit, { headers: { "content-type": req.headers["content-type"]! } }).formData().catch(() => {
       throw new HttpError(400, "bad_request", "The upload could not be read");
     });
     const file = form.get("file");

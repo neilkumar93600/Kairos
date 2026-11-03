@@ -4,10 +4,9 @@ import { db } from "../db/client";
 import { facts, profiles, resumeImports, user } from "../db/schema";
 import { decrypt } from "../lib/crypto";
 import { logger } from "../lib/logger";
-import { dropSensitiveLines, redactResumeHeader } from "../llm/redact";
 import { finalizeFacts, normalizeForHash } from "../services/import/finalize";
 import { sourceAad } from "../services/import/imports";
-import { parseResumeToFacts } from "../services/resume-parser";
+import { parseResumeToFacts, parserInput } from "../services/resume-parser";
 import { planFor } from "../services/submissions";
 import { gatewayCtx } from "../llm/wire";
 import type { JobData } from "./queues";
@@ -48,8 +47,8 @@ export async function processParseResume(job: Job<JobData["parse-resume"]>) {
     const source = decrypt(claimed.sourceTextEnc, sourceAad(claimed.id)).toString("utf8");
     const ctx = gatewayCtx({ userId: claimed.userId, plan: await planFor(db(), claimed.userId) });
     const parsed = await parseResumeToFacts(source, contact, ctx);
-    // The containment check reads what the model read (parseResumeToFacts redacts the same way).
-    const { kept, counts } = finalizeFacts(parsed, redactResumeHeader(dropSensitiveLines(source), contact));
+    // The containment check reads exactly what the model was given (parserInput), no more.
+    const { kept, counts } = finalizeFacts(parsed, parserInput(source, contact));
 
     const added = await db().transaction(async (tx) => {
       await tx

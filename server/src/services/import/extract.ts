@@ -16,6 +16,13 @@ export const EXTRACT_LIMITS = { heapMb: 128, timeoutMs: 20_000 } as const;
 const EXTRACT_SLOTS = 2;
 let running = 0;
 
+/** A free extraction slot right now. The route asks before reading the body, so a busy replica never buffers 5 MB. */
+export const hasSlot = (): boolean => running < EXTRACT_SLOTS;
+export const busy = () => new HttpError(503, "service_unavailable", "We are reading other files right now. Try again in a minute.");
+
+/** Raw characters a thread may return: twice the cap, since normalizeSource only shrinks text before capChars. */
+const rawBudget = (maxChars: number) => maxChars * 2;
+
 export type FileKind = "pdf" | "docx";
 
 /** The file's type from its first bytes, never its name or header: %PDF- or a zip (a DOCX is checked in the thread). */
@@ -38,8 +45,9 @@ const STRUCTURAL = /^(not_a_zip|not_docx|macro|xml_dtd|zip_\w+|pdf_encrypted)$/;
 
 /** One file in one fresh thread. `timeoutMs` is lowered only by the kill test. */
 export function runThread(req: ExtractRequest, timeoutMs: number = EXTRACT_LIMITS.timeoutMs): Promise<ExtractReply> {
-  // Source mode (vitest, tsx) runs the .ts thread through tsx; the build emits dist/workers/extract-thread.js.
-  const source = import.meta.url.endsWith(".ts");
+  // Source mode (vitest, tsx) runs the .ts thread through tsx; the build emits dist/workers/extract-thread.js. Never in
+  // production, whatever the file name says.
+  const source = import.meta.url.endsWith(".ts") && process.env.NODE_ENV !== "production";
   const url = source ? new URL("../../workers/extract-thread.ts", import.meta.url) : new URL("./workers/extract-thread.js", import.meta.url);
   return new Promise((resolve) => {
     const worker = new Worker(url, {
@@ -81,11 +89,11 @@ export async function extractFile(bytes: Uint8Array, opts: { maxPages: number; m
   if (bytes.byteLength > IMPORT_MAX_BYTES) throw new ImportRejected(413, "payload_too_large", "Files can be up to 5 MB.", { limitBytes: IMPORT_MAX_BYTES });
   const kind = sniff(bytes);
   if (!kind) throw unsupported("magic_bytes");
-  if (running >= EXTRACT_SLOTS) throw new HttpError(503, "service_unavailable", "We are reading other files right now. Try again in a minute.");
+  if (!hasSlot()) throw busy();
   running += 1;
   let reply: ExtractReply;
   try {
-    reply = await runThread({ kind, bytes, maxPages: opts.maxPages });
+    reply = await runThread({ kind, bytes, maxPages: opts.maxPages, maxChars: rawBudget(opts.maxChars) });
   } finally {
     running -= 1;
   }

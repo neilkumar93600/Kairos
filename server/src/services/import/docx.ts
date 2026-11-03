@@ -116,10 +116,39 @@ function xmlText(buf: Buffer): string {
   return text;
 }
 
-/** Paragraphs, tabs and breaks of word/document.xml as plain lines. */
+/**
+ * Removes every <name ...>...</name> block in one left-to-right pass with indexOf, so an opener with no closer costs
+ * one scan, not one per opener (a lazy [\s\S]*? regex is quadratic there: 1.6 MB of unterminated openers took 18 s,
+ * Security-reviewer-B). Same result as that regex: an unterminated opener and what follows it stay.
+ */
+export function stripBlocks(xml: string, name: string): string {
+  const open = `<${name}`;
+  const close = `</${name}>`;
+  let out = "";
+  let i = 0;
+  for (;;) {
+    const a = xml.indexOf(open, i);
+    if (a < 0) return out + xml.slice(i);
+    // A longer tag name that starts the same (<w:delTextX) is not this block.
+    if (/[\w:.-]/.test(xml[a + open.length] ?? "")) {
+      out += xml.slice(i, a + open.length);
+      i = a + open.length;
+      continue;
+    }
+    const b = xml.indexOf(close, a);
+    if (b < 0) return out + xml.slice(i);
+    out += xml.slice(i, a);
+    i = b + close.length;
+  }
+}
+
+/**
+ * Paragraphs, tabs and breaks of word/document.xml as plain lines. Numeric references decode to any code point,
+ * controls such as U+202E included: callers run the result through normalizeSource (services/import/source.ts).
+ */
 export function documentXmlToText(xml: string): string {
   // Text boxes appear twice (DrawingML and a VML fallback); keep the first. Deleted tracked changes are not text.
-  const body = xml.replace(/<mc:Fallback\b[\s\S]*?<\/mc:Fallback>/g, "").replace(/<w:delText\b[\s\S]*?<\/w:delText>/g, "");
+  const body = stripBlocks(stripBlocks(xml, "mc:Fallback"), "w:delText");
   let out = "";
   for (const m of body.matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>|<w:tab\/>|<w:(?:br|cr)\b[^>]*\/>|<\/w:p>|<w:p\b[^>]*\/>/g)) {
     if (m[1] !== undefined) out += decodeXmlText(m[1]);

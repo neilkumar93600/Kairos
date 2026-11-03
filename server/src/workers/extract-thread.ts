@@ -11,6 +11,8 @@ export interface ExtractRequest {
   kind: "pdf" | "docx";
   bytes: Uint8Array;
   maxPages: number;
+  /** Raw characters the thread may send back; the parent normalizes, then caps at IMPORT_MAX_CHARS. */
+  maxChars: number;
 }
 export type ExtractReply = { ok: true; text: string; pages: number | null } | { ok: false; reason: string };
 
@@ -18,10 +20,10 @@ const req = workerData as ExtractRequest;
 let reply: ExtractReply;
 try {
   if (req.kind === "pdf") {
-    const { text, pages } = await pdfText(req.bytes, req.maxPages);
-    reply = { ok: true, text, pages };
+    const { text, pages } = await pdfText(req.bytes, req.maxPages, req.maxChars);
+    reply = { ok: true, text: text.slice(0, req.maxChars), pages };
   } else {
-    reply = { ok: true, text: docxText(Buffer.from(req.bytes.buffer, req.bytes.byteOffset, req.bytes.byteLength)), pages: null };
+    reply = { ok: true, text: docxText(Buffer.from(req.bytes.buffer, req.bytes.byteOffset, req.bytes.byteLength)).slice(0, req.maxChars), pages: null };
   }
 } catch (err) {
   reply = { ok: false, reason: err instanceof FileRejected ? err.reason : `${req.kind}_corrupt` };
