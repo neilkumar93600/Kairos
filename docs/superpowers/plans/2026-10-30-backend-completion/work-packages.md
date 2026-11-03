@@ -599,3 +599,18 @@ Explicitly deferred, each with its trigger:
 
 **Acceptance:** Each item gets its own ADR and package when its trigger fires. Until then the register is kept in the spec README (WP-43).
 
+
+## Unplanned additions
+
+Packages raised after the final review, outside the waves above. Each names the spec that asked for it.
+
+## WP-50: Newsletter sign-ups (marketing surfaces)
+
+- Effort: S; parallel group: none (raised 2026-11-03 by the marketing-surfaces spec); depends on: WP-25, WP-44
+- Domains: messaging, api-auth-security, privacy
+- Spec refs: docs/superpowers/specs/2026-11-03-marketing-surfaces/README.md, "Backend contract (WP-50)"; messaging-43 (ledger), api-auth-security-50 (token links); 05-api 6.2 (limit classes); 02-database 16 (privacy registry)
+- Needs owner: The privacy-notice line, Postmark DKIM over the List-Unsubscribe headers, and the sender of the newsletter issues themselves (owner-actions/WP-50.md).
+
+POST /api/newsletter { email, source, website? } behind a newsletter limit class (5 an hour per client IP, the contact form's numbers), with a honeypot. Double opt-in: every valid body answers 202 { ok: true } and does the same work (one upsert, one notify enqueue) whatever the address's state, so nothing enumerates the list. The confirm email (kind newsletter_confirm, no user id) goes through the WP-44 notify ledger; the worker mints the confirm token at render time, stores only its SHA-256, and a sign-up re-queues at most one email per address per 10 minutes. GET /confirm and GET or POST (RFC 8058 one-click) /unsubscribe behind the link class, redirecting only to fixed pages on WEB_ORIGIN. Unsubscribe tokens are HMAC(USER_HASH_KEY) of the row id, stored as SHA-256, so every later newsletter mail carries the same link. Erasure deletes sign-ups by address or normalized hash; retention deletes pending and unsubscribed rows after 30 days. Files: shared/src/schemas.ts (newsletterSignupSchema), db/schema/messaging.ts, drizzle/0016_newsletter.sql, services/newsletter.ts, routes/newsletter.ts, jobs/notify.ts (renderer), services/erasure.ts, services/privacy-registry.ts, jobs/retention.ts, ops/provision-roles.sql.
+
+**Acceptance:** A new, pending and confirmed address get byte-identical 202 answers. A filled honeypot stores nothing. A burst of sign-ups for one address sends one email. A confirm link works once and expires after 7 days. A one-click POST unsubscribes without a cookie or a redirect, and a later sign-up runs double opt-in again. No column holds a token. An erased account's sign-ups are gone.
