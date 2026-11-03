@@ -83,10 +83,12 @@ describe.skipIf(!hasTestDb)("llm ledger against Postgres", () => {
     await writeCallRow(row(), { userId, pipelineUsd: 0.0002, interactiveUsd: 0 });
     const writer = row({ agentId: "resume-writer", model: "claude-sonnet-5-5", workspace: "interactive", budgetClass: "interactive", costUsd: 0.01 });
     await writeCallRow(writer, { userId, pipelineUsd: 0, interactiveUsd: 0.01 });
-    await processCostRollup();
-    const first = await db.select().from(platform.llmCostDaily);
-    await processCostRollup();
-    const second = await db.select().from(platform.llmCostDaily);
+    const rollup = async () => {
+      await processCostRollup();
+      return db.select().from(platform.llmCostDaily).orderBy(platform.llmCostDaily.agentId);
+    };
+    const first = await rollup();
+    const second = await rollup();
     expect(first.length).toBe(2);
     expect(second.map((r) => [r.agentId, r.calls, r.costUsd])).toEqual(first.map((r) => [r.agentId, r.calls, r.costUsd]));
 

@@ -60,13 +60,14 @@ describe.skipIf(!hasTestDb)("scoring controls against Postgres", () => {
 
   const run = (jobId: string, extra: { userIds?: string[]; attempt?: number } = {}) =>
     processScoreMatches({ data: { jobId, ...extra } } as Parameters<typeof processScoreMatches>[0]);
-  const scoredUsers = () => scoreFit.mock.calls.map((c) => (c[2] as { userId?: string } | undefined)?.userId ?? null);
+  // On the legacy path (the test default) scoreFit gets no context, so each user's fact carries the user id.
+  const scoredUsers = () => scoreFit.mock.calls.map((c) => String(c[1]).match(/user ([0-9a-f-]{36})/)?.[1] ?? null);
 
   /** A user who passes every gate unless told otherwise: preferences, a confirmed fact, credits, a recent session. */
   async function candidate(opts: { credits?: number; sessionDaysAgo?: number | null; plan?: "free" | "pro"; status?: string; pausedUntil?: Date } = {}) {
     const id = await seedUser(db, { credits: opts.credits ?? 5 });
     await db.insert(schema.profiles).values({ userId: id, forwardingAddress: `${id}@inbound.test`, preferences: PREFS });
-    await db.insert(schema.facts).values({ userId: id, kind: "skill", text: "TypeScript APIs", confirmed: true });
+    await db.insert(schema.facts).values({ userId: id, kind: "skill", text: `TypeScript APIs, user ${id}`, confirmed: true });
     if (opts.sessionDaysAgo !== null) {
       const at = new Date(Date.now() - (opts.sessionDaysAgo ?? 1) * 86_400_000);
       await db.insert(schema.session).values({ id: randomUUID(), token: randomUUID(), userId: id, expiresAt: new Date(Date.now() + 86_400_000), createdAt: at, updatedAt: at });
