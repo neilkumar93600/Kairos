@@ -1,11 +1,12 @@
 import type { Job } from "bullmq";
 import { and, eq, sql } from "drizzle-orm";
+import { z } from "zod";
 import { Errors } from "postmark";
 import { db } from "../db/client";
 import { actionTokens, emailSends, emailSuppressions, notifications, type EMAIL_KINDS, type NOTIFICATION_KINDS } from "../db/schema";
 import { env } from "../lib/env";
 import { logger } from "../lib/logger";
-import { addressHash, findSent, mailErrorCode, sendEmail, type Email, type Stream } from "../lib/mailer";
+import { addressHash, findSent, mailErrorCode, metadataKey, sendEmail, type Email, type Stream } from "../lib/mailer";
 import { signal } from "../lib/sentry";
 import { enqueue, redrive, type JobData } from "./queues";
 
@@ -49,6 +50,13 @@ export async function enqueueNotify(kind: EmailKind, entityId: string, userId: s
 
 type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
 
+/** `detail` holds codes and counts only: scalar values, each at most 64 characters, so no free text gets in. */
+const DETAIL = z.record(z.string().max(64), z.union([z.string().max(64), z.number(), z.boolean(), z.null()]));
+
+/** Postgres foreign_key_violation, directly or as the cause drizzle wraps it in. */
+const isFkViolation = (err: unknown) =>
+  [err, (err as { cause?: unknown } | null)?.cause].some((e) => (e as { code?: string } | null)?.code === "23503");
+
 /**
  * The in-app notification of an event, written in the event's own transaction (messaging-31): ids and codes only in
  * `detail`, at most one row per (user, kind, entity). Returns whether this call created it.
@@ -57,7 +65,8 @@ export async function addNotification(
   tx: Tx | ReturnType<typeof db>,
   n: { userId: string; kind: NotificationKind; entityId: string; detail?: Record<string, string | number | boolean | null> },
 ): Promise<boolean> {
-  const rows = await tx.insert(notifications).values(n).onConflictDoNothing().returning({ id: notifications.id });
+  const detail = DETAIL.parse(n.detail ?? {});
+  const rows = await tx.insert(notifications).values({ ...n, detail }).onConflictDoNothing().returning({ id: notifications.id });
   return rows.length > 0;
 }
 
@@ -79,6 +88,7 @@ export async function processNotify(job: Pick<Job<JobData["notify"]>, "data">): 
   if (!render) throw new Error(`no email renderer for ${kind}`);
 
   // Claim: a new row, or a stale claim (lease over, attempts left). No row: sent, failed, suppressed or in flight.
+  // A user erased since the enqueue fails the foreign key: nothing to send, and nothing to retry.
   const [claim] = await db()
     .insert(emailSends)
     .values({ kind, entityId, userId })
@@ -87,11 +97,15 @@ export async function processNotify(job: Pick<Job<JobData["notify"]>, "data">): 
       set: { attempts: sql`${emailSends.attempts} + 1`, claimedAt: sql`now()` },
       setWhere: sql`${emailSends.status} = 'claimed' AND ${emailSends.claimedAt} < now() - ${LEASE} AND ${emailSends.attempts} < ${MAX_ATTEMPTS}`,
     })
-    .returning({ attempts: emailSends.attempts });
+    .returning({ attempts: emailSends.attempts })
+    .catch((err: unknown) => {
+      if (isFkViolation(err)) return [];
+      throw err;
+    });
   if (!claim) return { result: "skipped" };
 
   const stream: Stream = BROADCAST_KINDS.has(kind) ? "broadcast" : "transactional";
-  const key = `${kind}:${entityId}`;
+  const key = metadataKey(`${kind}:${entityId}`);
   // A re-claim may follow a send Postmark accepted before the worker died: look for it before sending again. If the
   // search itself fails, the lease alone decides (messaging-43's fallback).
   if (claim.attempts > 1) {
@@ -110,8 +124,11 @@ export async function processNotify(job: Pick<Job<JobData["notify"]>, "data">): 
     await finish(kind, entityId, "suppressed", { code: email.skip });
     return { result: "suppressed", code: email.skip };
   }
-  const [suppressed] = await db().select({ reason: emailSuppressions.reason }).from(emailSuppressions).where(eq(emailSuppressions.addressHash, addressHash(email.to)));
-  if (suppressed) {
+  const hash = addressHash(email.to);
+  const [suppressed] = await db().select({ reason: emailSuppressions.reason }).from(emailSuppressions).where(eq(emailSuppressions.addressHash, hash));
+  // A spam complaint stops broadcast mail only: the user still gets resend links, offer-pause notices and forwarding
+  // codes about their own account. A hard bounce or a manual suppression stops everything.
+  if (suppressed && (suppressed.reason !== "spam_complaint" || stream === "broadcast")) {
     await finish(kind, entityId, "suppressed", { code: suppressed.reason });
     return { result: "suppressed", code: suppressed.reason };
   }
@@ -123,6 +140,9 @@ export async function processNotify(job: Pick<Job<JobData["notify"]>, "data">): 
   } catch (err) {
     const code = mailErrorCode(err);
     if (code) {
+      // 406: Postmark holds the address inactive (bounced, complained or suppressed by hand). Record it, so the next
+      // email to it is stopped here; the delivery webhook refines the reason when it says which.
+      if (code === "postmark_406") await db().insert(emailSuppressions).values({ addressHash: hash, reason: "hard_bounce" }).onConflictDoNothing();
       await finish(kind, entityId, "failed", { code });
       return { result: "failed", code };
     }

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { appendFile } from "node:fs/promises";
 import { Errors, Models, ServerClient } from "postmark";
 import { env } from "./env";
@@ -83,7 +83,9 @@ export async function findSent(key: string, stream: Stream): Promise<string | nu
   const c = env().MAIL_SINK_FILE ? undefined : client(stream);
   if (!c) return null;
   const found = await c.getOutboundMessages({ count: 1, offset: 0, messageStream: streamId(stream), metadata_k: key });
-  return found.Messages[0]?.MessageID ?? null;
+  // Trust the result only when it carries the key: a search that ignored the filter returns a stranger's message.
+  const m = found.Messages[0];
+  return m?.Metadata?.k === key ? m.MessageID : null;
 }
 
 /**
@@ -97,5 +99,20 @@ export function mailErrorCode(err: unknown): "postmark_406" | "postmark_422" | n
   return err.statusCode === 422 ? "postmark_422" : null;
 }
 
-/** email_suppressions' key: SHA-256 of the trimmed, lower-cased address, so the list never holds an address. */
-export const addressHash = (address: string) => createHash("sha256").update(address.trim().toLowerCase()).digest();
+/**
+ * email_suppressions' key: HMAC-SHA256(USER_HASH_KEY, "suppress:" + trimmed, lower-cased address). Keyed, so the list
+ * cannot be tested against guessed addresses without the key; exact address (no +tag or Gmail-dot folding), because
+ * Postmark reports the exact recipient it refused. USER_HASH_KEY must never rotate: every stored hash depends on it
+ * (WP-25 keys erasure hashes with it too). Throws without it, so nothing is suppressed or sent unchecked.
+ */
+export function addressHash(address: string): Buffer {
+  const key = env().USER_HASH_KEY;
+  if (!key) throw new Error("USER_HASH_KEY is not set");
+  return createHmac("sha256", key).update(`suppress:${address.trim().toLowerCase()}`).digest();
+}
+
+/**
+ * Postmark Metadata.k of one ledger email: the first 32 hex characters of SHA-256 of `<kind>:<entityId>`. Postmark caps a
+ * metadata value at 80 characters, and an entity id may name a user, which Postmark's search index need not hold.
+ */
+export const metadataKey = (ledgerKey: string) => createHash("sha256").update(ledgerKey).digest("hex").slice(0, 32);

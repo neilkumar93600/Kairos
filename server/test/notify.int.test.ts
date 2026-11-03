@@ -23,6 +23,7 @@ describe.skipIf(!hasTestDb)("notify ledger against Postgres", () => {
   let db: Db;
   let notify: typeof import("../src/jobs/notify");
   let addressHash: typeof import("../src/lib/mailer").addressHash;
+  let metadataKey: typeof import("../src/lib/mailer").metadataKey;
   let userId: string;
   const job = (entityId = "app-1:1", kind: "resend_available" | "digest" = "resend_available") => ({ data: { kind, entityId, userId } });
   const row = async (entityId = "app-1:1") =>
@@ -31,7 +32,7 @@ describe.skipIf(!hasTestDb)("notify ledger against Postgres", () => {
   beforeAll(async () => {
     db = await testDb("notify");
     notify = await import("../src/jobs/notify");
-    addressHash = (await import("../src/lib/mailer")).addressHash;
+    ({ addressHash, metadataKey } = await import("../src/lib/mailer"));
     notify.RENDERERS.resend_available = async (entityId, uid) => ({ to: `${uid}@test.local`, subject: "Resend?", text: `Resend ${entityId}` });
     notify.RENDERERS.digest = async () => ({ skip: "unsubscribed" });
   });
@@ -53,7 +54,7 @@ describe.skipIf(!hasTestDb)("notify ledger against Postgres", () => {
     expect(results.filter((r) => r.result === "sent")).toHaveLength(1);
     expect(await notify.processNotify(job())).toEqual({ result: "skipped" });
     expect(sendEmail).toHaveBeenCalledTimes(1);
-    expect(sendEmail.mock.calls[0]![0]).toMatchObject({ stream: "transactional", metadata: { k: "resend_available:app-1:1" } });
+    expect(sendEmail.mock.calls[0]![0]).toMatchObject({ stream: "transactional", metadata: { k: metadataKey("resend_available:app-1:1") } });
     expect(await row()).toMatchObject({ status: "sent", attempts: 1, providerMessageId: "mid-1" });
   });
 
@@ -75,11 +76,21 @@ describe.skipIf(!hasTestDb)("notify ledger against Postgres", () => {
     expect(sendEmail).not.toHaveBeenCalled();
   });
 
-  it("a complained or bounced address receives nothing", async () => {
-    await db.insert(schema.emailSuppressions).values({ addressHash: addressHash(` ${userId.toUpperCase()}@TEST.local `), reason: "spam_complaint" });
-    expect(await notify.processNotify(job())).toEqual({ result: "suppressed", code: "spam_complaint" });
+  it("a bounced address receives nothing; a complained one gets account mail but no broadcast", async () => {
+    await db.insert(schema.emailSuppressions).values({ addressHash: addressHash(` ${userId.toUpperCase()}@TEST.local `), reason: "hard_bounce" });
+    expect(await notify.processNotify(job())).toEqual({ result: "suppressed", code: "hard_bounce" });
     expect(sendEmail).not.toHaveBeenCalled();
-    expect(await row()).toMatchObject({ status: "suppressed", errorCode: "spam_complaint" });
+    expect(await row()).toMatchObject({ status: "suppressed", errorCode: "hard_bounce" });
+
+    await db.update(schema.emailSuppressions).set({ reason: "spam_complaint" });
+    notify.RENDERERS.outcome_report = async (_e, uid) => ({ to: `${uid}@test.local`, subject: "Week", text: "t" });
+    expect(await notify.processNotify({ data: { kind: "outcome_report", entityId: "w1", userId } })).toEqual({ result: "suppressed", code: "spam_complaint" });
+    expect(await notify.processNotify(job("app-2:1"))).toEqual({ result: "sent" });
+  });
+
+  it("a notify for a user erased since the enqueue is skipped, not retried", async () => {
+    expect(await notify.processNotify({ data: { kind: "resend_available", entityId: "x:1", userId: "erased-user" } })).toEqual({ result: "skipped" });
+    expect(sendEmail).not.toHaveBeenCalled();
   });
 
   it("a renderer's skip is recorded as suppressed with its code", async () => {
@@ -89,6 +100,8 @@ describe.skipIf(!hasTestDb)("notify ledger against Postgres", () => {
   it("a permanent refusal fails the row; a Postmark 5xx releases the lease for the retry; a timeout keeps it", async () => {
     sendEmail.mockRejectedValueOnce(new Errors.InactiveRecipientsError("inactive", 406, 422));
     expect(await notify.processNotify(job("a"))).toEqual({ result: "failed", code: "postmark_406" });
+    expect(await db.select().from(schema.emailSuppressions)).toMatchObject([{ reason: "hard_bounce" }]);
+    await db.delete(schema.emailSuppressions);
 
     sendEmail.mockRejectedValueOnce(new Errors.InternalServerError("oops", 0, 500));
     await expect(notify.processNotify(job("b"))).rejects.toThrow("oops");
@@ -121,7 +134,8 @@ describe.skipIf(!hasTestDb)("notify ledger against Postgres", () => {
   it("addNotification writes one row per user, kind and entity", async () => {
     expect(await notify.addNotification(db, { userId, kind: "autopilot_sent", entityId: "app-9" })).toBe(true);
     expect(await notify.addNotification(db, { userId, kind: "autopilot_sent", entityId: "app-9" })).toBe(false);
-    await expect(notify.addNotification(db, { userId, kind: "autopilot_sent", entityId: "app-8", detail: { note: randomBytes(1500).toString("hex") } })).rejects.toThrow();
+    await expect(notify.addNotification(db, { userId, kind: "autopilot_sent", entityId: "app-8", detail: { note: randomBytes(40).toString("hex") } })).rejects.toThrow();
+    expect(await notify.addNotification(db, { userId, kind: "autopilot_sent", entityId: "app-7", detail: { failureCode: "challenge", skipped: 3 } })).toBe(true);
   });
 
   it("retention keeps recent rows and deletes old ones", async () => {

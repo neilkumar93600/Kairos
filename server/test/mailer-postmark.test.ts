@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Errors, ServerClient } from "postmark";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -6,7 +7,7 @@ process.env.POSTMARK_SERVER_TOKEN = "pm-transactional";
 process.env.POSTMARK_BROADCAST_TOKEN = "pm-broadcast";
 process.env.POSTMARK_BROADCAST_STREAM = "digests";
 delete process.env.MAIL_SINK_FILE;
-const { findSent, mailErrorCode, sendEmail } = await import("../src/lib/mailer");
+const { addressHash, findSent, mailErrorCode, metadataKey, sendEmail } = await import("../src/lib/mailer");
 
 type Sent = { token: string; message: Parameters<ServerClient["sendEmail"]>[0] };
 const tokenOf = (c: ServerClient) => (c as unknown as { token: string }).token;
@@ -45,11 +46,29 @@ describe("sendEmail through Postmark (messaging-44)", () => {
   });
 
   it("finds an earlier send by its ledger key on the right stream", async () => {
-    const search = vi.spyOn(ServerClient.prototype, "getOutboundMessages").mockResolvedValue({ TotalCount: 1, Messages: [{ MessageID: "mid-old" }] } as never);
-    expect(await findSent("digest:s1:2026-11-03", "broadcast")).toBe("mid-old");
-    expect(search).toHaveBeenCalledWith({ count: 1, offset: 0, messageStream: "digests", metadata_k: "digest:s1:2026-11-03" });
+    const k = metadataKey("digest:s1:2026-11-03");
+    const search = vi.spyOn(ServerClient.prototype, "getOutboundMessages").mockResolvedValue({ TotalCount: 1, Messages: [{ MessageID: "mid-old", Metadata: { k } }] } as never);
+    expect(await findSent(k, "broadcast")).toBe("mid-old");
+    expect(search).toHaveBeenCalledWith({ count: 1, offset: 0, messageStream: "digests", metadata_k: k });
     search.mockResolvedValue({ TotalCount: 0, Messages: [] } as never);
-    expect(await findSent("digest:s1:2026-11-04", "broadcast")).toBeNull();
+    expect(await findSent(k, "broadcast")).toBeNull();
+  });
+
+  it("never trusts a search result that does not carry the key (a search that ignored the filter)", async () => {
+    vi.spyOn(ServerClient.prototype, "getOutboundMessages").mockResolvedValue({ TotalCount: 9, Messages: [{ MessageID: "stranger", Metadata: { k: "other" } }] } as never);
+    expect(await findSent(metadataKey("resend_available:a:1"), "transactional")).toBeNull();
+  });
+
+  it("metadata keys fit Postmark's 80-character limit and carry no id", () => {
+    const longest = `autopilot_paused:${"u".repeat(64)}:${"9".repeat(20)}`;
+    expect(metadataKey(longest)).toMatch(/^[0-9a-f]{32}$/);
+    expect(metadataKey(longest).length).toBeLessThanOrEqual(80);
+  });
+
+  it("hashes addresses with a key, exact address only (case and spaces folded, nothing else)", () => {
+    expect(addressHash(" A@Test.local ")).toEqual(addressHash("a@test.local"));
+    expect(addressHash("a+x@test.local")).not.toEqual(addressHash("a@test.local"));
+    expect(addressHash("a@test.local")).not.toEqual(createHash("sha256").update("a@test.local").digest());
   });
 
   it("classifies permanent refusals; a timeout, 429, 5xx or 401 stays retryable", () => {

@@ -62,6 +62,7 @@ export const emailSends = pgTable(
   "email_sends",
   {
     kind: text("kind").notNull(),
+    /** Ids, dates and counters only (_db/messaging.md 5.2); for contact_message, contact_messages.id, never an address or name. */
     entityId: text("entity_id").notNull(),
     userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
     status: text("status").notNull().default("claimed"),
@@ -145,7 +146,9 @@ export const actionTokens = pgTable(
 
 /**
  * Addresses Kairos never mails again (messaging-59): a hard bounce or spam complaint from Postmark's delivery webhook,
- * or a 406 inactive recipient on a send. Keyed by SHA-256 of the lower-cased address, so the list holds no address.
+ * or a 406 inactive recipient on a send (jobs/notify.ts). Keyed by HMAC(USER_HASH_KEY, "suppress:" + lower-cased
+ * address) (lib/mailer.ts addressHash): no address is stored, and the list cannot be tested against guessed addresses
+ * without the key, which must never rotate. A spam complaint stops broadcast mail; any other reason stops all of it.
  */
 export const emailSuppressions = pgTable(
   "email_suppressions",

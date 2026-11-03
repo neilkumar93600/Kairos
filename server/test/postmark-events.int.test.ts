@@ -22,7 +22,7 @@ describe.skipIf(!hasTestDb)("Postmark delivery events against Postgres", () => {
 
   beforeAll(async () => {
     tdb = await testDb("postmark_events");
-    notify.RENDERERS.resend_available = async (_e, uid) => ({ to: `${uid}@test.local`, subject: "s", text: "t" });
+    notify.RENDERERS.digest = async (_e, uid) => ({ to: `${uid}@test.local`, subject: "s", text: "t" });
   });
   beforeEach(async () => {
     sendEmail.mockClear();
@@ -34,11 +34,11 @@ describe.skipIf(!hasTestDb)("Postmark delivery events against Postgres", () => {
     await closeTestDbs();
   });
 
-  it("a complaint suppresses every later email to that address, and Postmark's reactivation does not lift it", async () => {
+  it("a complaint stops every later broadcast to that address, and Postmark's reactivation does not lift it", async () => {
     expect((await post({ RecordType: "SpamComplaint", Email: `${userId}@TEST.local` })).body).toEqual({ recorded: true });
-    expect(await notify.processNotify({ data: { kind: "resend_available", entityId: "a:1", userId } })).toEqual({ result: "suppressed", code: "spam_complaint" });
+    expect(await notify.processNotify({ data: { kind: "digest", entityId: "s:1", userId } })).toEqual({ result: "suppressed", code: "spam_complaint" });
     await post({ RecordType: "SubscriptionChange", Recipient: `${userId}@test.local`, SuppressSending: false });
-    expect(await notify.processNotify({ data: { kind: "resend_available", entityId: "a:2", userId } })).toMatchObject({ result: "suppressed" });
+    expect(await notify.processNotify({ data: { kind: "digest", entityId: "s:2", userId } })).toMatchObject({ result: "suppressed" });
     expect(sendEmail).not.toHaveBeenCalled();
     const rows = await tdb.select().from(schema.emailSuppressions);
     expect(rows).toHaveLength(1);
