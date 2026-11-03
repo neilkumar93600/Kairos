@@ -10,6 +10,7 @@ import { CLIENT_IP_HEADER } from "../middleware/client-ip";
 import { hit } from "../middleware/rate-limit";
 import { cancelBillingForDeletedUser } from "../services/billing-events";
 import { bootstrapUser } from "../services/bootstrap";
+import { eraseUser, tombstoneStore } from "../services/erasure";
 import { INLINE_REQUEST, stripe } from "../services/stripe";
 import { env, type Env } from "./env";
 import { logger, logUserHash } from "./logger";
@@ -86,21 +87,26 @@ function createAuth() {
       ? { google: { clientId: e.GOOGLE_CLIENT_ID!, clientSecret: e.GOOGLE_CLIENT_SECRET! } }
       : {},
     user: {
-      // Settings > Delete account. Stripe is cancelled first, then cascades remove the profile, applications, ledger and replies.
+      // Settings > Delete account. Stripe is cancelled first, then eraseUser (WP-25) archives the ledger, records the
+      // erasure and deletes the user row with its cascade; the erasure worker finishes Stripe, R2 and llm_calls. Better
+      // Auth's own deletes that follow find nothing left.
       deleteUser: {
         enabled: true,
         // A Stripe outage throws here, which aborts the deletion: billing must never outlive the account.
         beforeDelete: async (deleted) => {
-          if (!env().STRIPE_SECRET_KEY) return;
-          const [row] = await db()
-            .select({ stripeCustomerId: schema.subscriptions.stripeCustomerId })
-            .from(schema.subscriptions)
-            .where(eq(schema.subscriptions.userId, deleted.id));
-          const cancelled = await cancelBillingForDeletedUser(row?.stripeCustomerId ?? null, {
-            list: async (customer) => (await stripe().subscriptions.list({ customer, status: "all", limit: 100 }, INLINE_REQUEST)).data,
-            cancel: (id) => stripe().subscriptions.cancel(id, {}, INLINE_REQUEST),
-          });
-          if (cancelled) logger.info({ userHash: logUserHash(deleted.id), cancelled }, "subscriptions cancelled before account deletion");
+          if (env().STRIPE_SECRET_KEY) {
+            const [row] = await db()
+              .select({ stripeCustomerId: schema.subscriptions.stripeCustomerId })
+              .from(schema.subscriptions)
+              .where(eq(schema.subscriptions.userId, deleted.id));
+            const cancelled = await cancelBillingForDeletedUser(row?.stripeCustomerId ?? null, {
+              list: async (customer) => (await stripe().subscriptions.list({ customer, status: "all", limit: 100 }, INLINE_REQUEST)).data,
+              cancel: (id) => stripe().subscriptions.cancel(id, {}, INLINE_REQUEST),
+            });
+            if (cancelled) logger.info({ userHash: logUserHash(deleted.id), cancelled }, "subscriptions cancelled before account deletion");
+          }
+          await eraseUser(db(), deleted.id, "user", tombstoneStore());
+          logger.info({ userHash: logUserHash(deleted.id) }, "account erased; the erasure worker finishes the other stores");
         },
       },
     },
