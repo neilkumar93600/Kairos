@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { hasTestDb, testDbUrl } from "./helpers/test-db";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { testDbUrl } from "./helpers/test-db";
 
 describe("testDbUrl", () => {
   const saved = process.env.TEST_DATABASE_URL;
@@ -13,9 +13,28 @@ describe("testDbUrl", () => {
   });
 });
 
-// CI sets REQUIRE_TEST_DB=1 once it runs a Postgres service (WP-00); without it every *.int.test.ts skips silently.
 describe("REQUIRE_TEST_DB", () => {
-  it("fails the run when integration tests were required but TEST_DATABASE_URL is unset", () => {
-    if (process.env.REQUIRE_TEST_DB === "1") expect(hasTestDb, "REQUIRE_TEST_DB=1 but TEST_DATABASE_URL is unset: integration tests would skip").toBe(true);
+  const saved = { url: process.env.TEST_DATABASE_URL, require: process.env.REQUIRE_TEST_DB };
+  afterEach(() => {
+    if (saved.url === undefined) delete process.env.TEST_DATABASE_URL;
+    else process.env.TEST_DATABASE_URL = saved.url;
+    if (saved.require === undefined) delete process.env.REQUIRE_TEST_DB;
+    else process.env.REQUIRE_TEST_DB = saved.require;
+    vi.resetModules();
+  });
+
+  // CI sets REQUIRE_TEST_DB so an unreachable or unset database fails the run instead of skipping every *.int.test.ts.
+  it("fails the importing test file when set without a database URL", async () => {
+    delete process.env.TEST_DATABASE_URL;
+    process.env.REQUIRE_TEST_DB = "1";
+    vi.resetModules();
+    await expect(import("./helpers/test-db")).rejects.toThrow(/REQUIRE_TEST_DB/);
+  });
+
+  it("does nothing when a database URL is present", async () => {
+    process.env.TEST_DATABASE_URL = "postgres://u:p@localhost:5432/x";
+    process.env.REQUIRE_TEST_DB = "1";
+    vi.resetModules();
+    await expect(import("./helpers/test-db")).resolves.toMatchObject({ hasTestDb: true });
   });
 });

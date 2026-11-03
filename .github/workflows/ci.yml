@@ -12,27 +12,91 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Actions are pinned by commit SHA (supply chain); Dependabot keeps the SHA and the version comment in step.
 jobs:
   checks:
     name: checks
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # The integration tests (*.int.test.ts) run against these, so the money invariants are a required check (tests-02).
+    services:
+      postgres:
+        image: postgres:17@sha256:3b0cda93be7c8dba2ed484d19393d93845dc3dafb88973e248ba8e6d99d784e1
+        env:
+          POSTGRES_USER: kairos
+          POSTGRES_PASSWORD: kairos
+          POSTGRES_DB: kairos_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U kairos"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7@sha256:b6b6e3dc0c0952737748e55d5d885272840c7e42ba41ab1d5489f693419882f5
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       # The web build only needs these to exist; nothing is called at build time.
       API_ORIGIN: http://localhost:4000
       NEXT_PUBLIC_SITE_URL: http://localhost:3000
       NEXT_TELEMETRY_DISABLED: "1"
+      TEST_DATABASE_URL: postgres://kairos:kairos@localhost:5432/kairos_test
+      REDIS_URL: redis://localhost:6379
+      # A missing database fails the run instead of skipping every integration test.
+      REQUIRE_TEST_DB: "1"
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
+      # No dependency lifecycle scripts run; esbuild is the one package whose install step the build relies on.
+      - run: npm ci --ignore-scripts && npm rebuild esbuild
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
       - run: npm run build
+
+  # INV-16: the extension is frozen and the cloud applier injects its built filler unchanged. Fails on any change to
+  # extension/src or to the built dist/filler.js; re-record deliberately with npm run frozen:update -w @auto-career/server.
+  frozen-extension:
+    name: frozen-extension
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts && npm rebuild esbuild
+      - run: npm run frozen:check -w @auto-career/server -- --filler
+
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Fails a pull request that adds a dependency with a known vulnerability (compared with the base branch).
+  osv-scanner:
+    name: osv-scanner
+    if: github.event_name == 'pull_request'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
 
   # Builds the Railway images without pushing, so a broken Dockerfile fails the pull request
   # instead of the deploy.
@@ -50,9 +114,9 @@ jobs:
           - name: applier
             file: server/Dockerfile.applier
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: ${{ matrix.file }}
