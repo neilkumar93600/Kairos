@@ -82,7 +82,7 @@ export const AnswerDrafterOutputV2 = z.object({
 }).strict();
 ```
 
-The union of B.9.2 (`{ fieldKey, value, factIds }` or `{ fieldKey, abstain }`) is written as one object with two nullable fields, because the strict subset rejects `oneOf` and every `anyOf` counts against the limit; exactly-one is a `postValidate` rule. 2 `anyOf` nodes. Stored per answer: `{ fieldKey, label, value, source: "drafted", factIds }` in `applications.answers` (`workers/04` step 3.11); an abstain leaves `value` empty and records the reason in the verification summary.
+The union of B.9.2 (`{ fieldKey, value, factIds }` or `{ fieldKey, abstain }`) is written as one object with two nullable fields, because the strict subset rejects `oneOf` and every `anyOf` counts against the limit; exactly-one is a `postValidate` rule. Snapshot plan: v2 `schema.snap.json` by `agents:snap`; 2 `anyOf` nodes; bounds move into descriptions and zod enforces them. Stored per answer: `{ fieldKey, label, value, source: "drafted", factIds }` in `applications.answers` (`workers/04` step 3.11); an abstain leaves `value` empty and records the reason in the verification summary.
 
 `abstain` meanings: `sensitive`, the question touches a protected category; `no_supporting_facts`, it asks about experience and no given fact supports an answer; `not_answerable`, it needs something that is not experience (start date, referral source, relocation preference, consent).
 
