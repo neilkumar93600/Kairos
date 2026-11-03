@@ -9,7 +9,7 @@ import { PRIVACY_REGISTRY } from "../src/services/privacy-registry";
 // how it is erased and exported. A new user-data table without an entry fails here; its SQL-only twin is caught by
 // privacy-registry.int.test.ts against the live catalog.
 
-const tables = [...Object.values(schema), ...Object.values(platform)].filter((t): t is PgTable => is(t, PgTable)).map(getTableConfig);
+const tables = ([...Object.values(schema), ...Object.values(platform)] as unknown[]).filter((t): t is PgTable => is(t, PgTable)).map((t) => getTableConfig(t));
 const byName = new Map(tables.map((t) => [t.name, t]));
 const entry = (table: string) => PRIVACY_REGISTRY.find((e) => e.table === table);
 
