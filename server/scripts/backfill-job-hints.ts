@@ -13,8 +13,12 @@ import { HINTS_VERSION, refreshJobHints } from "../src/services/normalize-postin
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
 const db = drizzle(pool, { schema, casing: "snake_case" });
 let total = 0;
-for (let n = await refreshJobHints(db); n > 0; n = await refreshJobHints(db)) {
-  total += n;
+let lastId: string | undefined;
+for (;;) {
+  const batch = await refreshJobHints(db, 1000, lastId);
+  if (batch.n === 0) break;
+  total += batch.n;
+  lastId = batch.lastId;
   console.log(`hints v${HINTS_VERSION}: ${total} jobs`);
   await new Promise((resolve) => setTimeout(resolve, 1_000));
 }

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { asc, eq, lt } from "drizzle-orm";
+import { and, asc, eq, gt, lt } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { jobs } from "../db/schema";
 import type { NormalizedJob } from "./ats/types";
@@ -153,18 +153,24 @@ export function normalizePosting(job: NormalizedJob): NormalizedPosting {
 
 /**
  * Backfill B-6 and the HINTS_VERSION refresh: recomputes the derived columns of up to `limit` rows still below
- * HINTS_VERSION, oldest id first, and returns how many it wrote. Only derived columns change: no visible_at bump, so
- * a refresh never shows an old posting again. Safe to rerun and to run beside the poller.
+ * HINTS_VERSION with an id above `afterId`, in id order, and returns how many it wrote and the last id. A caller walks
+ * the table once by passing that id back, so no batch re-reads the rows earlier batches fixed. Only derived columns
+ * change: no visible_at bump, so a refresh never shows an old posting again. Safe to rerun and beside the poller.
  * ponytail: one UPDATE per row; batch it into one statement when a refresh of 150,000 open jobs is too slow.
  */
-export async function refreshJobHints(db: Db, limit = 1000): Promise<number> {
-  const rows = await db.select().from(jobs).where(lt(jobs.hintsVersion, HINTS_VERSION)).orderBy(asc(jobs.id)).limit(limit);
+export async function refreshJobHints(db: Db, limit = 1000, afterId?: string): Promise<{ n: number; lastId: string | undefined }> {
+  const rows = await db
+    .select()
+    .from(jobs)
+    .where(and(lt(jobs.hintsVersion, HINTS_VERSION), afterId ? gt(jobs.id, afterId) : undefined))
+    .orderBy(asc(jobs.id))
+    .limit(limit);
   await db.transaction(async (tx) => {
     for (const row of rows) {
       await tx.update(jobs).set(hintColumns(normalizePosting(row))).where(eq(jobs.id, row.id));
     }
   });
-  return rows.length;
+  return { n: rows.length, lastId: rows.at(-1)?.id ?? afterId };
 }
 
 /** The jobs columns normalizePosting owns (INV-1: no other writer sets them). Spread into every jobs insert and update. */
