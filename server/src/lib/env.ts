@@ -88,6 +88,11 @@ const envSchema = z.object({
   APPLIER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
   /** Built by `npm run build -w @auto-career/extension`; the applier image copies it to /app/filler.js. */
   FILLER_SCRIPT_PATH: z.string().default("../extension/dist/filler.js"),
+
+  /** api only. Proves a request came through the web edge (web/proxy.ts, 05-api 5.5); the same value is set on Vercel. */
+  KAIROS_EDGE_SECRET: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
+  /** api only. Proxies between Railway's edge and the api, skipped from the right of X-Forwarded-For. Set only from the S-B1 probe. */
+  TRUSTED_PROXY_HOPS_DIRECT: z.coerce.number().int().min(0).max(3).default(0),
 }).superRefine((e, ctx) => {
   // Without a token the mailer logs emails instead of sending them. Fine locally; in production
   // that would put sign-up and reset codes in the logs, so refuse to boot.
