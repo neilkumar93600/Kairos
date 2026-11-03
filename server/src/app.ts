@@ -7,6 +7,7 @@ import { HttpError } from "./lib/errors";
 import { httpLogger, requestId } from "./lib/logger";
 import { signal, type Signal } from "./lib/sentry";
 import { clientIpResolver } from "./middleware/client-ip";
+import { originGuard } from "./middleware/origin-guard";
 import { createLimiters } from "./middleware/rate-limit";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
 import { healthRouter, type HealthCheck } from "./routes/health";
@@ -18,6 +19,8 @@ export interface AppDeps {
   healthChecks: Record<string, HealthCheck>;
   /** Origins allowed to call the API cross-origin. The web app is same-origin via its /api rewrite. */
   corsOrigins: string[];
+  /** Exact origins whose cookie-authenticated writes are accepted (05-api 5.6). None: every such write is refused. */
+  csrfOrigins?: string[];
   /** KAIROS_EDGE_SECRET. Unset: no request is trusted as coming through the web edge (05-api 5.5). */
   edgeSecret?: string;
   /** TRUSTED_PROXY_HOPS_DIRECT: inner proxies between Railway's edge and the api. */
@@ -68,7 +71,7 @@ export function createApp(deps: AppDeps) {
   app.use("/api/webhooks", limits.webhook, webhooksRouter);
 
   app.use(express.json({ limit: "1mb" }));
-  app.use("/api", apiRouter(deps.auth, limits));
+  app.use("/api", originGuard(deps.csrfOrigins ?? []), apiRouter(deps.auth, limits));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

@@ -56,6 +56,16 @@ describe("createApp", () => {
     expect(res.body.error.code).toBe("unauthorized");
   });
 
+  it("marks every signed-in answer private, no-store, errors included (CISO should-fix)", async () => {
+    const user = { id: "u1", email: "u1@test.local", name: "U", emailVerified: true };
+    const app = createApp({ auth: { ...signedOut, getSession: async () => ({ user, sessionId: "s1" }) }, corsOrigins: [], healthChecks: {} });
+    // Both fail validation before any database read, so the header is the authed chain's, not a handler's.
+    for (const res of [await request(app).get("/api/applications?status=bogus"), await request(app).post("/api/profile/facts").send({})]) {
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(res.headers["cache-control"]).toBe("private, no-store");
+    }
+  });
+
   it("hands /api/auth/* to Better Auth", async () => {
     const app = createApp({ auth: signedOut, corsOrigins: [], healthChecks: {} });
     const res = await request(app).get("/api/auth/ok");

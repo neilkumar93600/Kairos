@@ -17,6 +17,8 @@ if (e.NODE_ENV === "production" && !e.KAIROS_EDGE_SECRET) throw new Error("Inval
 const app = createApp({
   auth: authGateway(),
   corsOrigins: [e.WEB_ORIGIN, ...(e.EXTENSION_ORIGIN ? [e.EXTENSION_ORIGIN] : [])],
+  // The same exact origins Better Auth trusts, minus the extension (it sends a bearer token, which skips the guard).
+  csrfOrigins: [new URL(e.WEB_ORIGIN).origin, ...e.CSRF_ALLOWED_ORIGINS],
   edgeSecret: e.KAIROS_EDGE_SECRET,
   proxyHops: e.TRUSTED_PROXY_HOPS_DIRECT,
   sharedLimits: true,
