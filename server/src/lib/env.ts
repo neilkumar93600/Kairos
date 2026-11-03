@@ -140,6 +140,11 @@ const envSchema = z.object({
         return z.NEVER;
       }
     }),
+  /**
+   * Stripe Tax on Checkout (decision 7, WP-47). Off until the owner activates Stripe Tax: with it on and Tax not
+   * activated, every checkout fails (owner-actions/WP-47.md).
+   */
+  STRIPE_AUTOMATIC_TAX: flag("0"),
 
   // Model per agent: docs/superpowers/specs/2026-10-15-kairos-backend-design/_research/anthropic-models.md
   ANTHROPIC_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
