@@ -8,7 +8,7 @@ import { authClient } from "@/lib/auth-client";
 import { Button } from "../shared/button";
 import { Field, Input } from "../shared/field";
 import { EMAIL_RE, FormError, INPUT, OrDivider, PasswordInput, useFieldErrors } from "./fields";
-import { GoogleButton } from "./google-button";
+import { SocialButtons } from "./social-buttons";
 
 const INTERVAL_WORD: Record<BillingInterval, string> = { week: "weekly", month: "monthly", quarter: "quarterly" };
 
@@ -71,7 +71,7 @@ export function SignUpForm() {
       <Suspense>
         <PlanNote />
       </Suspense>
-      <GoogleButton next="/onboarding" />
+      <SocialButtons next="/onboarding" />
       <OrDivider />
       <form noValidate onSubmit={onSubmit} onInput={clear} className="flex flex-col gap-4">
         <Field label="Full name" htmlFor="name" hint="As it should appear on applications." error={errors.name}>

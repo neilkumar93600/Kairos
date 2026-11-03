@@ -1,0 +1,89 @@
+/*
+ * Rainbow Button (owner override 2026-10-29; Magic UI's mechanism, no dependency). The only two gradient surfaces on
+ * the site and the only place art hues touch UI. Layers, back to front inside one isolated stack:
+ *   1. the element background: the rainbow over the border box, so the 2px transparent border is a full ring on all
+ *      four sides (brand critique 2026-10-29: the bottom-weighted Magic UI fade read as a coloured underline);
+ *   2. ::before, the glow: a blurred strip of the same rainbow under the bottom edge;
+ *   3. ::after, the face: solid fill over the padding box, so the glow never sits behind the label (white on
+ *      Espresso stays 19:1);
+ *   4. the label.
+ * Press and lift come from the shared rule in app/globals.css (the kn-press class).
+ */
+@layer theme, base, components, utilities;
+
+@layer components {
+  .kn-rainbow {
+    --fill: var(--action);
+    /* The valley's hues at dawn strength: the art tokens themselves (#dce7f2, #d8c8e8, #f2b866, #a9b48c, #f6dcc8)
+       vanished against the peach sky, so these are the same five hues with more chroma. Only this button uses them. */
+    --color-1: #8fb2ec;   /* sky, periwinkle */
+    --color-2: #b795e3;   /* lilac, dusk */
+    --color-3: #f3a53f;   /* amber */
+    --color-4: #4fc26a;   /* meadow, more chroma: the old #8dbd6b blended to olive on the peach sky */
+    --color-5: #f2906f;   /* haze, coral */
+    --glow: 0.5;   /* 0.8 read as a muddy smudge under the button on the warm sky */
+    /* oklch interpolation keeps chroma between stops (sRGB mixed amber and meadow into olive). */
+    --rainbow: linear-gradient(90deg in oklch, var(--color-1), var(--color-5), var(--color-3), var(--color-4), var(--color-2));
+
+    position: relative; isolation: isolate;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 44px; padding: 0 20px;
+    border: 0.125rem solid transparent; border-radius: 8px;
+    background: var(--rainbow);
+    background-size: 200%;
+    background-clip: border-box;
+    background-origin: border-box;
+    color: var(--on-action);
+    font: 500 15px / 1.25 var(--font-urbanist), ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: -0.01em; white-space: nowrap; text-decoration: none; cursor: pointer;
+    animation: kn-rainbow var(--speed, 2s) infinite linear;
+  }
+  .kn-rainbow--lg { min-height: 56px; padding-inline: 32px; font-size: 17px; }
+
+  .kn-rainbow::before,
+  .kn-rainbow::after { content: ""; position: absolute; pointer-events: none; }
+  .kn-rainbow::before {
+    z-index: -2;
+    bottom: -20%; left: 50%; translate: -50% 0; width: 60%; height: 20%;
+    background: var(--rainbow); background-size: 200%;
+    filter: blur(0.75rem); opacity: var(--glow);
+    transition: opacity 300ms ease-out;
+    animation: kn-rainbow var(--speed, 2s) infinite linear;
+  }
+  .kn-rainbow::after {
+    z-index: -1; inset: 0; border-radius: 6px;   /* 8px outer minus the 2px border */
+    background: var(--fill);
+    transition: box-shadow 300ms ease-out;
+  }
+
+  .kn-rainbow__arrow { flex: none; transition: translate 200ms cubic-bezier(0.22, 1, 0.36, 1);  /* landing --ease-out */ }
+
+  @media (hover: hover) {
+    /* The speed stays at 2s: changing it mid-cycle made the colours skip. The face stays Espresso (a lighter fill read
+       as disabled); the ring and glow saturate and a hairline inner highlight catches the top edge instead. */
+    .kn-rainbow:hover { --glow: 0.85; filter: saturate(1.35) brightness(1.08); }
+    .kn-rainbow:hover::after { box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.16); }
+    .kn-rainbow:hover .kn-rainbow__arrow { translate: 4px 0; }
+  }
+
+  @keyframes kn-rainbow {
+    0% { background-position: 0%; }
+    100% { background-position: 200%; }
+  }
+
+  /* Reduced motion: the rainbow holds still at its start, the glow stays, the arrow does not move. */
+  html[data-motion="reduced"] .kn-rainbow,
+  html[data-motion="reduced"] .kn-rainbow::before { animation: none; }
+  html[data-motion="reduced"] .kn-rainbow .kn-rainbow__arrow { translate: none; }
+  @media (prefers-reduced-motion: reduce) {
+    html:not([data-motion="full"]) .kn-rainbow,
+    html:not([data-motion="full"]) .kn-rainbow::before { animation: none; }
+    html:not([data-motion="full"]) .kn-rainbow .kn-rainbow__arrow { translate: none; }
+  }
+
+  @media (forced-colors: active) {
+    .kn-rainbow { border-color: ButtonText; color: ButtonText; }
+    .kn-rainbow::before { display: none; }
+    .kn-rainbow::after { background: ButtonFace; }
+  }
+}

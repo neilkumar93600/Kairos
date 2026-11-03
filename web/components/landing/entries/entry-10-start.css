@@ -1,67 +1,163 @@
-/* A10 closing band (08 1.10). Colour, grain and drift come from .lp-glow-dusk / .lp-drift in landing.css and motion.css;
-   this file only places the content. Nothing here hides anything, so no-JS and Reduced need no special case. */
+/* A10 closing band (owner 2026-10-30). Unlayered and scoped under .lp, so it wins over landing.css.
+   One line holds the composition together, the ridge: where the dusk hills start in the band (--ridge of its height,
+   the sky above is masked out). The band sits on the section's bottom edge, so the ridge is fixed by the bottom
+   padding; the window is anchored to the same line, so the hills always cover its lower third, and from 1024 the
+   ridge stays --clear below the copy whatever the copy's height, so the hills never reach the text. Every height is
+   reserved per breakpoint (no layout shift).
 
-/* The closing gap sits above the band (the glow does not fill it). The stack sits at the top and the band is tall
-   enough that the serif line and button end inside the painting's calm upper 55 percent (prompt.md #10); the door
-   and path fill the lower part. ponytail: fixed heights per breakpoint from the measured stack; 200 percent text
-   zoom grows the band but can push the button below the calm line. */
-.lp-start {
-  margin-block-start: var(--gap-closing);
-  min-height: 640px;
-  display: grid;
-  place-items: start center;
-  padding-block: 56px;
+   Hand-off: the section is transparent on the haze at the top and ends on Linen. The footer's first 56 px
+   (colophon.css --ft-fade) are a transparent-to-paper fade meant to sit on whatever is behind it, so the section
+   runs 56 px under the footer (later in tree order, it paints on top): Linen blends straight into paper. Without
+   the overlap that fade shows the fixed haze, and the haze's tinted corners make a visible step at the boundary. */
+
+.lp .lp-start {
+  --hm: 300px;                                    /* window height */
+  --hb: max(240px, 100vw * 840 / 2880);           /* band height: the painting's own ratio, with a floor */
+  --ridge: 0.38;
+  --gap: 56px;                                    /* copy to window when stacked: more than the window's rise */
+  position: relative;
+  isolation: isolate;
+  overflow: clip;
+  margin-block-end: -56px;                        /* = colophon.css --ft-fade */
+  padding-block: var(--gap-closing) calc((1 - var(--ridge)) * var(--hb) - var(--hm) / 3 + 56px);
+  background: linear-gradient(to bottom, transparent calc(100% - var(--hb)), var(--canvas) calc(100% - 56px));
   scroll-margin-top: var(--nav-h);
 }
-@media (min-width: 768px) {
-  .lp-start { min-height: 560px; }
+
+/* ===== Copy: centred and stacked over the window below 1024 ===== */
+.lp .lp-start__grid { position: relative; z-index: 1; }
+.lp .lp-start__copy { display: flex; flex-direction: column; align-items: center; text-align: center; }
+/* Subline: the min-height holds the longer approved sentence, so the swap never moves the button. */
+.lp .lp-start__copy .lp-lead { margin: 24px auto 0; min-block-size: 3lh; }
+@media (min-width: 640px) {
+  .lp .lp-start__copy .lp-lead { min-block-size: 2lh; }
 }
+.lp .lp-start__act { margin-block-start: 32px; }
+@media (max-width: 479px) {
+  .lp .lp-start__act { align-self: stretch; }
+  .lp .lp-start__cta { inline-size: 100%; }
+}
+
+/* ===== Window: the hero's app mockup (strong glass is its own frame; no second glass layer around it) ===== */
+.lp .lp-start__slot { margin-block-start: var(--gap); }
+.lp .lp-start__mock { position: relative; z-index: 1; block-size: var(--hm); }
+/* Its last quarter dissolves under the hills, so a parallax gap between the two layers never shows a hard edge.
+   The mask sits on the window itself so the blur still reaches the haze; the wider no-clip mask keeps the side
+   shadow (as in entry-00-hero.css). */
+.lp .lp-start__app {
+  inline-size: 100%;
+  block-size: 100%;
+  mask-image: linear-gradient(to bottom, #000 72%, transparent);
+  mask-size: calc(100% + 96px) 100%;
+  mask-position: 50% 0;
+  mask-repeat: no-repeat;
+  mask-clip: no-clip;
+}
+
+/* ===== Hills: full width on the bottom edge, in front of the window, never hit-testable ===== */
+/* The outer box is still: its mask dissolves the section's last rows into Linen wherever the painting has moved.
+   The moving layer carries its own mask, so its top melts into the haze and its bottom into Linen at any offset.
+   The painting's pale sky above the ridge is masked out entirely: the band box reaches up beside the copy, and even
+   a faint sky there veils the dark button. */
+.lp .lp-start__hills {
+  position: absolute;
+  z-index: 2;
+  inset-inline: 0;
+  inset-block-end: 56px;                          /* sits on the footer's top edge, not under it */
+  block-size: var(--hb);
+  pointer-events: none;
+  mask-image: linear-gradient(to bottom, #000 72%, transparent);
+}
+.lp .lp-start__hills-move {
+  position: absolute;
+  inset: 0;
+  mask-image: linear-gradient(to bottom, transparent calc(var(--ridge) * 100% - 6%), #000 calc(var(--ridge) * 100% + 8%), #000 82%, transparent);
+}
+.lp .lp-start__hills-move > img { object-fit: cover; object-position: 50% 100%; }
+
+/* will-change only while the section is within half a viewport of the screen (StartParallax writes data-live). */
+.lp .lp-start[data-live] .lp-start__move { will-change: transform; }
+
+/* ===== 768: taller window and band ===== */
+@media (min-width: 768px) {
+  .lp .lp-start { --hm: 400px; --hb: max(320px, 100vw * 840 / 2880); --gap: 80px; }
+}
+
+/* ===== 1024: two columns in --c-main, copy 5 of 12, the window 7 of 12 pinned toward the right edge ===== */
 @media (min-width: 1024px) {
-  .lp-start { min-height: 600px; padding-block-start: 72px; }
+  .lp .lp-start {
+    --hm: 440px;
+    --hb: max(360px, 100vw * 840 / 2880);
+    /* The hills rise while the copy is still on screen: about 90 px at 900 tall, more on taller screens (the copy
+       stays in view longer), approaching the full 200 px. ponytail: a linear fit to that curve, checked from 768 to
+       2560 tall; derive it from the copy's height if the copy grows. */
+    --clear: max(124px, 80px + 4vh);
+    padding-block-end: calc((1 - var(--ridge)) * var(--hb) + var(--clear) + 56px);
+  }
+  .lp .lp-start__grid {
+    container-type: inline-size;
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    column-gap: 24px;
+  }
+  .lp .lp-start__copy { grid-column: 1 / span 5; align-self: start; align-items: flex-start; text-align: start; }
+  /* The closing line keeps --t-closing where it fits and otherwise follows the column, so "Try it on 25 real"
+     (5.2em) always holds one line: 96 px at 1440, about 83 at 1280, 69 at 1024. */
+  .lp .lp-start__copy > h2 { font-size: min(var(--t-closing), 7.4cqi); }
+  .lp .lp-start__copy .lp-lead { margin-inline: 0; }
+  /* The slot spans the grid row; the window hangs from its bottom so its lower third meets the ridge. It runs from
+     its column past the container to the viewport edge and 8 px beyond (7 percent of the container at 1440), where
+     the section's clip cuts it: only its border and side padding are cut, never a word or the SAMPLE chip. The min
+     height keeps the window's top inside the grid for short copy. */
+  .lp .lp-start__slot {
+    grid-column: 6 / -1;
+    grid-row: 1;
+    position: relative;
+    margin: 0;
+    min-block-size: calc(var(--hm) * 2 / 3 - var(--clear) + 24px);
+  }
+  .lp .lp-start__mock {
+    position: absolute;
+    inset-inline-start: 0;
+    inset-block-end: calc(-1 * (var(--clear) + var(--hm) / 3));
+    inline-size: calc(100% + (100vw - 100cqi) / 2 + 8px);
+  }
+}
+/* 1024 to 1279 the window is 590 to 750 px, too narrow for the open draft's pane: it shows the rail and the queue
+   only (app-mockup.css lays out the inside; this only drops the pane column here). */
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .lp .lp-start .lp-app { grid-template-columns: 56px minmax(0, 1fr); grid-template-areas: "rail head" "rail list"; }
+  .lp .lp-start .lp-app__pane { display: none; }
 }
 @media (min-width: 1280px) {
-  .lp-start { min-height: 820px; padding-block-start: 80px; }
+  .lp .lp-start { --hm: 480px; --hb: max(420px, 100vw * 840 / 2880); }
+  .lp .lp-start__grid { column-gap: 32px; }
 }
 
-/* The door painting (prompt.md #10, 3:1), under the glow's ::before (-2) and grain (-1). Bottom-anchored, so the
-   door and path stay in frame at every width; the sky above is what crops. */
-.lp-start__art { position: absolute; inset: 0; z-index: -3; }
-.lp-start__art > img { object-fit: cover; object-position: 50% 100%; }
+/* ===== Button label roll: the label slides up and its aria-hidden twin rises from below, 250 ms ===== */
+.lp .lp-roll { display: inline-grid; overflow: clip; }
+.lp .lp-roll > span { grid-area: 1 / 1; transition: transform 250ms var(--ease-out); }
+.lp .lp-roll > span + span { transform: translateY(100%); }
+@media (hover: hover) and (pointer: fine) {
+  .lp .lp-start__cta:hover .lp-roll > span:first-child { transform: translateY(-100%); }
+  .lp .lp-start__cta:hover .lp-roll > span + span { transform: none; }
+}
+.lp .lp-start__cta:focus-visible .lp-roll > span:first-child { transform: translateY(-100%); }
+.lp .lp-start__cta:focus-visible .lp-roll > span + span { transform: none; }
 
-/* Opens the band into the haze above and the footer below: the painting, glow and grain dissolve to transparent
-   (a mask, not a Linen fade, so no Linen strip shows against the .site-backdrop haze). The copy is not masked.
-   The glow and grain boxes overhang the band by 8 percent (landing.css) and drift, so their mask starts later. */
-.lp-start__art {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 80%, transparent 100%);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 80%, transparent 100%);
+/* ===== Reduced (motion.css rule c: the attribute is the switch, the media query the first-paint backstop) =====
+   Nothing moves and transforms are none; the button label underlines instead of rolling. */
+html[data-motion="reduced"] .lp .lp-start__move { transform: none !important; will-change: auto; }
+html[data-motion="reduced"] .lp .lp-start__cta .lp-roll > span:first-child { transform: none; transition: none; }
+html[data-motion="reduced"] .lp .lp-start__cta .lp-roll > span + span { transform: translateY(100%); transition: none; }
+html[data-motion="reduced"] .lp .lp-start__cta:is(:hover, :focus-visible) .lp-roll > span:first-child {
+  text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
 }
-.lp-start.lp-glow-dusk::before {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0 8%, #000 22%, #000 76%, transparent 92%);
-  mask-image: linear-gradient(to bottom, transparent 0 8%, #000 22%, #000 76%, transparent 92%);
-}
-.lp-start.lp-glow-dusk::after {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 80%, transparent 100%);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 80%, transparent 100%);
-}
-
-.lp-start__stack {
-  position: relative; z-index: 1;
-  display: flex; flex-direction: column; align-items: center; text-align: center;
-}
-.lp-start__stack > .lp-serif-closing { max-width: 11em; }
-@media (min-width: 640px) {
-  .lp-start__tail { white-space: nowrap; }
-}
-
-/* Subline is --ink, not --body: --body is only 3.76:1 on the coral the glow reaches. The min-height holds the
-   lines of the longer approved sentence so the swap never moves the button. */
-.lp-start__stack > .lp-lead {
-  color: var(--ink); margin: 24px auto 0; min-height: 3lh;
-}
-@media (min-width: 640px) {
-  .lp-start__stack > .lp-lead { min-height: 2lh; }
-}
-.lp-start__cta { margin-top: 32px; }
-@media (max-width: 479px) {
-  .lp-start__cta { width: 100%; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="full"]) .lp .lp-start__move { transform: none !important; will-change: auto; }
+  html:not([data-motion="full"]) .lp .lp-start__cta .lp-roll > span:first-child { transform: none; transition: none; }
+  html:not([data-motion="full"]) .lp .lp-start__cta .lp-roll > span + span { transform: translateY(100%); transition: none; }
+  html:not([data-motion="full"]) .lp .lp-start__cta:is(:hover, :focus-visible) .lp-roll > span:first-child {
+    text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
+  }
 }

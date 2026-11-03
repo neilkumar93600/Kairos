@@ -6,7 +6,7 @@ import { PLANS, type BillingInterval, type Plan } from "@auto-career/shared";
 import { landingCopy } from "@/content/landing-copy";
 import { FloatingCard } from "@/components/landing/floating-card";
 import { SectionIntro } from "@/components/landing/section-intro";
-import { INTERVAL_LABEL, PricingPlans } from "@/components/shared/pricing-plans";
+import { INTERVAL_LABEL, PricingPlans, quarterlySaving } from "@/components/shared/pricing-plans";
 import { computeReceipt, creditsPerInvoice, type CalcPlanId } from "@/lib/landing/calculator";
 import { formatCredits, formatPerApp } from "@/lib/landing/format";
 import { useHydrated } from "@/lib/landing/use-hydrated";
@@ -18,6 +18,8 @@ const INTERVALS = Object.keys(INTERVAL_LABEL) as BillingInterval[];
 const UNIT: Record<BillingInterval, string> = { week: "week", month: "month", quarter: "quarter" };
 const PAID = PLANS.filter((plan): plan is Plan & { id: CalcPlanId } => plan.id !== "free");
 const HIGHLIGHTED = PAID.find((plan) => plan.highlighted) ?? PAID[0];
+// Best quarterly saving against three monthly invoices across paid plans; quarterlySaving reads plans.ts and rounds down.
+const SAVE_UP_TO = Math.max(0, ...PAID.map((plan) => quarterlySaving(plan) ?? 0));
 // Steps divide every allowance in plans.ts (234, 280, 700 · 1,000, 1,200, 3,000 · 3,000, 3,600, 9,000), so each
 // plan's full use is reachable on the range.
 const STEP: Record<BillingInterval, number> = { week: 1, month: 10, quarter: 30 };
@@ -74,7 +76,8 @@ export function PricingBoard() {
         <div className="lp-wrap lp-wrap--main">
           <div className="pr-head">
             <SectionIntro titleId="plans-title" title={p.title} subline={p.subline} align="start" />
-            <fieldset className="lp-seg pr-seg glass-panel">
+            {/* Below 1024 the saving chip hangs under the Quarterly segment, so the toggle reserves room for it. */}
+            <fieldset className="lp-seg pr-seg glass-panel max-lg:mb-[30px]">
               <legend>{landingCopy.pricing.intervalLegend}</legend>
               {INTERVALS.map((i) => (
                 <label key={i}>
@@ -87,6 +90,16 @@ export function PricingBoard() {
                     onChange={() => pickInterval(i)}
                   />
                   {INTERVAL_LABEL[i]}
+                  {/* Bone micro chip (docs/DESIGN.md "Reference layer"), part of the radio's name. Inside the segment
+                      from 1024; a phone segment is too narrow, so there it sits under the segment on the haze. */}
+                  {i === "quarter" && SAVE_UP_TO > 0 ? (
+                    <>
+                      {" "}
+                      <span className="absolute top-[calc(100%+8px)] right-0 inline-flex min-h-[22px] items-center whitespace-nowrap rounded-full bg-sunk px-2 text-xs leading-none font-medium text-ink lg:static">
+                        {`Save up to ${SAVE_UP_TO}%`}
+                      </span>
+                    </>
+                  ) : null}
                 </label>
               ))}
             </fieldset>
