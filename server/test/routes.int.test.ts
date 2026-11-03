@@ -263,6 +263,44 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
     });
   });
 
+  describe("DELETE /api/profile/facts/:id (database-v09)", () => {
+    const remaining = async (id: string) => (await tdb.select().from(schema.facts).where(eq(schema.facts.id, id))).length;
+
+    it("409s fact_cited for a confirmed fact an application's resume lines cite, and keeps it", async () => {
+      const f = await fact("Built billing", true);
+      await draft({ resumeLines: [{ id: "l1", section: "Experience", text: "Built billing", factIds: [f] }] });
+      const res = await request(app).delete(`/api/profile/facts/${f}`);
+      expect(res.status).toBe(409);
+      expect(res.body.error.code).toBe("fact_cited");
+      expect(await remaining(f)).toBe(1);
+    });
+
+    it("409s fact_cited for a confirmed fact the base resume cites, by a line or an entry heading", async () => {
+      const line = await fact("Built billing", true);
+      const heading = await fact("Engineer at Initech", true);
+      await tdb.insert(schema.resumes).values({ userId: me.id, document: doc(line, heading) });
+      for (const f of [line, heading]) {
+        expect((await request(app).delete(`/api/profile/facts/${f}`)).status).toBe(409);
+        expect(await remaining(f)).toBe(1);
+      }
+    });
+
+    it("deletes an uncited confirmed fact, an unconfirmed one, and leaves another user's fact alone", async () => {
+      const cited = await fact("Built billing", true);
+      await draft({ resumeLines: [{ id: "l1", section: "Experience", text: "Built billing", factIds: [cited] }] });
+      const uncited = await fact("Shipped payroll", true);
+      const unconfirmed = await fact("A parsed fact", false);
+      for (const f of [uncited, unconfirmed]) {
+        expect((await request(app).delete(`/api/profile/facts/${f}`)).status).toBe(204);
+        expect(await remaining(f)).toBe(0);
+      }
+      const otherId = await seedUser(tdb);
+      const [other] = await tdb.insert(schema.facts).values({ userId: otherId, kind: "role", text: "Theirs", confirmed: true }).returning();
+      expect((await request(app).delete(`/api/profile/facts/${other!.id}`)).status).toBe(204);
+      expect(await remaining(other!.id)).toBe(1);
+    });
+  });
+
   describe("POST /api/jobs/import", () => {
     it("422s unsupported_board without fetching anything", async () => {
       const res = await request(app).post("/api/jobs/import").send({ url: "https://example.com/jobs/123" });
