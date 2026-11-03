@@ -182,3 +182,10 @@ END $$;
 -- kairos_metrics (Grafana): aggregates only, never a user id or free text. metrics_minute and the ops_*_v views join
 -- it when they exist (WP-27).
 GRANT SELECT ON llm_cost_daily TO kairos_metrics;
+
+-- WP-17: resume imports, employments and the revision writer. The parse job (worker) writes imports, employments and
+-- facts; snapshot_resume() (SECURITY DEFINER, owned by kairos_migrator) is the only writer of resume_revisions, so the
+-- runtime roles keep SELECT there and lose INSERT, UPDATE and DELETE.
+GRANT SELECT, INSERT, UPDATE, DELETE ON resume_imports, employments TO kairos_api, kairos_worker;
+REVOKE INSERT, UPDATE, DELETE ON resume_revisions FROM kairos_api, kairos_worker;
+GRANT EXECUTE ON FUNCTION snapshot_resume(uuid, text, text, text) TO kairos_api, kairos_worker;

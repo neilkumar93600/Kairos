@@ -64,6 +64,20 @@
       "when": 1793687798488,
       "tag": "0008_auth_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793704018318,
+      "tag": "0009_resume_library",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793704032838,
+      "tag": "0010_facts_import_indexes",
+      "breakpoints": true
     }
   ]
 }
