@@ -1,7 +1,7 @@
 import type { Job } from "bullmq";
 import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
-import { chromium, type Browser, type Frame, type Page } from "playwright-core";
+import type { Browser, Frame, Page } from "playwright-core";
 import { submissionReportSchema, type ApplicationAnswer, type ResumeLine, type SubmissionReport } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, jobs } from "../db/schema";
@@ -9,6 +9,7 @@ import { applierEnv } from "../lib/env";
 import { logger } from "../lib/logger";
 import { signal } from "../lib/sentry";
 import { claimForCloud, cloudAllowed, FAILURE_MESSAGES, recordSubmission, type FailureCode } from "../services/submissions";
+import { applierPool } from "./browser-pool";
 import type { JobData } from "./queues";
 
 /**
@@ -193,43 +194,6 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
   }
 }
 
-let browser: Promise<Browser> | undefined;
-
-/** One Chromium per applier, launched lazily and again on the next job after it crashes or disconnects. */
-function getBrowser(): Promise<Browser> {
-  if (!browser) {
-    const e = applierEnv();
-    // Without chromiumSandbox: true, Playwright adds --no-sandbox. Off only under the signed S-AP4 risk acceptance.
-    const launching = chromium.launch({ headless: true, executablePath: e.CHROMIUM_EXECUTABLE_PATH, chromiumSandbox: e.APPLIER_CHROMIUM_SANDBOX });
-    browser = launching;
-    launching.then(
-      (b) =>
-        b.on("disconnected", () => {
-          if (browser === launching) browser = undefined;
-          logger.warn("chromium disconnected; the next job relaunches it");
-        }),
-      () => {
-        if (browser === launching) browser = undefined;
-      },
-    );
-  }
-  return browser;
-}
-
-/** Launches Chromium at boot, so a sandbox that cannot start (spike S-AP4) shows in the log before any claim. */
-export async function warmBrowser(): Promise<void> {
-  await getBrowser().then(
-    (b) => logger.info({ version: b.version(), sandbox: applierEnv().APPLIER_CHROMIUM_SANDBOX }, "chromium launched"),
-    (err) => logger.error({ err }, "chromium failed to launch (with 'No usable sandbox', see S-AP4 in owner-actions/WP-04.md)"),
-  );
-}
-
-export async function closeBrowser(): Promise<void> {
-  const b = await browser?.catch(() => undefined);
-  browser = undefined;
-  await b?.close();
-}
-
 let filler: string | undefined;
 const fillerSource = () => (filler ??= readFileSync(applierEnv().FILLER_SCRIPT_PATH, "utf8"));
 
@@ -264,7 +228,8 @@ export async function processCloudApply(job: Job<JobData["cloud-apply"]>) {
     else if (row.closedAt) outcome = fail("posting_closed", "closed_in_catalog");
     else {
       const { id, answers, resumeLines, coverLetter } = row.app;
-      outcome = await fillInBrowser(await getBrowser(), { applicationId: id, applyUrl: row.applyUrl, answers, resumeLines, coverLetter, fillerSource: fillerSource() });
+      const input = { applicationId: id, applyUrl: row.applyUrl, answers, resumeLines, coverLetter, fillerSource: fillerSource() };
+      outcome = await applierPool().run((browser) => fillInBrowser(browser, input));
     }
   } catch (err) {
     // Launch, filler bundle or database failures: the page was never filled, so nothing reached the employer.

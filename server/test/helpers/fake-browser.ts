@@ -4,7 +4,7 @@ import { vi } from "vitest";
 /**
  * Stands in for Chromium in the integration tests (CI has Postgres but no browser): chromium.launch resolves to a
  * browser whose one page shows `frames` (each visible) and whose filler call returns `fill()`. Real page behaviour
- * is covered by cloud-apply.browser.test.ts. Returns the fill spy. Call closeBrowser() after each test.
+ * is covered by cloud-apply.browser.test.ts. Returns the fill spy. Call closeBrowser() (jobs/browser-pool.ts) after each test.
  */
 export function fakeBrowser(opts: { frames?: string[]; fill?: () => Promise<unknown> } = {}) {
   const fill = vi.fn(opts.fill ?? (async () => ({})));

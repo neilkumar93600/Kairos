@@ -30,7 +30,8 @@ writeFileSync(process.env.FILLER_SCRIPT_PATH, "window.__kairosFill = async () =>
 
 const { closeDb, db } = await import("../src/db/client");
 const schema = await import("../src/db/schema");
-const { closeBrowser, processCloudApply } = await import("../src/jobs/cloud-apply");
+const { processCloudApply } = await import("../src/jobs/cloud-apply");
+const { closeBrowser } = await import("../src/jobs/browser-pool");
 
 describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
   let admin: Db;

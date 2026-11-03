@@ -50,6 +50,10 @@ const applierShape = {
   APPLIER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
   /** Built by `npm run build -w @auto-career/extension`; the applier image copies it to /app/filler.js. */
   FILLER_SCRIPT_PATH: z.string().default("../extension/dist/filler.js"),
+  /** Contexts one Chromium serves before it is replaced (07-cloud-applier 3.2 item 12). */
+  APPLIER_RECYCLE_AFTER: z.coerce.number().int().min(1).max(1000).default(25),
+  /** Container memory above which the browser is recycled (07-cloud-applier 4: the replica restarts above 3.6 GB). */
+  APPLIER_MEMORY_LIMIT_MB: z.coerce.number().int().min(256).default(3600),
 };
 
 /**

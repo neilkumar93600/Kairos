@@ -6,7 +6,8 @@ import { closeServer, deadline, onShutdown, serveHealth, startHeartbeat } from "
 import { logger } from "./lib/logger";
 import { assertNoEviction, redis } from "./lib/redis";
 import { captureJobFailure, initSentry } from "./lib/sentry";
-import { closeBrowser, processCloudApply, warmBrowser } from "./jobs/cloud-apply";
+import { applierPool, closeBrowser, warmBrowser, watchMemory } from "./jobs/browser-pool";
+import { processCloudApply } from "./jobs/cloud-apply";
 import { QUEUES, workerOptions } from "./jobs/queues";
 
 // The applier opens hostile employer pages, so it runs on its own schema (envFor("applier")): no auth, Stripe,
@@ -30,8 +31,9 @@ worker.on("failed", (job, err) => {
 });
 logger.info({ concurrency: e.APPLIER_CONCURRENCY, sandbox: e.APPLIER_CHROMIUM_SANDBOX }, "applier started");
 void warmBrowser();
+watchMemory(applierPool(), e.APPLIER_MEMORY_LIMIT_MB);
 
-// Chromium is not checked: a dead browser is relaunched by the next job. The DB check runs as kairos_applier.
+// Chromium is not checked: a dead browser is relaunched by the next job (jobs/browser-pool.ts). The DB check runs as kairos_applier.
 const checks = {
   database: async () => void (await db().execute(sql`select 1`)),
   redis: async () => {
