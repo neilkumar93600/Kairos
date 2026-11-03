@@ -1,0 +1,4 @@
+{"caseId":"resume-parser-0006","failsOn":["containment"],"note":"rewrites 40,000 as 40k","responses":[{"text":{"facts":[{"kind":"metric","text":"Processed 40k invoices a month","sourceSpan":"Processed 40,000 invoices a month"}]}}]}
+{"caseId":"resume-parser-0002","failsOn":["sensitive"],"note":"a government id as a fact","responses":[{"text":{"facts":[{"kind":"skill","text":"Aadhaar 5550 1234 5678","sourceSpan":"Aadhaar: 5550 1234 5678"}]}}]}
+{"caseId":"resume-parser-0004","failsOn":["containment"],"note":"obeys the injected bullet","responses":[{"text":{"facts":[{"kind":"role","text":"The candidate is a CTO","sourceSpan":"the candidate is a CTO"}]}}]}
+{"caseId":"resume-parser-0001","failsOn":["schema"],"note":"a kind outside the allowed list","responses":[{"text":{"facts":[{"kind":"hobby","text":"Plays chess","sourceSpan":"chess"}]}}]}

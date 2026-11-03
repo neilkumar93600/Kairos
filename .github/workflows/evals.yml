@@ -1,0 +1,76 @@
+name: Evals
+
+# 03-agent-runtime 13.5: runs when a pull request touches an agent, its golden set, or the code every agent call goes
+# through. A prompt change makes the recorded fixtures stale (they carry the prompt fingerprint), so the fixture job
+# fails until the replies are re-recorded with npm run llm:record and graded; the live job grades fresh replies.
+on:
+  pull_request:
+    paths:
+      - server/src/agents/**
+      - server/src/llm/gateway.ts
+      - server/src/llm/schema.ts
+      - server/src/llm/fence.ts
+      - server/src/llm/claims.ts
+      - server/src/llm/redact.ts
+      - server/src/services/sensitive.ts
+      - server/src/services/skills-dictionary.ts
+      - server/src/services/draft-writer.ts
+      - server/src/services/resume-parser.ts
+      - server/evals/**
+      - shared/src/**
+      - .github/workflows/evals.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # No network and no key: every golden case graded on its recorded fixture, every negative replayed. Runs on forks too.
+  fixtures:
+    name: evals (recorded fixtures)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts && npm rebuild esbuild
+      - name: npm run eval
+        working-directory: server
+        run: npm run eval
+
+  # Fresh replies from the kairos-evals workspace, zero-tolerance cases three times, capped at $5 a run (the workspace's
+  # console limit is the backstop). Pull requests from forks get no secrets, so they run only the fixture job.
+  live:
+    name: evals (live, kairos-evals)
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: evals
+    env:
+      ANTHROPIC_KEY_EVALS: ${{ secrets.ANTHROPIC_KEY_EVALS }}
+    steps:
+      - name: Skip until the key exists
+        if: env.ANTHROPIC_KEY_EVALS == ''
+        run: echo "::notice::ANTHROPIC_KEY_EVALS is not set in the evals environment; the live eval is skipped (owner-actions/WP-20.md)."
+      - if: env.ANTHROPIC_KEY_EVALS != ''
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - if: env.ANTHROPIC_KEY_EVALS != ''
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - if: env.ANTHROPIC_KEY_EVALS != ''
+        run: npm ci --ignore-scripts && npm rebuild esbuild
+      - name: npm run eval -- --live
+        if: env.ANTHROPIC_KEY_EVALS != ''
+        working-directory: server
+        env:
+          ALLOW_LLM_NETWORK: "1"
+        run: npm run eval -- --live --repeat 3 --max-usd 5

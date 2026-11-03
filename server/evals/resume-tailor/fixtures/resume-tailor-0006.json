@@ -1,0 +1,31 @@
+{
+  "caseId": "resume-tailor-0006",
+  "promptVersion": 1,
+  "promptSha256": "56daa5a999d31075f51f084de24cfe646cc044c5c458076702f98d60bf12f5f7",
+  "inputHash": "47dc608048834cdaa17649a19d48475c490d65d2b03c1aa9e3297a8dbc682660",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "lines": [
+          {
+            "id": "l1",
+            "section": "Experience",
+            "text": "Backend Engineer at Quillon Labs from 2021 to 2024",
+            "factIds": [
+              "f1"
+            ]
+          },
+          {
+            "id": "l2",
+            "section": "Projects",
+            "text": "Published the ledger tool",
+            "factIds": [
+              "f7"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

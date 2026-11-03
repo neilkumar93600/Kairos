@@ -1,0 +1,23 @@
+{
+  "caseId": "resume-tailor-0005",
+  "promptVersion": 1,
+  "promptSha256": "56daa5a999d31075f51f084de24cfe646cc044c5c458076702f98d60bf12f5f7",
+  "inputHash": "7b646a758e4835b163ddef33a83da380b718e67c17a8f19052548738e6af6c50",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "lines": [
+          {
+            "id": "l1",
+            "section": "Skills",
+            "text": "TypeScript and PostgreSQL",
+            "factIds": [
+              "f3"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

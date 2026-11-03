@@ -1,0 +1,30 @@
+{
+  "caseId": "resume-parser-0002",
+  "promptVersion": 1,
+  "promptSha256": "9d478c531a649f8d3da83b746de04979cfe050fb7d6e80b785a09a4428b4cc6f",
+  "inputHash": "387c34fe70d8b7ceaae811cc6b995a1fa6763d0c9173317099bbd69767bc6e89",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "facts": [
+          {
+            "kind": "role",
+            "text": "Systems Engineer at Tallowmere Systems Ltd since Jul'19",
+            "sourceSpan": "Tallowmere Systems Ltd | Systems Engineer | Jul'19 - Till date"
+          },
+          {
+            "kind": "project",
+            "text": "Developed 14 REST APIs in Spring Boot for a banking client",
+            "sourceSpan": "Developed 14 REST APIs in Spring Boot for a banking client"
+          },
+          {
+            "kind": "skill",
+            "text": "Spring Boot",
+            "sourceSpan": "Spring Boot"
+          }
+        ]
+      }
+    }
+  ]
+}

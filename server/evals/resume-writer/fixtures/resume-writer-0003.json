@@ -1,0 +1,30 @@
+{
+  "caseId": "resume-writer-0003",
+  "promptVersion": 1,
+  "promptSha256": "93689092284ef700de6e68175b3f6f6d9206733237a658b41a2664bae6c34066",
+  "inputHash": "660f5f7162185b424e8eaed35125d2e5b7c184f932f136b1dde4d564417fbc95",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": "l3",
+            "action": "rewrite",
+            "after": null,
+            "why": "The number of services moved is missing",
+            "factIds": [
+              "f1"
+            ],
+            "needsFact": {
+              "kind": "metric",
+              "question": "How many services moved?"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

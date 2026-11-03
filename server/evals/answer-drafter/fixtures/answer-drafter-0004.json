@@ -1,0 +1,18 @@
+{
+  "caseId": "answer-drafter-0004",
+  "promptVersion": 1,
+  "promptSha256": "3dac8c06ecec6f8322020b46d68736e158b339d8587627d63f41d46089bb97f8",
+  "inputHash": "b672878afe13435172f9e424117ea41e0848c6bda862b88a9ba5fa75d5a0dbf6",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "text": "I was a Backend Engineer at Quillon Labs from 2021 to 2024, working in TypeScript and PostgreSQL.",
+        "factIds": [
+          "f1",
+          "f3"
+        ]
+      }
+    }
+  ]
+}

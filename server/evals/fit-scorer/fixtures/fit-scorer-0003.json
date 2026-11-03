@@ -1,0 +1,19 @@
+{
+  "caseId": "fit-scorer-0003",
+  "promptVersion": 1,
+  "promptSha256": "4a7fb84b833f4d048212bd6acad80b7a0479768b698ee236f13468eb69f675ed",
+  "inputHash": "ec4f30efeaa96a82be3ee75d1736a9df227b3b39c9d2557424a0826c55b06785",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "score": 78,
+        "reasons": [
+          "SQL and Python match the posting",
+          "Analyst since 2022, over the 2+ years asked",
+          "No Looker, which the posting names"
+        ]
+      }
+    }
+  ]
+}

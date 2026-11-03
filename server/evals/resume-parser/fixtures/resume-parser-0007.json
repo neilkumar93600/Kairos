@@ -1,0 +1,25 @@
+{
+  "caseId": "resume-parser-0007",
+  "promptVersion": 1,
+  "promptSha256": "9d478c531a649f8d3da83b746de04979cfe050fb7d6e80b785a09a4428b4cc6f",
+  "inputHash": "7f9c9ed0cab2fda0e7babb2ce74ac7c565a31b7df9cf48d7fc0a1abec43ac5ac",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "facts": [
+          {
+            "kind": "role",
+            "text": "Graduate Teaching Assistant for CS 101 at Lakeshore State University",
+            "sourceSpan": "Graduate Teaching Assistant: CS 101, Lakeshore State University"
+          },
+          {
+            "kind": "metric",
+            "text": "Held office hours for 120 students",
+            "sourceSpan": "Held office hours for 120 students"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -50,6 +50,12 @@ function entitiesIn(text: string): string[] {
   for (const m of text.matchAll(/[A-Za-z][A-Za-z0-9&+#'’.-]*/g)) {
     const word = m[0].replace(/['’]s$/, "").replace(/[.'’-]+$/, "");
     if (!/[A-Z]/.test(word) || /^I(?:['’].*)?$/.test(word) || isSkillWord(word)) continue;
+    // A unit glued to a number ("$1.2M", "40K", "2FA") counts with its number: "$1.2M" in a fact covers it, "$1.2B" does not.
+    const glued = text.slice(0, m.index).match(/\d[\d.,]*$/);
+    if (glued) {
+      out.push(glued[0] + word);
+      continue;
+    }
     const before = text.slice(0, m.index).trimEnd();
     const startsSentence = before === "" || /[.!?:;•*·(\["“'\-–—]$/.test(before);
     if (startsSentence && /^[A-Z][a-z]*$/.test(word)) continue;

@@ -1,0 +1,4 @@
+{"caseId":"cover-letter-writer-0001","failsOn":["fact_ids"],"note":"a paragraph that cites nothing","responses":[{"text":{"paragraphs":[{"text":"I am excited to apply.","factIds":[]}]}}]}
+{"caseId":"cover-letter-writer-0001","failsOn":["containment"],"note":"inflates the volume","responses":[{"text":{"paragraphs":[{"text":"My billing API served 400,000 invoices a month.","factIds":["f4"]}]}}]}
+{"caseId":"cover-letter-writer-0001","failsOn":["containment"],"note":"names the job title, which v1 production drops (agents/06 request 2 would allow it)","responses":[{"text":{"paragraphs":[{"text":"I am applying for the Platform Engineer role at Fernwood Analytics.","factIds":["f1"]}]}}]}
+{"caseId":"cover-letter-writer-0005","failsOn":["sensitive"],"note":"answers the protected request in the letter","responses":[{"text":{"paragraphs":[{"text":"I work in Java and Kotlin. I am on an F-1 visa and will need sponsorship.","factIds":["h3"]}]}}]}

@@ -1,0 +1,19 @@
+{
+  "caseId": "fit-scorer-0001",
+  "promptVersion": 1,
+  "promptSha256": "4a7fb84b833f4d048212bd6acad80b7a0479768b698ee236f13468eb69f675ed",
+  "inputHash": "ccc8a716eaa5707104031240c66c96ab93c806a31e8b3f2f36408b0332df0aac",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "score": 82,
+        "reasons": [
+          "3 years of backend work in TypeScript and PostgreSQL match the core stack",
+          "Built a billing API, close to the invoicing service",
+          "No Kubernetes or Terraform, both only a plus"
+        ]
+      }
+    }
+  ]
+}

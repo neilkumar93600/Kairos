@@ -1,0 +1,55 @@
+{
+  "caseId": "resume-tailor-0001",
+  "promptVersion": 1,
+  "promptSha256": "56daa5a999d31075f51f084de24cfe646cc044c5c458076702f98d60bf12f5f7",
+  "inputHash": "ea95e25d4514b5afee179f905b50ba7083218d503914fc3d83d0487c38f29932",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "lines": [
+          {
+            "id": "l1",
+            "section": "Experience",
+            "text": "Backend Engineer at Quillon Labs from 2021 to 2024",
+            "factIds": [
+              "f1"
+            ]
+          },
+          {
+            "id": "l2",
+            "section": "Experience",
+            "text": "Built a billing API that served 40,000 invoices a month",
+            "factIds": [
+              "f4"
+            ]
+          },
+          {
+            "id": "l3",
+            "section": "Experience",
+            "text": "Cut invoice processing time by 30% at Quillon Labs",
+            "factIds": [
+              "f2"
+            ]
+          },
+          {
+            "id": "l4",
+            "section": "Skills",
+            "text": "TypeScript and PostgreSQL",
+            "factIds": [
+              "f3"
+            ]
+          },
+          {
+            "id": "l5",
+            "section": "Education",
+            "text": "B.Sc. in Computer Science, Riverbend University, 2020",
+            "factIds": [
+              "f5"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

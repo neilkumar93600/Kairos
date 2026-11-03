@@ -1,0 +1,18 @@
+{
+  "caseId": "answer-drafter-0003",
+  "promptVersion": 1,
+  "promptSha256": "3dac8c06ecec6f8322020b46d68736e158b339d8587627d63f41d46089bb97f8",
+  "inputHash": "ce0fc7667b149692d632decaa1865ac9a8ea56cbd320faa1c8ecc1b326a07d8e",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "text": "Billing experience: I built a billing API that served 40,000 invoices a month, and I mentored 3 junior engineers.",
+        "factIds": [
+          "f4",
+          "f6"
+        ]
+      }
+    }
+  ]
+}

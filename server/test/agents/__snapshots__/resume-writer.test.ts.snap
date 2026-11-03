@@ -1,0 +1,27 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`resume-writer render > is unchanged byte for byte 1`] = `
+{
+  "task": "Task: Rewrite this one line. Give different rewrites, each a full replacement. At most 3 suggestions. Style: Make every rewrite strictly shorter than the line it replaces: cut filler, keep the facts.",
+  "untrusted": [
+    {
+      "label": "resume_lines",
+      "maxTokens": 2000,
+      "text": "Resume view:
+Section [exp] Experience (experience)
+  Entry [e1] Backend Engineer | Quillon Labs {heading cites f1}
+    Line [l1] Worked on invoices {cites f2}",
+    },
+  ],
+  "userBlock": {
+    "label": "facts",
+    "nonce": "<nonce>",
+    "text": "<<DATA kind=facts id=<nonce>>>
+Confirmed facts (cite by id):
+[f1] (role) Backend Engineer at Quillon Labs from 2021 to 2024
+[f2] (metric) Cut invoice processing time by 30% at Quillon Labs
+[f3] (skill) TypeScript and PostgreSQL
+<<END DATA id=<nonce>>>",
+  },
+}
+`;
