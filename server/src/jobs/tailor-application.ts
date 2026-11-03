@@ -4,6 +4,7 @@ import type { ApplicationAnswer, ResumeLine } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, companies, facts, jobs, profiles, savedAnswers, user } from "../db/schema";
 import { logger } from "../lib/logger";
+import { slo } from "../lib/metrics";
 import { tailorResume } from "../services/tailor";
 import { topFacts } from "../services/job-fit";
 import { planFor } from "../services/submissions";
@@ -64,5 +65,7 @@ export async function processTailorApplication(job: Job<JobData["tailor-applicat
     .update(applications)
     .set({ resumeLines: ifEmpty(applications.resumeLines, kept), answers: ifEmpty(applications.answers, answers), updatedAt: new Date() })
     .where(and(eq(applications.id, row.app.id), eq(applications.status, "draft")));
+  // S3: 95% of drafts ready within 60 s of the request.
+  slo("s3", Date.now() - row.app.createdAt.getTime() <= 60_000);
   return { lines: kept.length, answers: answers.length };
 }

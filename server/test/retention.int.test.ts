@@ -40,15 +40,18 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
       await db.insert(schema.inboundEmails).values({ userId, providerMessageId: randomUUID(), sender: "a@b.c", subject: "s", textBody: body, receivedAt: ago(days) });
       await db.insert(schema.contactMessages).values({ name: "n", email: "x@y.z", topic: "support", message: body, createdAt: ago(days * 2) });
     }
-    const [unreferenced, referenced, recent] = [await job(200), await job(200), await job(10)];
+    const [unreferenced, referenced, recent, saved] = [await job(200), await job(200), await job(10), await job(200)];
     await db.insert(schema.applications).values({ userId, jobId: referenced });
+    // A job saved to the tracker is purged, never deleted (its item would lose the posting; DB-reviewer round 2).
+    await db.insert(schema.trackerItems).values({ userId, jobId: saved });
 
-    expect(await retention.processRetention()).toEqual({ inbound_body: 1, contact_messages: 1, matches_below_bar: 0, jobs_closed: 2 });
+    expect(await retention.processRetention()).toEqual({ inbound_body: 1, contact_messages: 1, matches_below_bar: 0, jobs_closed: 3 });
     expect((await db.select().from(schema.inboundEmails)).map((r) => r.textBody).sort()).toEqual(["", "new"]);
     expect((await db.select().from(schema.contactMessages)).map((r) => r.message)).toEqual(["new"]);
     const jobs = await db.select().from(schema.jobs);
-    expect(jobs.map((j) => j.id).sort()).toEqual([referenced, recent].sort());
+    expect(jobs.map((j) => j.id).sort()).toEqual([referenced, recent, saved].sort());
     expect(jobs.find((j) => j.id === referenced)).toMatchObject({ descriptionText: "", raw: null });
+    expect(jobs.find((j) => j.id === saved)).toMatchObject({ descriptionText: "", raw: null });
     // A second run changes nothing.
     expect(await retention.processRetention()).toEqual({ inbound_body: 0, contact_messages: 0, matches_below_bar: 0, jobs_closed: 0 });
   });
@@ -61,8 +64,8 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
     ];
     const receipt = { filledFields: answers.map(({ fieldKey, label, value }) => ({ fieldKey, label, value })), channel: "extension" as const };
     const sent = { status: "submitted" as const, channel: "extension" as const, approvedAt: ago(9), answers, receipt };
-    const [old] = await db.insert(schema.applications).values({ userId, jobId: await job(null), ...sent, submittedAt: ago(8) }).returning();
-    const [fresh] = await db.insert(schema.applications).values({ userId, jobId: await job(null), ...sent, submittedAt: ago(2) }).returning();
+    const [old] = await db.insert(schema.applications).values({ userId, jobId: await job(null), ...sent, submittedAt: ago(8), terminalAt: ago(8), questions: [{ q: "Gender" }] }).returning();
+    const [fresh] = await db.insert(schema.applications).values({ userId, jobId: await job(null), ...sent, submittedAt: ago(2), terminalAt: ago(2) }).returning();
     const [draft] = await db.insert(schema.applications).values({ userId, jobId: await job(null), answers, updatedAt: ago(30) }).returning();
 
     expect(await retention.processScrubApplications()).toEqual({ scrubbed: 1 });
@@ -71,6 +74,7 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
     expect(scrubbed.answers.map((a) => a.value)).toEqual(["", "Mission"]);
     expect(scrubbed.receipt?.filledFields.map((f) => f.value)).toEqual(["", "Mission"]);
     expect(scrubbed.contentScrubbedAt).not.toBeNull();
+    expect(scrubbed.questions).toBeNull();
     expect(JSON.stringify(scrubbed)).not.toContain("Female");
     expect((await row(fresh!.id)).answers[0]!.value).toBe("Female");
     expect((await row(draft!.id)).answers[0]!.value).toBe("Female");

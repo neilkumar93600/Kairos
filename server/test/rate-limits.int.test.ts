@@ -48,4 +48,18 @@ describe.skipIf(!hasTestDb)("rate limits in Postgres", () => {
     expect((await send(b)).status).toBe(429);
     expect((await send(replica())).status).toBe(429);
   });
+
+  it("holds the ai_burst limit across two replicas", async () => {
+    const user = { id: "ai-user", email: "ai@test.local", name: "A", emailVerified: true };
+    const signedIn: AuthGateway = { handler: signedOut.handler, getSession: async () => ({ user, sessionId: "s", createdAt: new Date() }) };
+    const replica = () => createApp({ auth: signedIn, corsOrigins: [], healthChecks: {}, sharedLimits: true });
+    const [a, b] = [replica(), replica()];
+    // An empty body stops at validation (422) after the limiter counted it: 10 a minute per user, whichever replica.
+    const send = (app: ReturnType<typeof replica>) => request(app).post("/api/resume/suggestions").send({});
+    for (let i = 0; i < 10; i++) expect((await send(i % 2 ? a : b)).status).toBe(422);
+    const refused = await send(a);
+    expect(refused.status).toBe(429);
+    expect(refused.body.error.details.bucket).toBe("ai_burst");
+    expect((await send(b)).status).toBe(429);
+  });
 });

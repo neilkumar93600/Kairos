@@ -69,13 +69,41 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
   { table: "facts", column: "user_id", erase: "cascade", export: ALL },
   { table: "saved_answers", column: "user_id", erase: "cascade", export: ALL },
   { table: "matches", column: "user_id", erase: "cascade", export: ALL },
-  { table: "applications", column: "user_id", erase: "cascade", export: ALL },
+  // WP-42's columns (resume_snapshot, questions, verification, resume_line_entries, resume_file_key) go with the row;
+  // resume_file_key's object sits under the user's R2 prefix, which the worker empties. questions is nulled by the scrub.
+  { table: "applications", column: "user_id", erase: "cascade", export: { omit: ["lease_session_id"] } },
+  // WP-42. application_events_immutable lets only the cascade from "user" or tracker_items delete a row.
+  { table: "tracker_items", column: "user_id", erase: "cascade", export: ALL },
+  { table: "application_events", column: "user_id", erase: "cascade", export: ALL },
+  { table: "submission_attempts", column: "user_id", erase: "cascade", export: { omit: ["session_id", "worker_identity"] } },
   { table: "inbound_emails", column: "user_id", erase: "cascade", export: ALL },
   { table: "subscriptions", column: "user_id", erase: "cascade", export: ALL },
   { table: "credit_ledger", column: "user_id", erase: "archive", export: ALL },
   { table: "user_daily_usage", column: "user_id", erase: "cascade", export: ALL },
   { table: "ai_usage", column: "user_id", erase: "cascade", export: ALL },
   { table: "contact_messages", column: "email", by: "email", erase: "delete", export: { omit: ["email_hash"] } },
+  // WP-44. Job payloads in Redis carry ids only and BullMQ keeps finished jobs at most 7 days: no entry, stated in the
+  // privacy notice's processor tail (owner-actions/WP-25.md).
+  // Rows of kind contact_message have no user_id; their entity_id is the contact_messages id, never an address.
+  { table: "email_sends", column: "user_id", erase: "cascade", export: ALL },
+  { table: "notifications", column: "user_id", erase: "cascade", export: ALL },
+  { table: "action_tokens", column: "user_id", erase: "cascade", export: false, why: "single-use signed-link hashes: a credential, not the user's data" },
+  // Retained on purpose: the record of a person's objection to mail, honoured if the address signs up again. Its hash is
+  // of the exact address and anyone holding the table can test an address for membership, so the privacy notice says
+  // that a suppressed address is kept as a hash after erasure (owner-actions/WP-25.md, counsel item 10).
+  {
+    table: "email_suppressions",
+    column: "address_hash",
+    by: "hash",
+    erase: "keep",
+    export: false,
+    why: "the person's objection to mail (GDPR Art. 21, CAN-SPAM), kept after erasure on purpose; a hash, no address or user id",
+  },
+  // WP-27. The admin who acted, as a user id or 'system:<job>'. Rewritten to the pseudonym by the erasure worker; the
+  // ops_audit trigger (migration 0015) accepts only that. metrics_minute holds no user data (counters by name and label).
+  { table: "ops_audit", column: "actor", erase: "pseudonymise", export: ALL },
+  { table: "ops_flags", column: "updated_by", erase: "pseudonymise", export: ALL },
+  { table: "feature_flags", column: "updated_by", erase: "pseudonymise", export: ALL },
   {
     table: "llm_calls",
     column: "user_hash",
@@ -99,40 +127,10 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
 ];
 
 /**
- * Entries for tables other packages add on their own branches (as they reported them). They are not in
- * PRIVACY_REGISTRY yet because their tables are not on this branch; at merge the coordinator moves each into
- * PRIVACY_REGISTRY, and the coverage tests fail until it does. Retention of these tables stays with their owners
- * (WP-44's mail-retention: email_sends 120 d, notifications 90 d, action_tokens 7 d after expiry).
+ * Entries for tables other packages add on branches not merged here yet. At their integration the entries move into
+ * PRIVACY_REGISTRY, and the coverage tests fail until they do.
  */
 export const AT_MERGE: Record<string, readonly PrivacyEntry[]> = {
-  // Job payloads in Redis carry ids only and BullMQ keeps finished jobs at most 7 days: no registry entry, stated in the
-  // privacy notice's processor tail (owner-actions/WP-25.md).
-  "WP-44": [
-    // Rows of kind contact_message have no user_id; their entity_id must be the contact_messages id, never an address.
-    { table: "email_sends", column: "user_id", erase: "cascade", export: ALL },
-    { table: "notifications", column: "user_id", erase: "cascade", export: ALL },
-    { table: "action_tokens", column: "user_id", erase: "cascade", export: false, why: "single-use signed-link hashes: a credential, not the user's data" },
-    {
-      table: "email_suppressions",
-      column: "address_hash",
-      by: "hash",
-      erase: "keep",
-      export: false,
-      why: "the user's objection to mail (GDPR Art. 21, CAN-SPAM), honoured even if the address signs up again; holds a hash, no address or user id",
-    },
-  ],
-  // WP-42 merges first. Its new applications columns (resume_snapshot, questions, verification, resume_line_entries,
-  // lease_session_id, resume_file_key) cascade with applications; resume_file_key's object sits under the user's R2
-  // prefix, which the worker empties. lease_session_id should be omitted from the export at merge. application_events is the user's own timeline, not a record anyone must keep after the account
-  // (the ledger archive keeps application_id for the books), so it is erased with the account: its append-only guard
-  // must let a referential cascade through, as credit_ledger's does (pg_trigger_depth() >= 2). If it carries no user_id,
-  // register it as a parent entry on applications instead. At merge, scrub-applications also nulls
-  // applications.questions (jobs/retention.ts says where); resume_snapshot is resume content and stays with the account.
-  "WP-42": [
-    { table: "tracker_items", column: "user_id", erase: "cascade", export: ALL },
-    { table: "application_events", column: "user_id", erase: "cascade", export: ALL },
-    { table: "submission_attempts", column: "user_id", erase: "cascade", export: { omit: ["session_id", "worker_identity"] } },
-  ],
   // WP-17 (resume library and imports). At merge also: facts gains export omit ["source_span_hash"]. Its uploads live
   // under uploads/<userId>/, emptied by the worker; the 30-day uploads lifecycle rule is WP-17's owner action.
   "WP-17": [
@@ -145,13 +143,6 @@ export const AT_MERGE: Record<string, readonly PrivacyEntry[]> = {
     { table: "employments", column: "user_id", erase: "cascade", export: { omit: ["import_key"] } },
   ],
   // WP-24 (reply encryption): inbound_emails gains decrypt { text_body_enc, preview_enc } with their AAD column names.
-  // DB-reviewer on WP-27: an admin's id in the audit trail and on the flags they set. metrics_minute and feature_flags hold
-  // none. Both are rewritten by the worker (kairos_worker needs UPDATE (actor) on ops_audit, which WP-27 grants, and
-  // UPDATE (updated_by) on ops_flags).
-  "WP-27": [
-    { table: "ops_audit", column: "actor", erase: "pseudonymise", export: ALL },
-    { table: "ops_flags", column: "updated_by", erase: "pseudonymise", export: ALL },
-  ],
 };
 
 /** Entries whose rows carry the user id directly: the ones erasure verifies are gone and export selects by id. */

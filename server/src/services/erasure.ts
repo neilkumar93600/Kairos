@@ -74,7 +74,7 @@ export function tombstoneStore(): Storage | null {
 
 /**
  * What an audit column holds instead of an erased user's id: 'erased:' and the first 32 hex characters of the user hash
- * (deletion_tasks.user_hash), so it joins the task and names nobody. ops_audit_pseudonym_guard (migration 0009) checks
+ * (deletion_tasks.user_hash), so it joins the task and names nobody. ops_audit_immutable() (migration 0015) checks
  * exactly this form; the erasure worker writes it (jobs/erasure.ts), never the api.
  */
 export const pseudonym = (userHash: string) => `erased:${userHash.slice(0, 32)}`;

@@ -11,13 +11,11 @@ import { scrubContent } from "../services/sensitive";
  * the spec's defaults, overridable per rule with RETENTION_DAYS and pending counsel (owner-actions/WP-25.md).
  *
  * Rules for columns other packages are adding wait for them: hidden inbound rows (WP-44, messaging), the spam status
- * of contact messages, submission_attempts.evidence at 90 days (WP-42). matches_below_bar keys on status::text, so it
- * is a no-op until WP-42 adds the below_bar status. At WP-42's merge: below_bar keys on status_changed_at
- * (matches_retention_idx), the scrub selects on terminal_at (applications_scrub_due_idx) and also sets questions to
- * null. jobs_closed marks a purge by the emptied description_text (still NOT NULL), so no description_purged_at.
- * At WP-42's and WP-17's merges, jobs_closed's delete also requires `NOT EXISTS (SELECT 1 FROM tracker_items t WHERE
- * t.job_id = j.id) AND NOT EXISTS (SELECT 1 FROM resumes r WHERE r.job_id = j.id)` (both are ON DELETE SET NULL, so a
- * saved or tailored-for job would silently vanish); those jobs take the purge branch instead (DB-reviewer round 2).
+ * of contact messages, submission_attempts.evidence at 90 days (WP-42's to schedule). below_bar keys on
+ * status_changed_at (matches_retention_idx); the scrub selects on terminal_at (applications_scrub_due_idx) and nulls
+ * questions. jobs_closed marks a purge by the emptied description_text (still NOT NULL), so no description_purged_at.
+ * A closed job a tracker item (or, with WP-17, a tailored resume) points at is never deleted, only purged: both are
+ * ON DELETE SET NULL, so the item would silently lose its posting (DB-reviewer round 2).
  * ponytail: inbound_body scans inbound_emails per batch; add (received_at) WHERE text_body <> '' at scale.
  * ponytail: jobs has no closed_at index, so jobs_closed scans jobs once per batch; add jobs_closed_idx (02-database 11)
  * when jobs passes a few hundred thousand rows.
@@ -55,14 +53,17 @@ export const RETENTION_RULES = {
     days: 30,
     run: (d: number) =>
       batched(() => sql`delete from matches where id in (
-        select id from matches where status::text = 'below_bar' and created_at < ${before(d)} limit ${BATCH})`),
+        select id from matches where status = 'below_bar' and status_changed_at < ${before(d)} limit ${BATCH})`),
   },
-  /** Closed postings: deleted when no application points at them, else their description and raw payload purged. */
+  /** Closed postings: deleted when no application or tracker item points at them, else their description and raw purged. */
   jobs_closed: {
     days: 180,
     run: async (d: number) =>
+      // WP-17: add `and not exists (select 1 from resumes r where r.job_id = j.id)` at its integration.
       (await batched(() => sql`delete from jobs where id in (
-        select j.id from jobs j where j.closed_at < ${before(d)} and not exists (select 1 from applications a where a.job_id = j.id) limit ${BATCH})`)) +
+        select j.id from jobs j where j.closed_at < ${before(d)}
+          and not exists (select 1 from applications a where a.job_id = j.id)
+          and not exists (select 1 from tracker_items t where t.job_id = j.id) limit ${BATCH})`)) +
       (await batched(() => sql`update jobs set description_text = '', raw = null where id in (
         select id from jobs where closed_at < ${before(d)} and (description_text <> '' or raw is not null) limit ${BATCH})`)),
   },
@@ -100,8 +101,8 @@ const SCRUB_BATCH = 500;
 
 /**
  * Daily: blanks sensitive answer and receipt values of applications submitted or withdrawn at least 7 days ago
- * (CISO should-fix scrub, INV-9) and stamps content_scrubbed_at, so each row is scrubbed once. Until WP-42's
- * terminal_at, the terminal time is submitted_at, or updated_at for a withdrawal (the status guard stamps it).
+ * (CISO should-fix scrub, INV-9), nulls the question snapshot, and stamps content_scrubbed_at, so each row is scrubbed
+ * once. terminal_at is WP-42's (backfilled for older rows); applications_scrub_due_idx serves the select.
  */
 export async function processScrubApplications(): Promise<{ scrubbed: number }> {
   const days = retentionDays().scrub_applications;
@@ -115,7 +116,7 @@ export async function processScrubApplications(): Promise<{ scrubbed: number }> 
           and(
             isNull(applications.contentScrubbedAt),
             inArray(applications.status, ["submitted", "withdrawn"]),
-            sql`coalesce(${applications.submittedAt}, ${applications.updatedAt}) < ${before(days)}`,
+            sql`${applications.terminalAt} < ${before(days)}`,
           ),
         )
         .limit(SCRUB_BATCH)
@@ -123,7 +124,7 @@ export async function processScrubApplications(): Promise<{ scrubbed: number }> 
       for (const r of rows) {
         await tx
           .update(applications)
-          .set({ ...scrubContent(r.answers, r.receipt), contentScrubbedAt: new Date() })
+          .set({ ...scrubContent(r.answers, r.receipt), questions: null, contentScrubbedAt: new Date() })
           .where(sql`${applications.id} = ${r.id}`);
       }
       return rows.length;

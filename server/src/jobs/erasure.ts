@@ -65,7 +65,7 @@ export async function runErasure(t: ErasureTask, deps: ErasureDeps): Promise<voi
     await deps.mark(t.userHash, { stripeDoneAt: now(), stripeCustomerId: null });
   }
   if (!t.auditPseudonymisedAt) {
-    // As kairos_worker, after the user row is gone: ops_audit_pseudonym_guard (migration 0009) refuses anything else.
+    // As kairos_worker, after the user row is gone: ops_audit_immutable() (migrations 0014, 0015) refuses anything else.
     if (t.storageId) {
       await deps.pseudonymise(t.storageId, t.userHash).catch((err: unknown) => {
         throw new ErasureStepError("audit_pseudonymise_failed", `audit pseudonymisation failed: ${(err as Error).message}`);

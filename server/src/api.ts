@@ -5,9 +5,11 @@ import { authGateway } from "./lib/auth";
 import { env } from "./lib/env";
 import { closeServer, deadline, isDraining, onShutdown } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
+import { startMetricsFlush } from "./lib/metrics";
 import { assertNoEviction, redis } from "./lib/redis";
 import { initSentry } from "./lib/sentry";
 import { closeQueues } from "./jobs/queues";
+import { csrfOrigins } from "./middleware/origin-guard";
 
 const e = env();
 initSentry("api");
@@ -19,8 +21,7 @@ await deadline(assertNoEviction(), 10_000);
 const app = createApp({
   auth: authGateway(),
   corsOrigins: [e.WEB_ORIGIN, ...(e.EXTENSION_ORIGIN ? [e.EXTENSION_ORIGIN] : [])],
-  // The same exact origins Better Auth trusts, minus the extension (it sends a bearer token, which skips the guard).
-  csrfOrigins: [new URL(e.WEB_ORIGIN).origin, ...e.CSRF_ALLOWED_ORIGINS],
+  csrfOrigins: csrfOrigins(e),
   edgeSecret: e.KAIROS_EDGE_SECRET,
   proxyHops: e.TRUSTED_PROXY_HOPS_DIRECT,
   sharedLimits: true,
@@ -42,4 +43,8 @@ server.headersTimeout = 66_000;
 server.requestTimeout = 120_000;
 
 // 25 s for requests in flight (05-api 2.4); Railway's drainingSeconds is 60 (.railway/railway.ts).
-onShutdown("api", 25_000, () => closeServer(server), () => Promise.allSettled([closeQueues().then(() => redis().quit()), closeDb()]));
+const stopMetrics = startMetricsFlush();
+onShutdown("api", 25_000, () => closeServer(server), async () => {
+  await stopMetrics();
+  await Promise.allSettled([closeQueues().then(() => redis().quit()), closeDb()]);
+});

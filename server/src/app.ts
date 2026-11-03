@@ -7,6 +7,7 @@ import { HttpError } from "./lib/errors";
 import { httpLogger, requestId } from "./lib/logger";
 import { signal, type Signal } from "./lib/sentry";
 import { clientIpResolver } from "./middleware/client-ip";
+import { requestMetrics } from "./middleware/metrics";
 import { originGuard } from "./middleware/origin-guard";
 import { createLimiters } from "./middleware/rate-limit";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
@@ -30,6 +31,13 @@ export interface AppDeps {
   /** True once SIGTERM arrived (lib/lifecycle.ts): /health answers 503 draining. */
   isDraining?: () => boolean;
 }
+
+// 05-api 2.1. Headers a later route family reads or writes are listed now, so adding it needs no CORS change.
+const CORS_ALLOWED = ["content-type", "authorization", "idempotency-key", "if-match", "if-none-match", "x-kairos-client", "x-request-id"];
+const CORS_EXPOSED = ["x-request-id", "retry-after", "etag", "ratelimit", "ratelimit-policy", "kairos-allowance", "kairos-contract", "idempotent-replayed"];
+
+/** Date of the newest additive API change (05-api 2.1, "Kairos-Contract"); informational. Bump it with a shape addition. */
+export const CONTRACT_DATE = "2026-11-03";
 
 const AUTH_BODY_MAX_BYTES = 64 * 1024;
 
@@ -55,19 +63,28 @@ export function createApp(deps: AppDeps) {
   const app = express();
   const limits = createLimiters(deps.sharedLimits ?? false);
   app.set("trust proxy", 1);
+  app.locals.sharedLimits = deps.sharedLimits ?? false; // read by aiLimiter (middleware/rate-limit.ts)
   app.disable("x-powered-by");
 
   app.use(requestId);
+  app.use(requestMetrics());
   // Before the logger, so the edge secret never reaches a log line; req.ip is not used for limits (05-api 5.5).
   app.use(clientIpResolver(deps.edgeSecret, deps.proxyHops));
   app.use(helmet());
   app.use(httpLogger());
-  app.use(cors({ origin: deps.corsOrigins, credentials: true, allowedHeaders: ["content-type", "authorization", "x-request-id"], exposedHeaders: ["x-request-id"] }));
+  const corsMiddleware = cors({ origin: deps.corsOrigins, credentials: true, allowedHeaders: CORS_ALLOWED, exposedHeaders: CORS_EXPOSED, maxAge: 600 });
+  // 05-api 2.1: /api/admin is same-origin only (the web's /api rewrite); it never gets CORS headers, so no page on another origin can read it.
+  app.use((req, res, next) => (req.path.startsWith("/api/admin") ? next() : corsMiddleware(req, res, next)));
 
+  app.use("/api", (_req, res, next) => {
+    res.set("kairos-contract", CONTRACT_DATE);
+    next();
+  });
   app.use(healthRouter(deps.healthChecks, deps.isDraining));
   app.use("/api/auth", signalOn([429], "auth_rate_limited"), capAuthBody);
   app.all("/api/auth/*splat", toNodeHandler(deps.auth.handler));
   app.use("/api/webhooks/inbound-email", signalOn([401, 403], "inbound_token_rejected"));
+  app.use("/api/webhooks/postmark-events", signalOn([401, 403], "postmark_events_token_rejected"));
   app.use("/api/webhooks", limits.webhook, webhooksRouter);
 
   app.use(express.json({ limit: "1mb" }));

@@ -143,4 +143,27 @@ describe("parseEnv", () => {
     expect(() => parseEnv({ ...prod, ...r2, R2_ENDPOINT: "http://minio.internal:9000" })).toThrow(/R2_ENDPOINT: must be https in production/);
     expect(parseEnv({ ...base, ...r2, R2_ENDPOINT: "http://localhost:9000" }).R2_ENDPOINT).toBe("http://localhost:9000");
   });
+
+  // WP-44: outbound mail and signed links.
+  const key = (seed: number) => Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 7 + seed) % 256)).toString("base64");
+
+  it("parses LINK_SIGNING_KEY as a versioned key ring and refuses a malformed one or a DATA_KEKS key", () => {
+    const ring = parseEnv({ ...base, LINK_SIGNING_KEY: `v2:${key(1)},v1:${key(2)}` }).LINK_SIGNING_KEY!;
+    expect(ring.current).toBe(2);
+    expect([...ring.byVersion.keys()]).toEqual([2, 1]);
+    expect(() => parseEnv({ ...base, LINK_SIGNING_KEY: "v1:short" })).toThrow(/LINK_SIGNING_KEY: entry 1/);
+    expect(() => parseEnv({ ...base, DATA_KEKS: `v1:${key(3)}`, LINK_SIGNING_KEY: `v1:${key(3)}` })).toThrow(/must not reuse a DATA_KEKS key/);
+  });
+
+  it("takes API_PUBLIC_ORIGIN as a bare origin, https in production", () => {
+    expect(parseEnv({ ...base, API_PUBLIC_ORIGIN: "http://localhost:4000" }).API_PUBLIC_ORIGIN).toBe("http://localhost:4000");
+    expect(() => parseEnv({ ...base, API_PUBLIC_ORIGIN: "https://api.kairos.app/x" })).toThrow(/API_PUBLIC_ORIGIN/);
+    expect(() => parseEnv({ ...prod, API_PUBLIC_ORIGIN: "http://api.kairos.app" })).toThrow(/API_PUBLIC_ORIGIN: must be https in production/);
+  });
+
+  it("defaults the broadcast stream and the contact address; the owner alert address is optional", () => {
+    const e = parseEnv(base);
+    expect([e.POSTMARK_BROADCAST_STREAM, e.CONTACT_ALERT_TO, e.ALERT_EMAIL_TO]).toEqual(["broadcast", "hello@kairos.app", undefined]);
+    expect(() => parseEnv({ ...base, ALERT_EMAIL_TO: "not-an-address" })).toThrow(/ALERT_EMAIL_TO/);
+  });
 });

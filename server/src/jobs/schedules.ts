@@ -1,8 +1,11 @@
 import type { Job, RepeatOptions } from "bullmq";
+import { processAlerts, processMetricsPrune, processMetricsSample } from "./alerts";
 import { processBackupCheck } from "./backup-check";
 import { processErasure, processOrphanUploads } from "./erasure";
 import { processRetention, processScrubApplications } from "./retention";
+import { processInvariantsHourly, processInvariantsNightly } from "./invariants";
 import { processJournalReconcile, processMoneyJournal } from "./money-journal";
+import { processMailRetention, processNotifyReconcile } from "./notify";
 import { processPartitions } from "./partitions";
 import type { QueueName } from "./queues";
 import {
@@ -60,6 +63,15 @@ export const SCHEDULES: Schedule[] = [
   // Retention of reply bodies, contact messages, below-bar matches and closed jobs; the 7-day sensitive scrub (WP-25).
   { queue: "maintenance", id: "retention", repeat: { pattern: "10 4 * * *", tz: "UTC" }, run: () => processRetention() },
   { queue: "maintenance", id: "scrub-applications", repeat: { pattern: "40 4 * * *", tz: "UTC" }, run: () => processScrubApplications() },
+  // Queue gauges, the alert evaluator, the invariant checks and the metrics prune (WP-27).
+  { queue: "maintenance", id: "metrics-sample", repeat: { every: MINUTE }, run: () => processMetricsSample() },
+  { queue: "maintenance", id: "alerts", repeat: { pattern: "*/5 * * * *", tz: "UTC" }, run: () => processAlerts() },
+  { queue: "maintenance", id: "invariants-hourly", repeat: { pattern: "5 * * * *", tz: "UTC" }, run: () => processInvariantsHourly() },
+  { queue: "maintenance", id: "invariants-nightly", repeat: { pattern: "45 3 * * *", tz: "UTC" }, run: async () => [await processInvariantsNightly(), await processMetricsPrune()] },
+  // Stuck email claims, emails whose enqueue was lost, and the owner alert for given-up sends (WP-44, messaging-46).
+  { queue: "maintenance", id: "notify-reconcile", repeat: { every: 5 * MINUTE }, run: processNotifyReconcile },
+  // email_sends after 120 days, notifications after 90, signed links 7 days past expiry (WP-44).
+  { queue: "maintenance", id: "mail-retention", repeat: { pattern: "35 3 * * *", tz: "UTC" }, run: processMailRetention },
 ];
 
 /** The maintenance queue's processor: the scheduler id is the job name. */

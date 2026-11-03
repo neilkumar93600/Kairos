@@ -91,6 +91,9 @@ export const APPLIER_FORBIDDEN = [
   "DATABASE_UNPOOLED_URL",
   /** pgbackup's URL (WP-13): kairos_backup reads every row of every table. Only the pgbackup service holds it. */
   "DATABASE_BACKUP_URL",
+  // Outbound mail (WP-44): the broadcast stream's token and the Postmark delivery-event webhook's secret.
+  "POSTMARK_BROADCAST_TOKEN",
+  "POSTMARK_EVENTS_SECRET",
 ] as const;
 
 const applierSchema = z.object(applierShape);
@@ -127,6 +130,43 @@ const envSchema = z.object({
   INBOUND_WEBHOOK_SECRET: z.string().min(16),
   /** Dev and test only: the mailer appends each email as a JSON line here instead of sending it (scripts/smoke.mjs reads the code). */
   MAIL_SINK_FILE: z.preprocess(emptyToUndefined, z.string().optional()),
+  // Outbound mail core (WP-44, messaging-44): two Postmark streams, so a digest burst never queues behind OTPs.
+  /** Token of the server holding the broadcast stream (digests, reports). Unset: POSTMARK_SERVER_TOKEN's server. */
+  POSTMARK_BROADCAST_TOKEN: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** The broadcast message stream's id in Postmark (owner-actions/WP-44.md). */
+  POSTMARK_BROADCAST_STREAM: z.string().default("broadcast"),
+  /** api only. ?token= on Postmark's bounce, spam-complaint and suppression webhook (POST /api/webhooks/postmark-events). */
+  POSTMARK_EVENTS_SECRET: z.preprocess(emptyToUndefined, z.string().min(16).optional()),
+  /** Where notify-reconcile sends owner alerts (lease_exhausted). Unset: the alert is logged and signalled only. */
+  ALERT_EMAIL_TO: z.preprocess(emptyToUndefined, z.string().email().optional()),
+  /** Where the public contact form's messages are sent. */
+  CONTACT_ALERT_TO: z.string().email().default("hello@kairos.app"),
+  /**
+   * The public api origin for emailed links and the signed-link forms (05-api 5.1); not BETTER_AUTH_URL, which is the
+   * web origin. ponytail: optional until the first signed link is mailed (WP-29, WP-35); issuing one fails without it.
+   */
+  API_PUBLIC_ORIGIN: z.preprocess(
+    emptyToUndefined,
+    z.string().url().refine((u) => new URL(u).origin === u, "must be a bare origin like https://api.host").optional(),
+  ),
+  /**
+   * Signed links (lib/action-tokens.ts): `v2:<base64 of 32 bytes>,v1:<...>` as DATA_KEKS, the first signs and every
+   * entry verifies. ponytail: optional until the first signed link is mailed; signing and verifying fail closed without it.
+   */
+  LINK_SIGNING_KEY: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .transform((raw, ctx) => {
+        try {
+          return parseKeks(raw);
+        } catch (err) {
+          ctx.addIssue({ code: "custom", message: (err as Error).message });
+          return z.NEVER;
+        }
+      })
+      .optional(),
+  ),
 
   STRIPE_SECRET_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
   STRIPE_WEBHOOK_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
@@ -182,10 +222,27 @@ const envSchema = z.object({
   /** api only. Proxies between Railway's edge and the api, skipped from the right of X-Forwarded-For. Set only from the S-B1 probe. */
   TRUSTED_PROXY_HOPS_DIRECT: z.coerce.number().int().min(0).max(3).default(0),
 
-  // AI spend controls (WP-06). The shed level is set by hand until ops_flags lands (WP-27); global spend raises it too.
+  // AI spend controls (WP-06). The shed level is a floor under the llm_shed_level ops flag (WP-27); global spend raises it too.
   LLM_SHED_LEVEL: z.coerce.number().int().min(0).max(3).default(0),
   /** Kill switch for the scoring loop (true, 1, on): new postings are not scored while set. */
   PAUSE_SCORING: z.preprocess(emptyToUndefined, z.stringbool().default(false)),
+  /**
+   * Comma-separated user ids that may use /api/admin (WP-27), on top of a verified email and a session under 15 minutes
+   * old. Empty: the admin routes answer 404 to everyone. PAUSE_SCORING above stays a pause-only override of ops_flags.
+   */
+  ADMIN_USER_IDS: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .default("")
+      .transform((raw) => raw.split(",").map((id) => id.trim()).filter(Boolean)),
+  ),
+  /**
+   * api only. Enforce the 24 h session age on POST /api/applications/approve (05-api 5.2). Off until the web has a sign-in-again
+   * flow for reauth_required (frontend-handoff/WP-30.md); the cookie-cache bypass on that route is on regardless.
+   * Billing routes always enforce.
+   */
+  FRESH_SESSION_ENFORCE: z.preprocess(emptyToUndefined, z.stringbool().default(false)),
 
   /**
    * api and worker only: `v2:<base64 of 32 bytes>,v1:<...>`, the first encrypts (lib/crypto.ts, docs/runbook/keys.md).
@@ -289,6 +346,9 @@ const envSchema = z.object({
     if (authUrl.href !== `${authUrl.origin}/`) {
       ctx.addIssue({ code: "custom", path: ["BETTER_AUTH_URL"], message: "must be a bare origin like https://host (no path) in production" });
     }
+    if (e.API_PUBLIC_ORIGIN && !e.API_PUBLIC_ORIGIN.startsWith("https://")) {
+      ctx.addIssue({ code: "custom", path: ["API_PUBLIC_ORIGIN"], message: "must be https in production" });
+    }
     // Each entry is a trusted request origin and redirect target, so production takes https only.
     for (const origin of e.CSRF_ALLOWED_ORIGINS) {
       if (!origin.startsWith("https://")) {
@@ -317,6 +377,11 @@ const envSchema = z.object({
     if (!first) continue;
     anyBucket = true;
     for (const k of keys) if (!e[k]) ctx.addIssue({ code: "custom", path: [k], message: `required with ${first}` });
+  }
+  // One key, one purpose: a link key that also encrypts columns would make a leak of either a leak of both.
+  const keks = [...(e.DATA_KEKS?.byVersion.values() ?? [])];
+  if ([...(e.LINK_SIGNING_KEY?.byVersion.values() ?? [])].some((k) => keks.some((d) => d.equals(k)))) {
+    ctx.addIssue({ code: "custom", path: ["LINK_SIGNING_KEY"], message: "must not reuse a DATA_KEKS key" });
   }
   if (anyBucket && !e.R2_ENDPOINT) ctx.addIssue({ code: "custom", path: ["R2_ENDPOINT"], message: "required with an R2 bucket" });
   if (e.NODE_ENV === "production" && e.R2_ENDPOINT && !e.R2_ENDPOINT.startsWith("https://")) {

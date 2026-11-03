@@ -1,0 +1,137 @@
+import { eq, sql } from "drizzle-orm";
+import { z } from "zod";
+import { db, type Db } from "../db/client";
+import { featureFlags, opsAudit, opsFlags } from "../db/schema";
+import { baseEnv } from "./env";
+import { logger } from "./logger";
+import { signal } from "./sentry";
+
+/**
+ * Operator flags (WP-27), stored in ops_flags and read with a 10 s cache, so a flip takes effect on every replica within
+ * 10 s without a deploy. The env values of WP-04 and WP-06 stay and only ever make things stricter: PAUSE_SCORING=1
+ * pauses whatever the table says, LLM_SHED_LEVEL is a floor, and CLOUD_APPLIER_OPEN=0 closes the cloud channel whatever
+ * the table says (the table can close it too, never open it past the env). pause_cloud_apply, llm_paused and
+ * approvals_frozen have no env form.
+ */
+
+/** key -> value schema. `extension_only:<ats>` is a family handled below. */
+export const FLAG_SCHEMAS = {
+  pause_cloud_apply: z.boolean(),
+  pause_scoring: z.boolean(),
+  llm_paused: z.boolean(),
+  approvals_frozen: z.boolean(),
+  cloud_applier_open: z.boolean(),
+  llm_shed_level: z.number().int().min(0).max(3),
+} as const;
+export type FlagKey = keyof typeof FLAG_SCHEMAS;
+
+const ATS = ["greenhouse", "lever", "ashby"] as const;
+export const EXTENSION_ONLY_PREFIX = "extension_only:";
+
+/** The schema for a settable key, or undefined for a key nobody may set. */
+export function schemaFor(key: string): z.ZodType | undefined {
+  if (key in FLAG_SCHEMAS) return FLAG_SCHEMAS[key as FlagKey];
+  if (key.startsWith(EXTENSION_ONLY_PREFIX) && (ATS as readonly string[]).includes(key.slice(EXTENSION_ONLY_PREFIX.length))) return z.boolean();
+  return undefined;
+}
+
+export interface Flags {
+  pauseCloudApply: boolean;
+  pauseScoring: boolean;
+  llmPaused: boolean;
+  approvalsFrozen: boolean;
+  cloudApplierOpen: boolean;
+  llmShedLevel: 0 | 1 | 2 | 3;
+  /** ATS names whose cloud runs are off; those applications go through the extension. */
+  extensionOnly: ReadonlySet<string>;
+  features: ReadonlyMap<string, boolean>;
+  /** False while the latest attempt to read the table failed: these are the last answer (or the env's alone), possibly stale. */
+  loaded: boolean;
+}
+
+export const CACHE_MS = 10_000;
+
+/** Pure merge of the table rows and the env, so the precedence is testable without a database. */
+export function resolveFlags(
+  rows: ReadonlyMap<string, unknown>,
+  features: ReadonlyMap<string, boolean>,
+  e: { CLOUD_APPLIER_OPEN: boolean; PAUSE_SCORING?: boolean; LLM_SHED_LEVEL?: number },
+): Flags {
+  const bool = (k: FlagKey): boolean => FLAG_SCHEMAS[k].safeParse(rows.get(k)).data === true;
+  const shed = FLAG_SCHEMAS.llm_shed_level.safeParse(rows.get("llm_shed_level")).data ?? 0;
+  const open = FLAG_SCHEMAS.cloud_applier_open.safeParse(rows.get("cloud_applier_open"));
+  return {
+    pauseCloudApply: bool("pause_cloud_apply"),
+    pauseScoring: e.PAUSE_SCORING === true || bool("pause_scoring"),
+    llmPaused: bool("llm_paused"),
+    approvalsFrozen: bool("approvals_frozen"),
+    // The env opens the channel and a row can only close it, like PAUSE_SCORING: no runtime role deletes a row, so a row that
+    // won over the env would make CLOUD_APPLIER_OPEN=0 plus a redeploy (the hard stop) a no-op.
+    cloudApplierOpen: e.CLOUD_APPLIER_OPEN && (open.success ? open.data : true),
+    llmShedLevel: Math.max(shed, e.LLM_SHED_LEVEL ?? 0) as 0 | 1 | 2 | 3,
+    extensionOnly: new Set([...rows].filter(([k, v]) => k.startsWith(EXTENSION_ONLY_PREFIX) && v === true).map(([k]) => k.slice(EXTENSION_ONLY_PREFIX.length))),
+    features,
+    loaded: true,
+  };
+}
+
+let cache: { at: number; flags: Flags } | undefined;
+let inflight: Promise<Flags> | undefined;
+
+async function load(from: Db): Promise<Flags> {
+  const [flagRows, featureRows] = await Promise.all([from.select().from(opsFlags), from.select().from(featureFlags)]);
+  return resolveFlags(new Map(flagRows.map((r) => [r.key, r.value])), new Map(featureRows.map((r) => [r.key, r.enabled])), baseEnv());
+}
+
+/** The flags, at most 10 s old. One load at a time per process;  */
+export async function getFlags(from: Db = db()): Promise<Flags> {
+  if (cache && Date.now() - cache.at < CACHE_MS) return cache.flags;
+  inflight ??= load(from)
+    .then((flags) => {
+      cache = { at: Date.now(), flags };
+      return flags;
+    })
+    .catch((err: unknown) => {
+      // The last answer stands, marked not loaded: approvals and cloud claims refuse on it, and every kill switch is blind
+      // until a load succeeds again (retry in 2 s).
+      logger.warn({ err }, "flags not loaded; using the last answer");
+      signal("flags_unreadable");
+      const flags = { ...(cache?.flags ?? resolveFlags(new Map(), new Map(), baseEnv())), loaded: false };
+      cache = { at: Date.now() - CACHE_MS + 2_000, flags };
+      return flags;
+    })
+    .finally(() => {
+      inflight = undefined;
+    });
+  return inflight;
+}
+
+/** Forgets the cache: the next read loads. A write calls it so its own process sees the change at once. */
+export function resetFlagCache(): void {
+  cache = undefined;
+}
+
+type Tx = Pick<Db, "select" | "insert">;
+
+/**
+ * Sets one flag and writes its ops_audit row in the same transaction (an admin write never lacks its audit row).
+ * Other processes see it within CACHE_MS. `actor` is a user id or "system:<job>".
+ */
+export async function setFlag(key: string, value: unknown, actor: string, tx?: Tx): Promise<{ before: unknown; after: unknown; changed: boolean }> {
+  const parsed = schemaFor(key)?.safeParse(value);
+  if (!parsed?.success) throw new Error(`invalid flag ${key}`);
+  const run = async (t: Tx) => {
+    const [prev] = await t.select({ value: opsFlags.value }).from(opsFlags).where(eq(opsFlags.key, key)).for("update");
+    // Same value: no write and no audit row (an invariant run on an already frozen flag stays quiet).
+    if (prev && JSON.stringify(prev.value) === JSON.stringify(parsed.data)) return { before: prev.value, after: parsed.data, changed: false };
+    await t
+      .insert(opsFlags)
+      .values({ key, value: parsed.data, updatedBy: actor })
+      .onConflictDoUpdate({ target: opsFlags.key, set: { value: parsed.data, updatedBy: actor, updatedAt: sql`now()` } });
+    await t.insert(opsAudit).values({ actor, action: "flag_set", target: key, before: prev?.value ?? null, after: parsed.data });
+    return { before: prev?.value ?? null, after: parsed.data, changed: true };
+  };
+  const result = tx ? await run(tx) : await db().transaction((t) => run(t));
+  resetFlagCache();
+  return result;
+}

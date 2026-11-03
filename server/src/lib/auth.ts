@@ -4,8 +4,8 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { bearer, emailOTP, oneTimeToken } from "better-auth/plugins";
 import { createHash } from "node:crypto";
-import { eq } from "drizzle-orm";
-import { db, schema } from "../db/client";
+import { eq, sql } from "drizzle-orm";
+import { db, schema, type Db } from "../db/client";
 import { CLIENT_IP_HEADER } from "../middleware/client-ip";
 import { hit } from "../middleware/rate-limit";
 import { cancelBillingForDeletedUser } from "../services/billing-events";
@@ -14,7 +14,7 @@ import { emailHashIfKeyed, eraseUser, normalizeEmail, tombstoneStore } from "../
 import { INLINE_REQUEST, stripe } from "../services/stripe";
 import { env, type Env } from "./env";
 import { logger, logUserHash } from "./logger";
-import { sendEmail } from "./mailer";
+import { mailErrorCode, sendEmail } from "./mailer";
 
 const OTP_SUBJECTS = {
   "sign-in": "Your Kairos sign-in code",
@@ -54,9 +54,36 @@ export async function limitByEmail(path: string, body: unknown): Promise<void> {
   }
 }
 
+/**
+ * Sends a sign-in or verification code inline, on the transactional stream (never queued). An address Postmark holds
+ * inactive (406: bounced, complained, suppressed) answers 422 `email_undeliverable`, so the web can say "we cannot
+ * deliver to this address" instead of a generic failure; any other error stays a 500.
+ */
+export async function sendCode(to: string, subject: string, text: string, tag: string): Promise<void> {
+  try {
+    await sendEmail({ to, subject, text, tag });
+  } catch (err) {
+    if (mailErrorCode(err) === "postmark_406") {
+      throw new APIError("UNPROCESSABLE_ENTITY", { code: "email_undeliverable", message: "We cannot deliver email to this address. Check it, or use another." });
+    }
+    throw err;
+  }
+}
+
 /** Sign-in methods this deployment can serve. The web shows only these (GET /api/auth-providers). */
 export function configuredProviders(e: Env): AuthProvider[] {
   return e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET ? ["email", "google"] : ["email"];
+}
+
+/** The sessions a user may hold at once (api-auth-security-v07): repeated extension reconnects must not grow the table. */
+export const SESSIONS_KEPT = 20;
+
+/** Removes all but the user's `keep` most recently used sessions. Returns how many went. */
+export async function pruneOldSessions(database: Db, userId: string, keep = SESSIONS_KEPT): Promise<number> {
+  const { rowCount } = await database.execute(sql`
+    delete from ${schema.session} where user_id = ${userId} and id not in (
+      select id from ${schema.session} where user_id = ${userId} order by updated_at desc, id desc limit ${keep})`);
+  return rowCount ?? 0;
 }
 
 function createAuth() {
@@ -152,12 +179,7 @@ function createAuth() {
         overrideDefaultEmailVerification: true,
         storeOTP: "hashed",
         async sendVerificationOTP({ email, otp, type }) {
-          await sendEmail({
-            to: email,
-            subject: OTP_SUBJECTS[type],
-            text: `Your code is ${otp}. It expires in 10 minutes. If you did not ask for it, ignore this email.`,
-            tag: `otp-${type}`,
-          });
+          await sendCode(email, OTP_SUBJECTS[type], `Your code is ${otp}. It expires in 10 minutes. If you did not ask for it, ignore this email.`, `otp-${type}`);
         },
       }),
       // The Chrome extension signs in with a one-time token from the web app, then uses a bearer token.
@@ -170,6 +192,15 @@ function createAuth() {
       account: {
         create: { before: async (account) => ({ data: { ...account, idToken: null } }) },
         update: { before: async (account) => ({ data: { ...account, idToken: null } }) },
+      },
+      session: {
+        // After the new session is stored, so the one just created is always among the newest. A failure is logged only:
+        // the sign-in must not fail over housekeeping.
+        create: {
+          after: async (created) => {
+            await pruneOldSessions(db(), created.userId).catch((err: unknown) => logger.warn({ err, userHash: logUserHash(created.userId) }, "session pruning failed"));
+          },
+        },
       },
       user: {
         create: {
@@ -207,18 +238,20 @@ export interface SessionUser {
 /** The narrow surface the Express app needs, so tests can pass a fake. */
 export interface AuthGateway {
   handler: (request: Request) => Promise<Response>;
-  getSession: (headers: Headers) => Promise<{ user: SessionUser; sessionId: string } | null>;
+  /** `fresh`: bypass Better Auth's cookie cache, so a revoked session is refused at once. `createdAt` ages out "session-fresh" routes. */
+  getSession: (headers: Headers, opts?: { fresh?: boolean }) => Promise<{ user: SessionUser; sessionId: string; createdAt: Date } | null>;
 }
 
 export function authGateway(): AuthGateway {
   const a = auth();
   return {
     handler: (request) => a.handler(request),
-    getSession: async (headers) => {
-      const result = await a.api.getSession({ headers });
+    getSession: async (headers, opts) => {
+      const result = await a.api.getSession({ headers, query: opts?.fresh ? { disableCookieCache: true } : undefined });
       if (!result) return null;
       return {
         sessionId: result.session.id,
+        createdAt: result.session.createdAt,
         user: {
           id: result.user.id,
           email: result.user.email,

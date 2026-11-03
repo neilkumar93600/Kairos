@@ -160,7 +160,17 @@ The pgbackup service encrypts each dump to the public keys in `BACKUP_AGE_RECIPI
 
 **Rotate** (yearly, or at once if one may have leaked): make a new pair, put both in the kit, set `BACKUP_AGE_RECIPIENTS` to the new public keys and trigger a pgbackup run. Keep the old private keys in the kit until the last dump encrypted to them has expired (28 days after the switch), then destroy them. A leaked key: also assume the dumps encrypted to it are readable by whoever has the R2 backups token, and count them in the breach assessment (section 5.2 step 3).
 
-## 9. `USER_HASH_KEY`: never rotate (WP-25)
+## 9. LINK_SIGNING_KEY (signed email links)
+
+`LINK_SIGNING_KEY` signs the links Kairos emails: resend, offer-pause undo, unsubscribe and the extension's resume PDF (`server/src/lib/action-tokens.ts`, WP-44). Same format as `DATA_KEKS`, `v<n>:<base64 of 32 random bytes>` entries, comma-separated; the first signs and every entry verifies. It must be a key of its own: the api and worker refuse to boot when it repeats a `DATA_KEKS` key. Losing it loses nothing but the links already mailed; leaking it lets anyone forge a link, though the single-use links still need their `action_tokens` row, so a forger can mint only stateless resume-PDF links. Sealed on the api and the worker, never the applier. No emergency kit copy is needed.
+
+**First key.** `openssl rand -base64 32`, set `v1:<value>` on the api and the worker of the environment, redeploy both.
+
+**Routine rotation, yearly.** Prepend a new version on both services (`v2:<new>,v1:<old>`) and redeploy both. Remove `v1` 91 days later: the longest link (unsubscribe) lives 90 days. Links signed under `v1` stop working at once when it is removed.
+
+**Compromise.** Replace the whole value with a single new version (`v2:<new>`) on both services and redeploy. Every link mailed so far answers "This link has expired"; users act from the app instead. The outstanding `action_tokens` rows can no longer be presented and age out with the daily retention.
+
+## 10. `USER_HASH_KEY`: never rotate (WP-25)
 
 `USER_HASH_KEY` (api and worker, sealed, one value per environment, in the emergency kit with `DATA_KEKS`) is a single unversioned HMAC key. It keys the user hash of `deletion_tasks`, `credit_ledger_archive` and the R2 tombstones, the erased-address hashes of `erased_emails` and `contact_messages.email_hash`, `llm_calls.user_hash`, the per-email auth limits in `rate_limits`, and the `erased:<hash>` pseudonyms in `ops_audit`.
 

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { contactMessageSchema, type ContactMessage } from "@auto-career/shared";
 import { db } from "../db/client";
 import { contactMessages } from "../db/schema";
+import { env } from "../lib/env";
 import { sendEmail } from "../lib/mailer";
 import { emailHashIfKeyed } from "../services/erasure";
 import { validateBody } from "../middleware/validate";
@@ -14,7 +15,7 @@ contactRouter.post("/", validateBody(contactMessageSchema), async (req, res) => 
   // The normalized address's keyed hash, so an erasure finds this message under any alias of the account's address.
   await db().insert(contactMessages).values({ ...message, emailHash: emailHashIfKeyed(message.email) });
   await sendEmail({
-    to: "hello@kairos.app",
+    to: env().CONTACT_ALERT_TO,
     subject: `[contact:${message.topic}] ${message.name}`,
     text: `${message.name} <${message.email}>\n\n${message.message}`,
     tag: "contact",
