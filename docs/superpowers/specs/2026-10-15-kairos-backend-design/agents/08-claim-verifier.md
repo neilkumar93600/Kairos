@@ -128,9 +128,9 @@ In prose, connective phrases and statements of interest in the target job or com
 
 | # | Check | On failure |
 |---|---|---|
-| V1 | Exactly one verdict per input claim id, none extra, none repeated | `missing_verdict`, `unknown_claim`, `duplicate_verdict` |
-| V2 | `supported` and `contradicted` carry a `factRef` from that claim's `factRefs`; `unsupported` and `uncertain` carry null | `bad_fact_ref` |
-| V3 | Echo canary (only `claimId` and `factRef` are strings, so a hit means an id was forged) | `injection_echo`: the whole call is treated as verifier unavailable |
+| CV1 | Exactly one verdict per input claim id, none extra, none repeated | `missing_verdict`, `unknown_claim`, `duplicate_verdict` |
+| CV2 | `supported` and `contradicted` carry a `factRef` from that claim's `factRefs`; `unsupported` and `uncertain` carry null | `bad_fact_ref` |
+| CV3 | Echo canary (only `claimId` and `factRef` are strings, so a hit means an id was forged) | `injection_echo`: the whole call is treated as verifier unavailable |
 
 A verifier reply that stays invalid after the repair and the tier-up is "verifier unavailable": prepare retries the step and stores nothing; `PATCH` stores the edit as `stale`; routes answer 503. Verification is never skipped at any shed level (`workers/04` INV-7).
 

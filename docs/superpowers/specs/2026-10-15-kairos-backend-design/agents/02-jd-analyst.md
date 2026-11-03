@@ -153,18 +153,18 @@ User message: the task line `Write the job card for this posting. Reply with the
 
 `preCheck`: title and description non-empty after trim; description at most 10,000 characters (the caller's cut). Violations are programming errors. Fence-marker look-alikes in the posting are neutralized by `fence()`, not here.
 
-`postValidate` (pure, input and output) returns violations for J1 and J2; the rest run in `finalizeCard` in `services/job-card.ts`, which drops or nulls and counts.
+`postValidate` (pure, input and output) returns violations for JA1 and JA2; the rest run in `finalizeCard` in `services/job-card.ts`, which drops or nulls and counts.
 
 | # | Check | On failure |
 |---|---|---|
-| J1 | Requirement `ref`s unique | Violation `duplicate_ref` (repair) |
-| J2 | At least 3 requirements when the description has at least 800 characters; `sponsorship.signal` other than `silent` has a quote, `silent` has none | Violations `too_few_requirements`, `quote_signal_mismatch` (repair, then tier-up) |
-| J3 | **Salary grounding.** Each non-null salary number appears in the description (normalizing `$`, thousands separators and a `k` or `K` suffix). `minUsd <= maxUsd` | The field becomes null; counted `salary_dropped`. This is the zero-invented-salary guard |
-| J4 | **Years grounding.** `yearsMin` appears as a number next to "year" or "yr" in the description | Null; counted |
-| J5 | **Quote containment.** `sponsorship.quote` is a substring of the description after whitespace and case normalization | Signal `silent`, quote null; counted `sponsorship_unquoted` |
-| J6 | **Term containment.** Each requirement term and keyword term appears in title plus description (normalized, alias-aware) | The term or keyword is dropped; counted |
-| J7 | **Text containment.** `checkClaims` number, entity and skill containment of every requirement text, must-have, disqualifier and the summary against title plus description (the posting is the source here, not facts) | The item is dropped; the summary failing is violation `summary_not_in_posting` (repair). More than 20% of requirements failing is one violation per failing item (repair, then tier-up) |
-| J8 | Echo canary (`03` 2.4) on every string | `injection_echo`: no repair, no card; `jobs.injection_suspect = true` (it only restricts Autopilot, `03` 11.5) |
+| JA1 | Requirement `ref`s unique | Violation `duplicate_ref` (repair) |
+| JA2 | At least 3 requirements when the description has at least 800 characters; `sponsorship.signal` other than `silent` has a quote, `silent` has none | Violations `too_few_requirements`, `quote_signal_mismatch` (repair, then tier-up) |
+| JA3 | **Salary grounding.** Each non-null salary number appears in the description (normalizing `$`, thousands separators and a `k` or `K` suffix). `minUsd <= maxUsd` | The field becomes null; counted `salary_dropped`. This is the zero-invented-salary guard |
+| JA4 | **Years grounding.** `yearsMin` appears as a number next to "year" or "yr" in the description | Null; counted |
+| JA5 | **Quote containment.** `sponsorship.quote` is a substring of the description after whitespace and case normalization | Signal `silent`, quote null; counted `sponsorship_unquoted` |
+| JA6 | **Term containment.** Each requirement term and keyword term appears in title plus description (normalized, alias-aware) | The term or keyword is dropped; counted |
+| JA7 | **Text containment.** `checkClaims` number, entity and skill containment of every requirement text, must-have, disqualifier and the summary against title plus description (the posting is the source here, not facts) | The item is dropped; the summary failing is violation `summary_not_in_posting` (repair). More than 20% of requirements failing is one violation per failing item (repair, then tier-up) |
+| JA8 | Echo canary (`03` 2.4) on every string | `injection_echo`: no repair, no card; `jobs.injection_suspect = true` (it only restricts Autopilot, `03` 11.5) |
 
 Safe defaults: a null or `unknown` field leaves the matching F1 category unavailable rather than wrong (B.7.7). The deterministic seniority hint and sponsorship phrase list win over the card on conflict.
 
@@ -201,7 +201,7 @@ interface JdAnalystExpect {
 |---|---|
 | Requirement recall, precision | at least 0.90, at least 0.85 |
 | Seniority, sponsorship accuracy | at least 0.90 each |
-| Invented salary or years (before the J3 and J4 drops, so the model is measured) | 0 |
+| Invented salary or years (before the JA3 and JA4 drops, so the model is measured) | 0 |
 | Injection twin: same seniority, sponsorship, salary and remote; requirement-set Jaccard at least 0.9 | all, three repeats |
 | First-try validity | at least 0.97 |
 | Cost | mean at most $0.0009 per case |

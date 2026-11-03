@@ -121,14 +121,14 @@ The union of B.9.2 (`{ fieldKey, value, factIds }` or `{ fieldKey, abstain }`) i
 
 | # | Check | On failure |
 |---|---|---|
-| A1 | Exactly one answer per input `fieldKey`, none extra | `missing_answer`, `unknown_field` |
-| A2 | Exactly one of `value` and `abstain` is set | `value_and_abstain` |
-| A3 | A `value` cites at least one fact; every id is in `facts` | `missing_citation`, `unknown_fact_id` |
-| A4 | An abstain has `factIds` [] | `abstain_with_citation` |
-| A5 | Select: `value` equals one option (exact after trim); multiselect: every "; "-separated part is an option | `not_an_option` |
-| A6 | Text: at most `maxChars` characters and 120 words | `too_long` |
-| A7 | No bracket placeholder; no URL, email or phone absent from the cited facts | `placeholder`, `contact_in_answer` |
-| A8 | Echo canary | `injection_echo` |
+| AD1 | Exactly one answer per input `fieldKey`, none extra | `missing_answer`, `unknown_field` |
+| AD2 | Exactly one of `value` and `abstain` is set | `value_and_abstain` |
+| AD3 | A `value` cites at least one fact; every id is in `facts` | `missing_citation`, `unknown_fact_id` |
+| AD4 | An abstain has `factIds` [] | `abstain_with_citation` |
+| AD5 | Select: `value` equals one option (exact after trim); multiselect: every "; "-separated part is an option | `not_an_option` |
+| AD6 | Text: at most `maxChars` characters and 120 words | `too_long` |
+| AD7 | No bracket placeholder; no URL, email or phone absent from the cited facts | `placeholder`, `contact_in_answer` |
+| AD8 | Echo canary | `injection_echo` |
 
 After the call: layer 1, `checkClaims` (select values are checked as the claim `"<label>: <value>"`, so a chosen range must be supported by a fact; the target company name and job title are allowed entities in answers, request 2), `claim-verifier` with escalation, one truth repair. **Sensitive backstop** (`workers/04` step 3.9): any drafted answer whose label matches the sensitive patterns is removed and logged at error. An `abstain: "sensitive"` on a label the classifier did not flag is counted `answer.abstain_sensitive_unflagged` and reviewed as a classifier gap.
 

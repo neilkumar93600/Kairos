@@ -128,14 +128,14 @@ Snapshot plan: v2 `schema.snap.json` by `agents:snap`; 3 `anyOf` nodes; bounds i
 
 | # | Check | On failure |
 |---|---|---|
-| T1 | Ids exist in the view: `sectionId` always; `lineId` for rewrite and remove; `entryId`, when set, inside `sectionId` | `unknown_target` |
-| T2 | Shape: rewrite and add have `after` and at least one fact id; remove has `after` null, `factIds` [] and `requirementRefs` []; add has `lineId` null | `bad_action_shape`, `missing_citation` |
-| T3 | Every fact id is in `input.facts` | `unknown_fact_id` |
-| T4 | Every requirement ref is in `input.card.requirements` | `unknown_requirement` |
-| T5 | At most one suggestion per `lineId`; total at most `maxSuggestions` | `duplicate_target`, `too_many` |
-| T6 | `after` has no line break, no first-person pronoun, no bracket placeholder such as `[X]` (PRD anti-goal) | `bad_line_text` |
-| T7 | With `doNotClaim`: no `after` contains a dropped item's text, or its failing number or entity | `repeats_dropped_claim` |
-| T8 | Echo canary | `injection_echo`, no repair |
+| RT1 | Ids exist in the view: `sectionId` always; `lineId` for rewrite and remove; `entryId`, when set, inside `sectionId` | `unknown_target` |
+| RT2 | Shape: rewrite and add have `after` and at least one fact id; remove has `after` null, `factIds` [] and `requirementRefs` []; add has `lineId` null | `bad_action_shape`, `missing_citation` |
+| RT3 | Every fact id is in `input.facts` | `unknown_fact_id` |
+| RT4 | Every requirement ref is in `input.card.requirements` | `unknown_requirement` |
+| RT5 | At most one suggestion per `lineId`; total at most `maxSuggestions` | `duplicate_target`, `too_many` |
+| RT6 | `after` has no line break, no first-person pronoun, no bracket placeholder such as `[X]` (PRD anti-goal) | `bad_line_text` |
+| RT7 | With `doNotClaim`: no `after` contains a dropped item's text, or its failing number or entity | `repeats_dropped_claim` |
+| RT8 | Echo canary | `injection_echo`, no repair |
 
 After the call (service, not `postValidate`): layer 1 against the owned, confirmed set; `checkClaims`; `claim-verifier` with escalation in the pipeline and on the route (B.8.5 step 4); the deterministic `needsFact` suggestions for missing required requirements.
 

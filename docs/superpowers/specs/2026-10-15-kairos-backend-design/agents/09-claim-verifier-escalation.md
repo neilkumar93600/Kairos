@@ -60,7 +60,7 @@ The verifier's sections and examples, with three changes: the role says "you are
 
 ## 5. Checks
 
-`preCheck`: at most 15 claims; the daily cap (section 2). `postValidate`: the verifier's V1 to V3.
+`preCheck`: at most 15 claims; the daily cap (section 2). `postValidate`: the verifier's CV1 to CV3.
 
 ---
 

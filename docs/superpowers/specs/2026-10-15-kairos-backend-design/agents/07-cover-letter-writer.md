@@ -101,12 +101,12 @@ Snapshot plan: 0 `anyOf`; `maxItems` 4 and the lengths move into descriptions an
 
 | # | Check | On failure |
 |---|---|---|
-| C1 | Every fact id is in `facts` (v1) | `unknown_fact_id` |
-| C2 | Total words at most 250 | `too_long` (repair) |
-| C3 | No line that is only a greeting or sign-off ("Dear ...", "Sincerely", "Best regards", "Thank you for your consideration" alone); no bracket placeholder | `salutation`, `placeholder` |
-| C4 | No URL, email or phone | `contact_in_letter` |
-| C5 | With `doNotClaim`: no paragraph repeats a dropped text or its failing number or entity | `repeats_dropped_claim` |
-| C6 | Echo canary | `injection_echo` |
+| CL1 | Every fact id is in `facts` (v1) | `unknown_fact_id` |
+| CL2 | Total words at most 250 | `too_long` (repair) |
+| CL3 | No line that is only a greeting or sign-off ("Dear ...", "Sincerely", "Best regards", "Thank you for your consideration" alone); no bracket placeholder | `salutation`, `placeholder` |
+| CL4 | No URL, email or phone | `contact_in_letter` |
+| CL5 | With `doNotClaim`: no paragraph repeats a dropped text or its failing number or entity | `repeats_dropped_claim` |
+| CL6 | Echo canary | `injection_echo` |
 
 After the call: layer 1, `checkClaims` per paragraph (company name and job title allowed, `agents/06-answer-drafter.md` request 2), `claim-verifier` per paragraph with escalation, then one truth repair for dropped paragraphs. If none survives: prepare stores no letter (the field stays empty and `draft_issue` names it); the route returns 422 `truth_lock`.
 

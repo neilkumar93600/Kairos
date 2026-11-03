@@ -129,13 +129,13 @@ Server mapping: `matches.reasons` stores the reason texts in model order (the fr
 
 | # | Check | On failure |
 |---|---|---|
-| F1 | Each reason at most 20 words and 160 characters | Violation `reason_too_long` |
-| F2 | **Grounding.** A reason containing a number contains a number that appears in the card or the profile block | `reason_number_not_in_input` |
-| F3 | **Polarity.** `score >= bar` has at least one `match`; `score < 50` has at least one `gap` | `polarity_mismatch` |
-| F4 | **Protected attributes.** No reason matches the shared pattern list (`classifySensitive` patterns plus age, religion, nationality, pregnancy, marital status) | `protected_attribute` |
-| F5 | No URL, email or phone in a reason | `contact_in_reason` |
-| F6 | `mustHaveHits` unique and each `< card.mustHaves.length` | `must_have_out_of_range` |
-| F7 | Echo canary | `injection_echo`, no repair |
+| FS1 | Each reason at most 20 words and 160 characters | Violation `reason_too_long` |
+| FS2 | **Grounding.** A reason containing a number contains a number that appears in the card or the profile block | `reason_number_not_in_input` |
+| FS3 | **Polarity.** `score >= bar` has at least one `match`; `score < 50` has at least one `gap` | `polarity_mismatch` |
+| FS4 | **Protected attributes.** No reason matches the shared pattern list (`classifySensitive` patterns plus age, religion, nationality, pregnancy, marital status) | `protected_attribute` |
+| FS5 | No URL, email or phone in a reason | `contact_in_reason` |
+| FS6 | `mustHaveHits` unique and each `< card.mustHaves.length` | `must_have_out_of_range` |
+| FS7 | Echo canary | `injection_echo`, no repair |
 
 The gateway repairs once. `scoreUser` then drops reasons that still fail; if none remains, the pair is skipped and not written (`04` 11.2).
 

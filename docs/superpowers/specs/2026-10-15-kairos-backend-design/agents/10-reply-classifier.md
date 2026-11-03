@@ -12,12 +12,12 @@ Stakes: medium. A kind moves the application's stage forward and drives notifica
 
 | # | Rule |
 |---|---|
-| R1 | Rules always run first on the subject and the first 4,000 characters of the normalized body; first match wins in the order offer, rejection, assessment, interview, confirmation (`workers/10` 3.3, `RULES_VERSION` 1). A rule change needs a version bump, a green golden file and an owner review |
-| R2 | The model runs only when the rules return null, the row is visible (not hidden as spam or a forwarding confirmation), `spam_score` is null or below 5, the agent is enabled, and the step deadline leaves at least 25 s (`workers/10` A7) |
-| R3 | **Offer is rules-only.** A model reply of `offer` resolves to `other`; the raw value is kept as `inbound_emails.model_kind` evidence and counted `inbound.model_offer_rejected`. Only a rule-tagged offer can create an offer-pause candidate (`inbound_emails_offer_needs_rule_ck`, WP-33). This keeps the only path to a billing pause deterministic |
-| R4 | A model kind with `confidence` below 0.6 (`MODEL_MIN_CONFIDENCE`) resolves to `other` |
-| R5 | A resolved kind moves `applications.stage` forward only and writes one `application_events` row with `source: "model"`; the tracker projector (WP-21) reads it. It never touches `status`, `credit_ledger`, `subscriptions` or `approveCore` |
-| R6 | Deferral (`rate_limited`, `budget_stopped`, `agent_disabled`, outage) leaves `kind` null for the reconciler's model-only redrive; a final failure (`schema_invalid` after repair, `refusal`, `injection_echo`) resolves to `other` |
+| RC1 | Rules always run first on the subject and the first 4,000 characters of the normalized body; first match wins in the order offer, rejection, assessment, interview, confirmation (`workers/10` 3.3, `RULES_VERSION` 1). A rule change needs a version bump, a green golden file and an owner review |
+| RC2 | The model runs only when the rules return null, the row is visible (not hidden as spam or a forwarding confirmation), `spam_score` is null or below 5, the agent is enabled, and the step deadline leaves at least 25 s (`workers/10` A7) |
+| RC3 | **Offer is rules-only.** A model reply of `offer` resolves to `other`; the raw value is kept as `inbound_emails.model_kind` evidence and counted `inbound.model_offer_rejected`. Only a rule-tagged offer can create an offer-pause candidate (`inbound_emails_offer_needs_rule_ck`, WP-33). This keeps the only path to a billing pause deterministic |
+| RC4 | A model kind with `confidence` below 0.6 (`MODEL_MIN_CONFIDENCE`) resolves to `other` |
+| RC5 | A resolved kind moves `applications.stage` forward only and writes one `application_events` row with `source: "model"`; the tracker projector (WP-21) reads it. It never touches `status`, `credit_ledger`, `subscriptions` or `approveCore` |
+| RC6 | Deferral (`rate_limited`, `budget_stopped`, `agent_disabled`, outage) leaves `kind` null for the reconciler's model-only redrive; a final failure (`schema_invalid` after repair, `refusal`, `injection_echo`) resolves to `other` |
 
 ---
 
@@ -46,7 +46,7 @@ export const ReplyClassifierOutput = z.object({
 }).strict();
 ```
 
-Snapshot plan: 0 `anyOf`; `minimum` and `maximum` move into the description. `offer` stays in the enum so the model can say what it thinks (evidence for R3 and the eval), not so it can act.
+Snapshot plan: 0 `anyOf`; `minimum` and `maximum` move into the description. `offer` stays in the enum so the model can say what it thinks (evidence for RC3 and the eval), not so it can act.
 
 ---
 
@@ -67,7 +67,7 @@ Snapshot plan: 0 `anyOf`; `minimum` and `maximum` move into the description. `of
 | Item | Value |
 |---|---|
 | Model, tier-up | Haiku, none |
-| `onFailure` | `defer` (R6) |
+| `onFailure` | `defer` (RC6) |
 | Thinking | Disabled |
 | `max_tokens` | 160 |
 | `maxInputTokens` | 1,600. Check: 1,600 x 0.10 + 160 x 0.50 = $0.00024 under $0.0006 |
@@ -100,7 +100,7 @@ interface ReplyClassifierExpect {
 
 | Slice | Count |
 |---|---|
-| Mail the rules tag (regression guard for R1) | 150 |
+| Mail the rules tag (regression guard for RC1) | 150 |
 | Mail the rules miss (varied wording, other languages' templates in English, ATS notices) | 210 |
 | "We would like to offer you an interview" and variants | 40 |
 | **Total** | **400** |

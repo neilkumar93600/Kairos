@@ -118,14 +118,14 @@ This settles the `before` conflict of gap-map specGaps: B.9.2 lists `before` as 
 
 | # | Check | On failure |
 |---|---|---|
-| W1 | Fact ids in `facts` or equal to `noteFact.id` (v1) | `unknown_fact_id` |
-| W2 | Action shape: rewrite and remove need `lineId`; add has `lineId` null; remove has `after` null and `factIds` []; `needsFact` set means `after` null | `bad_action_shape` |
-| W3 | Headline scope: every suggestion has `sectionId` "headline", `entryId` and `lineId` null, at most 3; other scopes never use "headline" and always have `appendYears` false | `bad_headline_shape` |
-| W4 | `appendYears` true only when `derived` holds a years value | `append_without_value` |
-| W5 | **No model-stated years.** No `after` matches `\b\d+\s*\+?\s*(years?\|yrs?)\b` | `model_stated_years` |
-| W6 | `tag = fix_spelling` only with `action = rewrite` | `bad_tag` |
-| W7 | No bracket placeholder (`[X]`, `[number]`) in `after` | `placeholder` |
-| W8 | Echo canary | `injection_echo` |
+| RW1 | Fact ids in `facts` or equal to `noteFact.id` (v1) | `unknown_fact_id` |
+| RW2 | Action shape: rewrite and remove need `lineId`; add has `lineId` null; remove has `after` null and `factIds` []; `needsFact` set means `after` null | `bad_action_shape` |
+| RW3 | Headline scope: every suggestion has `sectionId` "headline", `entryId` and `lineId` null, at most 3; other scopes never use "headline" and always have `appendYears` false | `bad_headline_shape` |
+| RW4 | `appendYears` true only when `derived` holds a years value | `append_without_value` |
+| RW5 | **No model-stated years.** No `after` matches `\b\d+\s*\+?\s*(years?\|yrs?)\b` | `model_stated_years` |
+| RW6 | `tag = fix_spelling` only with `action = rewrite` | `bad_tag` |
+| RW7 | No bracket placeholder (`[X]`, `[number]`) in `after` | `placeholder` |
+| RW8 | Echo canary | `injection_echo` |
 
 Service checks in `verify()` (a failing suggestion is dropped, not repaired): ids exist in the document (v1); citable facts (v1); `checkClaims` against the cited facts (v1 uses `inventedDetails`; WP-07 moves it to `llm/claims.ts`); refine compliance for every mode (`shorter` shorter than `before`, `longer` longer, `use_numbers` contains a number from a cited `metric` fact, `result_first` and `natural` judged in evals only); `fix_spelling` keeps the line's own fact ids and changes at most 15% of characters (normalized edit distance) with no new number, entity or skill; `after` at most 300 characters for lines and 160 for headlines. Then `claim-verifier` on every suggestion with text (WP-26).
 
