@@ -1,5 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { draftAnswer, draftCoverLetter } from "../src/services/draft-writer";
+import { Budget } from "../src/llm/budget";
+import { configureGateway } from "../src/llm/gateway";
+import { memorySpendStore } from "../src/llm/spend-store";
+import { fakeAnthropic, type FakeAnthropic, type Scripted } from "../src/llm/testing";
+import { resetBreakers } from "../src/llm/breaker";
+import { resetLimiter } from "../src/llm/limiter";
 
 const facts = [
   { id: "f1", kind: "experience", text: "Built a billing API at Acme" },
@@ -145,4 +151,59 @@ describe("draftAnswer", () => {
     await expect(draftAnswer({ label: "Veteran status", job, facts }, { chat: chat as never })).rejects.toMatchObject({ status: 422, code: "profile_only" });
     expect(chat).not.toHaveBeenCalled();
   });
+});
+
+describe("profile and sensitive questions (INV-9)", () => {
+  it.each(["Email", "LinkedIn profile", "First name", "Phone number", "Location (City)", "Website or portfolio URL"])(
+    "refuses the profile question %s without calling chat",
+    async (label) => {
+      const chat = vi.fn();
+      await expect(draftAnswer({ label, job, facts }, { chat: chat as never })).rejects.toMatchObject({ status: 422, code: "profile_only" });
+      expect(chat).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("the gateway path (LLM_GATEWAY=anthropic)", () => {
+  let fake: FakeAnthropic;
+  const reply = (body: unknown): Scripted[] => [
+    { content: [{ type: "text", text: JSON.stringify(body) }], stop_reason: "end_turn", usage: { input_tokens: 500, output_tokens: 300 } },
+  ];
+  const useReply = (body: unknown) => {
+    fake = fakeAnthropic(reply(body));
+    configureGateway({
+      client: () => fake,
+      budget: new Budget(memorySpendStore()),
+      writeRow: async () => "call-1",
+      sleep: async () => {},
+      flags: () => ({ llmPaused: false, batchPaused: false, disabled: {}, promptPin: {} }),
+    });
+  };
+  beforeEach(() => {
+    resetBreakers();
+    resetLimiter();
+  });
+  afterEach(() => configureGateway({ writeRow: async () => null }));
+
+  it("caps a cover letter at 4 paragraphs and 250 words, as the legacy path does (llm-agents-48)", async () => {
+    useReply({ paragraphs: Array.from({ length: 6 }, (_, i) => ({ text: `Paragraph ${"abcdef"[i]} ${words(70)}`, factIds: ["f1"] })) });
+    const r = await draftCoverLetter({ job, facts }, { callCtx: { userId: "u1" } });
+    expect(r.text.split("\n\n").length).toBeLessThanOrEqual(4);
+    expect(r.text.split(/\s+/).length).toBeLessThanOrEqual(250);
+    expect(r.text.split("\n\n")).toHaveLength(3);
+  });
+
+  it("drops invented details from a gateway cover letter", async () => {
+    useReply({ paragraphs: [{ text: "I built a billing API at Acme.", factIds: ["f1"] }, { text: "At Initech I cut costs by 40%.", factIds: ["f1"] }] });
+    expect((await draftCoverLetter({ job, facts }, { callCtx: { userId: "u1" } })).text).toBe("I built a billing API at Acme.");
+  });
+
+  it.each(["Veteran status", "Desired salary", "Do you require visa sponsorship?", "Email", "LinkedIn profile"])(
+    "never sends %s to the model",
+    async (label) => {
+      useReply({ text: "x", factIds: ["f1"] });
+      await expect(draftAnswer({ label, job, facts }, { callCtx: { userId: "u1" } })).rejects.toMatchObject({ code: "profile_only" });
+      expect(fake.requests).toHaveLength(0);
+    },
+  );
 });

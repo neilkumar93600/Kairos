@@ -250,6 +250,17 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       expect(res.status).toBe(422);
       expect(res.body.error.code).toBe("profile_only");
     });
+
+    it("still 422s profile_only for Email after a PATCH rewrote every answer's source to user_edit (resume-44)", async () => {
+      const app1 = await draft({ answers: [{ fieldKey: "email", label: "Email", value: me.email, source: "profile" }] });
+      const patched = await request(app)
+        .patch(`/api/applications/${app1.id}`)
+        .send({ answers: [{ fieldKey: "email", label: "Email", value: me.email, source: "profile" }] });
+      expect(patched.body.application.answers[0].source).toBe("user_edit");
+      const res = await request(app).post(`/api/applications/${app1.id}/drafts`).send({ kind: "answer", fieldKey: "email" });
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBe("profile_only");
+    });
   });
 
   describe("POST /api/jobs/import", () => {

@@ -9,7 +9,7 @@ import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
 import { enqueue } from "../jobs/queues";
 import { draftAnswer, draftCoverLetter } from "../services/draft-writer";
-import { classifySensitive } from "../services/sensitive";
+import { classifySensitive, isProfileQuestion } from "../services/sensitive";
 import { approveApplications, planFor } from "../services/submissions";
 import { enforceTruthLock } from "../services/tailor";
 import { lineKey } from "../services/resume-doc";
@@ -148,7 +148,7 @@ applicationsRouter.post("/:id/drafts", writerLimiter, validateBody(draftRequestS
   if (body.kind === "answer") {
     const answer = row.application.answers.find((a) => a.fieldKey === body.fieldKey);
     if (!answer) throw notFound("Answer");
-    if (classifySensitive(answer.label) || answer.source === "profile") {
+    if (classifySensitive(answer.label) || isProfileQuestion(answer.label) || answer.source === "profile") {
       throw new HttpError(422, "profile_only", "This question is answered from your profile, never by AI");
     }
     label = answer.label;
