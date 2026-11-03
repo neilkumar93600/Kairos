@@ -241,3 +241,10 @@ GRANT SELECT, INSERT ON credit_ledger_archive, erased_emails TO kairos_api, kair
 GRANT DELETE ON contact_messages TO kairos_api;
 -- The erasure worker pseudonymises an erased admin's id in feature_flags.updated_by too (WP-25); nothing else changes.
 GRANT UPDATE (updated_by) ON feature_flags TO kairos_worker;
+
+-- Newsletter sign-ups (WP-50, migration 0016). The api takes a sign-up (insert or the upsert's update), confirms and
+-- unsubscribes by token hash, and deletes an erased account's rows in the erasure transaction. The worker sets the token
+-- hashes when it renders the confirm email and runs the 30-day retention delete; it never inserts a sign-up.
+-- kairos_readonly gets nothing: the table is addresses.
+GRANT SELECT, INSERT, UPDATE, DELETE ON newsletter_subscribers TO kairos_api;
+GRANT SELECT, UPDATE, DELETE ON newsletter_subscribers TO kairos_worker;
