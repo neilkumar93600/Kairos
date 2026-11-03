@@ -89,6 +89,16 @@ export const AT_MERGE: Record<string, readonly PrivacyEntry[]> = {
       why: "the user's objection to mail (GDPR Art. 21, CAN-SPAM), honoured even if the address signs up again; holds a hash, no address or user id",
     },
   ],
+  // WP-42 merges first. application_events is the user's own timeline, not a record anyone must keep after the account
+  // (the ledger archive keeps application_id for the books), so it is erased with the account: its append-only guard
+  // must let a referential cascade through, as credit_ledger's does (pg_trigger_depth() >= 2). If it carries no user_id,
+  // register it as a parent entry on applications instead. At merge, scrub-applications also nulls
+  // applications.questions (jobs/retention.ts says where); resume_snapshot is resume content and stays with the account.
+  "WP-42": [
+    { table: "tracker_items", column: "user_id", erase: "cascade", export: ALL },
+    { table: "application_events", column: "user_id", erase: "cascade", export: ALL },
+    { table: "submission_attempts", column: "application_id", parent: "applications", erase: "cascade", export: ALL },
+  ],
   // DB-reviewer on WP-27: an admin's id in the audit trail and on the flags they set. metrics_minute and feature_flags hold none.
   "WP-27": [
     { table: "ops_audit", column: "actor", erase: "pseudonymise", export: ALL },

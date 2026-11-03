@@ -11,8 +11,10 @@ import { scrubContent } from "../services/sensitive";
  * the spec's defaults, overridable per rule with RETENTION_DAYS and pending counsel (owner-actions/WP-25.md).
  *
  * Rules for columns other packages are adding wait for them: hidden inbound rows (WP-44, messaging), the spam status
- * of contact messages, submission evidence (WP-29). matches_below_bar keys on status::text, so it is a no-op until
- * WP-42 adds the below_bar status, and on created_at until it adds status_changed_at.
+ * of contact messages, submission_attempts.evidence at 90 days (WP-42). matches_below_bar keys on status::text, so it
+ * is a no-op until WP-42 adds the below_bar status. At WP-42's merge: below_bar keys on status_changed_at
+ * (matches_retention_idx), the scrub selects on terminal_at (applications_scrub_due_idx) and also sets questions to
+ * null. jobs_closed marks a purge by the emptied description_text (still NOT NULL), so no description_purged_at.
  * ponytail: jobs has no closed_at index, so jobs_closed scans jobs once per batch; add jobs_closed_idx (02-database 11)
  * when jobs passes a few hundred thousand rows.
  */
