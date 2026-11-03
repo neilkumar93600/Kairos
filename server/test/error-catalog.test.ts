@@ -5,16 +5,36 @@ import { ERROR_CATALOG } from "../src/lib/error-catalog";
 
 const files = (dir: string): string[] =>
   readdirSync(dir).flatMap((f) => (statSync(join(dir, f)).isDirectory() ? files(join(dir, f)) : f.endsWith(".ts") ? [join(dir, f)] : []));
+const sources = files("src").map((file) => [file, readFileSync(file, "utf8")] as const);
+
+/** Codes whose HttpError lives on a branch that is not merged here yet (WP-27); remove an entry once its code is used. */
+const NOT_MERGED_YET = new Set(["approvals_frozen", "cloud_paused", "extension_only", "unknown_flag"]);
 
 describe("error catalog", () => {
   it("lists every code and status that src/ passes to HttpError", () => {
     const unlisted: string[] = [];
-    for (const file of files("src")) {
-      for (const m of readFileSync(file, "utf8").matchAll(/HttpError\(\s*(\d{3}),\s*"([a-z_]+)"/g)) {
+    for (const [file, text] of sources) {
+      for (const m of text.matchAll(/new HttpError\(\s*(\d{3}),\s*"([a-z_]+)"/g)) {
         if (!ERROR_CATALOG[m[2]!]?.includes(Number(m[1]))) unlisted.push(`${m[1]} ${m[2]} (${file})`);
       }
     }
     expect(unlisted).toEqual([]);
+  });
+
+  it("has no HttpError whose status and code are not literals (the check above could not see them)", () => {
+    const hidden: string[] = [];
+    for (const [file, text] of sources) {
+      const all = [...text.matchAll(/new HttpError\(/g)].length;
+      const literal = [...text.matchAll(/new HttpError\(\s*\d{3},\s*"[a-z_]+"/g)].length;
+      if (all !== literal) hidden.push(file);
+    }
+    expect(hidden).toEqual([]);
+  });
+
+  it("lists no code that nothing emits", () => {
+    const all = sources.map(([, t]) => t).join("\n");
+    const dead = Object.keys(ERROR_CATALOG).filter((code) => !NOT_MERGED_YET.has(code) && !all.includes(`"${code}"`));
+    expect(dead).toEqual([]);
   });
 
   it("is sorted and uses only snake_case codes with 4xx or 5xx statuses", () => {
