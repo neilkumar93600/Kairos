@@ -132,7 +132,7 @@ describe.skipIf(!hasTestDb)("lifecycle expand: backfills over a pre-WP-42 databa
     });
     // B-10
     expect(await one(`select source, selection from matches where id = $1`, [imported.id])).toEqual({ source: "manual_url", selection: "import" });
-    expect((await client.query(`select 1 from matches where id = $1`, [gateReject.id])).rowCount).toBe(0);
+    expect(await one(`select source, selection from matches where id = $1`, [gateReject.id])).toEqual({ source: "manual_url", selection: "import" });
     // B-8
     const appRow = (id: string) =>
       one(`select approved_by, attempt_no, failure_code, draft_state, stage, terminal_at is not null as terminal, current_attempt_id is not null as attempt

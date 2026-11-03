@@ -3,14 +3,15 @@
 -- (schema-lifecycle.int.test.ts runs this file twice). SQL in a migration is allowed while each table is below 100,000
 -- rows (14.4): owner-actions/WP-42.md counts them first. B-6 (job hints) is TypeScript: refreshJobHints.
 
--- B-5: companies. Hosts from (ats, api_region) through companies_fill_hosts (a no-op update fires it). A company never
--- polled and inactive was pasted by a user (WP-00 stores imports inactive); one that 404'd is board_not_found; any other
--- inactive company was switched off by the owner.
-UPDATE companies SET api_host = api_host WHERE api_host IS NULL OR apply_host IS NULL;--> statement-breakpoint
+-- B-5: companies. A company never polled and inactive was pasted by a user (WP-00 stores imports inactive); one that
+-- 404'd is board_not_found; any other inactive company was switched off by the owner. Reasons first: an update holds
+-- every check of 0009, companies_active_reason_ck included. Then the hosts, from (ats, api_region) through
+-- companies_fill_hosts, which a no-op update of api_host fires.
 UPDATE companies SET discovered_by = 'import', inactive_reason = 'import_pending'
  WHERE NOT active AND inactive_reason IS NULL AND last_polled_at IS NULL;--> statement-breakpoint
 UPDATE companies SET inactive_reason = CASE WHEN last_poll_error = 'board_not_found' THEN 'board_not_found' ELSE 'owner' END
  WHERE NOT active AND inactive_reason IS NULL;--> statement-breakpoint
+UPDATE companies SET api_host = api_host WHERE api_host IS NULL OR apply_host IS NULL;--> statement-breakpoint
 
 -- jobs: every job closed so far was closed by the poller. Then a job stored before WP-04 may carry the payload's URL
 -- (an employer's own careers page): it is rebuilt to the hosted form services/ats builds today, the only URL the applier
@@ -25,13 +26,13 @@ UPDATE jobs j SET apply_url = CASE c.ats
    AND j.apply_url !~ '^https://(boards\.greenhouse\.io|job-boards\.greenhouse\.io|jobs\.lever\.co|jobs\.eu\.lever\.co|jobs\.ashbyhq\.com)/';--> statement-breakpoint
 ALTER TABLE "jobs" ADD CONSTRAINT "jobs_apply_url_host_ck" CHECK (apply_url ~ '^https://(boards\.greenhouse\.io|job-boards\.greenhouse\.io|jobs\.lever\.co|jobs\.eu\.lever\.co|jobs\.ashbyhq\.com)/') NOT VALID;--> statement-breakpoint
 
--- B-10, the part today's writers agree with: matches on a pasted posting are imports; a pipeline row that failed the
--- gate was never meant to be stored (C-1). Gate-failing imports to below_bar and unscored 'new' imports to expired wait
--- for WP-23, which changes the import route to write them that way (the frozen web still queues a skipped import).
+-- B-10, the part today's writers agree with: a match is an import when its posting was pasted, or when it failed the
+-- gate (the scorer stores passed rows only; the import route stores a failed one as skipped, also for a posting that was
+-- already polled, so no such row is a pipeline row to delete under C-1). Gate-failing imports to below_bar and unscored
+-- 'new' imports to expired wait for WP-23, which changes the import route to write them that way (the frozen web still
+-- queues a skipped import).
 UPDATE matches m SET source = 'manual_url', selection = 'import'
-  FROM jobs j WHERE j.id = m.job_id AND j.source = 'manual_url' AND m.source = 'pipeline';--> statement-breakpoint
-DELETE FROM matches m WHERE NOT m.passed_filters AND m.source = 'pipeline'
-   AND NOT EXISTS (SELECT 1 FROM applications a WHERE a.match_id = m.id);--> statement-breakpoint
+  FROM jobs j WHERE j.id = m.job_id AND m.source = 'pipeline' AND (j.source = 'manual_url' OR NOT m.passed_filters);--> statement-breakpoint
 
 -- B-8 statement 2: every row ever approved was approved by its user, once.
 UPDATE applications SET approved_by = 'user' WHERE approved_at IS NOT NULL AND approved_by IS NULL;--> statement-breakpoint
