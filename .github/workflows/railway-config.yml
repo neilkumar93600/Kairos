@@ -1,0 +1,132 @@
+name: Railway config
+
+# .railway/railway.ts is Railway's only deploy config: Railway stops reading Config as Code (railway.json) on
+# 2026-12-01 (https://docs.railway.com/infrastructure-as-code). A pull request that changes it gets the staging plan
+# as a comment, and merging applies exactly that plan to staging. Production gets the file from promote.yml, together
+# with the code it describes. Nightly, a plan that is not empty means someone changed Railway by hand (2.5).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    paths: [".railway/**", "ops/railway-limits.json"]
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  NO_COLOR: "1"
+
+jobs:
+  plan:
+    name: plan (staging)
+    # Fork pull requests get no secrets.
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # The plan evaluates .railway/railway.ts, which imports the railway SDK.
+      - run: npm ci --ignore-scripts
+      - run: sh ops/install-railway-cli.sh
+      - name: Plan
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: railway config plan --out railway-plan.json | tee plan.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: railway-plan-staging
+          path: railway-plan.json
+      - name: Comment the plan on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          { echo '<!-- railway-plan -->'; echo '### Railway plan: staging'; echo; echo '```'; cat plan.txt; echo '```'
+            echo; echo 'Merging applies exactly this plan to staging. Production gets the file with the code, through `promote.yml`.'; } > comment.md
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate --jq '.[] | select(.body | startswith("<!-- railway-plan -->")) | .id' | tail -n1)
+          if [ -n "$id" ]; then gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@comment.md >/dev/null
+          else gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file comment.md; fi
+
+  apply:
+    name: apply (staging)
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      # The pinned plan checks that this .railway/ tree is the one it planned.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+      - run: sh ops/install-railway-cli.sh
+      - name: Download the plan reviewed on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          run=$(gh run list --workflow railway-config.yml --commit "$HEAD_SHA" --event pull_request --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          [ -n "$run" ] || { echo "No successful plan for $HEAD_SHA. Plan and apply by hand: railway config plan, then railway config apply."; exit 1; }
+          gh run download "$run" --name railway-plan-staging
+      # No --confirm-destructive: a plan that deletes a service, database or variable stops here and is applied by hand.
+      - name: Apply
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: railway config apply --plan railway-plan.json --yes
+
+  # A plan with changes exits 2, which fails the job, and GitHub emails the owner.
+  drift-staging:
+    name: drift (staging)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: main
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: sh ops/install-railway-cli.sh
+      - env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+        run: railway config plan --detailed-exit-code
+
+  drift-production:
+    name: drift (production)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Holds RAILWAY_TOKEN_PRODUCTION; its branch rule admits only workflows running from main.
+    environment: railway-production
+    steps:
+      # Production runs the file as of its last promotion, which is what release holds.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: release
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: sh ops/install-railway-cli.sh
+      - env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+        run: railway config plan --detailed-exit-code
