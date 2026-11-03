@@ -56,7 +56,7 @@ export const SCHEDULES: Schedule[] = [
   { queue: "maintenance", id: "backup-check", repeat: { pattern: "20 * * * *", tz: "UTC" }, run: () => processBackupCheck() },
   // Queue gauges, the alert evaluator, the invariant checks and the metrics prune (WP-27).
   { queue: "maintenance", id: "metrics-sample", repeat: { every: MINUTE }, run: () => processMetricsSample() },
-  { queue: "maintenance", id: "alerts", repeat: { every: 5 * MINUTE }, run: () => processAlerts() },
+  { queue: "maintenance", id: "alerts", repeat: { pattern: "*/5 * * * *", tz: "UTC" }, run: () => processAlerts() },
   { queue: "maintenance", id: "invariants-hourly", repeat: { pattern: "5 * * * *", tz: "UTC" }, run: () => processInvariantsHourly() },
   { queue: "maintenance", id: "invariants-nightly", repeat: { pattern: "45 3 * * *", tz: "UTC" }, run: async () => [await processInvariantsNightly(), await processMetricsPrune()] },
 ];

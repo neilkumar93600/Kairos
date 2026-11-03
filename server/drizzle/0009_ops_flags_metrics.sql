@@ -46,7 +46,9 @@ BEGIN
   -- The one allowed update (extend here, nothing else): actor of a deleted user becomes an erased:<32 hex> pseudonym.
   IF TG_OP = 'UPDATE'
      AND NEW.actor ~ '^erased:[0-9a-f]{32}$' AND OLD.actor !~ '^erased:'
+     AND OLD.actor !~ '^system:'
      AND NOT EXISTS (SELECT 1 FROM "user" WHERE id = OLD.actor)
+     -- WP-25 adds: AND EXISTS (SELECT 1 FROM deletion_tasks d WHERE left(d.user_hash, 32) = substr(NEW.actor, 8))
      AND (NEW.id, NEW.at, NEW.action, NEW.target, NEW.before, NEW.after)
          IS NOT DISTINCT FROM (OLD.id, OLD.at, OLD.action, OLD.target, OLD.before, OLD.after)
   THEN RETURN NEW; END IF;
