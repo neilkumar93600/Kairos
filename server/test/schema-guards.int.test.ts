@@ -242,6 +242,18 @@ describe.skipIf(!hasTestDb)("database backstops", () => {
     });
   });
 
+  it("allows one account per email whatever its case, and one password per user (database-29)", async () => {
+    const userId = await seedUser(db);
+    const email = `${userId}@test.local`.toUpperCase();
+    expect(await failure(() => db.insert(schema.user).values({ id: randomUUID(), name: "Twin", email }))).toBe("23505");
+    const credential = { userId, providerId: "credential", password: "hash" };
+    expect(await failure(() => db.insert(schema.account).values({ id: randomUUID(), accountId: userId, ...credential }))).toBe("ok");
+    expect(await failure(() => db.insert(schema.account).values({ id: randomUUID(), accountId: `${userId}-2`, ...credential }))).toBe("23505");
+    expect(await failure(() => db.insert(schema.account).values({ id: randomUUID(), accountId: "g-1", userId, providerId: "google" }))).toBe("ok");
+    const other = await seedUser(db);
+    expect(await failure(() => db.insert(schema.account).values({ id: randomUUID(), accountId: "g-1", userId: other, providerId: "google" }))).toBe("23505");
+  });
+
   describe("same-owner triggers (database-40)", () => {
     it("refuses a fact or a resume that points at another user's resume profile", async () => {
       const mine = await seedUser(db);

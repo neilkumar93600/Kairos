@@ -57,6 +57,13 @@
       "when": 1793687147393,
       "tag": "0007_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793687798488,
+      "tag": "0008_auth_indexes",
+      "breakpoints": true
     }
   ]
 }
