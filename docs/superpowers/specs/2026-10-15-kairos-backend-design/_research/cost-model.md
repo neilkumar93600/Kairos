@@ -1,5 +1,7 @@
 # Kairos backend: scale and cost model for about 10,000 users
 
+> **Superseded for prices, 2026-10-30 (WP-43).** Volumes, token counts and the load model in this file still feed the capacity figures. Every price, model slug and per-submission cost does not: it prices OpenRouter and a DeepSeek scorer ($0.0035 to $0.0038 a submission, about $1,586 a month for models). The governing figures are `anthropic-models.md` (model per agent and Anthropic prices) and `01-architecture.md` B.12 (Anthropic only: about $0.0079 a submission at baseline, about $4,092 a month for models at 10,000 users). Its embeddings and pgvector assumption (C-3) is also superseded: pre-rank is lexical F1 and there is no vector store (ADR-001 A.7). See the README's master capacity table.
+
 Date: 2026-10-16. Scope: backend only (`server/`, additive `shared/` types). Nothing under `web/` or `extension/` is touched.
 
 Inputs read: `_research/openrouter.md` (model prices on zero-data-retention plus structured-output routes, caching rules, fees), `_research/requirements.md` (FR, NFR, INV register), `_research/as-built.md` (current prompts, token estimates, defects S-01 to S-06), `_research/stack-options.md` (Railway unit prices, browser fleet, load model), `docs/pricing.md`, `shared/src/plans.ts`. Method: the `llm-cost-optimizer` skill in "design a cost-efficient architecture" mode (budget envelopes per agent and per plan, routing by task class, caching, output caps, cost observability before launch).
