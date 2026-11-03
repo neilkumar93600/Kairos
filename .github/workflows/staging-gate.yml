@@ -1,0 +1,56 @@
+name: Staging gate
+
+# 06-infrastructure 3.5: once Railway has deployed a commit to staging, prove it works end to end. promote.yml releases
+# only a commit whose "staging gate" job succeeded, so a failed smoke test keeps it out of production.
+on:
+  # Railway reports each service's deploy to GitHub as a deployment status.
+  deployment_status:
+  # By hand, against what staging runs now (the head of main).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-gate-${{ github.sha }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gate:
+    # promote.yml looks for this job name.
+    name: staging gate
+    # Only finished staging deploys; Railway names the GitHub environment after its own (for example "kairos / staging").
+    if: github.event_name == 'workflow_dispatch' || (github.event.deployment_status.state == 'success' && contains(github.event.deployment.environment, 'staging'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      WEB: ${{ vars.STAGING_WEB_ORIGIN }}
+      SMOKE_VERCEL_BYPASS: ${{ secrets.STAGING_VERCEL_BYPASS }}
+    steps:
+      # The deployed commit (github.sha is the deployment's SHA).
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts && npm rebuild esbuild
+      - name: Health through the web rewrite
+        run: |
+          [ -n "$WEB" ] || { echo "Set the repository variable STAGING_WEB_ORIGIN"; exit 1; }
+          curl -fsS --retry 10 --retry-all-errors --retry-delay 15 -H "x-vercel-protection-bypass: $SMOKE_VERCEL_BYPASS" "$WEB/api/health" | grep -q '"status":"ok"'
+      - name: Smoke (sign up, verify the emailed code, sign in, /api/me, delete the user)
+        env:
+          SMOKE_BASE_URL: ${{ vars.STAGING_WEB_ORIGIN }}
+          SMOKE_EMAIL: ${{ vars.SMOKE_EMAIL }}
+          SMOKE_POSTMARK_TOKEN: ${{ secrets.STAGING_POSTMARK_SERVER_TOKEN }}
+        run: |
+          [ -n "$SMOKE_POSTMARK_TOKEN" ] || { echo "Set the secret STAGING_POSTMARK_SERVER_TOKEN"; exit 1; }
+          node scripts/smoke.mjs
+      # The shared contract suite of this commit. It replays against the QA mock until the resume suite routes exist on
+      # the server (WP-17), when the same SUITE_CASES replay against staging.
+      - name: Contract suite
+        run: npm test -w @auto-career/shared

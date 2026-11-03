@@ -1,0 +1,80 @@
+name: Promote
+
+# 06-infrastructure 3.6: the only way code reaches production. Railway production deploys the `release` branch, which
+# only this workflow's deploy key may move (a ruleset on `release`). It releases a commit of main that passed CI and
+# the staging gate, after applying that commit's .railway/railway.ts to production. Rolling back is promoting an
+# earlier released commit.
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit of main to release (full 40-character SHA)
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  promote:
+    if: github.actor == github.repository_owner && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Holds RAILWAY_TOKEN_PRODUCTION and RELEASE_DEPLOY_KEY.
+    environment: railway-production
+    env:
+      SHA: ${{ inputs.sha }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      NO_COLOR: "1"
+    steps:
+      - name: The commit is on main and passed CI and the staging gate
+        run: |
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "sha must be a full 40-character commit SHA"; exit 1; }
+          on_main=$(gh api "repos/$GH_REPO/compare/$SHA...main" --jq .status)
+          [[ "$on_main" == ahead || "$on_main" == identical ]] || { echo "$SHA is not on main ($on_main)"; exit 1; }
+          ci=$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&status=success&per_page=1" --jq .total_count)
+          [ "$ci" -gt 0 ] || { echo "$SHA has no successful CI run: refusing to release it"; exit 1; }
+          # The job, not the run: a run whose gate job was skipped (another environment's deploy) also ends "success".
+          for run in $(gh api --paginate "repos/$GH_REPO/actions/workflows/staging-gate.yml/runs?head_sha=$SHA" --jq '.workflow_runs[].id'); do
+            if gh api "repos/$GH_REPO/actions/runs/$run/jobs" --jq '.jobs[] | select(.name == "staging gate" and .conclusion == "success") | .id' | grep -q .; then
+              echo "staging gate passed in run $run"; exit 0
+            fi
+          done
+          echo "$SHA has not passed the staging gate: refusing to release it"; exit 1
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: sh ops/install-railway-cli.sh
+      # Config first, so the new code starts with the settings it was tested with. No --confirm-destructive: a plan that
+      # deletes a service, database or variable fails here, before anything is released, and is applied by hand.
+      - name: Apply this commit's .railway/railway.ts to production
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+        run: |
+          { echo '### Railway plan: production'; echo '```'; railway config plan; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+          railway config apply --yes
+      - name: Move release to the commit
+        run: |
+          git fetch origin release
+          current=$(git rev-parse origin/release)
+          if git merge-base --is-ancestor "$current" "$SHA"; then echo "release: fast-forward $current to $SHA"
+          elif git merge-base --is-ancestor "$SHA" "$current"; then echo "release: roll back $current to $SHA"
+          else echo "release ($current) and $SHA have diverged: refusing"; exit 1; fi
+          git push --force-with-lease="release:$current" origin "$SHA:refs/heads/release"
+          echo "Released \`$SHA\` (was \`$current\`). Railway deploys it to production now." >> "$GITHUB_STEP_SUMMARY"
