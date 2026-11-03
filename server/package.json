@@ -17,6 +17,7 @@
     "db:studio": "drizzle-kit studio",
     "agents:snap": "node --import tsx --import ./scripts/md-register.mjs scripts/agents-snap.ts",
     "agents:lock": "node --import tsx --import ./scripts/md-register.mjs scripts/agents-lock.ts",
+    "llm:smoke": "node --import tsx --import ./scripts/md-register.mjs scripts/llm-smoke.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "frozen:check": "tsx scripts/frozen-extension.ts check",
