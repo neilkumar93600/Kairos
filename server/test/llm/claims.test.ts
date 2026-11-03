@@ -47,6 +47,19 @@ describe("checkClaims passes text its facts support", () => {
   });
 });
 
+describe("checkClaims and units glued to a number", () => {
+  // Found by the resume-parser golden set (server/evals): "M" in "$1.2M" was checked as a word of its own, so a line
+  // repeating its fact word for word was rejected.
+  it("passes a unit its fact writes on the same number", () => {
+    expect(checkClaims("Saved $1.2M annually", ["Processed invoices, saving $1.2M annually"])).toEqual([]);
+    expect(checkClaims("Served 40K users with 2FA", ["Served 40K users", "Added 2FA to sign-in"])).toEqual([]);
+  });
+
+  it("rejects the same number with another unit", () => {
+    expect(checkClaims("Saved $1.2B annually", ["Saved $1.2M annually"])).toEqual([{ rule: "entity_not_in_facts", value: "1.2B" }]);
+  });
+});
+
 describe("checkClaims rejects invented details", () => {
   it.each([
     ["an invented percentage", "Cut invoice processing time by 45%", "number_not_in_facts", "45"],
