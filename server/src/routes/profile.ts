@@ -1,10 +1,11 @@
 import { Router } from "express";
-import { and, eq } from "drizzle-orm";
+import { and, eq, exists, not, or, sql } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { FACT_KINDS, getPlan, preferencesSchema } from "@auto-career/shared";
 import { db } from "../db/client";
-import { facts, profiles, resumeProfiles, savedAnswers } from "../db/schema";
-import { forbidden, notFound } from "../lib/errors";
+import { applications, facts, profiles, resumeProfiles, resumes, savedAnswers } from "../db/schema";
+import { HttpError, forbidden, notFound } from "../lib/errors";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
 import { enqueue } from "../jobs/queues";
@@ -92,9 +93,28 @@ profileRouter.patch("/facts/:id", validateBody(factPatchSchema), async (req, res
   res.json({ fact });
 });
 
+/**
+ * A confirmed fact that an application or the base resume cites stays (database-v09), so a sent application never
+ * points at a fact that no longer exists. Anything else deletes, and a missing or foreign id is still 204.
+ * ponytail: a citation is the id as a JSON string anywhere in resume_lines or the document (fact ids are uuids, nothing
+ * else stores one); a scan over the user's rows, fine at hundreds of applications. A jsonb index joins with DB rev 2.
+ */
 profileRouter.delete("/facts/:id", async (req, res) => {
+  const me = currentUser(req);
   const id = parseParam(z.uuid(), req.params.id);
-  await db().delete(facts).where(and(eq(facts.id, id), eq(facts.userId, currentUser(req).id)));
+  const cites = (doc: AnyPgColumn) => sql`position(${`"${id}"`} in ${doc}::text) > 0`;
+  const cited = and(
+    eq(facts.confirmed, true),
+    or(
+      exists(db().select({ one: sql`1` }).from(applications).where(and(eq(applications.userId, me.id), cites(applications.resumeLines)))),
+      exists(db().select({ one: sql`1` }).from(resumes).where(and(eq(resumes.userId, me.id), cites(resumes.document)))),
+    ),
+  );
+  const mine = and(eq(facts.id, id), eq(facts.userId, me.id));
+  const deleted = await db().delete(facts).where(and(mine, not(cited!))).returning({ id: facts.id });
+  if (deleted.length === 0 && (await db().select({ id: facts.id }).from(facts).where(mine)).length > 0) {
+    throw new HttpError(409, "fact_cited", "This fact is cited by your resume or an application, so it cannot be deleted");
+  }
   res.status(204).end();
 });
 

@@ -16,7 +16,7 @@ import type { SessionUser } from "../lib/auth";
 import { HttpError, notFound } from "../lib/errors";
 import { currentUser } from "../middleware/require-auth";
 import { validateBody } from "../middleware/validate";
-import { defaultResume, profileContactFrom, truthLockViolations, type ProfileFact } from "../services/resume-doc";
+import { claimViolations, defaultResume, profileContactFrom, truthLockViolations, type ProfileFact } from "../services/resume-doc";
 import { suggestEdits } from "../services/resume-writer";
 
 /** The structured base resume and the Resume Writer (spec 2026-10-23-resume-workspace, section 6). Mounted at /api/resume. */
@@ -85,16 +85,29 @@ resumeRouter.get("/", async (req, res) => {
   res.json({ resume: await loadResume(currentUser(req)) });
 });
 
-/** Saves the whole document. Every line and fact-backed heading must cite confirmed facts of this user, or nothing is stored. */
+/**
+ * Saves the whole document. Every line and fact-backed heading must cite confirmed facts of this user, and every line
+ * that changed must pass checkClaims against its cited facts (B.8.3), or nothing is stored.
+ */
 resumeRouter.put("/", validateBody(resumeInputSchema), async (req, res) => {
   const me = currentUser(req);
   const doc = req.body as ResumeInput;
-  const confirmed = await db()
-    .select({ id: facts.id })
-    .from(facts)
-    .where(and(eq(facts.userId, me.id), eq(facts.confirmed, true)));
-  const lineIds = truthLockViolations(doc, new Set(confirmed.map((f) => f.id)));
-  if (lineIds.length) throw new HttpError(422, "truth_lock", "Some lines cite facts that are not confirmed in your profile", { lineIds });
+  const [confirmed, [stored]] = await Promise.all([
+    db()
+      .select({ id: facts.id, text: facts.text })
+      .from(facts)
+      .where(and(eq(facts.userId, me.id), eq(facts.confirmed, true))),
+    db().select({ document: resumes.document }).from(resumes).where(eq(resumes.userId, me.id)),
+  ]);
+  const factTexts = new Map(confirmed.map((f) => [f.id, f.text]));
+  const reasons = claimViolations(doc, factTexts, stored?.document ?? null);
+  const lineIds = [...new Set([...truthLockViolations(doc, new Set(factTexts.keys())), ...Object.keys(reasons)])];
+  if (lineIds.length) {
+    throw new HttpError(422, "truth_lock", "Some lines cite facts that are not confirmed in your profile, or add details those facts do not contain", {
+      lineIds,
+      ...(Object.keys(reasons).length ? { reasons } : {}),
+    });
+  }
 
   const row = await db().transaction(async (tx) => {
     const [saved] = await tx

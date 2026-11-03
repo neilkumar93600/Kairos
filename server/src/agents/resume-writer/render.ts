@@ -1,6 +1,6 @@
 import type { ResumeWriterInput } from "./schema";
 import type { RenderedPrompt } from "../types";
-import { fence, userBlockNonce } from "../../llm/fence";
+import { fenceUserBlock } from "../../llm/fence";
 
 const SCOPE_TEXT: Record<ResumeWriterInput["scope"], string> = {
   resume: "Review the whole resume and suggest the edits that matter most.",
@@ -29,7 +29,6 @@ export function renderResumeWriter(input: ResumeWriterInput, ctx: { userId?: str
     .map((f) => `[${f.id}] (${f.kind}) ${f.text}`)
     .join("\n");
   const factsBlock = `Confirmed facts (cite by id):\n${factList || "(none)"}`;
-  const nonce = ctx.userId ? userBlockNonce(ctx.userId, 0, "resume-writer") : undefined;
 
   const blocks: RenderedPrompt["untrusted"] = [
     { label: "resume_lines", text: `Resume view:\n${input.resumeView}`, maxTokens: 2_000 },
@@ -57,11 +56,7 @@ export function renderResumeWriter(input: ResumeWriterInput, ctx: { userId?: str
     .join(" ");
 
   return {
-    userBlock: {
-      text: nonce ? fence("facts", factsBlock, nonce, 2_000) : factsBlock,
-      label: "facts",
-      ...(nonce ? { nonce } : {}),
-    },
+    userBlock: fenceUserBlock("facts", factsBlock, "resume-writer", ctx),
     task,
     untrusted: blocks,
   };

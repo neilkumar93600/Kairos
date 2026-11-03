@@ -109,6 +109,18 @@ describe("suggestEdits verification", () => {
     expect(suggestions.map((s) => s.after)).toEqual(["Built a React dashboard used by 2,000 customers"]);
   });
 
+  it("drops a line with an invented employer, title, school or link (checkClaims)", async () => {
+    const { deps } = fakes([
+      rewrite("l1", "Built a React dashboard used by 2,000 customers at Globex", ["f1"]),
+      rewrite("l1", "Senior engineer who built a React dashboard used by 2,000 customers", ["f1"]),
+      rewrite("l1", "Built a React dashboard used by 2,000 customers while at Stanford University", ["f1"]),
+      rewrite("l1", "Built a React dashboard used by 2,000 customers (demo at github.com/ada/dash)", ["f1"]),
+      rewrite("l1", "Built a React dashboard for 2,000 customers at Initech", ["f1", "f4"]),
+    ]);
+    const { suggestions } = await suggestEdits(req(), ctx, deps);
+    expect(suggestions.map((s) => s.after)).toEqual(["Built a React dashboard for 2,000 customers at Initech"]);
+  });
+
   it("keeps a needsFact question with no text to accept", async () => {
     const ask = { ...rewrite("l2", "Moved 30 services", ["f2"]), needsFact: { kind: "metric" as const, question: "How many services moved?" } };
     const { deps } = fakes([ask]);

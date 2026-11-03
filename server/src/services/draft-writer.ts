@@ -1,14 +1,14 @@
 import { z } from "zod";
 import { UNTRUSTED_RULES, untrusted } from "../ai/untrusted";
 import { HttpError } from "../lib/errors";
-import { inventedDetails } from "./invented-details";
+import { checkClaims } from "../llm/claims";
 import { runAgent } from "../llm/gateway";
 import { answerDrafter } from "../agents/answer-drafter/spec";
 import { coverLetterWriter } from "../agents/cover-letter-writer/spec";
 import { gatewayEnabled } from "../llm/wire";
 import type { AgentCallContext } from "../agents/types";
 import { chatJson } from "./llm";
-import { classifySensitive } from "./sensitive";
+import { classifySensitive, isProfileQuestion } from "./sensitive";
 
 export interface DraftFact {
   id: string;
@@ -46,13 +46,16 @@ const truthLock = () => new HttpError(422, "truth_lock", "The draft cited facts 
 
 /**
  * A draft passes only if it cites at least one fact, every cited id is a confirmed fact of this user (`ok` maps id to
- * text), and it adds no number or skill its cited facts lack.
+ * text), and checkClaims finds nothing its cited facts lack. The target company may be named (B.9.6).
  */
-const verified = (p: { text: string; factIds: string[] }, ok: ReadonlyMap<string, string>) =>
-  p.factIds.length > 0 && p.factIds.every((id) => ok.has(id)) && !inventedDetails(p.text, p.factIds.map((id) => ok.get(id)!)).length;
+const verified = (p: { text: string; factIds: string[] }, ok: ReadonlyMap<string, string>, job: Job) =>
+  p.factIds.length > 0 &&
+  p.factIds.every((id) => ok.has(id)) &&
+  !checkClaims(p.text, p.factIds.map((id) => ok.get(id)!), { allow: [job.company] }).length;
 
 /**
- * Drafts one application answer. Never called for sensitive questions: the route checks first and this refuses too.
+ * Drafts one application answer. Never called for sensitive or profile questions: the route checks first and this
+ * refuses too, before any model call.
  * ponytail: a failed verification gets one retry, then 422 truth_lock. An answer is one short field, so a retry costs
  * little on the fast tier and often fixes a stray id; a second miss means the facts cannot support an answer.
  */
@@ -60,7 +63,9 @@ export async function draftAnswer(
   input: { label: string; job: Job; facts: DraftFact[]; savedAnswers?: { label: string; answer: string }[] },
   deps: Deps = {},
 ): Promise<DraftResult> {
-  if (classifySensitive(input.label)) throw new HttpError(422, "profile_only", "This question is answered from your profile, never by AI");
+  if (classifySensitive(input.label) || isProfileQuestion(input.label)) {
+    throw new HttpError(422, "profile_only", "This question is answered from your profile, never by AI");
+  }
   const ok = new Map(input.facts.map((f) => [f.id, f.text]));
   if (deps.callCtx || (!deps.chat && gatewayEnabled())) {
     // The gateway path (LLM_GATEWAY=anthropic); verification below owns the truth rules in code.
@@ -69,7 +74,7 @@ export async function draftAnswer(
       { label: input.label, facts: input.facts, savedAnswers: input.savedAnswers ?? null, job: input.job },
       deps.callCtx ?? {},
     ).then((r) => r.data);
-    if (verified(out, ok)) return { text: out.text.trim(), factIds: [...new Set(out.factIds)] };
+    if (verified(out, ok, input.job)) return { text: out.text.trim(), factIds: [...new Set(out.factIds)] };
     throw truthLock();
   }
   const chat = deps.chat ?? chatJson;
@@ -89,7 +94,7 @@ export async function draftAnswer(
   ];
   for (let attempt = 0; attempt < 2; attempt++) {
     const out = await chat({ tier: "fast", agent: "draft-writer", schema: answerSchema, maxTokens: 500, messages });
-    if (verified(out, ok)) return { text: out.text.trim(), factIds: [...new Set(out.factIds)] };
+    if (verified(out, ok, input.job)) return { text: out.text.trim(), factIds: [...new Set(out.factIds)] };
   }
   throw truthLock();
 }
@@ -100,9 +105,7 @@ export async function draftCoverLetter(input: { job: Job; facts: DraftFact[] }, 
   if (deps.callCtx || (!deps.chat && gatewayEnabled())) {
     // The gateway path (LLM_GATEWAY=anthropic); the same paragraph filter applies in code.
     const out = await runAgent(coverLetterWriter, { facts: input.facts, job: input.job }, deps.callCtx ?? {}).then((r) => r.data);
-    const kept = out.paragraphs.filter((p) => verified(p, ok));
-    if (kept.length === 0) throw truthLock();
-    return { text: kept.map((p) => p.text.trim()).join("\n\n"), factIds: [...new Set(kept.flatMap((p) => p.factIds))] };
+    return letterFrom(out.paragraphs, ok, input.job);
   }
   const chat = deps.chat ?? chatJson;
   const out = await chat({
@@ -118,10 +121,15 @@ export async function draftCoverLetter(input: { job: Job; facts: DraftFact[] }, 
       { role: "user", content: `Facts:\n${factList(input.facts)}\n\n${jobBlock(input.job)}` },
     ],
   });
+  return letterFrom(out.paragraphs, ok, input.job);
+}
+
+/** On either path: paragraphs failing verification are dropped, then at most 4 paragraphs and 250 words are kept. */
+function letterFrom(paragraphs: { text: string; factIds: string[] }[], ok: ReadonlyMap<string, string>, job: Job): DraftResult {
   const kept: { text: string; factIds: string[] }[] = [];
   let words = 0;
-  for (const p of out.paragraphs) {
-    if (!verified(p, ok)) continue;
+  for (const p of paragraphs) {
+    if (!verified(p, ok, job)) continue;
     const n = p.text.trim().split(/\s+/).length;
     if (kept.length >= MAX_PARAGRAPHS || words + n > MAX_WORDS) break;
     kept.push({ text: p.text.trim(), factIds: p.factIds });

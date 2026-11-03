@@ -9,9 +9,11 @@ import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
 import { enqueue } from "../jobs/queues";
 import { draftAnswer, draftCoverLetter } from "../services/draft-writer";
-import { classifySensitive } from "../services/sensitive";
+import { classifySensitive, isProfileQuestion } from "../services/sensitive";
 import { approveApplications, planFor } from "../services/submissions";
 import { enforceTruthLock } from "../services/tailor";
+import { lineKey } from "../services/resume-doc";
+import { checkClaims, type ClaimViolation } from "../llm/claims";
 import { writerLimiter } from "./resume";
 
 /** Review queue, approvals and receipts. Mounted at /api/applications. */
@@ -54,22 +56,54 @@ applicationsRouter.get("/:id", async (req, res) => {
   res.json(row);
 });
 
-/** Edits a draft. Resume lines go through the truth lock again, so an edit cannot cite facts the user lacks. */
+/**
+ * Edits a draft (05-api 10.6, layers 1 and 2). Every line must cite confirmed facts of this user; lines and cover-letter
+ * paragraphs that changed must also pass checkClaims. Any failure is 422 truth_lock and nothing is stored.
+ * ponytail: answers are not claim-checked. 10.6 step 6 checks only free-text questions from a questions snapshot, which
+ * does not exist yet; profile and sensitive answers are the user's own assertion. Add it with the snapshot (prepare v2).
+ */
 applicationsRouter.patch("/:id", validateBody(updateApplicationSchema), async (req, res) => {
   const me = currentUser(req);
   const id = parseParam(z.uuid(), req.params.id);
   const body = req.body as z.infer<typeof updateApplicationSchema>;
 
   let resumeLines = body.resumeLines;
-  if (resumeLines) {
+  if (resumeLines || body.coverLetter) {
+    const [current] = await db()
+      .select({ resumeLines: applications.resumeLines, coverLetter: applications.coverLetter, companyName: companies.name })
+      .from(applications)
+      .innerJoin(jobs, eq(jobs.id, applications.jobId))
+      .innerJoin(companies, eq(companies.id, jobs.companyId))
+      .where(and(eq(applications.id, id), eq(applications.userId, me.id), eq(applications.status, "draft")));
+    if (!current) throw notFound("Draft application");
     // Confirmed only: a note the writer made citable stays unconfirmed until the user confirms it, and must not reach a draft.
     const confirmed = await db()
-      .select({ id: facts.id })
+      .select({ id: facts.id, text: facts.text })
       .from(facts)
       .where(and(eq(facts.userId, me.id), eq(facts.confirmed, true)));
-    const { kept, rejected } = enforceTruthLock(resumeLines, new Set(confirmed.map((f) => f.id)));
-    if (rejected.length) throw new HttpError(422, "truth_lock", "Some lines cite facts that are not confirmed in your profile", rejected);
-    resumeLines = kept;
+    const failures: object[] = [];
+    if (resumeLines) {
+      const stored = new Set(current.resumeLines.map(lineKey));
+      const { kept, rejected } = enforceTruthLock(resumeLines, new Map(confirmed.map((f) => [f.id, f.text])), (l) => !stored.has(lineKey(l)));
+      failures.push(...rejected);
+      resumeLines = kept;
+    }
+    // A letter cites no fact ids (frozen schema), so each paragraph is checked against every confirmed fact (F-8).
+    let letterClaim: ClaimViolation | undefined;
+    if (body.coverLetter && body.coverLetter !== current.coverLetter) {
+      const sources = confirmed.map((f) => f.text);
+      [letterClaim] = body.coverLetter
+        .split(/\n\s*\n/)
+        .flatMap((p) => checkClaims(p, sources, { allow: [current.companyName, me.name] }));
+      if (letterClaim) failures.push({ coverLetter: true, reason: `not in your confirmed facts: ${letterClaim.value}`, rule: letterClaim.rule });
+    }
+    if (failures.length) {
+      const message =
+        letterClaim && failures.length === 1
+          ? `Your cover letter mentions "${letterClaim.value}", which is not in your confirmed facts`
+          : "Some lines cite facts that are not confirmed in your profile, or add details those facts do not contain";
+      throw new HttpError(422, "truth_lock", message, failures);
+    }
   }
 
   const [updated] = await db()
@@ -114,7 +148,7 @@ applicationsRouter.post("/:id/drafts", writerLimiter, validateBody(draftRequestS
   if (body.kind === "answer") {
     const answer = row.application.answers.find((a) => a.fieldKey === body.fieldKey);
     if (!answer) throw notFound("Answer");
-    if (classifySensitive(answer.label) || answer.source === "profile") {
+    if (classifySensitive(answer.label) || isProfileQuestion(answer.label) || answer.source === "profile") {
       throw new HttpError(422, "profile_only", "This question is answered from your profile, never by AI");
     }
     label = answer.label;

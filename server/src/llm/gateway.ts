@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { defaultBudget } from "./spend-store";
-import type { AgentCallContext, AgentResult, AgentSpec, CallKind, ClaudeModel, RenderedPrompt, Violation } from "../agents/types";
+import type { AgentCallContext, AgentResult, AgentSpec, CallKind, ClaudeModel, DataLabel, RenderedPrompt, Violation } from "../agents/types";
 import { Budget } from "./budget";
 import * as breaker from "./breaker";
 import { createAnthropicClient, type AnthropicLike, type SentResponse } from "./client";
@@ -22,6 +22,9 @@ import { canonicalJson, normalizeEnumCase } from "./schema";
  */
 
 const sha256 = (s: string): Buffer => createHash("sha256").update(s, "utf8").digest();
+
+/** Fence labels of user-authored data (11.1 T2), the only text that exempts an echo-canary pattern. */
+const USER_LABELS: ReadonlySet<DataLabel> = new Set(["facts", "profile", "resume_text", "resume_lines", "user_note", "user_answer", "saved_answers"]);
 
 export interface GatewayDeps {
   client: (workspace: "interactive" | "batch") => AnthropicLike;
@@ -93,6 +96,8 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
 
   const rendered = spec.render(input, ctx);
   const variableBlock = variableText(rendered, nonces);
+  // The user's own data (T2) may legitimately be quoted back; third-party blocks never exempt a canary pattern.
+  const canaryExempt = [rendered.userBlock?.text ?? "", ...rendered.untrusted.filter((b) => USER_LABELS.has(b.label)).map((b) => b.text)].join("\n");
 
   // Per-call budget estimate (9.2): worst case, every input token uncached.
   const inputTokensEstimate = estimateInputTokens([systemText, rendered.userBlock?.text ?? "", variableBlock]);
@@ -296,7 +301,7 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
       return { outcome: "invalid", error: new AgentError("schema_invalid", `${spec.id}: ${fmt(violations)}`, false, violations), violations, replyText: text };
     }
     const violations: Violation[] = [...(spec.postValidate ? spec.postValidate(parsed.data, input) : [])];
-    const echo = echoCanaryHit(parsed.data, nonces.filter(Boolean));
+    const echo = echoCanaryHit(parsed.data, nonces.filter(Boolean), canaryExempt);
     if (echo.hit) violations.push({ code: "injection_echo", path: echo.path ?? "$" });
     if (violations.length) {
       const isEcho = violations.some((v) => v.code === "injection_echo");

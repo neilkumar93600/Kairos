@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import type { AgentId, DataLabel } from "../agents/types";
+import type { AgentCallContext, AgentId, DataLabel } from "../agents/types";
 import { env } from "../lib/env";
 
 /**
@@ -47,21 +47,43 @@ export function fence(label: DataLabel, text: string, nonce: string, maxTokens: 
   return `<<DATA kind=${label} id=${nonce}>>\n${clean}\n<<END DATA id=${nonce}>>`;
 }
 
-/** The output-echo canary patterns of 11.4, case-insensitive. */
+/**
+ * The per-user block, always fenced (11.3). With a userId the nonce is the stable userBlockNonce, so the cached prefix
+ * stays byte-identical; without one it is a per-call nonce: never cached, but never unfenced either (llm-agents-35).
+ */
+export function fenceUserBlock(
+  label: DataLabel,
+  text: string,
+  agentId: AgentId,
+  ctx: Pick<AgentCallContext, "userId">,
+): { text: string; label: DataLabel; nonce: string } {
+  const nonce = ctx.userId ? userBlockNonce(ctx.userId, 0, agentId) : callNonce();
+  return { text: fence(label, text, nonce, 2_000), label, nonce };
+}
+
+/**
+ * The output-echo canary patterns of 11.4. Narrowed so ordinary resume text passes: "as an AI engineer", "as an
+ * airline analyst", "power user:" and "Teaching assistant:" are not echoes; a role prefix counts only at a line start.
+ */
 export const ECHO_PATTERNS: RegExp[] = [
   /ignore (all|previous|prior) instructions/i,
   /system prompt/i,
   /you are now/i,
-  /as an ai/i,
+  /\bas an ai(?:,|\s+(?:language model|model|assistant|i)\b)/i,
   /<\|/,
-  /\bassistant:/,
-  /\buser:/,
+  /^\s*assistant:/im,
+  /^\s*user:/im,
   /BEGIN UNTRUSTED/i,
   /<<DATA/,
 ];
 
-/** True when a reply echoes a fence nonce, a marker, or an instruction pattern (2.4 step 5). */
-export function echoCanaryHit(output: unknown, nonces: string[]): { hit: boolean; path: string | null } {
+/**
+ * True when a reply echoes a fence nonce, a marker, or an instruction pattern (2.4 step 5). A pattern that `exempt`
+ * (the user's own data: facts, notes, resume text) also contains is quoted, not echoed (parser spec V8). Nonces and
+ * markers are never exempt, and third-party text (postings, form questions) never belongs in `exempt`.
+ */
+export function echoCanaryHit(output: unknown, nonces: string[], exempt = ""): { hit: boolean; path: string | null } {
+  const patterns = ECHO_PATTERNS.filter((p) => !p.test(exempt));
   const findings: string[] = [];
   const visit = (value: unknown, path: string): void => {
     if (typeof value === "string") {
@@ -69,7 +91,7 @@ export function echoCanaryHit(output: unknown, nonces: string[]): { hit: boolean
         if (nonce && value.includes(nonce)) findings.push(`${path}: nonce`);
       }
       if (/<<DATA|<<END DATA/i.test(value)) findings.push(`${path}: marker`);
-      for (const pattern of ECHO_PATTERNS) {
+      for (const pattern of patterns) {
         if (pattern.test(value)) findings.push(`${path}: ${pattern.source}`);
       }
       return;

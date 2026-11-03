@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { AGENTS } from "../../src/agents/registry";
-import { toStrictJsonSchema } from "../../src/llm/schema";
+import { normalizeEnumCase, toStrictJsonSchema } from "../../src/llm/schema";
 
 const here = join(import.meta.dirname ?? ".");
 
@@ -40,6 +41,17 @@ describe("toStrictJsonSchema per agent", () => {
   it("keeps enums constrained in the sent schema (unlike the SDK helper)", () => {
     const parser = JSON.stringify(AGENTS["resume-parser"].schemaSnapshot);
     expect(parser).toContain('"enum"');
+  });
+
+  it("normalizes enum casing only where the schema has an enum, never free text (llm-agents-10)", () => {
+    const reply = { facts: [{ kind: "SKILL", text: "Skill", sourceSpan: "Role" }] };
+    expect(normalizeEnumCase(reply, AGENTS["resume-parser"].output)).toEqual({ facts: [{ kind: "skill", text: "Skill", sourceSpan: "Role" }] });
+  });
+
+  it("normalizes a nullable enum and leaves unknown values for zod to reject", () => {
+    const schema = z.object({ action: z.enum(["rewrite", "add"]), needsFact: z.object({ kind: z.enum(["metric", "role"]) }).nullable() });
+    expect(normalizeEnumCase({ action: "Rewrite", needsFact: { kind: "METRIC" } }, schema)).toEqual({ action: "rewrite", needsFact: { kind: "metric" } });
+    expect(normalizeEnumCase({ action: "delete", needsFact: null }, schema)).toEqual({ action: "delete", needsFact: null });
   });
 
   it("keeps personal data out of the schemas", () => {
