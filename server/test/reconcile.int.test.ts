@@ -174,4 +174,51 @@ describe.skipIf(!hasTestDb)("reconcilers against Postgres", () => {
       expect(enqueue).not.toHaveBeenCalled();
     });
   });
+
+  describe("sign-up bootstrap (billing-46, billing-67, R-4)", () => {
+    const FREE_GRANT = 25; // shared/src/plans.ts, Free applicationsPerCycle
+    const newUser = async (createdAt: Date) => {
+      const id = crypto.randomUUID();
+      await db.insert(schema.user).values({ id, name: "New User", email: `${id}@test.local`, createdAt });
+      return id;
+    };
+    const pieces = async (userId: string) => ({
+      profiles: (await db.select().from(schema.profiles).where(eq(schema.profiles.userId, userId))).length,
+      plans: (await db.select({ plan: schema.subscriptions.plan }).from(schema.subscriptions).where(eq(schema.subscriptions.userId, userId))).map((r) => r.plan),
+      grants: (await db.select({ delta: schema.creditLedger.delta }).from(schema.creditLedger).where(eq(schema.creditLedger.userId, userId))).map((r) => r.delta),
+    });
+
+    it("a user whose sign-up hook failed gets the profile, the free plan and the free grant, exactly once across two workers", async () => {
+      const userId = await newUser(new Date(Date.now() - 2 * MINUTE));
+      const results = await Promise.all([reconcile.processBootstrapUsers(), reconcile.processBootstrapUsers()]);
+      expect(results[0]!.repaired + results[1]!.repaired).toBe(1);
+      expect(await pieces(userId)).toEqual({ profiles: 1, plans: ["free"], grants: [FREE_GRANT] });
+      expect(signal).toHaveBeenCalledWith("signup_repaired", 1);
+      await expect(reconcile.processBootstrapUsers()).resolves.toEqual({ repaired: 0 });
+    });
+
+    it("fills only the missing piece: a user with a profile and a plan but no grant gets the grant alone", async () => {
+      const userId = await newUser(new Date(Date.now() - 2 * MINUTE));
+      await db.insert(schema.profiles).values({ userId, forwardingAddress: `u-${userId}@replies.test` });
+      await db.insert(schema.subscriptions).values({ userId, plan: "pro" });
+      await expect(reconcile.processBootstrapUsers()).resolves.toEqual({ repaired: 1 });
+      expect(await pieces(userId)).toEqual({ profiles: 1, plans: ["pro"], grants: [FREE_GRANT] });
+    });
+
+    it("leaves users in their first minute, and users older than 2 days, alone", async () => {
+      const fresh = await newUser(new Date());
+      const old = await newUser(new Date(Date.now() - 3 * 24 * 60 * MINUTE));
+      await expect(reconcile.processBootstrapUsers()).resolves.toEqual({ repaired: 0 });
+      expect(await pieces(fresh)).toEqual({ profiles: 0, plans: [], grants: [] });
+      expect(await pieces(old)).toEqual({ profiles: 0, plans: [], grants: [] });
+    });
+
+    it("bootstrapUser, the sign-up hook's body, run twice in a row writes one grant", async () => {
+      const { bootstrapUser } = await import("../src/services/bootstrap");
+      const userId = await newUser(new Date());
+      await expect(bootstrapUser(db, userId)).resolves.toBe(true);
+      await expect(bootstrapUser(db, userId)).resolves.toBe(false);
+      expect(await pieces(userId)).toEqual({ profiles: 1, plans: ["free"], grants: [FREE_GRANT] });
+    });
+  });
 });

@@ -3,12 +3,13 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { bearer, emailOTP, oneTimeToken } from "better-auth/plugins";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/client";
 import { CLIENT_IP_HEADER } from "../middleware/client-ip";
 import { hit } from "../middleware/rate-limit";
 import { cancelBillingForDeletedUser } from "../services/billing-events";
+import { bootstrapUser } from "../services/bootstrap";
 import { INLINE_REQUEST, stripe } from "../services/stripe";
 import { env, type Env } from "./env";
 import { logger, logUserHash } from "./logger";
@@ -20,11 +21,6 @@ const OTP_SUBJECTS = {
   "forget-password": "Reset your Kairos password",
   "change-email": "Confirm your new email for Kairos",
 } as const;
-
-function forwardingAddressFor(userId: string): string {
-  const suffix = randomBytes(4).toString("hex");
-  return `u-${userId.slice(0, 8).toLowerCase()}-${suffix}@${env().INBOUND_EMAIL_DOMAIN}`;
-}
 
 type EmailLimit = [bucket: string, max: number, windowMs: number];
 /** Every path that mails a code shares one bucket per address: it protects the inbox, not the endpoint. */
@@ -163,18 +159,15 @@ function createAuth() {
       },
       user: {
         create: {
-          // Every new user gets a profile, a free plan row and the free credit grant in one transaction.
+          // Every new user gets a profile, a free plan row and the free credit grant in one transaction. The user row is
+          // already committed, so a failure is logged rather than thrown (which would fail the sign-up before its code
+          // is mailed); the bootstrap-users reconciler finishes it within 2 minutes and signals signup_repaired.
           after: async (created) => {
-            await db().transaction(async (tx) => {
-              await tx.insert(schema.profiles).values({
-                userId: created.id,
-                forwardingAddress: forwardingAddressFor(created.id),
-                preferences: null,
-              });
-              await tx.insert(schema.subscriptions).values({ userId: created.id, plan: "free" });
-              await tx.insert(schema.creditLedger).values({ userId: created.id, delta: 25, reason: "free_grant" });
-            });
-            logger.info({ userHash: logUserHash(created.id) }, "user onboarded");
+            const userHash = logUserHash(created.id);
+            await bootstrapUser(db(), created.id).then(
+              () => logger.info({ userHash }, "user onboarded"),
+              (err: unknown) => logger.error({ err, userHash }, "sign-up bootstrap failed; the reconciler retries it"),
+            );
           },
         },
       },

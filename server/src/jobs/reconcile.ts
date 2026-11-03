@@ -1,8 +1,9 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { applications, inboundEmails } from "../db/schema";
+import { applications, creditLedger, inboundEmails, profiles, subscriptions, user } from "../db/schema";
 import { logger } from "../lib/logger";
 import { signal } from "../lib/sentry";
+import { bootstrapUser } from "../services/bootstrap";
 import { sweepStuckSubmitting } from "../services/submissions";
 import { redrive } from "./queues";
 
@@ -95,4 +96,30 @@ export async function processRedriveInbox(): Promise<{ checked: number; added: n
   const added = await each("redrive-inbox", rows.map((r) => r.id), (id) => redrive("classify-email", { inboundEmailId: id }, `classify-${id}`, true));
   if (added) logger.warn({ added }, "lost classify jobs re-added");
   return { checked: rows.length, added };
+}
+
+/**
+ * Every minute: a user from the last 2 days, past their first minute, missing the profile, the subscriptions row or the
+ * free grant: the sign-up hook failed after Better Auth committed the user (billing-67, R-4). bootstrapUser is the
+ * hook's own body and inserts only what is missing, so the grant is written once however often this runs.
+ */
+export async function processBootstrapUsers(): Promise<{ repaired: number }> {
+  const rows = await db()
+    .select({ id: user.id })
+    .from(user)
+    .where(
+      and(
+        sql`${user.createdAt} between now() - interval '2 days' and now() - interval '1 minute'`,
+        sql`(not exists (select 1 from ${profiles} where ${profiles.userId} = ${user.id})
+          or not exists (select 1 from ${subscriptions} where ${subscriptions.userId} = ${user.id})
+          or not exists (select 1 from ${creditLedger} where ${creditLedger.userId} = ${user.id} and ${creditLedger.reason} = 'free_grant'))`,
+      ),
+    )
+    .limit(200);
+  const repaired = await each("bootstrap-users", rows.map((r) => r.id), (id) => bootstrapUser(db(), id));
+  if (repaired) {
+    logger.warn({ repaired }, "sign-up bootstrap finished by the reconciler");
+    signal("signup_repaired", repaired);
+  }
+  return { repaired };
 }

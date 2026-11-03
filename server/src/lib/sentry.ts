@@ -100,6 +100,8 @@ const SIGNALS = {
   llm_calls_default_rows: 1,
   /** Cloud sends left in submitting over 10 minutes, settled as unconfirmed: an applier died mid-run (WP-09). */
   submitting_swept: 1,
+  /** Users the bootstrap reconciler finished: their sign-up hook failed (WP-09). */
+  signup_repaired: 1,
 } as const;
 export type Signal = keyof typeof SIGNALS;
 

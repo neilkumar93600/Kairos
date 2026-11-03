@@ -1,7 +1,7 @@
 import type { Job, RepeatOptions } from "bullmq";
 import { processPartitions } from "./partitions";
 import type { QueueName } from "./queues";
-import { processReconcileApply, processRedriveDrafts, processRedriveInbox, processSweepSubmitting } from "./reconcile";
+import { processBootstrapUsers, processReconcileApply, processRedriveDrafts, processRedriveInbox, processSweepSubmitting } from "./reconcile";
 
 export interface Schedule {
   queue: QueueName;
@@ -33,6 +33,8 @@ export const SCHEDULES: Schedule[] = [
   // Drafts whose tailoring job and mail whose classify job Redis lost (platform-v02, messaging-v04).
   { queue: "maintenance", id: "redrive-drafts", repeat: { every: 5 * MINUTE }, run: processRedriveDrafts },
   { queue: "maintenance", id: "redrive-inbox", repeat: { every: 5 * MINUTE }, run: processRedriveInbox },
+  // A sign-up whose hook failed gets its profile, plan and free grant (billing-67).
+  { queue: "maintenance", id: "bootstrap-users", repeat: { every: MINUTE }, run: processBootstrapUsers },
 ];
 
 /** The maintenance queue's processor: the scheduler id is the job name. */

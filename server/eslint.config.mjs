@@ -39,9 +39,9 @@ export default tseslint.config(
     files: ["src/services/credits.ts"],
     rules: { "no-restricted-syntax": "off" },
   },
-  // ponytail: three files predate the rules. Each exception is a file-level off switch, so a new violation anywhere
+  // ponytail: two files predate the rules. Each exception is a file-level off switch, so a new violation anywhere
   // else still fails. Remove them when the owning package moves the code: services/llm.ts (the legacy chatJson, to
-  // llm/ in WP-07), lib/auth.ts (free grant) and routes/webhooks.ts (plan grant) to services/credits.ts (WP-02, WP-32).
+  // llm/ in WP-07) and routes/webhooks.ts (plan grant) to services/credits.ts (WP-32).
   { files: ["src/services/llm.ts"], rules: { "no-restricted-imports": "off" } },
-  { files: ["src/lib/auth.ts", "src/routes/webhooks.ts"], rules: { "no-restricted-syntax": "off" } },
+  { files: ["src/routes/webhooks.ts"], rules: { "no-restricted-syntax": "off" } },
 );

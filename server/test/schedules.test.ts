@@ -31,6 +31,10 @@ describe("job schedules", () => {
     expect(byId["redrive-inbox"]).toMatchObject({ queue: "maintenance", repeat: { every: 5 * 60_000 } });
   });
 
+  it("a sign-up whose hook failed is finished within 2 minutes", () => {
+    expect(byId["bootstrap-users"]).toMatchObject({ queue: "maintenance", repeat: { every: 60_000 } });
+  });
+
   it("an unknown maintenance job fails instead of passing silently", async () => {
     await expect(processMaintenance({ name: "nope" } as never)).rejects.toThrow(/nope/);
   });
