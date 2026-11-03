@@ -108,6 +108,9 @@ describe("job upsert values", () => {
 });
 
 describe("adapter fetchPosting", () => {
+  const L = "0f6c1a3e-2b4d-4c5e-8f9a-1b2c3d4e5f60";
+  const A = "aaaaaaaa-0000-4000-8000-000000000001";
+  const B = "bbbbbbbb-0000-4000-8000-000000000002";
   const json = (b: unknown) => async () => new Response(JSON.stringify(b), { status: 200 });
   const gone = async () => new Response("", { status: 404 });
 
@@ -127,18 +130,18 @@ describe("adapter fetchPosting", () => {
     let seen = "";
     const f = async (u: string) => {
       seen = u;
-      return new Response(JSON.stringify({ id: "abc", text: "Eng", hostedUrl: "https://jobs.lever.co/acme/abc" }), { status: 200 });
+      return new Response(JSON.stringify({ id: L, text: "Eng", hostedUrl: `https://jobs.lever.co/acme/${L}` }), { status: 200 });
     };
-    const j = await lever.fetchPosting("acme", "abc", f);
-    expect(seen).toBe("https://api.lever.co/v0/postings/acme/abc");
-    expect(j).toMatchObject({ externalId: "abc", applyUrl: "https://jobs.lever.co/acme/abc/apply" });
-    expect(await lever.fetchPosting("acme", "abc", gone)).toBeNull();
+    const j = await lever.fetchPosting("acme", L, f);
+    expect(seen).toBe(`https://api.lever.co/v0/postings/acme/${L}`);
+    expect(j).toMatchObject({ externalId: L, applyUrl: `https://jobs.lever.co/acme/${L}/apply` });
+    expect(await lever.fetchPosting("acme", L, gone)).toBeNull();
   });
 
   it("Ashby selects the posting from the board, null when absent or board missing", async () => {
-    const board = { jobs: [{ id: "a", title: "A", jobUrl: "https://jobs.ashbyhq.com/o/a" }, { id: "b", title: "B", jobUrl: "https://jobs.ashbyhq.com/o/b" }] };
-    expect(await ashby.fetchPosting("o", "b", json(board))).toMatchObject({ externalId: "b", applyUrl: "https://jobs.ashbyhq.com/o/b/application" });
+    const board = { jobs: [{ id: A, title: "A", jobUrl: `https://jobs.ashbyhq.com/o/${A}` }, { id: B, title: "B", jobUrl: `https://jobs.ashbyhq.com/o/${B}` }] };
+    expect(await ashby.fetchPosting("o", B, json(board))).toMatchObject({ externalId: B, applyUrl: `https://jobs.ashbyhq.com/o/${B}/application` });
     expect(await ashby.fetchPosting("o", "zzz", json(board))).toBeNull();
-    expect(await ashby.fetchPosting("o", "a", gone)).toBeNull();
+    expect(await ashby.fetchPosting("o", A, gone)).toBeNull();
   });
 });
