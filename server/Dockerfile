@@ -2,16 +2,18 @@
 # Image for the Railway "api" and "worker" services (same image, different start command).
 # Build context is the repo root: docker build -f server/Dockerfile .
 
-FROM node:22-slim AS base
+FROM node:22-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da AS base
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json .npmrc ./
 COPY shared/package.json shared/
 COPY server/package.json server/
 COPY web/package.json web/
 COPY extension/package.json extension/
 
 FROM base AS build
-RUN npm ci --workspace @auto-career/server --include-workspace-root=false
+# No lifecycle scripts run during install (supply chain); esbuild is the one package whose binary the build needs.
+RUN npm ci --ignore-scripts --workspace @auto-career/server --include-workspace-root=false \
+ && npm rebuild esbuild
 COPY shared shared
 COPY server server
 RUN npm run build --workspace @auto-career/server
@@ -20,12 +22,14 @@ FROM base AS prod-deps
 # better-auth lists next, react, vitest and drizzle-kit as optional peers. Because the web workspace and the
 # dev tools share this lockfile, npm installs them here too. No service imports them at runtime (api, worker,
 # applier and migrate all boot without them), so they are removed: about 120 MB of node_modules instead of 620 MB.
-RUN npm ci --omit=dev --workspace @auto-career/server --include-workspace-root=false \
+RUN npm ci --omit=dev --ignore-scripts --workspace @auto-career/server --include-workspace-root=false \
  && rm -rf node_modules/next node_modules/@next node_modules/react node_modules/react-dom node_modules/styled-jsx \
       node_modules/vitest node_modules/@vitest node_modules/vite node_modules/drizzle-kit node_modules/@esbuild-kit \
       node_modules/esbuild node_modules/@esbuild node_modules/tsx node_modules/sharp node_modules/@img
 
-FROM node:22-slim AS runtime
+FROM node:22-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da AS runtime
+# tini is PID 1 so SIGTERM reaches node and orphaned child processes are reaped; ca-certificates for TLS.
+RUN apt-get update && apt-get install -y --no-install-recommends tini ca-certificates && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=prod-deps /app/node_modules ./node_modules
@@ -35,4 +39,5 @@ COPY server/package.json ./server/package.json
 WORKDIR /app/server
 USER node
 EXPOSE 4000
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "dist/api.js"]
