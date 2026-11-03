@@ -1,4 +1,6 @@
 import { z } from "zod";
+// Both modules call each other only inside functions, so the import cycle is safe.
+import { parseKeks } from "./crypto";
 
 const emptyToUndefined = (v: unknown) => (v === "" ? undefined : v);
 
@@ -150,6 +152,26 @@ const envSchema = z.object({
   LLM_SHED_LEVEL: z.coerce.number().int().min(0).max(3).default(0),
   /** Kill switch for the scoring loop (true, 1, on): new postings are not scored while set. */
   PAUSE_SCORING: z.preprocess(emptyToUndefined, z.stringbool().default(false)),
+
+  /**
+   * api and worker only: `v2:<base64 of 32 bytes>,v1:<...>`, the first encrypts (lib/crypto.ts, docs/runbook/keys.md).
+   * A malformed list refuses the boot. ponytail: optional until the first encrypted column (WP-12), which makes it
+   * required in production.
+   */
+  DATA_KEKS: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .transform((raw, ctx) => {
+        try {
+          return parseKeks(raw);
+        } catch (err) {
+          ctx.addIssue({ code: "custom", message: (err as Error).message });
+          return z.NEVER;
+        }
+      })
+      .optional(),
+  ),
 }).superRefine((e, ctx) => {
   // Without a token the mailer logs emails instead of sending them. Fine locally; in production
   // that would put sign-up and reset codes in the logs, so refuse to boot.
