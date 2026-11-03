@@ -1,6 +1,7 @@
+import * as Sentry from "@sentry/node";
 import type { NextFunction, Request, Response } from "express";
 import { HttpError, nextUtcMidnight } from "../lib/errors";
-import { logger } from "../lib/logger";
+import { logger, logUserHash } from "../lib/logger";
 import { AgentError } from "../llm/errors";
 import { LlmError } from "../services/llm";
 
@@ -59,5 +60,10 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     return;
   }
   logger.error({ err, requestId, path: req.path, method: req.method }, "unhandled error");
+  // Tags and the userHash only; lib/sentry.ts scrubs the rest. A no-op without SENTRY_DSN.
+  Sentry.captureException(err, {
+    tags: { requestId: rid.requestId, method: req.method, path: req.path },
+    user: req.user ? { id: logUserHash(req.user.id) } : undefined,
+  });
   res.status(500).json({ error: { code: "internal", message: "Something went wrong on our side", ...rid } });
 }

@@ -29,6 +29,17 @@ const baseShape = {
   ),
   /** Opens the cloud channel to paid plans with cloudApplier. Owner-only (0) until WP-04 is accepted and S-AP4 is settled. */
   CLOUD_APPLIER_OPEN: flag("0"),
+
+  // Detection (WP-11). None is a secret; each service sets its own values (owner-actions/WP-11.md).
+  /** The api serves the app here; the worker and the applier serve only GET /health, Railway's deploy healthcheck. */
+  PORT: z.coerce.number().int().default(4000),
+  /** This service's Sentry DSN; the applier's points at its own project. Unset: no Sentry (local, tests). */
+  SENTRY_DSN: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  /** Dead-man's switch: GET once a minute while healthy; the uptime vendor pages when pings stop. Unset: no pings. */
+  HEARTBEAT_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  /** Set by Railway; the release and the environment on Sentry events. */
+  RAILWAY_GIT_COMMIT_SHA: z.preprocess(emptyToUndefined, z.string().optional()),
+  RAILWAY_ENVIRONMENT_NAME: z.preprocess(emptyToUndefined, z.string().optional()),
 };
 
 const applierShape = {
@@ -77,7 +88,6 @@ const applierSchema = z.object(applierShape);
 /** The api and the worker: everything. */
 const envSchema = z.object({
   ...applierShape,
-  PORT: z.coerce.number().int().default(4000),
 
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().url(),

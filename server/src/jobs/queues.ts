@@ -11,6 +11,7 @@ export const QUEUES = {
   classifyEmail: "classify-email",
   cloudApply: "cloud-apply",
   costRollup: "cost-rollup",
+  ledgerWatch: "ledger-watch",
 } as const;
 
 export interface JobData {
@@ -22,6 +23,7 @@ export interface JobData {
   "classify-email": { inboundEmailId: string };
   "cloud-apply": { applicationId: string };
   "cost-rollup": { schedule: true };
+  "ledger-watch": { schedule: true };
 }
 
 export type QueueName = keyof JobData;

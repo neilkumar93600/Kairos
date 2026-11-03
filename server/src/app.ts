@@ -5,6 +5,7 @@ import { toNodeHandler } from "better-auth/node";
 import type { AuthGateway } from "./lib/auth";
 import { HttpError } from "./lib/errors";
 import { httpLogger, requestId } from "./lib/logger";
+import { signal, type Signal } from "./lib/sentry";
 import { clientIpResolver } from "./middleware/client-ip";
 import { createLimiters } from "./middleware/rate-limit";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
@@ -23,6 +24,8 @@ export interface AppDeps {
   proxyHops?: number;
   /** Rate-limit counters in Postgres, shared by replicas and kept across deploys. Off: in memory per app (tests). */
   sharedLimits?: boolean;
+  /** True once SIGTERM arrived (lib/lifecycle.ts): /health answers 503 draining. */
+  isDraining?: () => boolean;
 }
 
 const AUTH_BODY_MAX_BYTES = 64 * 1024;
@@ -38,6 +41,12 @@ function capAuthBody(req: Request, res: Response, next: NextFunction) {
   next(tooLarge ? new HttpError(413, "payload_too_large", "The request body is too large") : undefined);
 }
 
+/** Counts responses with one of `statuses` as a security signal for Sentry (lib/sentry.ts). */
+const signalOn = (statuses: number[], name: Signal) => (_req: Request, res: Response, next: NextFunction) => {
+  res.on("finish", () => statuses.includes(res.statusCode) && signal(name));
+  next();
+};
+
 /** Builds the Express app. Order matters: auth and webhooks read the raw body, so they mount before express.json(). */
 export function createApp(deps: AppDeps) {
   const app = express();
@@ -52,9 +61,10 @@ export function createApp(deps: AppDeps) {
   app.use(httpLogger());
   app.use(cors({ origin: deps.corsOrigins, credentials: true, allowedHeaders: ["content-type", "authorization", "x-request-id"], exposedHeaders: ["x-request-id"] }));
 
-  app.use(healthRouter(deps.healthChecks));
-  app.use("/api/auth", capAuthBody);
+  app.use(healthRouter(deps.healthChecks, deps.isDraining));
+  app.use("/api/auth", signalOn([429], "auth_rate_limited"), capAuthBody);
   app.all("/api/auth/*splat", toNodeHandler(deps.auth.handler));
+  app.use("/api/webhooks/inbound-email", signalOn([401, 403], "inbound_token_rejected"));
   app.use("/api/webhooks", limits.webhook, webhooksRouter);
 
   app.use(express.json({ limit: "1mb" }));

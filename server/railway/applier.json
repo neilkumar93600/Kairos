@@ -7,6 +7,9 @@
   },
   "deploy": {
     "startCommand": "node dist/applier.js",
-    "restartPolicyType": "ALWAYS"
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 120,
+    "restartPolicyType": "ALWAYS",
+    "drainingSeconds": 180
   }
 }

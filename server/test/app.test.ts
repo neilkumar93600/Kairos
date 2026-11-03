@@ -21,14 +21,17 @@ const signedOut: AuthGateway = {
 };
 
 describe("createApp", () => {
-  it("reports healthy when every check passes", async () => {
+  it("reports healthy when every check passes, on /health and on /api/health (the path through Vercel)", async () => {
     const app = createApp({ auth: signedOut, corsOrigins: [], healthChecks: { database: async () => {}, redis: async () => {} } });
-    const res = await request(app).get("/health");
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ status: "ok", checks: { database: "ok", redis: "ok" } });
+    for (const path of ["/health", "/api/health"]) {
+      const res = await request(app).get(path);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ status: "ok" });
+    }
   });
 
-  it("reports 503 when a dependency is down", async () => {
+  // The public /health listed its dependencies (CISO small hygiene); the failed name goes to the log only.
+  it("reports 503 with status only when a dependency is down", async () => {
     const app = createApp({
       auth: signedOut,
       corsOrigins: [],
@@ -36,7 +39,14 @@ describe("createApp", () => {
     });
     const res = await request(app).get("/health");
     expect(res.status).toBe(503);
-    expect(res.body.checks.database).toBe("down");
+    expect(res.body).toEqual({ status: "degraded" });
+  });
+
+  it("reports 503 draining once shutdown began", async () => {
+    const app = createApp({ auth: signedOut, corsOrigins: [], healthChecks: {}, isDraining: () => true });
+    const res = await request(app).get("/api/health");
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ status: "draining" });
   });
 
   it("returns 401 on protected routes without a session", async () => {

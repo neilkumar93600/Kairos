@@ -1,7 +1,10 @@
 import { Worker } from "bullmq";
-import { closeDb } from "./db/client";
+import { sql } from "drizzle-orm";
+import { closeDb, db } from "./db/client";
 import { applierEnv, setProcessRole } from "./lib/env";
+import { closeServer, onShutdown, serveHealth, startHeartbeat } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
+import { captureJobFailure, initSentry } from "./lib/sentry";
 import { closeBrowser, processCloudApply, warmBrowser } from "./jobs/cloud-apply";
 import { QUEUES, redisConnection } from "./jobs/queues";
 
@@ -9,6 +12,8 @@ import { QUEUES, redisConnection } from "./jobs/queues";
 // model, mail or webhook secret, and env() throws here. Production refuses to boot when one of them is set.
 setProcessRole("applier");
 const e = applierEnv();
+// Its own Sentry project and DSN (a compromised applier holds it); types, our frames and signals only (lib/sentry.ts).
+initSentry("applier");
 if (!e.APPLIER_CHROMIUM_SANDBOX) logger.warn("Chromium sandbox is off (APPLIER_CHROMIUM_SANDBOX=0): only with the signed S-AP4 risk acceptance");
 
 /** Cloud applier: submits approved cloud applications from headless Chromium. */
@@ -18,15 +23,25 @@ const worker = new Worker(QUEUES.cloudApply, processCloudApply, {
   // Employers' forms are slow; give each job time before BullMQ treats it as stalled.
   lockDuration: 120_000,
 });
-worker.on("failed", (job, err) => logger.error({ jobId: job?.id, err }, "cloud apply failed"));
+worker.on("failed", (job, err) => {
+  logger.error({ jobId: job?.id, err }, "cloud apply failed");
+  captureJobFailure(QUEUES.cloudApply, job, err);
+});
 logger.info({ concurrency: e.APPLIER_CONCURRENCY, sandbox: e.APPLIER_CHROMIUM_SANDBOX }, "applier started");
 void warmBrowser();
 
-async function shutdown(signal: string) {
-  logger.info({ signal }, "applier shutting down");
-  await worker.close();
-  await Promise.allSettled([closeBrowser(), closeDb()]);
-  process.exit(0);
-}
-process.on("SIGTERM", () => void shutdown("SIGTERM"));
-process.on("SIGINT", () => void shutdown("SIGINT"));
+// Chromium is not checked: a dead browser is relaunched by the next job. The DB check runs as kairos_applier.
+const checks = {
+  database: async () => void (await db().execute(sql`select 1`)),
+  redis: async () => {
+    if ((await worker.backend.client).status !== "ready") throw new Error("redis not ready");
+  },
+  consumer: async () => {
+    if (!worker.isRunning()) throw new Error("the consumer stopped");
+  },
+};
+const health = serveHealth(e.PORT, checks);
+startHeartbeat(e.HEARTBEAT_URL, checks);
+
+// 170 s: a submit that already reached the employer is allowed to finish and report (06-infrastructure 1.6).
+onShutdown("applier", 170_000, () => worker.close(), () => Promise.allSettled([closeServer(health), closeBrowser(), closeDb()]));
