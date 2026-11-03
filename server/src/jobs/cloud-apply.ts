@@ -9,6 +9,7 @@ import { applierEnv } from "../lib/env";
 import { logger } from "../lib/logger";
 import { signal } from "../lib/sentry";
 import { claimForCloud, cloudAllowed, FAILURE_MESSAGES, recordSubmission, type FailureCode } from "../services/submissions";
+import { admitOrPark, type ApplyGate } from "./apply-gate";
 import { applierPool } from "./browser-pool";
 import type { JobData } from "./queues";
 
@@ -20,8 +21,14 @@ import type { JobData } from "./queues";
  * reasons only (WP-04, CISO mustFix 1).
  */
 
-/** The only hosts the applier navigates to (APPLIER_ALLOWED_HOSTS, 07-cloud-applier 3.2). */
-export const APPLY_HOSTS = new Set(["job-boards.greenhouse.io", "boards.greenhouse.io", "jobs.lever.co", "jobs.eu.lever.co", "jobs.ashbyhq.com"]);
+/** The only hosts the applier navigates to (APPLIER_ALLOWED_HOSTS, 07-cloud-applier 3.2), and the ATS each belongs to. */
+export const APPLY_HOSTS = new Map([
+  ["job-boards.greenhouse.io", "greenhouse"],
+  ["boards.greenhouse.io", "greenhouse"],
+  ["jobs.lever.co", "lever"],
+  ["jobs.eu.lever.co", "lever"],
+  ["jobs.ashbyhq.com", "ashby"],
+]);
 
 /** The filler clicks submit and waits up to 20 s for the confirmation; this bounds the whole call. */
 const FILL_DEADLINE_MS = 120_000;
@@ -35,6 +42,15 @@ export function isAllowedApplyUrl(raw: string): boolean {
     return false;
   }
   return u.protocol === "https:" && !u.username && !u.password && !u.port && APPLY_HOSTS.has(u.hostname);
+}
+
+/** The ATS whose limits a run counts against (jobs/apply-gate.ts); undefined for a URL the applier refuses anyway. */
+export function atsOfApplyUrl(raw: string): string | undefined {
+  try {
+    return APPLY_HOSTS.get(new URL(raw).hostname);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -211,15 +227,35 @@ function toReport(app: { id: string; answers: ApplicationAnswer[] }, outcome: Cl
   return { ...outcome.report, applicationId: app.id, filledFields, submittedAt };
 }
 
-export async function processCloudApply(job: Job<JobData["cloud-apply"]>) {
+/**
+ * The applier's processor. With a gate (the applier passes one; the tests call it bare) the run is admitted per ATS
+ * before the claim, so a parked job leaves the application approved and unclaimed.
+ */
+export async function processCloudApply(job: Job<JobData["cloud-apply"]>, opts: { gate?: ApplyGate; token?: string } = {}) {
   const [row] = await db()
     .select({ app: applications, applyUrl: jobs.applyUrl, closedAt: jobs.closedAt })
     .from(applications)
     .innerJoin(jobs, eq(jobs.id, applications.jobId))
     .where(eq(applications.id, job.data.applicationId));
   if (!row || row.app.status !== "approved" || row.app.channel !== "cloud") return { skipped: true };
+
+  const ats = atsOfApplyUrl(row.applyUrl);
+  const leave = opts.gate && ats ? await admitOrPark(opts.gate, ats, job, opts.token) : undefined;
+  try {
+    const outcome = await claimAndApply(row);
+    // A 429 on the apply page cools that ATS down on every replica; the other ATS keep running.
+    if (opts.gate && ats && outcome?.detail === "http_429") await opts.gate.coolDown(ats).catch((err: unknown) => logger.warn({ err, ats }, "cool-down not recorded"));
+    return outcome ? { submitted: outcome.submitted } : { skipped: true };
+  } finally {
+    // A slot that cannot be given back frees itself when its lease ends (APPLY_LIMITS.leaseMs).
+    await leave?.().catch((err: unknown) => logger.warn({ err, ats }, "apply slot not released"));
+  }
+}
+
+/** Claims the approved application and runs it once; every path after the claim records an outcome. Null: not claimed. */
+async function claimAndApply(row: { app: typeof applications.$inferSelect; applyUrl: string; closedAt: Date | null }): Promise<{ submitted: boolean; detail?: string } | null> {
   // The read above can be stale: a withdraw may land in between. Only the conditional claim decides.
-  if (!(await claimForCloud(db(), row.app.id))) return { skipped: true };
+  if (!(await claimForCloud(db(), row.app.id))) return null;
 
   let outcome: CloudOutcome;
   try {
@@ -239,5 +275,5 @@ export async function processCloudApply(job: Job<JobData["cloud-apply"]>) {
 
   await recordSubmission(db(), row.app.userId, toReport(row.app, outcome), "cloud");
   logger.info({ applicationId: row.app.id, submitted: outcome.submitted, ...(outcome.submitted ? {} : { code: outcome.code, detail: outcome.detail }) }, "cloud apply result");
-  return { submitted: outcome.submitted };
+  return outcome.submitted ? { submitted: true } : { submitted: false, detail: outcome.detail };
 }

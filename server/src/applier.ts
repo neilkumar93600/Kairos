@@ -7,6 +7,7 @@ import { logger } from "./lib/logger";
 import { assertNoEviction, redis } from "./lib/redis";
 import { captureJobFailure, initSentry } from "./lib/sentry";
 import { applierPool, closeBrowser, warmBrowser, watchMemory } from "./jobs/browser-pool";
+import { applyGate, redisGateStore } from "./jobs/apply-gate";
 import { processCloudApply } from "./jobs/cloud-apply";
 import { QUEUES, workerOptions } from "./jobs/queues";
 
@@ -23,8 +24,9 @@ await deadline(assertNoEviction(), 10_000);
 // One connection per run plus the health check (scale-v12).
 sizeDbPool(e.APPLIER_CONCURRENCY + 1);
 
-/** Cloud applier: submits approved cloud applications from headless Chromium. */
-const worker = new Worker(QUEUES.cloudApply, processCloudApply, workerOptions(QUEUES.cloudApply, e.APPLIER_CONCURRENCY));
+/** Cloud applier: submits approved cloud applications from headless Chromium, admitted per ATS across replicas. */
+const gate = applyGate(redisGateStore(redis()));
+const worker = new Worker(QUEUES.cloudApply, (job, token) => processCloudApply(job, { gate, token }), workerOptions(QUEUES.cloudApply, e.APPLIER_CONCURRENCY));
 worker.on("failed", (job, err) => {
   logger.error({ jobId: job?.id, err }, "cloud apply failed");
   captureJobFailure(QUEUES.cloudApply, job, err);
