@@ -174,7 +174,7 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       llm_cost_daily: ["S", "SIU", "S"],
       user_daily_usage: ["SIU", "SIUD", "S"],
       ai_usage: ["SIU", "SD", ""],
-      tracker_items: ["SIUD", "SIU", ""],
+      tracker_items: ["SIUD", "SI", ""],
       application_events: ["SI", "SI", "S"],
       submission_attempts: ["SIU", "SIU", "cols"],
     };
@@ -228,6 +228,9 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       ["kairos_api", "select llm_calls_drop_old_partitions(9999)", false],
       ["kairos_readonly", "insert into companies (name, ats, board_token) values ('x', 'greenhouse', 'x')", false],
       ["kairos_readonly", "select resume_snapshot from applications limit 1", false],
+      ["kairos_readonly", "select verification from applications limit 1", false],
+      ["kairos_worker", "update tracker_items set stage = 'applied', updated_at = now() where false", true],
+      ["kairos_worker", "update tracker_items set notes = 'x' where false", false],
       ["kairos_readonly", "select id, state, failure_code from submission_attempts limit 1", true],
       ["kairos_readonly", "select evidence from submission_attempts limit 1", false],
       ["kairos_api", "update application_events set kind = 'sent'", false],

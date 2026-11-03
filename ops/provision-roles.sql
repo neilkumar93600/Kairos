@@ -172,8 +172,10 @@ BEGIN
            (c.table_name = 'profiles' AND c.column_name IN ('user_id', 'onboarding_step', 'timezone', 'applications_paused_at', 'forwarding_state', 'created_at'))
         OR (c.table_name = 'resume_profiles' AND c.column_name IN ('id', 'user_id', 'name', 'is_default', 'source_kind', 'parse_status', 'created_at'))
         OR (c.table_name = 'subscriptions' AND c.column_name IN ('user_id', 'plan', 'interval', 'status', 'current_period_end', 'cancel_at_period_end', 'collection_paused', 'created_at'))
+        -- A new applications column holding the user's content (resume text, answers, verdict details) joins this list.
         OR (c.table_name = 'applications' AND c.column_name NOT IN ('resume_lines', 'answers', 'cover_letter', 'receipt', 'questions',
-                                                                    'resume_line_entries', 'failure_reason', 'lease_session_id')))
+                                                                    'resume_line_entries', 'failure_reason', 'lease_session_id',
+                                                                    'resume_snapshot', 'verification')))
   LOOP
     EXECUTE format('GRANT SELECT (%I) ON %I TO kairos_readonly', g.column_name, g.table_name);
   END LOOP;
@@ -185,15 +187,15 @@ GRANT SELECT ON llm_cost_daily TO kairos_metrics;
 
 -- WP-42: the lifecycle tables (_db/applications.md 2.3, 02-database 7.7). No runtime role updates or deletes
 -- application_events (its trigger stops the owner too) or deletes submission_attempts. The worker holds INSERT and
--- UPDATE on tracker_items, not 7.7's SELECT: recordEvent creates an application's item when a worker records its first
--- event, and WP-21's projector moves stages. The applier gets nothing here; WP-29's attempt functions give it its rows.
+-- UPDATE of the link and stage columns on tracker_items, not 7.7's SELECT: recordEvent creates or links an
+-- application's item when a worker records its first event, and WP-21's projector moves stages. Never the user's notes,
+-- salary text or saved posting. The applier gets nothing here; WP-29's attempt functions give it its rows.
 GRANT SELECT, INSERT, UPDATE, DELETE ON tracker_items TO kairos_api;
-GRANT SELECT, INSERT, UPDATE ON tracker_items TO kairos_worker;
+GRANT SELECT, INSERT ON tracker_items TO kairos_worker;
+GRANT UPDATE (application_id, stage, stage_set_by, closed_reason, updated_at) ON tracker_items TO kairos_worker;
 GRANT SELECT, INSERT ON application_events TO kairos_api, kairos_worker;
 GRANT SELECT, INSERT, UPDATE ON submission_attempts TO kairos_api, kairos_worker;
 GRANT SELECT ON application_events TO kairos_readonly;
 GRANT SELECT (id, application_id, user_id, attempt_no, channel, ats, approved_by, phase, state, failure_code, lease_conflict,
   duplicate_reports, late_confirmation, worker_identity, browser_launched_at, submit_seen_at, heartbeat_at, started_at,
   finished_at, settled_at) ON submission_attempts TO kairos_readonly;
--- The sent resume snapshot is the user's resume, not analytics: the readonly loop above grants every new column.
-REVOKE SELECT (resume_snapshot) ON applications FROM kairos_readonly;
