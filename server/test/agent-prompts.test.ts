@@ -47,7 +47,7 @@ describe("agent prompts", () => {
 
   it("resume-parser names itself in the cost log", async () => {
     chatJson.mockResolvedValue({ facts: [{ kind: "skill", text: "TypeScript", sourceSpan: "TypeScript" }] });
-    await parseResumeToFacts("TypeScript");
+    await parseResumeToFacts("TypeScript", { name: "Ada", email: "ada@example.com", links: [] });
     expect(lastCall().agent).toBe("resume-parser");
   });
 });
