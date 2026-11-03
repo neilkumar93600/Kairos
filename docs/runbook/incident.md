@@ -25,8 +25,9 @@ The owner is the incident commander and decides everything below: kill switches,
 
 | To stop | Do |
 |---|---|
-| Cloud sends | On `sd1-api` and `sd1-applier`, set `CLOUD_APPLIER_OPEN=0` and `OWNER_USER_IDS=` (empty). Or remove the `sd1-applier` deployment |
-| AI spend | `PAUSE_SCORING=true` and `LLM_SHED_LEVEL=3` on the api and the worker; for a hard stop, set the Anthropic Console workspace limit to its current spend |
+| Cloud sends | Admin flag `pause_cloud_apply` (new claims stop within 10 s, no deploy; running sends finish), or `extension_only:<ats>` for one employer system. For a hard stop also set `CLOUD_APPLIER_OPEN=0` and `OWNER_USER_IDS=` (empty) on `sd1-api` and `sd1-applier`, or remove the `sd1-applier` deployment |
+| All approvals | Admin flag `approvals_frozen` (the invariant checks set it themselves; see below) |
+| AI spend | Admin flags `pause_scoring`, `llm_shed_level` = 3, or `llm_paused` (every model call, drafting included); within 10 s, no deploy. The env values `PAUSE_SCORING=true` and `LLM_SHED_LEVEL=3` on the api and the worker still work and are never lowered by a flag. For a hard stop, set the Anthropic Console workspace limit to its current spend |
 | One user's sessions | `delete from session where user_id = '<id>';` (this also ends their extension token) |
 | Every session | Rotate `BETTER_AUTH_SECRET` (below) and run `delete from session;` |
 | Inbound mail | Rotate `INBOUND_WEBHOOK_SECRET`. Postmark retries the deliveries it could not make |
@@ -109,6 +110,14 @@ Send it from the owner's address with the support address in reply-to. Keep it p
 
 The rest of the 06-infrastructure section 10 catalogue is written by the package that creates each risk (the full list is in WP-40).
 
+## Admin flags and the invariant freeze
+
+`PUT /api/admin/flags/<key>` with `{"value": true}` (also `GET /api/admin/flags`, `GET /api/admin/info`). Only a user in `ADMIN_USER_IDS` whose sign-in is under 15 minutes old may call it (otherwise 404, or 403 `reauth_required`: sign in again); an empty list closes the surface. Every write leaves an `ops_audit` row (`select * from ops_audit order by at desc limit 20`). Keys: `pause_cloud_apply`, `pause_scoring`, `llm_paused`, `approvals_frozen`, `cloud_applier_open`, `llm_shed_level` (0 to 3), `extension_only:greenhouse|lever|ashby`. A flip takes effect on every replica within 10 s. How env and flags combine: the pause and shed values take the stricter of the two (an env pause is never lowered by a flag); `cloud_applier_open` is the env value until a flag row exists, then the row wins.
+
+The worker checks the money invariants hourly (`:05`) and nightly (03:45 UTC). A breach sets `approvals_frozen` (actor `system:invariants-hourly` or `-nightly`), logs `invariant breach` with the check ids and counts, and raises `invariant_breach`. Approvals answer 503 `approvals_frozen`, and parked cloud sends wait. Find the rows with the SQL of the check in `jobs/invariants.ts` (I-3 more approved than credits, I-4 charge without submit or submit without charge, I-6 stuck in `submitting`, BAL-1 negative balance, LEDGER-1 a charge on another user's application, I-8 a cited fact unconfirmed). Repair by hand with `admin_adjustment` rows only if you have to (that itself raises `admin_adjustment_row`), then set `approvals_frozen` to false. It does not clear itself. I-1, I-2, I-5 and I-7 need tables from WP-42, WP-29 and WP-26 and are not checked yet.
+
+To activate an imported company: `GET /api/admin/companies?active=false`, then `POST /api/admin/companies/<id>/activate` (and `/deactivate` to stop it again).
+
 ## Security signals (Sentry)
 
 Railway cannot alert on log lines, so the processes count these and send Sentry one warning per minute per process, titled `signal: <name>`, with the count. The Sentry alert rules fire on them (owner-actions/WP-11.md). Each count has a bar below which nothing is sent (`SIGNALS` in `server/src/lib/sentry.ts`).
@@ -128,6 +137,16 @@ Railway cannot alert on log lines, so the processes count these and send Sentry 
 | `journal_late_rows` | 1 | Rows that committed more than 15 seconds after they began, found after their minute was journaled; the reconcile merged them | Nothing to repair. Frequent: a slow transaction on the ledger; look for long `submission` or webhook transactions |
 | `journal_gaps_filled` | 1 | The reconcile wrote journal minutes nobody had written | Expected once, the first hour after the journal is deployed. Otherwise the job missed minutes (a worker outage): the gap is now filled from the database |
 | `llm_calls_default_rows` | 1 | `llm_calls_default` holds rows: a week had no partition, so the worker's daily `llm-partitions` job (03:00 UTC) has been failing | Fix the job's error first (its failures are Sentry issues on the `maintenance` queue). Then move the rows, below |
+| `invariant_breach` | 1 | A money or approval invariant failed; approvals are frozen | The section above. Page-level |
+| `slo_burn_fast` / `slo_burn_slow` | 1 | An SLO burns its 30-day budget 14.4x over 1 hour, or 6x over 6 hours (`GET /api/admin/info` shows the windows). Evaluated every 5 minutes across replicas | Find the failing route group or job in the logs. Fast: treat as an incident. Slow: fix within the day |
+| `slo_budget_half` | 1 | S1 or S5 passed half of its 30-day budget | Policy: only reliability work ships until it recovers; at 100% roll back and write a postmortem within 48 hours |
+| `llm_envelope_80` / `llm_envelope_100` | 1 | Today's model spend reached 80% / 100% of the daily envelope (the first shed threshold, $190) | 80%: look at `llm_cost_daily` by agent. 100%: set `llm_shed_level` or `llm_paused` |
+| `llm_escalation_cap` | 1 | More than 10% of today's model calls tiered up | An agent's schema or max-tokens failures are climbing; read `llm_cost_daily` by agent |
+| `cost_per_submission` | 1 | Model spend per submitted application today is over $2 | Scoring volume outgrew submissions; consider `pause_scoring` |
+| `queue_lag` | 1 | A queue's oldest waiting job is over 5 minutes old | Check the worker and the applier are up (R-HEALTH-2); `queue_waiting` and `queue_failed` gauges are in `GET /api/admin/info` |
+| `cloud_run_failures` | 1 | Over half of the last 30 minutes of cloud runs failed (alert A-SUB-1) | Read the `cloud apply result` log lines for the code; set `pause_cloud_apply` while you look |
+| `cross_tenant_row` | 1 | The nightly scan found a row owned by another user than its parent | Treat as a possible data leak: R-SEC-1, find the rows with the SQL of XT-1 and XT-2 |
+| `pii_in_column` | 1 | The nightly scan found an address, phone or token shape in a column that must hold codes | Find the writer of that column and stop it; the log line names the column |
 
 **Moving rows out of `llm_calls_default`.** As the owner, in one transaction (the gateway's inserts wait for it):
 
