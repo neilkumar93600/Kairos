@@ -122,7 +122,7 @@ This settles the `before` conflict of gap-map specGaps: B.9.2 lists `before` as 
 | W2 | Action shape: rewrite and remove need `lineId`; add has `lineId` null; remove has `after` null and `factIds` []; `needsFact` set means `after` null | `bad_action_shape` |
 | W3 | Headline scope: every suggestion has `sectionId` "headline", `entryId` and `lineId` null, at most 3; other scopes never use "headline" and always have `appendYears` false | `bad_headline_shape` |
 | W4 | `appendYears` true only when `derived` holds a years value | `append_without_value` |
-| W5 | **No model-stated years.** No `after` matches `\b\d+\s*\+?\s*(years?|yrs?)\b` | `model_stated_years` |
+| W5 | **No model-stated years.** No `after` matches `\b\d+\s*\+?\s*(years?\|yrs?)\b` | `model_stated_years` |
 | W6 | `tag = fix_spelling` only with `action = rewrite` | `bad_tag` |
 | W7 | No bracket placeholder (`[X]`, `[number]`) in `after` | `placeholder` |
 | W8 | Echo canary | `injection_echo` |
