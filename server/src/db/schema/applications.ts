@@ -78,7 +78,9 @@ export const applications = pgTable(
     /**
      * The tailored resume document with its template, accent and page size (PRD 6.1, 7.6), written by every approval in
      * the approving transaction (a resend after failed writes a new one). applications_guard_snapshot keeps it fixed
-     * while the application is approved, submitting or submitted; return-to-draft clears it. The receipt reads it.
+     * while the application is approved, submitting or submitted; return-to-draft clears it. The authoritative sent
+     * document: the receipt, the render job and the applier's attach read it, never resumes.application_id (a soft
+     * link for the library UI only).
      */
     resumeSnapshot: jsonb("resume_snapshot"),
     /** R2 key of the rendered snapshot PDF under snapshots/<user_id>/, set once per approval by the render job. */
