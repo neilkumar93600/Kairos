@@ -3,13 +3,14 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client";
-import { inboundEmails, profiles, stripeEvents, subscriptions, user } from "../db/schema";
+import { deletionTasks, inboundEmails, profiles, stripeEvents, subscriptions, user } from "../db/schema";
 import { env } from "../lib/env";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { enqueue } from "../jobs/queues";
 import { couponIdsOf, fetchStripeState, processStripeEvent } from "../services/billing-events";
 import { grantPlanCredits } from "../services/credits";
+import { stripeCustomerHash } from "../services/erasure";
 import { INLINE_REQUEST, stripe, verifyStripeEvent } from "../services/stripe";
 
 /** Provider webhooks. Mounted at /api/webhooks BEFORE express.json(), because Stripe signs the raw body. */
@@ -43,6 +44,8 @@ webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1
       userExists: async (id) => (await tx.select({ id: user.id }).from(user).where(eq(user.id, id))).length > 0,
       userForCustomer: async (customerId) =>
         (await tx.select({ userId: subscriptions.userId }).from(subscriptions).where(eq(subscriptions.stripeCustomerId, customerId)))[0]?.userId ?? null,
+      customerErased: async (customerId) =>
+        (await tx.select({ h: deletionTasks.userHash }).from(deletionTasks).where(eq(deletionTasks.stripeCustomerHash, stripeCustomerHash(customerId)))).length > 0,
       saveSubscription: async ({ userId, values }) => {
         // An unpaid state only overwrites the row when it is about the subscription the row tracks (or none yet),
         // so a late event for an old, cancelled subscription cannot drop a user who has since subscribed again.

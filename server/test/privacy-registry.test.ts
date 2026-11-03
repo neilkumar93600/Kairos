@@ -35,7 +35,8 @@ describe("privacy registry", () => {
       if (!t) continue; // SQL-only tables are checked against the catalog (int test)
       const names = t.columns.map((c) => c.name);
       expect(names, `${e.table}.${e.column}`).toContain(e.column);
-      for (const col of e.export ? [...(e.export.omit ?? []), ...(e.export.decrypt ?? [])] : []) expect(names, `${e.table}.${col}`).toContain(col);
+      const named = e.export ? [...(e.export.columns ?? []), ...(e.export.omit ?? []), ...Object.keys(e.export.decrypt ?? {})] : [];
+      for (const col of named) expect(names, `${e.table}.${col}`).toContain(col);
     }
   });
 
@@ -62,11 +63,13 @@ describe("privacy registry", () => {
     for (const e of [...PRIVACY_REGISTRY, ...Object.values(AT_MERGE).flat()]) if (e.export === false || e.erase === "keep") expect(e.why, e.table).toBeTruthy();
   });
 
-  it("never exports credentials or keyed hashes", () => {
-    const omitted = (table: string) => (entry(table)?.export || { omit: [] }).omit ?? [];
-    expect(omitted("account")).toEqual(expect.arrayContaining(["password", "access_token", "refresh_token", "id_token"]));
-    expect(omitted("session")).toContain("token");
-    expect(omitted("profiles")).toContain("normalized_email_hash");
-    expect(entry("profiles")?.export).toMatchObject({ decrypt: ["sensitive_answers_enc"] });
+  it("never exports credentials or keyed hashes: credential tables name their columns", () => {
+    const spec = (table: string) => entry(table)?.export || {};
+    for (const secret of ["password", "access_token", "refresh_token", "id_token"]) expect(spec("account").columns).not.toContain(secret);
+    expect(spec("account").columns).toContain("provider_id");
+    expect(spec("session").columns).not.toContain("token");
+    expect(spec("profiles").omit).toContain("normalized_email_hash");
+    expect(spec("contact_messages").omit).toContain("email_hash");
+    expect(spec("profiles").decrypt).toEqual({ sensitive_answers_enc: "sensitive_answers_enc" });
   });
 });

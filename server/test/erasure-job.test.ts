@@ -7,7 +7,7 @@ import { emailHash, erasureUserHash } from "../src/services/erasure";
 const HASH = erasureUserHash("u1");
 const task = (over: Partial<ErasureTask> = {}): ErasureTask => ({
   userHash: HASH, emailHash: emailHash("a@example.com"), requestedAt: new Date("2026-11-03T10:00:00Z"), storageId: "u1", stripeCustomerId: "cus_1",
-  tombstoneWrittenAt: null, stripeDoneAt: null, verifiedAt: null, r2DoneAt: null, llmScrubbedAt: null, ...over,
+  tombstoneWrittenAt: null, stripeDoneAt: null, auditPseudonymisedAt: null, verifiedAt: null, r2DoneAt: null, llmScrubbedAt: null, ...over,
 });
 
 function deps(over: Partial<ErasureDeps> = {}) {
@@ -15,6 +15,7 @@ function deps(over: Partial<ErasureDeps> = {}) {
   const d: ErasureDeps = {
     production: true,
     mark: vi.fn(async (_hash, set) => void log.push(`mark ${Object.keys(set).sort().join(",")}`)),
+    pseudonymise: vi.fn(async () => (log.push("audit"), 1)),
     remaining: vi.fn(async () => []),
     scrubLlm: vi.fn(async () => (log.push("llm"), 3)),
     tombstones: { put: vi.fn(async (key: string) => void log.push(`put ${key}`)) },
@@ -34,6 +35,8 @@ describe("runErasure", () => {
       "mark tombstoneWrittenAt",
       `stripe cus_1 erase:${HASH}`,
       "mark stripeCustomerId,stripeDoneAt",
+      "audit",
+      "mark auditPseudonymisedAt",
       "mark verifiedAt",
       "r2 u1",
       "mark r2DoneAt,storageId",
@@ -47,9 +50,20 @@ describe("runErasure", () => {
   it("resumes after a crash: steps already stamped are not repeated", async () => {
     const { d, log } = deps();
     const done = new Date();
-    await runErasure(task({ tombstoneWrittenAt: done, stripeDoneAt: done, stripeCustomerId: null, verifiedAt: done }), d);
+    await runErasure(task({ tombstoneWrittenAt: done, stripeDoneAt: done, stripeCustomerId: null, auditPseudonymisedAt: done, verifiedAt: done }), d);
     expect(log).toEqual(["r2 u1", "mark r2DoneAt,storageId", "llm", "mark llmScrubbedAt", "mark completedAt,lastErrorCode"]);
     expect(d.deleteCustomer).not.toHaveBeenCalled();
+  });
+
+  it("pseudonymises audit columns as the worker, by the user id, before the verification counts them", async () => {
+    const { d } = deps();
+    await runErasure(task(), d);
+    expect(d.pseudonymise).toHaveBeenCalledWith("u1", HASH);
+    const failing = deps({ pseudonymise: vi.fn(async () => Promise.reject(new Error("42501"))) });
+    await expect(runErasure(task({ tombstoneWrittenAt: new Date(), stripeDoneAt: new Date(), stripeCustomerId: null }), failing.d)).rejects.toMatchObject({
+      code: "audit_pseudonymise_failed",
+    });
+    expect(failing.d.remaining).not.toHaveBeenCalled();
   });
 
   it("refuses to verify while rows remain, and stops before the files and the id go", async () => {
@@ -62,14 +76,14 @@ describe("runErasure", () => {
     await expect(runErasure(task(), deps({ tombstones: null }).d)).rejects.toMatchObject({ code: "tombstones_unconfigured" });
     await expect(runErasure(task({ tombstoneWrittenAt: new Date() }), deps({ deleteCustomer: null }).d)).rejects.toMatchObject({ code: "stripe_unconfigured" });
     const done = new Date();
-    const before = { tombstoneWrittenAt: done, stripeDoneAt: done, stripeCustomerId: null, verifiedAt: done };
+    const before = { tombstoneWrittenAt: done, stripeDoneAt: done, stripeCustomerId: null, auditPseudonymisedAt: done, verifiedAt: done };
     await expect(runErasure(task(before), deps({ files: null }).d)).rejects.toMatchObject({ code: "storage_unconfigured" });
   });
 
   it("outside production an unconfigured store counts as done; no customer means nothing to delete at Stripe", async () => {
     const { d, log } = deps({ production: false, tombstones: null, files: null, deleteCustomer: null });
     await runErasure(task(), d);
-    expect(log.filter((l) => !l.startsWith("mark"))).toEqual(["llm"]);
+    expect(log.filter((l) => !l.startsWith("mark"))).toEqual(["audit", "llm"]);
     const live = deps();
     await runErasure(task({ stripeCustomerId: null }), live.d);
     expect(live.d.deleteCustomer).not.toHaveBeenCalled();

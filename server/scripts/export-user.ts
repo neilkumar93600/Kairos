@@ -7,6 +7,7 @@ import { sql } from "drizzle-orm";
 import { closeDb, db, type Db } from "../src/db/client";
 import { decrypt } from "../src/lib/crypto";
 import { storage, USER_BUCKETS, type Storage } from "../src/lib/storage";
+import { emailHashIfKeyed } from "../src/services/erasure";
 import { PRIVACY_REGISTRY } from "../src/services/privacy-registry";
 
 /**
@@ -17,7 +18,8 @@ import { PRIVACY_REGISTRY } from "../src/services/privacy-registry";
  *   railway run --service worker -- npx tsx scripts/export-user.ts <userId> --out ./export-<userId>
  *
  * Writes <out>/export.json and <out>/files/<bucket>/<name>. The bundle is personal data: send it over the agreed
- * channel and delete the local copy. ponytail: the ops_audit row (user.export) is a log line until WP-27's table lands.
+ * channel and delete the local copy. ponytail: the ops_audit row is a log line until WP-27's table lands; then it is
+ * an ops_audit row (actor the user id, action user.export, target 'user-data', never 'user:<id>').
  */
 
 type Row = Record<string, unknown>;
@@ -41,15 +43,19 @@ export async function exportRows(database: Db, userId: string): Promise<Record<s
     const where = e.parent
       ? sql`${c} in (select id from ${sql.identifier(e.parent)} where user_id = ${userId})`
       : e.by === "email"
-        ? sql`lower(${c}) = lower(${account.email})`
+        ? sql`lower(${c}) = lower(${account.email}) or email_hash = ${emailHashIfKeyed(account.email)}`
         : sql`${c} = ${userId}`;
-    const rows = (await database.execute<Row>(sql`select * from ${t} where ${where}`)).rows;
+    const spec = e.export;
+    // Credential tables name their columns, so a column added later is never exported by default.
+    const cols = spec.columns ? sql.join(spec.columns.map((x) => sql.identifier(x)), sql`, `) : sql`*`;
+    const rows = (await database.execute<Row>(sql`select ${cols} from ${t} where ${where}`)).rows;
     tables[e.table] = rows.map((row) => {
       const out: Row = {};
       for (const [k, v] of Object.entries(row)) {
-        if (e.export && e.export.omit?.includes(k)) continue;
-        if (e.export && e.export.decrypt?.includes(k) && Buffer.isBuffer(v)) {
-          out[k] = decrypt(v, { table: e.table, id: String(row.id ?? row.user_id), column: k }).toString("utf8");
+        if (spec.omit?.includes(k)) continue;
+        const aadColumn = spec.decrypt?.[k];
+        if (aadColumn && Buffer.isBuffer(v)) {
+          out[k] = decrypt(v, { table: e.table, id: String(row.id ?? row.user_id), column: aadColumn }).toString("utf8");
         } else out[k] = Buffer.isBuffer(v) ? v.toString("base64") : v;
       }
       return out;

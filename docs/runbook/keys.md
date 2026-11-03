@@ -159,3 +159,15 @@ The pgbackup service encrypts each dump to the public keys in `BACKUP_AGE_RECIPI
 **Check a kit copy** (part of the drill, section 6, once WP-13 is deployed): `read -rs AGE_IDENTITY && export AGE_IDENTITY`, paste the private key from the copy, `npx tsx scripts/backup.ts recipient`. Pass: it prints a public key listed in `BACKUP_AGE_RECIPIENTS` and in the latest manifest's `recipients`. The real proof is the monthly restore drill ([R-DR-2](R-DR-2.md) section 7), which decrypts last night's dump with it. `unset AGE_IDENTITY` afterwards.
 
 **Rotate** (yearly, or at once if one may have leaked): make a new pair, put both in the kit, set `BACKUP_AGE_RECIPIENTS` to the new public keys and trigger a pgbackup run. Keep the old private keys in the kit until the last dump encrypted to them has expired (28 days after the switch), then destroy them. A leaked key: also assume the dumps encrypted to it are readable by whoever has the R2 backups token, and count them in the breach assessment (section 5.2 step 3).
+
+## 9. `USER_HASH_KEY`: never rotate (WP-25)
+
+`USER_HASH_KEY` (api and worker, sealed, one value per environment, in the emergency kit with `DATA_KEKS`) is a single unversioned HMAC key. It keys the user hash of `deletion_tasks`, `credit_ledger_archive` and the R2 tombstones, the erased-address hashes of `erased_emails` and `contact_messages.email_hash`, `llm_calls.user_hash`, the per-email auth limits in `rate_limits`, and the `erased:<hash>` pseudonyms in `ops_audit`.
+
+**Do not rotate it.** A new value silently breaks all of these at once:
+
+- a restore's tombstone replay no longer recognises any account erased before the change, so it would come back (R-DR-1 step 5b);
+- every erased address can take a second free grant;
+- the ledger archive, `llm_calls` and the audit pseudonyms no longer join an erased user's other records.
+
+**Treat it like a signing key.** It keeps every one of those pseudonyms opaque. Whoever holds it can test candidate user ids and addresses against them, so a leak makes them reversible by dictionary: who was erased, and which address. A suspected leak is an incident (incident.md). Rotating it then means re-keying every table above in one migration, from the user ids and addresses that still exist; the hashes of erased users cannot be recomputed, so tombstones and erased addresses keyed under the old value stay matchable only by keeping the old key as well. Versioning is deliberately not built: plan it with that migration if it is ever needed.

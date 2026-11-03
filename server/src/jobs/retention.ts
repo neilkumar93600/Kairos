@@ -15,6 +15,10 @@ import { scrubContent } from "../services/sensitive";
  * is a no-op until WP-42 adds the below_bar status. At WP-42's merge: below_bar keys on status_changed_at
  * (matches_retention_idx), the scrub selects on terminal_at (applications_scrub_due_idx) and also sets questions to
  * null. jobs_closed marks a purge by the emptied description_text (still NOT NULL), so no description_purged_at.
+ * At WP-42's and WP-17's merges, jobs_closed's delete also requires `NOT EXISTS (SELECT 1 FROM tracker_items t WHERE
+ * t.job_id = j.id) AND NOT EXISTS (SELECT 1 FROM resumes r WHERE r.job_id = j.id)` (both are ON DELETE SET NULL, so a
+ * saved or tailored-for job would silently vanish); those jobs take the purge branch instead (DB-reviewer round 2).
+ * ponytail: inbound_body scans inbound_emails per batch; add (received_at) WHERE text_body <> '' at scale.
  * ponytail: jobs has no closed_at index, so jobs_closed scans jobs once per batch; add jobs_closed_idx (02-database 11)
  * when jobs passes a few hundred thousand rows.
  */

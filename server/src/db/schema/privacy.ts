@@ -26,11 +26,15 @@ export const deletionTasks = pgTable(
     /** The user id, which is the R2 prefix; nulled once the user's files are gone. */
     storageId: text("storage_id"),
     stripeCustomerId: text("stripe_customer_id"),
+    /** HMAC of the Stripe customer id, kept after the id is dropped: a late webhook for it is ignored (billing-50). */
+    stripeCustomerHash: text("stripe_customer_hash"),
     tombstoneWrittenAt: timestamp("tombstone_written_at", { withTimezone: true }),
     stripeDoneAt: timestamp("stripe_done_at", { withTimezone: true }),
     /** Every user-keyed table of the privacy registry counted zero rows for the user. */
     verifiedAt: timestamp("verified_at", { withTimezone: true }),
     r2DoneAt: timestamp("r2_done_at", { withTimezone: true }),
+    /** Audit columns naming the user rewritten to the pseudonym (registry "pseudonymise"), by the worker role. */
+    auditPseudonymisedAt: timestamp("audit_pseudonymised_at", { withTimezone: true }),
     llmScrubbedAt: timestamp("llm_scrubbed_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     attempts: integer("attempts").notNull().default(0),
@@ -41,7 +45,12 @@ export const deletionTasks = pgTable(
   },
   (t) => [
     index("deletion_tasks_open_idx").on(t.nextAttemptAt).where(sql`${t.completedAt} is null`),
-    check("deletion_tasks_hash_ck", sql`user_hash ~ '^[0-9a-f]{64}$' AND email_hash ~ '^[0-9a-f]{64}$'`),
+    check(
+      "deletion_tasks_hash_ck",
+      sql`user_hash ~ '^[0-9a-f]{64}$' AND email_hash ~ '^[0-9a-f]{64}$' AND (stripe_customer_hash IS NULL OR stripe_customer_hash ~ '^[0-9a-f]{64}$')`,
+    ),
+    // The verification counts audit rows by the user id too, so they are pseudonymised before it.
+    check("deletion_tasks_audit_ck", sql`verified_at IS NULL OR audit_pseudonymised_at IS NOT NULL`),
     check("deletion_tasks_by_ck", sql`requested_by IN ('user','operator','replay')`),
     // The verification counts rows by the user id, so it runs before the id is dropped with the files.
     check("deletion_tasks_r2_ck", sql`r2_done_at IS NULL OR (storage_id IS NULL AND verified_at IS NOT NULL)`),
@@ -49,7 +58,7 @@ export const deletionTasks = pgTable(
     check(
       "deletion_tasks_complete_ck",
       sql`completed_at IS NULL OR (tombstone_written_at IS NOT NULL AND stripe_done_at IS NOT NULL AND verified_at IS NOT NULL
-        AND r2_done_at IS NOT NULL AND llm_scrubbed_at IS NOT NULL)`,
+        AND r2_done_at IS NOT NULL AND llm_scrubbed_at IS NOT NULL AND audit_pseudonymised_at IS NOT NULL)`,
     ),
     check("deletion_tasks_error_ck", sql`last_error_code IS NULL OR last_error_code ~ '^[a-z0-9_]{1,64}$'`),
   ],

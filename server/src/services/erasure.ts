@@ -2,11 +2,10 @@ import { createHmac } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "../db/client";
-import { contactMessages, creditLedger, creditLedgerArchive, deletionTasks, erasedEmails, subscriptions, user } from "../db/schema";
+import { contactMessages, deletionTasks, erasedEmails, subscriptions, user } from "../db/schema";
 import { env } from "../lib/env";
 import { logger } from "../lib/logger";
 import { storage, storageConfig, type Storage } from "../lib/storage";
-import { PRIVACY_REGISTRY } from "./privacy-registry";
 
 /**
  * Account erasure (WP-25; 02-database 16.2, 06-infrastructure 8.7; CISO should-fix deletion). eraseUser runs every
@@ -15,8 +14,10 @@ import { PRIVACY_REGISTRY } from "./privacy-registry";
  * cascade. Then the R2 tombstone. The stores outside Postgres (Stripe customer, R2 files, llm_calls hashes) and the
  * verification are the erasure worker's (jobs/erasure.ts), each stamped on the task, so a crash resumes where it stopped.
  *
- * ponytail: one transaction for the whole cascade, inside the api's 10 s statement timeout. Fine while a user has
- * thousands of rows; move the cascade into the worker in batches of 500 applications (16.2 step 4) when one does not.
+ * ponytail: one transaction for the whole cascade, inside the api's 10 s statement and 5 s lock timeouts. Fine while a
+ * user has thousands of rows; move the cascade into the worker in batches of 500 applications (16.2 step 4) when one
+ * does not. A heavy account that times out fails the request and stays whole; the user retries, and owner-actions/
+ * WP-25.md section 5 runs scripts/erase-user.ts for one that keeps failing.
  */
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -34,7 +35,11 @@ export function erasureUserHash(userId: string): string {
   return createHmac("sha256", hashKey()).update(userId).digest("hex");
 }
 
-/** Trimmed, lower case, without a +tag; Gmail ignores dots and googlemail.com is gmail.com. */
+/**
+ * Trimmed, lower case, without a +tag; Gmail ignores dots and googlemail.com is gmail.com. Only the erasure hashes
+ * (erased_emails, contact_messages.email_hash) normalize: one person's aliases are one person there. Mail suppression
+ * (WP-44's email_suppressions) must stay keyed to the exact address Postmark reported (test/erasure.test.ts).
+ */
 export function normalizeEmail(email: string): string {
   const [local = "", domain = ""] = email.trim().toLowerCase().split("@");
   const bare = local.replace(/\+.*$/, "");
@@ -67,18 +72,27 @@ export function tombstoneStore(): Storage | null {
   return storageConfig(env()).buckets.tombstones ? storage() : null;
 }
 
-/** What an audit column holds instead of an erased user's id: joins the deletion task, names nobody. */
+/**
+ * What an audit column holds instead of an erased user's id: 'erased:' and the first 32 hex characters of the user hash
+ * (deletion_tasks.user_hash), so it joins the task and names nobody. ops_audit_pseudonym_guard (migration 0009) checks
+ * exactly this form; the erasure worker writes it (jobs/erasure.ts), never the api.
+ */
 export const pseudonym = (userHash: string) => `erased:${userHash.slice(0, 32)}`;
+
+/** HMAC of a Stripe customer id: an erased customer's late webhooks are recognised without keeping the id. */
+export function stripeCustomerHash(customerId: string): string {
+  return createHmac("sha256", hashKey()).update(`stripe:${customerId}`).digest("hex");
+}
 
 /** Copies the users' ledger rows to credit_ledger_archive under each user's hash. Archiving a row twice adds nothing. */
 export async function archiveLedger(tx: Tx, userIds: string[]): Promise<void> {
   if (userIds.length === 0) return;
   const users = JSON.stringify(userIds.map((id) => ({ id, hash: erasureUserHash(id) })));
-  // The archive is interpolated, not spelled: the lint rule that keeps ledger writes in services/credits.ts reads SQL text.
+  // eslint-disable-next-line no-restricted-syntax -- credit_ledger_archive is append-only and cannot move a balance; rule regex lacks a word boundary (pending owner fix)
   await tx.execute(sql`
-    insert into ${creditLedgerArchive} (id, user_hash, delta, reason, application_id, stripe_invoice_id, note, created_at)
+    insert into credit_ledger_archive (id, user_hash, delta, reason, application_id, stripe_invoice_id, note, created_at)
     select l.id, u.hash, l.delta, l.reason, l.application_id, l.stripe_invoice_id, l.note, l.created_at
-      from ${creditLedger} l join jsonb_to_recordset(${users}::jsonb) as u(id text, hash text) on u.id = l.user_id
+      from credit_ledger l join jsonb_to_recordset(${users}::jsonb) as u(id text, hash text) on u.id = l.user_id
     on conflict (id) do nothing`);
 }
 
@@ -92,20 +106,21 @@ export async function eraseUser(db: Db, userId: string, requestedBy: RequestedBy
     const [u] = await tx.select({ id: user.id, email: user.email }).from(user).where(eq(user.id, userId)).for("update");
     if (!u) return null;
     const [sub] = await tx.select({ customer: subscriptions.stripeCustomerId }).from(subscriptions).where(eq(subscriptions.userId, u.id));
-    const task = { userHash: erasureUserHash(u.id), emailHash: emailHash(u.email), requestedBy, storageId: u.id, stripeCustomerId: sub?.customer ?? null };
+    const customer = sub?.customer ?? null;
+    const task = {
+      userHash: erasureUserHash(u.id), emailHash: emailHash(u.email), requestedBy, storageId: u.id,
+      stripeCustomerId: customer, stripeCustomerHash: customer && stripeCustomerHash(customer),
+    };
     const fresh = {
-      tombstoneWrittenAt: null, stripeDoneAt: null, verifiedAt: null, r2DoneAt: null, llmScrubbedAt: null, completedAt: null,
+      tombstoneWrittenAt: null, stripeDoneAt: null, auditPseudonymisedAt: null, verifiedAt: null, r2DoneAt: null, llmScrubbedAt: null, completedAt: null,
       attempts: 0, lastErrorCode: null, pagedAt: null, requestedAt: sql`now()`, nextAttemptAt: sql`now()`, updatedAt: sql`now()`,
     };
     await tx.insert(deletionTasks).values(task).onConflictDoUpdate({ target: deletionTasks.userHash, set: { ...task, ...fresh } });
     await tx.insert(erasedEmails).values({ emailHash: task.emailHash }).onConflictDoNothing();
     await archiveLedger(tx, [u.id]);
-    // Audit columns that name the user keep their rows under a pseudonym (registry "pseudonymise").
-    for (const e of PRIVACY_REGISTRY.filter((x) => x.erase === "pseudonymise")) {
-      await tx.execute(sql`update ${sql.identifier(e.table)} set ${sql.identifier(e.column)} = ${pseudonym(task.userHash)} where ${sql.identifier(e.column)} = ${u.id}`);
-    }
-    // Contact messages carry no user id, only the address they were sent from (R-22).
-    await tx.delete(contactMessages).where(sql`lower(${contactMessages.email}) = lower(${u.email})`);
+    // Contact messages carry no user id, only the address they were sent from (R-22): by the normalized hash, so a +tag
+    // or dotted alias goes too, and by the address for rows written before the hash existed.
+    await tx.delete(contactMessages).where(sql`${contactMessages.emailHash} = ${task.emailHash} or lower(${contactMessages.email}) = lower(${u.email})`);
     await tx.delete(user).where(eq(user.id, u.id));
     return task;
   });

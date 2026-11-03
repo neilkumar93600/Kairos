@@ -38,6 +38,8 @@ describe.skipIf(!hasTestDb)("erasure against Postgres (WP-25)", () => {
   it("deletes every user-keyed row in one transaction, archives the ledger and records the task", async () => {
     const a = await seedEverything(db, "Ann.Lee@example.com");
     const b = await seedEverything(db, "bob@example.com", "bobmarker");
+    // An alias of Ann's address, as the contact route stores it: found by the normalized hash, not the address.
+    await db.insert(schema.contactMessages).values({ name: "A", email: "ann.lee+help@example.com", topic: "support", message: MARK, emailHash: erasure.emailHash("ann.lee+help@example.com") });
     const hash = await erasure.eraseUser(db, a.id, "user", store);
     expect(hash).toBe(erasure.erasureUserHash(a.id));
 
@@ -77,7 +79,8 @@ describe.skipIf(!hasTestDb)("erasure against Postgres (WP-25)", () => {
     const hash = await erasure.eraseUser(db, a.id, "user"); // no tombstone store at the request: the worker writes it
     expect(await processErasure(deps)).toMatchObject({ claimed: 1, done: 1, failed: 0 });
     const [task] = await db.select().from(schema.deletionTasks);
-    expect(task).toMatchObject({ storageId: null, stripeCustomerId: null, lastErrorCode: null });
+    expect(task).toMatchObject({ storageId: null, stripeCustomerId: null, stripeCustomerHash: erasure.stripeCustomerHash("cus_ann"), lastErrorCode: null });
+    expect(task!.auditPseudonymisedAt).not.toBeNull();
     expect(task!.completedAt).not.toBeNull();
     expect(deleted).toEqual(["cus_ann"]);
     expect([...r2.objects.keys()].sort()).toEqual([`kairos-tombstones|users/${hash}.json`, `kairos-uploads|${b.id}/cv.pdf`]);
@@ -110,10 +113,11 @@ describe.skipIf(!hasTestDb)("erasure against Postgres (WP-25)", () => {
     const live = await seedEverything(db, "live@example.com");
     const pending = await seedEverything(db, "pending@example.com");
     await erasure.eraseUser(db, pending.id, "user");
-    for (const id of [live.id, pending.id, "gone-user"]) await r2.storage.put(userKey("renders", id, "a.pdf"), "x", "application/pdf");
+    for (const id of [live.id, pending.id, "gone0user0000000000000000000000ab", "cache"]) await r2.storage.put(userKey("renders", id, "a.pdf"), "x", "application/pdf");
     const { processOrphanUploads } = await import("../src/jobs/erasure");
-    expect(await processOrphanUploads(r2.storage)).toEqual({ owners: 3, orphans: 1, objects: 1 });
-    expect([...r2.objects.keys()].sort()).toEqual([`kairos-renders|${live.id}/a.pdf`, `kairos-renders|${pending.id}/a.pdf`].sort());
+    // "cache" is not a user id's shape: reported, never deleted.
+    expect(await processOrphanUploads(r2.storage)).toEqual({ owners: 4, orphans: 1, objects: 1, notUserIds: 1 });
+    expect([...r2.objects.keys()].sort()).toEqual([`kairos-renders|${live.id}/a.pdf`, `kairos-renders|${pending.id}/a.pdf`, "kairos-renders|cache/a.pdf"].sort());
   });
 
   it("is a no-op for a user already gone, and a ledger written in a racing transaction is archived or refused", async () => {

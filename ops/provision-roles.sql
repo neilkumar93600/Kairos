@@ -190,4 +190,7 @@ GRANT SELECT ON llm_cost_daily TO kairos_metrics;
 -- may rewrite or delete the archive or the erased-address list; kairos_readonly reads none of the four tables.
 GRANT SELECT, INSERT, UPDATE ON deletion_tasks, consent_records TO kairos_api, kairos_worker;
 GRANT SELECT, INSERT ON credit_ledger_archive, erased_emails TO kairos_api, kairos_worker;
+-- A deviation from 02-database 4.2 (the api never deletes contact rows): only the erasure transaction holds the account's
+-- address, so it deletes that address's messages by contact_messages.email_hash, and by the address for older rows. No
+-- other api path deletes them.
 GRANT DELETE ON contact_messages TO kairos_api;

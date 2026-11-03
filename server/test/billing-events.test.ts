@@ -58,6 +58,7 @@ function deps(overrides: Partial<StripeEventDeps> = {}): StripeEventDeps {
     recordEvent: vi.fn(async () => true),
     userExists: vi.fn(async () => true),
     userForCustomer: vi.fn(async () => null),
+    customerErased: vi.fn(async () => false),
     saveSubscription: vi.fn(async () => undefined),
     grantCredits: vi.fn(async () => undefined),
     ...overrides,
@@ -238,6 +239,13 @@ describe("processStripeEvent", () => {
     await expect(processStripeEvent(event("invoice.paid", invoice(["price_starter_month"])), {}, d)).resolves.toBe("ignored");
     await expect(processStripeEvent(event("customer.subscription.deleted", sub("canceled")), { subscription: sub("canceled") }, d)).resolves.toBe("ignored");
     expect(d.grantCredits).not.toHaveBeenCalled();
+    expect(d.saveSubscription).not.toHaveBeenCalled();
+  });
+
+  it("ignores a subscription event without metadata for a customer an erasure deleted (WP-25, billing-50)", async () => {
+    const d = deps({ customerErased: vi.fn(async (c: string) => c === "cus_1") });
+    const s = sub("canceled", { userId: "" });
+    await expect(processStripeEvent(event("customer.subscription.deleted", s), { subscription: s }, d)).resolves.toBe("ignored");
     expect(d.saveSubscription).not.toHaveBeenCalled();
   });
 

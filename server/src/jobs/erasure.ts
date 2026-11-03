@@ -5,27 +5,30 @@ import { env } from "../lib/env";
 import { logger } from "../lib/logger";
 import { signal } from "../lib/sentry";
 import { storage, storageConfig, USER_BUCKETS, type Storage } from "../lib/storage";
-import { tombstoneOf, tombstoneStore, writeTombstone, type TombstoneStore } from "../services/erasure";
-import { userKeyed } from "../services/privacy-registry";
+import { pseudonym, tombstoneOf, tombstoneStore, writeTombstone, type TombstoneStore } from "../services/erasure";
+import { PRIVACY_REGISTRY, userKeyed } from "../services/privacy-registry";
 import { INLINE_REQUEST, stripe } from "../services/stripe";
 
 /**
  * The erasure worker (WP-25; 02-database 16.2 steps 1, 6 to 9 and Verify). eraseUser (services/erasure.ts) already
  * deleted the Postgres rows; this finishes each deletion task's other stores, one column stamp per step, so a crash or
- * a failed call resumes at the first unstamped step: the R2 tombstone, the Stripe customer, the verification that every
+ * a failed call resumes at the first unstamped step: the R2 tombstone, the Stripe customer, the audit columns that name
+ * the user (registry "pseudonymise", as kairos_worker: only it holds the grant), the verification that every
  * user-keyed table of the privacy registry counts zero rows, the user's R2 files, the llm_calls hashes. A task still
  * open 24 hours after its request pages once (A-DATA-1). Also the daily orphan-upload reconciler.
  */
 
 export type ErasureTask = Pick<
   typeof deletionTasks.$inferSelect,
-  "userHash" | "emailHash" | "requestedAt" | "storageId" | "stripeCustomerId" | "tombstoneWrittenAt" | "stripeDoneAt" | "verifiedAt" | "r2DoneAt" | "llmScrubbedAt"
+  "userHash" | "emailHash" | "requestedAt" | "storageId" | "stripeCustomerId" | "tombstoneWrittenAt" | "stripeDoneAt" | "auditPseudonymisedAt" | "verifiedAt" | "r2DoneAt" | "llmScrubbedAt"
 >;
 
 export interface ErasureDeps {
   /** An unreachable store fails the step in production; elsewhere (local, tests) it counts as done. */
   production: boolean;
   mark(userHash: string, set: Partial<typeof deletionTasks.$inferInsert>): Promise<void>;
+  /** Rewrites the user id to its pseudonym in every registry "pseudonymise" column; returns the rows changed. */
+  pseudonymise(userId: string, userHash: string): Promise<number>;
   /** Registry tables that still hold rows for the user id. */
   remaining(userId: string): Promise<string[]>;
   scrubLlm(userHash: string): Promise<number>;
@@ -61,6 +64,15 @@ export async function runErasure(t: ErasureTask, deps: ErasureDeps): Promise<voi
     }
     await deps.mark(t.userHash, { stripeDoneAt: now(), stripeCustomerId: null });
   }
+  if (!t.auditPseudonymisedAt) {
+    // As kairos_worker, after the user row is gone: ops_audit_pseudonym_guard (migration 0009) refuses anything else.
+    if (t.storageId) {
+      await deps.pseudonymise(t.storageId, t.userHash).catch((err: unknown) => {
+        throw new ErasureStepError("audit_pseudonymise_failed", `audit pseudonymisation failed: ${(err as Error).message}`);
+      });
+    }
+    await deps.mark(t.userHash, { auditPseudonymisedAt: now() });
+  }
   if (!t.verifiedAt) {
     const left = t.storageId ? await deps.remaining(t.storageId) : [];
     if (left.length) throw new ErasureStepError("rows_remain", `rows remain in ${left.join(", ")}`);
@@ -74,7 +86,8 @@ export async function runErasure(t: ErasureTask, deps: ErasureDeps): Promise<voi
     await deps.mark(t.userHash, { r2DoneAt: now(), storageId: null });
   }
   if (!t.llmScrubbedAt) {
-    await deps.scrubLlm(t.userHash);
+    const scrubbed = await deps.scrubLlm(t.userHash);
+    logger.info({ userHash: t.userHash.slice(0, 32), llmRowsScrubbed: scrubbed }, "erasure: llm_calls hashes nulled");
     await deps.mark(t.userHash, { llmScrubbedAt: now() });
   }
   await deps.mark(t.userHash, { completedAt: now(), lastErrorCode: null });
@@ -90,6 +103,14 @@ export function defaultErasureDeps(): ErasureDeps {
   return {
     production: env().NODE_ENV === "production",
     mark: async (userHash, set) => void (await db().update(deletionTasks).set({ ...set, updatedAt: new Date() }).where(eq(deletionTasks.userHash, userHash))),
+    pseudonymise: async (userId, userHash) => {
+      let n = 0;
+      for (const e of PRIVACY_REGISTRY.filter((x) => x.erase === "pseudonymise")) {
+        const col = sql.identifier(e.column);
+        n += (await db().execute(sql`update ${sql.identifier(e.table)} set ${col} = ${pseudonym(userHash)} where ${col} = ${userId}`)).rowCount ?? 0;
+      }
+      return n;
+    },
     remaining: async (userId) => {
       const counts = userKeyed().map((e) => sql`select ${e.table}::text as t from ${sql.identifier(e.table)} where ${sql.identifier(e.column)} = ${userId} having count(*) > 0`);
       return ((await db().execute<{ t: string }>(sql.join(counts, sql` union all `))).rows).map((r) => r.t);
@@ -163,6 +184,8 @@ export async function processErasure(deps: ErasureDeps = defaultErasureDeps()) {
 
 /** Prefixes deleted per run at most: a bug that misreads every user as gone cannot empty a bucket in one night. */
 const ORPHAN_CAP = 100;
+/** A Better Auth id or a uuid; any other owner segment is reported, never deleted. */
+const USER_ID_SHAPE = /^[A-Za-z0-9_-]{16,64}$/;
 
 /**
  * Daily: user-bucket prefixes whose user id is neither a live user nor an open erasure task (an R2 delete that failed
@@ -179,12 +202,14 @@ export async function processOrphanUploads(files: Pick<Storage, "owners" | "dele
     const open = await db().select({ id: deletionTasks.storageId }).from(deletionTasks).where(inArray(deletionTasks.storageId, chunk));
     for (const r of open) if (r.id) known.add(r.id);
   }
-  const orphans = owners.filter((o) => !known.has(o));
+  const strange = owners.filter((o) => !USER_ID_SHAPE.test(o));
+  if (strange.length) logger.warn({ owners: strange.length }, "user buckets hold prefixes that are not user ids; left alone");
+  const orphans = owners.filter((o) => USER_ID_SHAPE.test(o) && !known.has(o));
   let objects = 0;
   for (const id of orphans.slice(0, ORPHAN_CAP)) objects += await files.deleteUserObjects(id);
   if (orphans.length) {
     logger.warn({ prefixes: orphans.length, deleted: Math.min(orphans.length, ORPHAN_CAP), objects }, "orphan uploads deleted");
     signal("orphan_uploads", orphans.length);
   }
-  return { owners: owners.length, orphans: orphans.length, objects };
+  return { owners: owners.length, orphans: orphans.length, objects, notUserIds: strange.length };
 }

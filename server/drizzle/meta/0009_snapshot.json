@@ -1,5 +1,5 @@
 {
-  "id": "35138362-50c6-44e6-89b1-bbfb0a0340f1",
+  "id": "eee3947b-dc0e-4381-b4a7-0f6d6d61859c",
   "prevId": "16e15a30-272e-4cd0-a28b-2290eff839be",
   "version": "7",
   "dialect": "postgresql",
@@ -2285,6 +2285,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "email_hash": {
+          "name": "email_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -2293,7 +2299,24 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "contact_messages_email_hash_idx": {
+          "name": "contact_messages_email_hash_idx",
+          "columns": [
+            {
+              "expression": "email_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"contact_messages\".\"email_hash\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -2302,6 +2325,10 @@
         "contact_messages_topic_ck": {
           "name": "contact_messages_topic_ck",
           "value": "topic IN ('support','billing','partnership','press','other')"
+        },
+        "contact_messages_email_hash_ck": {
+          "name": "contact_messages_email_hash_ck",
+          "value": "email_hash ~ '^[0-9a-f]{64}$'"
         }
       },
       "isRLSEnabled": false
@@ -2735,6 +2762,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "stripe_customer_hash": {
+          "name": "stripe_customer_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "tombstone_written_at": {
           "name": "tombstone_written_at",
           "type": "timestamp with time zone",
@@ -2755,6 +2788,12 @@
         },
         "r2_done_at": {
           "name": "r2_done_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "audit_pseudonymised_at": {
+          "name": "audit_pseudonymised_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -2830,7 +2869,11 @@
       "checkConstraints": {
         "deletion_tasks_hash_ck": {
           "name": "deletion_tasks_hash_ck",
-          "value": "user_hash ~ '^[0-9a-f]{64}$' AND email_hash ~ '^[0-9a-f]{64}$'"
+          "value": "user_hash ~ '^[0-9a-f]{64}$' AND email_hash ~ '^[0-9a-f]{64}$' AND (stripe_customer_hash IS NULL OR stripe_customer_hash ~ '^[0-9a-f]{64}$')"
+        },
+        "deletion_tasks_audit_ck": {
+          "name": "deletion_tasks_audit_ck",
+          "value": "verified_at IS NULL OR audit_pseudonymised_at IS NOT NULL"
         },
         "deletion_tasks_by_ck": {
           "name": "deletion_tasks_by_ck",
@@ -2846,7 +2889,7 @@
         },
         "deletion_tasks_complete_ck": {
           "name": "deletion_tasks_complete_ck",
-          "value": "completed_at IS NULL OR (tombstone_written_at IS NOT NULL AND stripe_done_at IS NOT NULL AND verified_at IS NOT NULL\n        AND r2_done_at IS NOT NULL AND llm_scrubbed_at IS NOT NULL)"
+          "value": "completed_at IS NULL OR (tombstone_written_at IS NOT NULL AND stripe_done_at IS NOT NULL AND verified_at IS NOT NULL\n        AND r2_done_at IS NOT NULL AND llm_scrubbed_at IS NOT NULL AND audit_pseudonymised_at IS NOT NULL)"
         },
         "deletion_tasks_error_ck": {
           "name": "deletion_tasks_error_ck",
