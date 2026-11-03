@@ -117,12 +117,20 @@ export function queue<N extends QueueName>(name: N): Queue<JobData[N]> {
 
 /**
  * Adds a job; the jobId makes enqueueing idempotent (the same application is never tailored twice at once). delayMs
- * holds it back that long (a delayed retry).
+ * holds it back that long (a delayed retry); a priority (fairPriority) puts it behind lower ones, first in first out
+ * among equals.
  */
-export async function enqueue<N extends QueueName>(name: N, data: JobData[N], jobId?: string, delayMs?: number): Promise<void> {
+export async function enqueue<N extends QueueName>(name: N, data: JobData[N], jobId?: string, delayMs?: number, priority?: number): Promise<void> {
   // BullMQ's generic name typing is stricter than we need here.
-  await (queue(name) as unknown as Queue).add(name, data, { ...(jobId ? { jobId } : {}), ...(delayMs ? { delay: delayMs } : {}) });
+  await (queue(name) as unknown as Queue).add(name, data, { ...(jobId ? { jobId } : {}), ...(delayMs ? { delay: delayMs } : {}), ...(priority ? { priority } : {}) });
 }
+
+/**
+ * Per-user fairness for one-job-per-item queues (prepare, scale-06): the priority is the user's count of jobs still
+ * waiting there, so their k-th waits behind every other user's first. BullMQ priorities run from 1 to 2^21; jobs
+ * without one (a reconciler's redrive) go first.
+ */
+export const fairPriority = (waiting: number): number => Math.min(Math.max(waiting, 1), 2 ** 21);
 
 /**
  * What a reconciler does with a job id Redis may have lost: add it when Redis has no such job, leave a waiting, delayed

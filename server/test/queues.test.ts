@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { QUEUE_CONFIG, QUEUES, workerConcurrency, workerOptions } from "../src/jobs/queues";
+import { fairPriority, QUEUE_CONFIG, QUEUES, workerConcurrency, workerOptions } from "../src/jobs/queues";
 import { parseEnv } from "../src/lib/env";
 import { assertNoEviction } from "../src/lib/redis";
 
@@ -47,6 +47,15 @@ describe("worker concurrency", () => {
     expect(parseEnv({ ...base, QUEUE_CONCURRENCY: "score-user=8, poll-boards=2" }).QUEUE_CONCURRENCY).toEqual({ "score-user": 8, "poll-boards": 2 });
     expect(() => parseEnv({ ...base, QUEUE_CONCURRENCY: "score-user=0" })).toThrow(/QUEUE_CONCURRENCY/);
     expect(() => parseEnv({ ...base, QUEUE_CONCURRENCY: "score-user" })).toThrow(/QUEUE_CONCURRENCY/);
+  });
+});
+
+describe("fair priority (prepare jobs)", () => {
+  it("is the user's count of jobs still waiting, so their k-th waits behind everyone's first, within BullMQ's range", () => {
+    expect(fairPriority(1)).toBe(1);
+    expect(fairPriority(50)).toBe(50);
+    expect(fairPriority(0)).toBe(1);
+    expect(fairPriority(5_000_000)).toBe(2_097_152);
   });
 });
 
