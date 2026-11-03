@@ -50,7 +50,7 @@ export async function chargeSubmission(tx: Tx, userId: string, applicationId: st
   return inserted.length === 1;
 }
 
-/** Grants a paid invoice's credits. Idempotent: credit_ledger_invoice_uq allows one row per Stripe invoice. */
+/** Grants a paid invoice's credits. Idempotent: credit_ledger_invoice_reason_uq allows one plan_grant per Stripe invoice. */
 export async function grantPlanCredits(tx: Tx, grant: { userId: string; delta: number; stripeInvoiceId: string }): Promise<boolean> {
   const inserted = await tx
     .insert(creditLedger)

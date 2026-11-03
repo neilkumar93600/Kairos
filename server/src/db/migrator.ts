@@ -103,6 +103,13 @@ export async function runMigrations(client: MigrationClient, migrations: Migrati
       if (m.noTransaction) {
         // Idempotent statements only (IF NOT EXISTS), so a retry or a rerun after a partial run is safe.
         for (const statement of m.statements) await withLockRetry(() => client.query(statement), retryDelayMs, retry);
+        // A failed concurrent build leaves an invalid index that IF NOT EXISTS would then skip for good.
+        const invalid = await client.query(
+          "select i.indexrelid::regclass::text as name from pg_index i join pg_class c on c.oid = i.indexrelid where not i.indisvalid and c.relnamespace = 'public'::regnamespace",
+        );
+        if (invalid.rows.length > 0) {
+          throw new Error(`${m.tag} left invalid indexes (${invalid.rows.map((r) => r.name).join(", ")}): fix the cause, drop them, redeploy`);
+        }
         await record();
       } else {
         await withLockRetry(

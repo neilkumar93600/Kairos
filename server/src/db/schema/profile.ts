@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { boolean, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import type { Preferences, ResumeInput } from "@auto-career/shared";
 import { user } from "./auth";
@@ -54,7 +55,10 @@ export const resumes = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("resumes_user_uq").on(t.userId)],
+  (t) => [
+    uniqueIndex("resumes_user_uq").on(t.userId),
+    index("resumes_resume_profile_idx").on(t.resumeProfileId).where(sql`${t.resumeProfileId} is not null`),
+  ],
 );
 
 /** A snapshot per save, so every change to the base resume can be undone. */
@@ -86,7 +90,10 @@ export const facts = pgTable(
     confirmed: boolean("confirmed").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("facts_user_idx").on(t.userId)],
+  (t) => [
+    index("facts_user_idx").on(t.userId),
+    index("facts_resume_profile_idx").on(t.resumeProfileId).where(sql`${t.resumeProfileId} is not null`),
+  ],
 );
 
 /** Answers the user approved, reused across applications (e.g. "Are you authorized to work in the US?"). */

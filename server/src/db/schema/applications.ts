@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import type { ApplicationAnswer, ResumeLine } from "@auto-career/shared";
 import { user } from "./auth";
@@ -40,5 +41,8 @@ export const applications = pgTable(
   (t) => [
     uniqueIndex("applications_user_job_uq").on(t.userId, t.jobId),
     index("applications_user_status_idx").on(t.userId, t.status),
+    index("applications_job_idx").on(t.jobId),
+    index("applications_match_idx").on(t.matchId).where(sql`${t.matchId} is not null`),
+    index("applications_resume_profile_idx").on(t.resumeProfileId).where(sql`${t.resumeProfileId} is not null`),
   ],
 );

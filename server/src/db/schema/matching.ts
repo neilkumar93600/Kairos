@@ -23,5 +23,6 @@ export const matches = pgTable(
   (t) => [
     uniqueIndex("matches_user_job_uq").on(t.userId, t.jobId),
     index("matches_user_status_idx").on(t.userId, t.status),
+    index("matches_job_idx").on(t.jobId),
   ],
 );

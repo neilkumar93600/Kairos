@@ -24,9 +24,11 @@ export const creditLedger = pgTable(
     uniqueIndex("credit_ledger_application_reason_uq")
       .on(t.applicationId, t.reason)
       .where(sql`${t.applicationId} is not null`),
-    uniqueIndex("credit_ledger_invoice_uq")
-      .on(t.stripeInvoiceId)
+    // One grant and one expiry per invoice (billing-v02); replaced credit_ledger_invoice_uq, which allowed one row in all.
+    uniqueIndex("credit_ledger_invoice_reason_uq")
+      .on(t.stripeInvoiceId, t.reason)
       .where(sql`${t.stripeInvoiceId} is not null`),
+    uniqueIndex("credit_ledger_one_free_grant_uq").on(t.userId).where(sql`${t.reason} = 'free_grant'`),
   ],
 );
 

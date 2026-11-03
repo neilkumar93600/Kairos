@@ -16,7 +16,7 @@ const migration = (tag: string, when: number, statements: string[], noTransactio
 });
 
 /** Records every query; `fail` maps a statement to the errors it throws on its first calls. */
-function fakeClient(applied: { hash: string; created_at: number }[] = [], fail: Record<string, { code: string }[]> = {}) {
+function fakeClient(applied: { hash: string; created_at: number }[] = [], fail: Record<string, { code: string }[]> = {}, invalidIndexes: string[] = []) {
   const log: string[] = [];
   let lockFree = true;
   const client: MigrationClient & { log: string[]; holdLock: () => void } = {
@@ -26,6 +26,7 @@ function fakeClient(applied: { hash: string; created_at: number }[] = [], fail: 
       log.push(values ? `${text} ${JSON.stringify(values)}` : text);
       if (text.startsWith("select pg_try_advisory_lock")) return { rows: [{ ok: lockFree }] };
       if (text.startsWith("select hash, created_at")) return { rows: applied };
+      if (text.includes("not i.indisvalid")) return { rows: invalidIndexes.map((name) => ({ name })) };
       const err = fail[text]?.shift();
       if (err) throw err;
       return { rows: [] };
@@ -93,6 +94,14 @@ describe("runMigrations", () => {
     await runMigrations(client, [migration("0002_idx", 3, ["create index concurrently if not exists x on a(id)"], true)]);
     expect(client.log).not.toContain("begin");
     expect(client.log).toContain("create index concurrently if not exists x on a(id)");
+  });
+
+  it("refuses to record a no-transaction file that left an invalid index", async () => {
+    const client = fakeClient([], {}, ["credit_ledger_one_free_grant_uq"]);
+    await expect(runMigrations(client, [migration("0002_idx", 3, ["create unique index concurrently if not exists u on a(id)"], true)])).rejects.toThrow(
+      /left invalid indexes \(credit_ledger_one_free_grant_uq\)/,
+    );
+    expect(client.log.some((q) => q.startsWith("insert into drizzle"))).toBe(false);
   });
 
   it("retries a file whose statement timed out on a lock, up to 3 times", async () => {

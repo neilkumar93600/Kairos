@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { applications } from "./applications";
 import { user } from "./auth";
@@ -19,7 +20,10 @@ export const inboundEmails = pgTable(
     kind: emailKind("kind"),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("inbound_emails_user_idx").on(t.userId, t.receivedAt)],
+  (t) => [
+    index("inbound_emails_user_idx").on(t.userId, t.receivedAt),
+    index("inbound_emails_application_idx").on(t.applicationId, t.receivedAt).where(sql`${t.applicationId} is not null`),
+  ],
 );
 
 export const contactMessages = pgTable("contact_messages", {
