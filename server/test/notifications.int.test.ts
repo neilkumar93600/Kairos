@@ -78,7 +78,13 @@ describe.skipIf(!hasTestDb)("notifications routes against Postgres", () => {
       cursor = res.body.nextCursor;
     } while (cursor);
     expect(new Set(seen).size).toBe(7);
-    expect((await request(app).get("/api/notifications").query({ cursor: "junk" })).status).toBe(400);
+    const crafted = (k: unknown, extra: object = {}) =>
+      Buffer.from(JSON.stringify({ v: 1, t: "notifications", k: [k], id: "6f1c2a52-6d3e-4a0e-9a59-6e7f1b2c3d4e", ...extra })).toString("base64url");
+    for (const cursor of ["junk", crafted("not a time"), crafted("2026-02-31T00:00:00.000000Z"), crafted("2026-11-03 12:00:00+00"), crafted(5), crafted("2026-11-03T12:00:00.000000Z", { t: "inbox" })]) {
+      const res = await request(app).get("/api/notifications").query({ cursor });
+      expect(res.status, cursor).toBe(400);
+      expect(res.body.error.code).toBe("invalid_param");
+    }
   });
 
   it("marks chosen ids or all of the caller's unread rows read, once, and filters unread", async () => {

@@ -21,12 +21,22 @@ const TITLES: Record<Notification["kind"], string> = {
 };
 
 /**
- * Keyset cursor (05-api 10.6): base64url(JSON { v: 1, k: [created_at as Postgres text], id }). The timestamp stays the
- * database's own text with microseconds, never a JS Date (milliseconds), so rows tied to the millisecond are not skipped.
- * ponytail: local codec; swap for WP-30's lib/pagination.ts helpers when both are merged.
+ * Keyset cursor in WP-30's format (lib/pagination.ts): base64url(JSON { v: 1, t: "notifications", k: [created_at], id }),
+ * created_at as UTC text with microseconds (`YYYY-MM-DDTHH:MI:SS.ffffffZ`), never a JS Date (milliseconds), so rows
+ * tied to the millisecond are not skipped. The key is checked to be a real instant before it reaches SQL, so a crafted
+ * cursor is 400, never a 22007/22008 from Postgres.
+ * ponytail: local codec; the coordinator swaps in WP-30's helpers at merge.
  */
-const cursorShape = z.object({ v: z.literal(1), k: z.tuple([z.string().max(40)]), id: z.uuid() });
-const encodeCursor = (createdKey: string, id: string) => Buffer.from(JSON.stringify({ v: 1, k: [createdKey], id })).toString("base64url");
+const UTC_US = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.\d{6}Z$/;
+const realInstant = (k: string) => {
+  const m = UTC_US.exec(k);
+  if (!m) return false;
+  const [, y, mo, d, h, mi, sec] = m.map(Number) as number[];
+  const t = new Date(Date.UTC(y!, mo! - 1, d!, h!, mi!, sec!));
+  return y! >= 1970 && t.getUTCFullYear() === y && t.getUTCMonth() === mo! - 1 && t.getUTCDate() === d && t.getUTCHours() === h && t.getUTCMinutes() === mi && t.getUTCSeconds() === sec;
+};
+const cursorShape = z.strictObject({ v: z.literal(1), t: z.literal("notifications"), k: z.tuple([z.string().refine(realInstant)]), id: z.uuid() });
+const encodeCursor = (createdKey: string, id: string) => Buffer.from(JSON.stringify({ v: 1, t: "notifications", k: [createdKey], id })).toString("base64url");
 function decodeCursor(raw: string | undefined) {
   if (raw === undefined) return undefined;
   try {
@@ -35,6 +45,7 @@ function decodeCursor(raw: string | undefined) {
     throw new HttpError(400, "invalid_param", "Invalid cursor");
   }
 }
+const UUID_RE = sql.raw(`'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`);
 
 type Row = {
   id: string;
@@ -67,16 +78,16 @@ notificationsRouter.get("/", async (req, res) => {
        ORDER BY n.created_at DESC, n.id DESC
        LIMIT ${q.limit + 1}
     )
-    SELECT p.id, p.kind, p.created_at::text AS created_key,
+    SELECT p.id, p.kind, to_char(p.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_key,
            to_char(p.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
            to_char(p.read_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS read_at,
            p.detail, a.id AS application_id, j.title AS job_title, c.name AS company
       FROM page p
       LEFT JOIN inbound_emails ie
-        ON p.mail_key ~ '^[0-9a-f-]{36}$' AND ie.id = p.mail_key::uuid AND ie.user_id = ${me.id}
+        ON p.mail_key ~ ${UUID_RE} AND ie.id = p.mail_key::uuid AND ie.user_id = ${me.id}
       LEFT JOIN applications a
         ON a.user_id = ${me.id}
-       AND a.id = CASE WHEN p.app_key ~ '^[0-9a-f-]{36}$' THEN p.app_key::uuid ELSE ie.application_id END
+       AND a.id = CASE WHEN p.app_key ~ ${UUID_RE} THEN p.app_key::uuid ELSE ie.application_id END
       LEFT JOIN jobs j ON j.id = a.job_id
       LEFT JOIN companies c ON c.id = j.company_id
      ORDER BY p.created_at DESC, p.id DESC`);
