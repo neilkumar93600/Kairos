@@ -40,6 +40,8 @@ const SERVER = [
   "BETTER_AUTH_SECRET", "BETTER_AUTH_URL", "WEB_ORIGIN", "INBOUND_WEBHOOK_SECRET", "INBOUND_EMAIL_DOMAIN", "EMAIL_FROM",
   "POSTMARK_SERVER_TOKEN", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICES", "ANTHROPIC_KEY_INTERACTIVE",
   "USER_HASH_KEY", "DATA_KEKS", "SENTRY_DSN", "OWNER_USER_IDS", "R2_ENDPOINT",
+  // Outbound mail and signed links (WP-44): the worker mints links and sends; the api verifies them.
+  "LINK_SIGNING_KEY", "API_PUBLIC_ORIGIN", "POSTMARK_BROADCAST_TOKEN", "POSTMARK_BROADCAST_STREAM", "ALERT_EMAIL_TO", "CONTACT_ALERT_TO",
 ];
 const WATCH = ["server/**", "shared/**", "package-lock.json"];
 
@@ -88,7 +90,7 @@ export default defineRailway((ctx) => {
     {
       LLM_GATEWAY: "anthropic",
       // DATABASE_UNPOOLED_URL is the migrator's direct URL: only the service that migrates holds it.
-      ...byHand("DATABASE_URL", "DATABASE_UNPOOLED_URL", ...SERVER, "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "KAIROS_EDGE_SECRET", ...r2("UPLOADS", "RENDERS", "SNAPSHOTS")),
+      ...byHand("DATABASE_URL", "DATABASE_UNPOOLED_URL", ...SERVER, "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "KAIROS_EDGE_SECRET", ...r2("UPLOADS", "RENDERS", "SNAPSHOTS"), "POSTMARK_EVENTS_SECRET"),
     },
     "node dist/migrate.js",
   );
