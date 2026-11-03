@@ -40,6 +40,7 @@ describe.skipIf(!hasTestDb)("submissions against Postgres", () => {
         answers: opts.tailored === false || opts.answers === false ? [] : [ANSWER],
         status: opts.status ?? "draft",
         channel: opts.channel ?? null,
+        approvedAt: opts.status && opts.status !== "draft" ? new Date() : null,
       })
       .returning();
     return app!.id;

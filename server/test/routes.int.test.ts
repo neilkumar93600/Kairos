@@ -283,6 +283,43 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
     });
   });
 
+  it("GET /api/profile and PUT /api/profile/contact return the frozen columns only, never the sensitive ones (WP-12)", async () => {
+    await tdb
+      .update(schema.profiles)
+      .set({ sensitiveAnswersEnc: Buffer.alloc(40, 1), normalizedEmailHash: "a".repeat(64) })
+      .where(eq(schema.profiles.userId, me.id));
+    const keys = ["userId", "phone", "city", "country", "linkedinUrl", "githubUrl", "portfolioUrl", "preferences", "onboardingStep", "forwardingAddress", "createdAt", "updatedAt"];
+    const got = await request(app).get("/api/profile");
+    expect(Object.keys(got.body.profile).sort()).toEqual([...keys].sort());
+    const contact = { phone: null, city: "Austin", country: null, linkedinUrl: "javascript:alert(1)", githubUrl: null, portfolioUrl: null };
+    expect((await request(app).put("/api/profile/contact").send(contact)).status).toBe(422);
+    const put = await request(app).put("/api/profile/contact").send({ ...contact, linkedinUrl: "https://www.linkedin.com/in/me" });
+    expect(Object.keys(put.body.profile).sort()).toEqual([...keys].sort());
+  });
+
+  describe("POST and PATCH /api/profile/facts run as the user (facts_guard, WP-12)", () => {
+    it("creates a confirmed fact in the user's words, and edits and unconfirms it", async () => {
+      const created = await request(app).post("/api/profile/facts").send({ kind: "skill", text: "TypeScript services" });
+      expect(created.status).toBe(201);
+      expect(created.body.fact).toMatchObject({ confirmed: true, assertedBy: "user" });
+      expect(created.body.fact.confirmedAt).toBeTruthy();
+
+      const id = created.body.fact.id as string;
+      const edited = await request(app).patch(`/api/profile/facts/${id}`).send({ text: "TypeScript and Go services" });
+      expect(edited.status).toBe(200);
+      expect(edited.body.fact).toMatchObject({ text: "TypeScript and Go services", confirmed: true });
+
+      const unconfirmed = await request(app).patch(`/api/profile/facts/${id}`).send({ confirmed: false });
+      expect(unconfirmed.body.fact).toMatchObject({ confirmed: false, confirmedAt: null });
+    });
+
+    it("confirms an imported fact, which keeps its import provenance until the user edits it", async () => {
+      const id = await fact("A parsed fact", false);
+      const res = await request(app).patch(`/api/profile/facts/${id}`).send({ confirmed: true });
+      expect(res.body.fact).toMatchObject({ confirmed: true, assertedBy: "import" });
+    });
+  });
+
   describe("DELETE /api/profile/facts/:id (database-v09)", () => {
     const remaining = async (id: string) => (await tdb.select().from(schema.facts).where(eq(schema.facts.id, id))).length;
 

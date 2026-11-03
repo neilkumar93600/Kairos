@@ -5,6 +5,7 @@ import { z } from "zod";
 import { FACT_KINDS, getPlan, preferencesSchema } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, facts, profiles, resumeProfiles, resumes, savedAnswers } from "../db/schema";
+import { asActor } from "../lib/actor";
 import { HttpError, forbidden, notFound } from "../lib/errors";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
@@ -14,17 +15,35 @@ import { planFor } from "../services/submissions";
 /** Profile, preferences, resumes, facts and saved answers. Mounted at /api/profile. */
 export const profileRouter = Router();
 
+/** Links are printed on resumes and rendered as hrefs: http(s) only, as profiles_urls_ck also insists. */
+const link = z.url({ protocol: /^https?$/ }).max(300).nullable();
 const contactSchema = z.object({
   phone: z.string().max(40).nullable(),
   city: z.string().max(120).nullable(),
   country: z.string().max(120).nullable(),
-  linkedinUrl: z.url().nullable(),
-  githubUrl: z.url().nullable(),
-  portfolioUrl: z.url().nullable(),
+  linkedinUrl: link,
+  githubUrl: link,
+  portfolioUrl: link,
 });
 
+/** The columns a profile response carries (the frozen shape); sensitive_answers_enc and normalized_email_hash never leave. */
+const PROFILE_COLUMNS = {
+  userId: profiles.userId,
+  phone: profiles.phone,
+  city: profiles.city,
+  country: profiles.country,
+  linkedinUrl: profiles.linkedinUrl,
+  githubUrl: profiles.githubUrl,
+  portfolioUrl: profiles.portfolioUrl,
+  preferences: profiles.preferences,
+  onboardingStep: profiles.onboardingStep,
+  forwardingAddress: profiles.forwardingAddress,
+  createdAt: profiles.createdAt,
+  updatedAt: profiles.updatedAt,
+};
+
 profileRouter.get("/", async (req, res) => {
-  const [profile] = await db().select().from(profiles).where(eq(profiles.userId, currentUser(req).id));
+  const [profile] = await db().select(PROFILE_COLUMNS).from(profiles).where(eq(profiles.userId, currentUser(req).id));
   if (!profile) throw notFound("Profile");
   res.json({ profile });
 });
@@ -34,7 +53,7 @@ profileRouter.put("/contact", validateBody(contactSchema), async (req, res) => {
     .update(profiles)
     .set({ ...req.body, updatedAt: new Date() })
     .where(eq(profiles.userId, currentUser(req).id))
-    .returning();
+    .returning(PROFILE_COLUMNS);
   res.json({ profile });
 });
 
@@ -43,7 +62,7 @@ profileRouter.put("/preferences", validateBody(preferencesSchema), async (req, r
     .update(profiles)
     .set({ preferences: req.body, onboardingStep: "done", updatedAt: new Date() })
     .where(eq(profiles.userId, currentUser(req).id))
-    .returning();
+    .returning({ preferences: profiles.preferences });
   res.json({ preferences: profile?.preferences ?? null });
 });
 
@@ -71,8 +90,12 @@ profileRouter.get("/facts", async (req, res) => {
 
 const factSchema = z.object({ kind: z.enum(FACT_KINDS), text: z.string().trim().min(3).max(400), confirmed: z.boolean().default(true) });
 
+// Fact writes run as the user (asActor): facts_guard refuses a confirm or an edit from anyone else (INV-2).
 profileRouter.post("/facts", validateBody(factSchema), async (req, res) => {
-  const [fact] = await db().insert(facts).values({ ...req.body, userId: currentUser(req).id }).returning();
+  const [fact] = await db().transaction(async (tx) => {
+    await asActor(tx, "user");
+    return tx.insert(facts).values({ ...req.body, assertedBy: "user", userId: currentUser(req).id }).returning();
+  });
   res.status(201).json({ fact });
 });
 
@@ -84,11 +107,14 @@ export const factPatchSchema = factSchema
 
 profileRouter.patch("/facts/:id", validateBody(factPatchSchema), async (req, res) => {
   const id = parseParam(z.uuid(), req.params.id);
-  const [fact] = await db()
-    .update(facts)
-    .set(req.body)
-    .where(and(eq(facts.id, id), eq(facts.userId, currentUser(req).id)))
-    .returning();
+  const [fact] = await db().transaction(async (tx) => {
+    await asActor(tx, "user");
+    return tx
+      .update(facts)
+      .set(req.body)
+      .where(and(eq(facts.id, id), eq(facts.userId, currentUser(req).id)))
+      .returning();
+  });
   if (!fact) throw notFound("Fact");
   res.json({ fact });
 });

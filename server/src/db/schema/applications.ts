@@ -1,8 +1,10 @@
-import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { check, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import type { ApplicationAnswer, ResumeLine } from "@auto-career/shared";
 import { user } from "./auth";
-import { applicationStatus, emailKind, submitChannel } from "./enums";
-import { jobs, matches } from "./jobs";
+import { jobs } from "./catalog";
+import { applicationStatus, submitChannel } from "./enums";
+import { matches } from "./matching";
 import { resumeProfiles } from "./profile";
 
 export interface Receipt {
@@ -39,24 +41,14 @@ export const applications = pgTable(
   (t) => [
     uniqueIndex("applications_user_job_uq").on(t.userId, t.jobId),
     index("applications_user_status_idx").on(t.userId, t.status),
+    index("applications_job_idx").on(t.jobId),
+    index("applications_match_idx").on(t.matchId).where(sql`${t.matchId} is not null`),
+    index("applications_resume_profile_idx").on(t.resumeProfileId).where(sql`${t.resumeProfileId} is not null`),
+    // INV-3: nothing past draft without an approval time and a channel (02-database 7.3.1, before approved_by exists).
+    check(
+      "applications_approval_shape_ck",
+      sql`(status IN ('approved','submitting','submitted','failed') AND approved_at IS NOT NULL AND channel IS NOT NULL)
+        OR (status = 'draft' AND approved_at IS NULL AND channel IS NULL) OR status IN ('withdrawn','refunded')`,
+    ),
   ],
-);
-
-/** Replies forwarded to the user's address, tagged to an application when we can match them. */
-export const inboundEmails = pgTable(
-  "inbound_emails",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    applicationId: uuid("application_id").references(() => applications.id, { onDelete: "set null" }),
-    providerMessageId: text("provider_message_id").notNull().unique(),
-    sender: text("sender").notNull(),
-    subject: text("subject").notNull(),
-    textBody: text("text_body").notNull(),
-    kind: emailKind("kind"),
-    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index("inbound_emails_user_idx").on(t.userId, t.receivedAt)],
 );

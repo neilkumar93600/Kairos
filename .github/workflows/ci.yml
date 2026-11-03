@@ -58,6 +58,48 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  # 06-infrastructure 3.7: the expand-only linter, applied migrations never edited (INV-21), drizzle-kit's snapshot check,
+  # no drift between src/db/schema and drizzle/, and the deploy runner applied to an empty database twice (the second
+  # run applies nothing and re-checks every applied file's hash).
+  migrations:
+    name: migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17@sha256:3b0cda93be7c8dba2ed484d19393d93845dc3dafb88973e248ba8e6d99d784e1
+        env:
+          POSTGRES_USER: kairos
+          POSTGRES_PASSWORD: kairos
+          POSTGRES_DB: kairos_migrations
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U kairos"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts && npm rebuild esbuild
+      - name: Expand-only linter; migrations on the base branch unchanged
+        working-directory: server
+        run: node scripts/lint-migrations.mjs --base "${{ github.event.pull_request.base.sha || github.event.before }}"
+      - name: drizzle-kit check
+        working-directory: server
+        run: npx drizzle-kit check
+      - name: The schema files and the migrations agree
+        working-directory: server
+        run: npx drizzle-kit generate && git status --porcelain drizzle && test -z "$(git status --porcelain drizzle)"
+      - name: Apply to an empty database, then again
+        working-directory: server
+        env:
+          DATABASE_UNPOOLED_URL: postgres://kairos:kairos@localhost:5432/kairos_migrations
+        run: npx tsx src/migrate.ts && npx tsx src/migrate.ts
+
   # INV-16: the extension is frozen and the cloud applier injects its built filler unchanged. Fails on any change to
   # extension/src or to the built dist/filler.js; re-record deliberately with npm run frozen:update -w @auto-career/server.
   frozen-extension:
