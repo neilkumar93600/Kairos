@@ -5,7 +5,7 @@
  */
 //
 // details shapes the web may read (05-api 4.5): rate_limited { reason: "user_limit" | "ip_limit" | "daily_allowance" |
-// "service_budget", bucket?: limiter class (anon, user_api, billing, contact, webhook_ip, ai_burst), retryAfterSec?,
+// "service_budget", bucket?: limiter class (anon, user_api, billing, contact, newsletter, link, webhook_ip, ai_burst), retryAfterSec?,
 // resetsAt? }; reauth_required { maxAgeSec }; service_unavailable { retryAfterSec }.
 // approvals_frozen, cloud_paused, extension_only and unknown_flag are WP-27's (ops flags); listed here because this file is the catalog.
 export const ERROR_CATALOG: Record<string, readonly number[]> = {

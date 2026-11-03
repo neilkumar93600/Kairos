@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "../db/client";
-import { contactMessages, deletionTasks, erasedEmails, subscriptions, user } from "../db/schema";
+import { contactMessages, deletionTasks, erasedEmails, newsletterSubscribers, subscriptions, user } from "../db/schema";
 import { env } from "../lib/env";
 import { logger } from "../lib/logger";
 import { storage, storageConfig, type Storage } from "../lib/storage";
@@ -10,7 +10,7 @@ import { storage, storageConfig, type Storage } from "../lib/storage";
 /**
  * Account erasure (WP-25; 02-database 16.2, 06-infrastructure 8.7; CISO should-fix deletion). eraseUser runs every
  * Postgres step in one transaction: the deletion task, the erased-address tombstone, the ledger archive under the user
- * hash, the user's contact messages and the user row, whose cascade removes every table the privacy registry marks
+ * hash, the user's contact messages and newsletter sign-ups and the user row, whose cascade removes every table the privacy registry marks
  * cascade. Then the R2 tombstone. The stores outside Postgres (Stripe customer, R2 files, llm_calls hashes) and the
  * verification are the erasure worker's (jobs/erasure.ts), each stamped on the task, so a crash resumes where it stopped.
  *
@@ -121,6 +121,8 @@ export async function eraseUser(db: Db, userId: string, requestedBy: RequestedBy
     // Contact messages carry no user id, only the address they were sent from (R-22): by the normalized hash, so a +tag
     // or dotted alias goes too, and by the address for rows written before the hash existed.
     await tx.delete(contactMessages).where(sql`${contactMessages.emailHash} = ${task.emailHash} or lower(${contactMessages.email}) = lower(${u.email})`);
+    // Newsletter sign-ups (WP-50) are not accounts either: the same two keys (the stored address is already lower case).
+    await tx.delete(newsletterSubscribers).where(sql`${newsletterSubscribers.emailHash} = ${task.emailHash} or ${newsletterSubscribers.email} = lower(btrim(${u.email}))`);
     await tx.delete(user).where(eq(user.id, u.id));
     return task;
   });

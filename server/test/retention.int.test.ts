@@ -45,7 +45,7 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
     // A job saved to the tracker is purged, never deleted (its item would lose the posting; DB-reviewer round 2).
     await db.insert(schema.trackerItems).values({ userId, jobId: saved });
 
-    expect(await retention.processRetention()).toEqual({ inbound_body: 1, contact_messages: 1, matches_below_bar: 0, jobs_closed: 3 });
+    expect(await retention.processRetention()).toEqual({ inbound_body: 1, contact_messages: 1, newsletter_inactive: 0, matches_below_bar: 0, jobs_closed: 3 });
     expect((await db.select().from(schema.inboundEmails)).map((r) => r.textBody).sort()).toEqual(["", "new"]);
     expect((await db.select().from(schema.contactMessages)).map((r) => r.message)).toEqual(["new"]);
     const jobs = await db.select().from(schema.jobs);
@@ -53,7 +53,23 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
     expect(jobs.find((j) => j.id === referenced)).toMatchObject({ descriptionText: "", raw: null });
     expect(jobs.find((j) => j.id === saved)).toMatchObject({ descriptionText: "", raw: null });
     // A second run changes nothing.
-    expect(await retention.processRetention()).toEqual({ inbound_body: 0, contact_messages: 0, matches_below_bar: 0, jobs_closed: 0 });
+    expect(await retention.processRetention()).toEqual({ inbound_body: 0, contact_messages: 0, newsletter_inactive: 0, matches_below_bar: 0, jobs_closed: 0 });
+  });
+
+  it("deletes newsletter sign-ups 30 days after their last confirm request or their unsubscribe, never a confirmed one (WP-50)", async () => {
+    const row = (email: string, status: "pending" | "confirmed" | "unsubscribed", days: number, unsubDays?: number) =>
+      db.insert(schema.newsletterSubscribers).values({
+        email, source: "popup", status, confirmRequestedAt: ago(days), createdAt: ago(days),
+        confirmedAt: status === "pending" ? null : ago(days), unsubscribedAt: unsubDays === undefined ? null : ago(unsubDays),
+      });
+    await row("old-pending@example.com", "pending", 40);
+    await row("new-pending@example.com", "pending", 5);
+    await row("old-confirmed@example.com", "confirmed", 400);
+    await row("old-unsub@example.com", "unsubscribed", 400, 40);
+    await row("new-unsub@example.com", "unsubscribed", 400, 5);
+    expect(await retention.processRetention()).toMatchObject({ newsletter_inactive: 2 });
+    const left = await db.select({ email: schema.newsletterSubscribers.email }).from(schema.newsletterSubscribers);
+    expect(left.map((r) => r.email).sort()).toEqual(["new-pending@example.com", "new-unsub@example.com", "old-confirmed@example.com"]);
   });
 
   it("blanks sensitive values 7 days after submitted or withdrawn, once, and leaves the rest", async () => {

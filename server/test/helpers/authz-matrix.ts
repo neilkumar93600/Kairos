@@ -50,6 +50,10 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "POST /api/webhooks/inbound-email": { public: "Postmark inbound: the token is the credential; mail is filed by forwarding address" },
   "POST /api/webhooks/postmark-events": { public: "Postmark delivery events: the token is the credential; it only adds or lifts address-hash suppressions" },
   "POST /api/contact": { public: "the public contact form: stores a message and reads nothing back" },
+  "POST /api/newsletter": { public: "the public newsletter form: the same 202 for every address, reads nothing back" },
+  "GET /api/newsletter/confirm": { public: "the emailed confirm token is the credential; redirects to a fixed web page" },
+  "GET /api/newsletter/unsubscribe": { public: "the emailed unsubscribe token is the credential; redirects to a fixed web page" },
+  "POST /api/newsletter/unsubscribe": { public: "RFC 8058 one-click: the token in the URL is the credential, no cookie is read" },
   "GET /api/auth-providers": { public: "the configured sign-in methods; no user data" },
 
   "GET /api/me": own("/api/me"),

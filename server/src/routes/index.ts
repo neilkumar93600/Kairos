@@ -16,6 +16,7 @@ import { inboxRouter } from "./inbox";
 import { jobsRouter } from "./jobs";
 import { matchesRouter } from "./matches";
 import { meRouter } from "./me";
+import { newsletterRouter } from "./newsletter";
 import { notificationsRouter } from "./notifications";
 import { profileRouter } from "./profile";
 import { resumeRouter } from "./resume";
@@ -23,6 +24,8 @@ import { resumeRouter } from "./resume";
 /** Every JSON route under /api. Auth routes (/api/auth/*) and webhooks are mounted separately in app.ts. */
 export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   const router = Router();
+  // Public newsletter (WP-50): its own classes per route (routes/newsletter.ts), ahead of the anonymous class.
+  router.use("/newsletter", routeDeadline, newsletterRouter(limits));
   router.use(routeDeadline, limits.anon);
 
   router.use("/contact", limits.contact, contactRouter);

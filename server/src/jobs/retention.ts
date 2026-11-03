@@ -49,6 +49,17 @@ export const RETENTION_RULES = {
     days: 365,
     run: (d: number) => batched(() => sql`delete from contact_messages where id in (select id from contact_messages where created_at < ${before(d)} limit ${BATCH})`),
   },
+  /**
+   * Newsletter sign-ups that never confirmed, or unsubscribed (WP-50): nothing to keep them for once the confirm link is
+   * long dead or the person has left. Unsubscribed rows outlive the unsubscribe by this long, so a late click still finds
+   * its row. The partial index on status <> 'confirmed' keeps the scan to these rows.
+   */
+  newsletter_inactive: {
+    days: 30,
+    run: (d: number) =>
+      batched(() => sql`delete from newsletter_subscribers where id in (
+        select id from newsletter_subscribers where status <> 'confirmed' and coalesce(unsubscribed_at, confirm_requested_at) < ${before(d)} limit ${BATCH})`),
+  },
   matches_below_bar: {
     days: 30,
     run: (d: number) =>

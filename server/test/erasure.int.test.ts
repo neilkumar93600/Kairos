@@ -40,6 +40,8 @@ describe.skipIf(!hasTestDb)("erasure against Postgres (WP-25)", () => {
     const b = await seedEverything(db, "bob@example.com", "bobmarker");
     // An alias of Ann's address, as the contact route stores it: found by the normalized hash, not the address.
     await db.insert(schema.contactMessages).values({ name: "A", email: "ann.lee+help@example.com", topic: "support", message: MARK, emailHash: erasure.emailHash("ann.lee+help@example.com") });
+    // A newsletter sign-up under another alias (WP-50): found by the normalized hash too.
+    await db.insert(schema.newsletterSubscribers).values({ email: "ann.lee+news@example.com", source: "blog-post", emailHash: erasure.emailHash("ann.lee+news@example.com") });
     const hash = await erasure.eraseUser(db, a.id, "user", store);
     expect(hash).toBe(erasure.erasureUserHash(a.id));
 
@@ -56,6 +58,7 @@ describe.skipIf(!hasTestDb)("erasure against Postgres (WP-25)", () => {
     expect(archive.map((r) => r.reason).sort()).toEqual(["free_grant", "submission"]);
     expect(archive.find((r) => r.reason === "submission")?.applicationId).toBe(a.applicationId); // R-17
     expect(await db.select().from(schema.contactMessages)).toHaveLength(1); // Bob's
+    expect((await db.select().from(schema.newsletterSubscribers)).map((r) => r.email)).toEqual(["bob@example.com"]);
     expect(await db.select().from(schema.erasedEmails)).toEqual([expect.objectContaining({ emailHash: erasure.emailHash("ann.lee@example.com") })]);
 
     // Bob is untouched.

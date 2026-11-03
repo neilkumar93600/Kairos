@@ -82,6 +82,14 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
   { table: "user_daily_usage", column: "user_id", erase: "cascade", export: ALL },
   { table: "ai_usage", column: "user_id", erase: "cascade", export: ALL },
   { table: "contact_messages", column: "email", by: "email", erase: "delete", export: { omit: ["email_hash"] } },
+  // WP-50. Deleted with the account by address or normalized hash; the token hashes are credentials, not exported.
+  {
+    table: "newsletter_subscribers",
+    column: "email",
+    by: "email",
+    erase: "delete",
+    export: { omit: ["email_hash", "confirm_token_hash", "unsubscribe_token_hash", "confirm_seq"] },
+  },
   // WP-44. Job payloads in Redis carry ids only and BullMQ keeps finished jobs at most 7 days: no entry, stated in the
   // privacy notice's processor tail (owner-actions/WP-25.md).
   // Rows of kind contact_message have no user_id; their entity_id is the contact_messages id, never an address.
