@@ -109,6 +109,10 @@ export const MATRIX: Record<string, MatrixEntry> = {
   },
 
   "GET /api/files/*key": { request: (t) => ({ path: `/api/files/${t.fileKey}` }) },
+
+  // WP-44: every statement filters by the caller's user id; read-all touches only the caller's unread rows.
+  "GET /api/notifications": own("/api/notifications"),
+  "POST /api/notifications/read": own("/api/notifications/read", { all: true }),
 };
 
 type Layer = { route?: { path: string | string[]; methods: Record<string, boolean> }; handle: { stack?: Layer[] }; mountPath?: string | string[] };

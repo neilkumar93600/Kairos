@@ -7,6 +7,7 @@ import { publicPlan, SUBSCRIPTION_COLUMNS } from "../lib/serializers";
 import { currentUser } from "../middleware/require-auth";
 import { availableCredits, countInFlight, getBalance } from "../services/credits";
 import { planFor } from "../services/submissions";
+import { unreadCount } from "./notifications";
 
 /** GET /api/me: who is signed in, their plan, credits and onboarding step. */
 export const meRouter = Router();
@@ -28,5 +29,7 @@ meRouter.get("/", async (req, res) => {
     credits: { balance, inFlight, available: availableCredits(balance, inFlight) },
     onboardingStep: profile?.onboardingStep ?? "resume",
     forwardingAddress: profile?.forwardingAddress ?? null,
+    // Additive (05-api 12.1): the bell's badge without a second request.
+    unreadNotifications: await unreadCount(me.id),
   });
 });

@@ -257,3 +257,28 @@ export const draftRequestSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("cover_letter") }),
 ]);
 export type DraftRequest = z.infer<typeof draftRequestSchema>;
+
+// In-app notifications (WP-44, 05-api 12.1). Rows carry ids and codes only; the title is joined when read.
+export const NOTIFICATION_KINDS = ["autopilot_sent", "autopilot_paused", "resend_available", "offer_pause_notice", "reply_important", "forwarding_code"] as const;
+export const notificationSchema = z.object({
+  id: z.uuid(),
+  kind: z.enum(NOTIFICATION_KINDS),
+  createdAt: z.string(),
+  readAt: z.string().nullable(),
+  title: z.string().max(200),
+  applicationId: z.uuid().nullable(),
+  detail: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+});
+export type Notification = z.infer<typeof notificationSchema>;
+export const notificationsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  cursor: z.string().max(200).optional(),
+  unread: z.enum(["true"]).optional(),
+});
+export const notificationsResponseSchema = z.object({
+  notifications: z.array(notificationSchema),
+  unread: z.number().int().min(0),
+  nextCursor: z.string().optional(),
+});
+export const notificationsReadSchema = z.union([z.strictObject({ ids: z.array(z.uuid()).min(1).max(100) }), z.strictObject({ all: z.literal(true) })]);
+export type NotificationsRead = z.infer<typeof notificationsReadSchema>;
