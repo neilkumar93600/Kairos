@@ -1,6 +1,7 @@
 import type { Job, RepeatOptions } from "bullmq";
 import { processPartitions } from "./partitions";
 import type { QueueName } from "./queues";
+import { processReconcileApply, processSweepSubmitting } from "./reconcile";
 
 export interface Schedule {
   queue: QueueName;
@@ -26,6 +27,9 @@ export const SCHEDULES: Schedule[] = [
   { queue: "ledger-watch", id: "ledger-watch", repeat: { every: 15 * MINUTE } },
   // llm_calls partitions six weeks ahead, the default-partition check and the 90-day drop (database-88).
   { queue: "maintenance", id: "llm-partitions", repeat: { pattern: "0 3 * * *", tz: "UTC" }, run: processPartitions },
+  // Cloud sends stuck in submitting settle as unconfirmed (ops-18), and lost cloud-apply jobs come back (applications-40).
+  { queue: "maintenance", id: "sweep-submitting", repeat: { every: MINUTE / 2 }, run: processSweepSubmitting },
+  { queue: "maintenance", id: "reconcile-apply", repeat: { every: MINUTE }, run: processReconcileApply },
 ];
 
 /** The maintenance queue's processor: the scheduler id is the job name. */

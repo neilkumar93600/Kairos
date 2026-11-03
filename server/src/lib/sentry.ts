@@ -98,6 +98,8 @@ const SIGNALS = {
   admin_adjustment_row: 1,
   /** Rows in llm_calls_default: a week had no partition, so the daily partitions job has been failing (WP-09). */
   llm_calls_default_rows: 1,
+  /** Cloud sends left in submitting over 10 minutes, settled as unconfirmed: an applier died mid-run (WP-09). */
+  submitting_swept: 1,
 } as const;
 export type Signal = keyof typeof SIGNALS;
 

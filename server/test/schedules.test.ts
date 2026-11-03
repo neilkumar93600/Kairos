@@ -21,6 +21,11 @@ describe("job schedules", () => {
     expect(byId["llm-partitions"]).toMatchObject({ queue: "maintenance", repeat: { pattern: "0 3 * * *", tz: "UTC" } });
   });
 
+  it("a dead applier's claim is settled within 10.5 minutes, a lost cloud job re-added within 3", () => {
+    expect(byId["sweep-submitting"]).toMatchObject({ queue: "maintenance", repeat: { every: 30_000 } });
+    expect(byId["reconcile-apply"]).toMatchObject({ queue: "maintenance", repeat: { every: 60_000 } });
+  });
+
   it("an unknown maintenance job fails instead of passing silently", async () => {
     await expect(processMaintenance({ name: "nope" } as never)).rejects.toThrow(/nope/);
   });

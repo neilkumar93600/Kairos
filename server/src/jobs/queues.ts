@@ -64,6 +64,27 @@ export async function enqueue<N extends QueueName>(name: N, data: JobData[N], jo
   await (queue(name) as unknown as Queue).add(name, data, { ...(jobId ? { jobId } : {}), ...(delayMs ? { delay: delayMs } : {}) });
 }
 
+/**
+ * What a reconciler does with a job id Redis may have lost: add it when Redis has no such job, leave a waiting, delayed
+ * or running one alone, and replace a finished one only when `replaceFinished` (BullMQ ignores an add whose id it
+ * still holds, so a failed job would otherwise block its own redrive for the 7 days it is kept).
+ */
+export function redriveAction(state: string, replaceFinished: boolean): "add" | "replace" | "skip" {
+  if (state === "unknown") return "add";
+  return replaceFinished && (state === "completed" || state === "failed") ? "replace" : "skip";
+}
+
+/** Re-adds a job a reconciler found missing (redriveAction). Returns whether it added one. */
+export async function redrive<N extends QueueName>(name: N, data: JobData[N], jobId: string, replaceFinished = false): Promise<boolean> {
+  const job = await queue(name).getJob(jobId);
+  const action = redriveAction(job ? await job.getState() : "unknown", replaceFinished);
+  if (action === "skip") return false;
+  // A racing worker may have replaced it already; the add below is then a no-op.
+  if (action === "replace") await job!.remove().catch(() => {});
+  await enqueue(name, data, jobId);
+  return true;
+}
+
 export async function closeQueues(): Promise<void> {
   await Promise.all([...queues.values()].map((q) => q.close()));
   queues.clear();
