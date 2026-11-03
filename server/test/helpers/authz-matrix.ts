@@ -31,6 +31,8 @@ export interface TenantEntry {
   request: (ids: TenantIds) => { path: string; body?: object };
   foreign?: number;
   why?: string;
+  /** A session-fresh route (05-api 5.2): test/fresh-matrix.test.ts holds this flag against how routes/index.ts mounts it. */
+  fresh?: true;
 }
 
 export type MatrixEntry = PublicEntry | TenantEntry;
@@ -89,6 +91,7 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "GET /api/applications/:id": { request: (t) => ({ path: `/api/applications/${t.applicationId}` }) },
   "PATCH /api/applications/:id": { request: (t) => ({ path: `/api/applications/${t.applicationId}`, body: { coverLetter: null } }) },
   "POST /api/applications/approve": {
+    fresh: true,
     request: (t) => ({ path: "/api/applications/approve", body: { applicationIds: [t.applicationId], channel: "extension" } }),
     foreign: 200,
     why: "approves the caller's own drafts among the ids sent; another user's id is left out ({ approved: [] })",
@@ -98,8 +101,8 @@ export const MATRIX: Record<string, MatrixEntry> = {
 
   "GET /api/credits": own("/api/credits"),
   "GET /api/inbox": own("/api/inbox"),
-  "POST /api/billing/checkout": own("/api/billing/checkout", { plan: "starter", interval: "month" }),
-  "POST /api/billing/portal": own("/api/billing/portal"),
+  "POST /api/billing/checkout": { ...own("/api/billing/checkout", { plan: "starter", interval: "month" }), fresh: true },
+  "POST /api/billing/portal": { ...own("/api/billing/portal"), fresh: true },
 
   "GET /api/extension/queue": own("/api/extension/queue"),
   "POST /api/extension/report": {

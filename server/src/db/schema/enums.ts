@@ -12,7 +12,8 @@ import {
 } from "@auto-career/shared";
 
 export const atsProvider = pgEnum("ats_provider", ATS_PROVIDERS);
-export const matchStatus = pgEnum("match_status", MATCH_STATUSES);
+/** below_bar is server only (02-database 7.2.7): a scored pair under the user's bar, kept so it is never paid for twice. */
+export const matchStatus = pgEnum("match_status", [...MATCH_STATUSES, "below_bar"]);
 export const applicationStatus = pgEnum("application_status", APPLICATION_STATUSES);
 export const submitChannel = pgEnum("submit_channel", SUBMIT_CHANNELS);
 export const factKind = pgEnum("fact_kind", FACT_KINDS);

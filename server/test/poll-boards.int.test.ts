@@ -45,7 +45,7 @@ describe.skipIf(!hasTestDb)("closeMissingJobs against Postgres", () => {
     const add = async (name: string, values: { priority?: boolean; active?: boolean; lastPolledMinAgo?: number }) => {
       const [c] = await db
         .insert(companies)
-        .values({ name, ats: "lever", boardToken: name, priority: values.priority ?? false, active: values.active ?? true })
+        .values({ name, ats: "lever", boardToken: name, priority: values.priority ?? false, active: values.active ?? true, inactiveReason: values.active === false ? "owner" : null })
         .returning({ id: companies.id });
       if (values.lastPolledMinAgo !== undefined) await db.update(companies).set({ lastPolledAt: ago(values.lastPolledMinAgo) }).where(eq(companies.id, c!.id));
       return c!.id;

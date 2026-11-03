@@ -4,6 +4,7 @@ import { db, type Db } from "../db/client";
 import { companies, jobs } from "../db/schema";
 import { logger } from "../lib/logger";
 import { atsAdapters, BoardNotFoundError } from "../services/ats";
+import { normalizePosting } from "../services/normalize-posting";
 import { enqueue, queue, type JobData } from "./queues";
 
 const STANDARD_INTERVAL_MIN = 30;
@@ -56,7 +57,7 @@ export async function closeMissingJobs(database: Db, companyId: string, openIds:
   if (openIds.length === 0) return 0;
   const closed = await database
     .update(jobs)
-    .set({ closedAt: new Date() })
+    .set({ closedAt: new Date(), closedBy: "poll" })
     .where(and(eq(jobs.companyId, companyId), isNull(jobs.closedAt), notInArray(jobs.externalId, openIds)))
     .returning({ id: jobs.id });
   return closed.length;
@@ -83,7 +84,7 @@ async function pollCompany(companyId: string): Promise<{ added: number; closed: 
     const inserted = postings.length
       ? await db()
           .insert(jobs)
-          .values(postings.map((p) => ({ ...p, companyId })))
+          .values(postings.map((p) => ({ ...normalizePosting(p), companyId })))
           .onConflictDoNothing({ target: [jobs.companyId, jobs.externalId] })
           .returning({ id: jobs.id })
       : [];
@@ -96,7 +97,12 @@ async function pollCompany(companyId: string): Promise<{ added: number; closed: 
   } catch (err) {
     await db()
       .update(companies)
-      .set({ lastPolledAt: new Date(), lastPollError: pollErrorCode(err), active: !(err instanceof BoardNotFoundError) })
+      .set({
+        lastPolledAt: new Date(),
+        lastPollError: pollErrorCode(err),
+        active: !(err instanceof BoardNotFoundError),
+        inactiveReason: err instanceof BoardNotFoundError ? "board_not_found" : null,
+      })
       .where(eq(companies.id, companyId));
     if (err instanceof BoardNotFoundError) return { added: 0, closed: 0 };
     throw err;

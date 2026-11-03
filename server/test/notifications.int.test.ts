@@ -29,7 +29,7 @@ describe.skipIf(!hasTestDb)("notifications routes against Postgres", () => {
     me = await seedUser(tdb);
     other = await seedUser(tdb);
     app = createApp({
-      auth: { handler: async () => new Response(null), getSession: async () => ({ sessionId: "s", user: { id: me, email: "a@b.c", name: "A", emailVerified: true } }) },
+      auth: { handler: async () => new Response(null), getSession: async () => ({ sessionId: "s", createdAt: new Date(), user: { id: me, email: "a@b.c", name: "A", emailVerified: true } }) },
       corsOrigins: [],
       healthChecks: {},
     });

@@ -5,7 +5,7 @@ import { createApp } from "../src/app";
 // The cursor is checked before any query, so a crafted one is 400 here without a database (the paging itself runs in
 // notifications.int.test.ts).
 const app = createApp({
-  auth: { handler: async () => new Response(null), getSession: async () => ({ sessionId: "s", user: { id: "u1", email: "a@b.c", name: "A", emailVerified: true } }) },
+  auth: { handler: async () => new Response(null), getSession: async () => ({ sessionId: "s", createdAt: new Date(), user: { id: "u1", email: "a@b.c", name: "A", emailVerified: true } }) },
   corsOrigins: [],
   healthChecks: {},
 });
