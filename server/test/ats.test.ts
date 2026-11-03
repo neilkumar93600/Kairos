@@ -5,6 +5,8 @@ import { greenhouse, normalizeGreenhouse } from "../src/services/ats/greenhouse"
 import { lever, normalizeLever } from "../src/services/ats/lever";
 import { BoardNotFoundError } from "../src/services/ats/types";
 
+const LEVER_ID = "0f6c1a3e-2b4d-4c5e-8f9a-1b2c3d4e5f60";
+const ASHBY_ID = "9f8e7d6c-5b4a-4321-8fed-cba987654321";
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8"));
 
 describe("ATS normalizers", () => {
@@ -23,16 +25,36 @@ describe("ATS normalizers", () => {
   });
 
   it("normalizes Lever postings with yearly USD salary", () => {
-    const [job] = normalizeLever(fixture("lever"));
-    expect(job).toMatchObject({ externalId: "a1b2c3", remote: false, salaryMinUsd: 120000, salaryMaxUsd: 160000, department: "Platform" });
+    const [job] = normalizeLever(fixture("lever"), "acme");
+    expect(job).toMatchObject({ externalId: LEVER_ID, remote: false, salaryMinUsd: 120000, salaryMaxUsd: 160000, department: "Platform" });
     expect(job?.descriptionText).toContain("Node.js");
     expect(job?.descriptionText).not.toMatch(/<|&amp;/);
   });
 
   it("normalizes Ashby postings and skips unlisted ones", () => {
-    const jobs = normalizeAshby(fixture("ashby"));
+    const jobs = normalizeAshby(fixture("ashby"), "acme");
     expect(jobs).toHaveLength(1);
-    expect(jobs[0]).toMatchObject({ externalId: "9f8e", salaryMinUsd: 150000, salaryMaxUsd: 190000 });
+    expect(jobs[0]).toMatchObject({ externalId: ASHBY_ID, salaryMinUsd: 150000, salaryMaxUsd: 190000 });
+  });
+
+  // CISO mustFix 1(2): the board payload must not pick the host the cloud applier opens.
+  it("builds the Lever and Ashby apply URLs from the board token and posting id, never the payload's applyUrl", () => {
+    const evil = "https://169.254.169.254/latest/meta-data";
+    const [l] = normalizeLever([{ ...fixture("lever")[0], applyUrl: evil, hostedUrl: "https://evil.example/x" }], "acme");
+    expect(l?.applyUrl).toBe(`https://jobs.lever.co/acme/${LEVER_ID}/apply`);
+    const board = fixture("ashby");
+    board.jobs[0] = { ...board.jobs[0], applyUrl: evil, jobUrl: "https://evil.example/x" };
+    expect(normalizeAshby(board, "acme")[0]?.applyUrl).toBe(`https://jobs.ashbyhq.com/acme/${ASHBY_ID}/application`);
+  });
+
+  it("drops a posting whose token or id would not survive job-url validation", () => {
+    const lever1 = fixture("lever")[0];
+    expect(normalizeLever([{ ...lever1, id: "../../other" }], "acme")).toEqual([]);
+    expect(normalizeLever([{ ...lever1, id: `${LEVER_ID}?x=` }], "acme")).toEqual([]);
+    expect(normalizeLever([lever1], "acme/evil")).toEqual([]);
+    const board = fixture("ashby");
+    board.jobs[0].id = "not-a-uuid";
+    expect(normalizeAshby(board, "acme")).toEqual([]);
   });
 
   it("gives every board request a 15 s abort signal", async () => {

@@ -1,5 +1,6 @@
 import { Worker, type Job } from "bullmq";
 import { closeDb } from "./db/client";
+import { setProcessRole } from "./lib/env";
 import { logger } from "./lib/logger";
 import { processClassifyEmail } from "./jobs/classify-email";
 import { processParseResume } from "./jobs/parse-resume";
@@ -7,6 +8,8 @@ import { processPollBoards } from "./jobs/poll-boards";
 import { closeQueues, queue, QUEUES, redisConnection } from "./jobs/queues";
 import { processScoreMatches } from "./jobs/score-matches";
 import { processTailorApplication } from "./jobs/tailor-application";
+
+setProcessRole("worker");
 
 /** Background worker: polling, scoring, tailoring, resume parsing and reply tagging. */
 const handlers: Record<string, { run: (job: Job) => Promise<unknown>; concurrency: number }> = {
