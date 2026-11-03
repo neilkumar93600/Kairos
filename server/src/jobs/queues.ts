@@ -56,7 +56,7 @@ export function queue<N extends QueueName>(name: N): Queue<JobData[N]> {
  */
 export async function enqueue<N extends QueueName>(name: N, data: JobData[N], jobId?: string, delayMs?: number): Promise<void> {
   // BullMQ's generic name typing is stricter than we need here.
-  await (queue(name) as unknown as Queue).add(name, data, jobId || delayMs ? { ...(jobId ? { jobId } : {}), ...(delayMs ? { delay: delayMs } : {}) } : undefined);
+  await (queue(name) as unknown as Queue).add(name, data, { ...(jobId ? { jobId } : {}), ...(delayMs ? { delay: delayMs } : {}) });
 }
 
 export async function closeQueues(): Promise<void> {
