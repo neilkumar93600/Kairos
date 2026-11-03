@@ -2,8 +2,9 @@ import { z } from "zod";
 import { resumeSchema } from "@auto-career/shared";
 
 /**
- * Contract level 2 (S-C1): what the frozen web and extension clients READ from each success response (05-api 18.2),
- * recorded 2026-11-03. Objects are passthrough: an additive field is allowed, a missing or retyped one fails
+ * Contract level 2 (S-C1): what the frozen web and extension clients READ from each success response, taken from the
+ * 05-api 18.2 table and checked against the web hooks and components (derived from the spec and the client code, not
+ * recorded from live responses). Objects are passthrough: an additive field is allowed, a missing or retyped one fails
  * test/contract.int.test.ts. Add keys, never loosen or remove one without a frontend-handoff entry.
  */
 const obj = <T extends z.ZodRawShape>(shape: T) => z.object(shape).passthrough();
@@ -12,7 +13,7 @@ const date = z.string().min(10);
 export const FROZEN_SHAPES = {
   "GET /api/me": obj({
     user: obj({ id: z.string(), email: z.string(), name: z.string() }),
-    plan: obj({ id: z.string(), name: z.string(), priceUsd: z.number(), applicationsPerCycle: z.number(), cloudApplier: z.boolean(), coverLetters: z.boolean() }),
+    plan: obj({ id: z.string(), name: z.string(), priceUsd: obj({ month: z.number().nullable() }), applicationsPerCycle: z.number(), cloudApplier: z.boolean(), coverLetters: z.boolean() }),
     subscription: obj({}).nullable(),
     credits: obj({ balance: z.number(), inFlight: z.number(), available: z.number() }),
     onboardingStep: z.string(),
@@ -51,6 +52,7 @@ export const FROZEN_SHAPES = {
           approvedAt: date.nullable(),
           submittedAt: date.nullable(),
           failureReason: z.string().nullable(),
+          updatedAt: date,
           job: obj({ id: z.string(), title: z.string(), location: z.string().nullable(), applyUrl: z.string() }),
           company: obj({ name: z.string(), ats: z.string() }),
         }),
@@ -70,6 +72,7 @@ export const FROZEN_SHAPES = {
 } as const;
 
 /** Deterministic refusals the clients branch on: [method, path, body, status, code]. A missing id is a fresh UUID. */
+const b64 = (v: unknown) => Buffer.from(JSON.stringify(v)).toString("base64url");
 const MISSING = "00000000-0000-4000-8000-000000000000";
 export const FROZEN_ERRORS: [method: "get" | "post" | "put" | "patch" | "delete", path: string, body: object | undefined, status: number, code: string | null][] = [
   ["get", `/api/applications/${MISSING}`, undefined, 404, "not_found"],
@@ -84,4 +87,8 @@ export const FROZEN_ERRORS: [method: "get" | "post" | "put" | "patch" | "delete"
   ["post", `/api/jobs/import`, {}, 422, "invalid_body"],
   ["get", `/api/applications?status=bogus`, undefined, 400, "invalid_param"],
   ["delete", `/api/profile/facts/${MISSING}`, undefined, 204, null],
+  // A typed-wrong cursor must be a 400, never a cast error from SQL (500 and a Sentry event).
+  ["get", `/api/applications?cursor=${b64({ v: 1, t: "applications", k: [7], id: MISSING })}`, undefined, 400, "invalid_param"],
+  ["get", `/api/matches?cursor=${b64({ v: 1, t: "matches", k: ["x", "y"], id: MISSING })}`, undefined, 400, "invalid_param"],
+  ["get", `/api/inbox?cursor=${b64({ v: 1, t: "inbox", k: ["2026-02-30T00:00:00.000000Z"], id: MISSING })}`, undefined, 400, "invalid_param"],
 ];

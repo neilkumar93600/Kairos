@@ -1,11 +1,11 @@
 import { Router } from "express";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { APPLICATION_STATUSES, approveApplicationsSchema, draftRequestSchema, getPlan, updateApplicationSchema } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, companies, facts, jobs, savedAnswers } from "../db/schema";
 import { HttpError, notFound } from "../lib/errors";
-import { pageParams, slicePage } from "../lib/pagination";
+import { keysetBefore, pageParams, slicePage, tsKey } from "../lib/pagination";
 import { APPLICATION_COLUMNS, JOB_COLUMNS } from "../lib/serializers";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
@@ -28,7 +28,7 @@ const listQuery = z.object({ status: z.enum(APPLICATION_STATUSES).optional() });
 
 applicationsRouter.get("/", async (req, res) => {
   const { status } = parseParam(listQuery, req.query);
-  const { limit, after } = pageParams(req.query, 200, 1);
+  const { limit, after } = pageParams(req.query, 200, "applications", ["ts"]);
   const me = currentUser(req);
   const rows = await db()
     .select({
@@ -39,6 +39,7 @@ applicationsRouter.get("/", async (req, res) => {
       submittedAt: applications.submittedAt,
       failureReason: applications.failureReason,
       updatedAt: applications.updatedAt,
+      cursorTs: tsKey(applications.updatedAt),
       job: { id: jobs.id, title: jobs.title, location: jobs.location, applyUrl: jobs.applyUrl },
       company: { name: companies.name, ats: companies.ats },
     })
@@ -49,14 +50,13 @@ applicationsRouter.get("/", async (req, res) => {
       and(
         eq(applications.userId, me.id),
         status ? eq(applications.status, status) : undefined,
-        // ponytail: a Date holds milliseconds, so rows within one millisecond of a page edge may repeat or skip; widen the cursor key to text if that ever shows.
-        after && sql`(${applications.updatedAt}, ${applications.id}) < (${after.k[0]}::timestamptz, ${after.id}::uuid)`,
+        after && keysetBefore([applications.updatedAt], ["timestamptz"], applications.id, after),
       ),
     )
     .orderBy(desc(applications.updatedAt), desc(applications.id))
     .limit(limit + 1);
-  const page = slicePage(rows, limit, (r) => [r.updatedAt], (r) => r.id);
-  res.json({ applications: page.rows, nextCursor: page.nextCursor });
+  const page = slicePage(rows, limit, "applications", (r) => [r.cursorTs], (r) => r.id);
+  res.json({ applications: page.rows.map(({ cursorTs: _, ...row }) => row), nextCursor: page.nextCursor });
 });
 
 applicationsRouter.get("/:id", async (req, res) => {
@@ -180,7 +180,7 @@ applicationsRouter.post("/:id/drafts", writerLimiter, validateBody(draftRequestS
   const allowance = { userId: me.id, plan, feature: "applicationDrafts" as const };
   // The drafts route is interactive work (03-agent-runtime 3.3); the facts sent are the 60 (letter) or 25 (answer) the
   // posting needs most (resume-47), never the whole fact bank.
-  const deps = { callCtx: gatewayCtx({ userId: me.id, plan, applicationId: id, jobId: row.job.id, feature: "applicationDrafts", budgetClass: "interactive" }) };
+  const deps = { callCtx: gatewayCtx({ userId: me.id, plan, applicationId: id, jobId: row.job.id, feature: "applicationDrafts", budgetClass: "interactive", signal: res.locals.deadline }) };
   const posting = `${job.title}\n${job.descriptionText}`;
   if (body.kind === "cover_letter") {
     return void res.json(await metered(res, allowance, () => draftCoverLetter({ job, facts: topFacts(confirmed, posting, 60) }, deps)));

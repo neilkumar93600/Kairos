@@ -43,7 +43,7 @@ describe.skipIf(!hasTestDb)("frozen client routes, signed in", () => {
     app = createApp({
       auth: {
         handler: async () => new Response("{}", { headers: { "content-type": "application/json" } }),
-        getSession: async () => ({ user: { id: USER_ID, email: `${USER_ID}@test.local`, name: "Test User", emailVerified: true }, sessionId: "s1" }),
+        getSession: async () => ({ user: { id: USER_ID, email: `${USER_ID}@test.local`, name: "Test User", emailVerified: true }, sessionId: "s1", createdAt: new Date() }),
       },
       corsOrigins: [],
       healthChecks: {},

@@ -1,10 +1,10 @@
 import { Router } from "express";
-import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client";
 import { applications, companies, jobs, matches } from "../db/schema";
 import { notFound } from "../lib/errors";
-import { pageParams, slicePage } from "../lib/pagination";
+import { keysetBefore, pageParams, slicePage, tsKey } from "../lib/pagination";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam } from "../middleware/validate";
 import { enqueue, fairPriority } from "../jobs/queues";
@@ -13,7 +13,7 @@ import { enqueue, fairPriority } from "../jobs/queues";
 export const matchesRouter = Router();
 
 matchesRouter.get("/", async (req, res) => {
-  const { limit, after } = pageParams(req.query, 100, 2);
+  const { limit, after } = pageParams(req.query, 100, "matches", ["int", "ts"]);
   const rows = await db()
     .select({
       id: matches.id,
@@ -21,6 +21,7 @@ matchesRouter.get("/", async (req, res) => {
       reasons: matches.reasons,
       status: matches.status,
       createdAt: matches.createdAt,
+      cursorTs: tsKey(jobs.firstSeenAt),
       job: { id: jobs.id, title: jobs.title, location: jobs.location, remote: jobs.remote, applyUrl: jobs.applyUrl, firstSeenAt: jobs.firstSeenAt },
       company: { name: companies.name, ats: companies.ats },
     })
@@ -32,14 +33,15 @@ matchesRouter.get("/", async (req, res) => {
         eq(matches.userId, currentUser(req).id),
         eq(matches.status, "new"),
         isNull(jobs.closedAt),
-        // ponytail: a new match always has a score; a null one would drop out of a cursor page.
-        after && sql`(${matches.score}, ${jobs.firstSeenAt}, ${matches.id}) < (${after.k[0]}::int, ${after.k[1]}::timestamptz, ${after.id}::uuid)`,
+        // The feed is scored matches only (a new match always has a score), so the sort key is never null in a cursor.
+        isNotNull(matches.score),
+        after && keysetBefore([matches.score, jobs.firstSeenAt], ["int", "timestamptz"], matches.id, after),
       ),
     )
     .orderBy(desc(matches.score), desc(jobs.firstSeenAt), desc(matches.id))
     .limit(limit + 1);
-  const page = slicePage(rows, limit, (r) => [r.score ?? 0, r.job.firstSeenAt], (r) => r.id);
-  res.json({ matches: page.rows, nextCursor: page.nextCursor });
+  const page = slicePage(rows, limit, "matches", (r) => [r.score!, r.cursorTs], (r) => r.id);
+  res.json({ matches: page.rows.map(({ cursorTs: _, ...row }) => row), nextCursor: page.nextCursor });
 });
 
 matchesRouter.post("/:id/skip", async (req, res) => {
