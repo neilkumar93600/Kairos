@@ -11,6 +11,7 @@ import { enqueue } from "../jobs/queues";
 import { draftAnswer, draftCoverLetter } from "../services/draft-writer";
 import { classifySensitive, isProfileQuestion } from "../services/sensitive";
 import { approveApplications, planFor } from "../services/submissions";
+import { metered } from "../services/allowance";
 import { enforceTruthLock } from "../services/tailor";
 import { lineKey } from "../services/resume-doc";
 import { checkClaims, type ClaimViolation } from "../llm/claims";
@@ -144,6 +145,7 @@ applicationsRouter.post("/:id/drafts", writerLimiter, validateBody(draftRequestS
   if (!row) throw notFound("Draft application");
   const job = { title: row.job.title, company: row.companyName, descriptionText: row.job.descriptionText };
 
+  const plan = await planFor(db(), me.id);
   let label = "";
   if (body.kind === "answer") {
     const answer = row.application.answers.find((a) => a.fieldKey === body.fieldKey);
@@ -152,7 +154,7 @@ applicationsRouter.post("/:id/drafts", writerLimiter, validateBody(draftRequestS
       throw new HttpError(422, "profile_only", "This question is answered from your profile, never by AI");
     }
     label = answer.label;
-  } else if (!getPlan(await planFor(db(), me.id)).coverLetters) {
+  } else if (!getPlan(plan).coverLetters) {
     throw new HttpError(403, "forbidden", "Tailored cover letters are on Starter and up");
   }
 
@@ -161,13 +163,14 @@ applicationsRouter.post("/:id/drafts", writerLimiter, validateBody(draftRequestS
     .from(facts)
     .where(and(eq(facts.userId, me.id), eq(facts.confirmed, true)));
 
-  if (body.kind === "cover_letter") return void res.json(await draftCoverLetter({ job, facts: confirmed }));
+  const allowance = { userId: me.id, plan, feature: "applicationDrafts" as const };
+  if (body.kind === "cover_letter") return void res.json(await metered(res, allowance, () => draftCoverLetter({ job, facts: confirmed })));
   const saved = await db()
     .select({ label: savedAnswers.label, answer: savedAnswers.answer })
     .from(savedAnswers)
     .where(and(eq(savedAnswers.userId, me.id), eq(savedAnswers.approved, true), eq(savedAnswers.label, label)))
     .limit(3);
-  res.json(await draftAnswer({ label, job, facts: confirmed, savedAnswers: saved }));
+  res.json(await metered(res, allowance, () => draftAnswer({ label, job, facts: confirmed, savedAnswers: saved })));
 });
 
 applicationsRouter.post("/:id/withdraw", async (req, res) => {

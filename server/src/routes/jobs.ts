@@ -13,6 +13,8 @@ import { computeJobFit } from "../services/job-fit";
 import { fetchPostingFromBoard, importJob, jobUpsertValues, type ImportIo } from "../services/job-import";
 import { renderResumeText } from "../services/resume-doc";
 import { suggestEdits } from "../services/resume-writer";
+import { metered } from "../services/allowance";
+import { planFor } from "../services/submissions";
 import { loadResume, userFacts, visibleJob, writerLimiter } from "./resume";
 
 /** Pasted-link job import. Mounted at /api/jobs. */
@@ -79,8 +81,11 @@ const importLimiter = rateLimit({
   handler: (_req, _res, next) => next(new HttpError(429, "rate_limited", "Too many job imports. Try again in a minute.")),
 });
 
+/** Metered by the jobImports allowance (CISO mustFix 3): each import fetches a third-party board and stores a posting. */
 jobsRouter.post("/import", importLimiter, validateBody(importJobSchema), async (req, res) => {
-  res.json(await importJob(currentUser(req).id, req.body.url, dbIo));
+  const me = currentUser(req);
+  const plan = await planFor(db(), me.id);
+  res.json(await metered(res, { userId: me.id, plan, feature: "jobImports" }, () => importJob(me.id, req.body.url, dbIo)));
 });
 
 /** The deterministic F1 fit of one visible job against the user's base resume and confirmed facts. */
@@ -110,17 +115,20 @@ jobsRouter.get("/:jobId/fit", async (req, res) => {
 
 /** Tailoring proposals for one job. Nothing is saved: accepted lines go into the draft through PATCH /api/applications/:id. */
 jobsRouter.post("/:jobId/tailor", writerLimiter, async (req, res) => {
+  const me = currentUser(req);
   const jobId = jobIdParam(req.params.jobId);
-  const { job, factRows, resume, fit } = await fitFor(currentUser(req), jobId);
-  const { suggestions } = await suggestEdits(
-    { scope: "resume", jobId },
-    { resume, facts: factRows, job },
-    {
-      // No note on this route, so the writer never creates a fact.
-      createFact: async () => {
-        throw new Error("tailor never saves a note");
+  const [{ job, factRows, resume, fit }, plan] = await Promise.all([fitFor(me, jobId), planFor(db(), me.id)]);
+  const { suggestions } = await metered(res, { userId: me.id, plan, feature: "jobTailor" }, () =>
+    suggestEdits(
+      { scope: "resume", jobId },
+      { resume, facts: factRows, job },
+      {
+        // No note on this route, so the writer never creates a fact.
+        createFact: async () => {
+          throw new Error("tailor never saves a note");
+        },
       },
-    },
+    ),
   );
   res.json({ resume, suggestions, fit });
 });

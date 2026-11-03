@@ -45,7 +45,7 @@ describe("AgentError over HTTP", () => {
     expect(res.status).toBe(429);
     expect(res.body.error.code).toBe("rate_limited");
     expect(res.body.error.details.reason).toBe("daily_allowance");
-    expect(res.body.error.details.resetsAt).toMatch(/T00:00:00\.000Z$/);
+    expect(res.body.error.details.resetsAt).toMatch(/T00:00:00Z$/);
   });
 
   it.each(["agent", "global", "shed"] as const)("a %s budget stop answers 429 service_budget", async (scope) => {

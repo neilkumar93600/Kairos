@@ -18,6 +18,8 @@ import { currentUser } from "../middleware/require-auth";
 import { validateBody } from "../middleware/validate";
 import { claimViolations, defaultResume, profileContactFrom, truthLockViolations, type ProfileFact } from "../services/resume-doc";
 import { suggestEdits } from "../services/resume-writer";
+import { metered } from "../services/allowance";
+import { planFor } from "../services/submissions";
 
 /** The structured base resume and the Resume Writer (spec 2026-10-23-resume-workspace, section 6). Mounted at /api/resume. */
 export const resumeRouter = Router();
@@ -142,18 +144,22 @@ resumeRouter.put("/", validateBody(resumeInputSchema), async (req, res) => {
 resumeRouter.post("/suggestions", writerLimiter, validateBody(suggestionRequestSchema), async (req, res) => {
   const me = currentUser(req);
   const body = req.body as SuggestionRequest;
-  const [factRows, job] = await Promise.all([userFacts(me.id), body.jobId ? visibleJob(me.id, body.jobId) : null]);
+  const [factRows, job, plan] = await Promise.all([userFacts(me.id), body.jobId ? visibleJob(me.id, body.jobId) : null, planFor(db(), me.id)]);
   const resume = await loadResume(me, factRows);
-  const result = await suggestEdits(
-    body,
-    { resume, facts: factRows, job },
-    {
-      createFact: async ({ kind, text }) => {
-        const [fact] = await db().insert(facts).values({ userId: me.id, kind, text, confirmed: false }).returning(FACT_COLUMNS);
-        if (!fact) throw new Error("Fact insert returned no row");
-        return fact;
+  // F11: 1 unit, 4 for the whole-resume scope (05-api 11.5).
+  const allowance = { userId: me.id, plan, feature: "resumeSuggestions" as const, units: body.scope === "resume" ? 4 : 1 };
+  const result = await metered(res, allowance, () =>
+    suggestEdits(
+      body,
+      { resume, facts: factRows, job },
+      {
+        createFact: async ({ kind, text }) => {
+          const [fact] = await db().insert(facts).values({ userId: me.id, kind, text, confirmed: false }).returning(FACT_COLUMNS);
+          if (!fact) throw new Error("Fact insert returned no row");
+          return fact;
+        },
       },
-    },
+    ),
   );
   res.json(result);
 });
