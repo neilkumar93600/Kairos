@@ -28,6 +28,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "1.1.0",
     "@auto-career/shared": "*",
+    "@sentry/node": "11.8.0",
     "better-auth": "1.7.7",
     "bullmq": "6.3.14",
     "cors": "2.8.6",

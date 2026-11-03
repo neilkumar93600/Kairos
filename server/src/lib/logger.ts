@@ -35,6 +35,9 @@ const REDACT_PATHS = [
 
 const MESSAGE_CAP = 500;
 
+/** An error message up to drizzle's `params:` line, capped. Sentry events use the same cut (lib/sentry.ts). */
+export const safeMessage = (message: string) => message.split(/\r?\nparams:/)[0]!.slice(0, MESSAGE_CAP);
+
 /**
  * Error serializer for every `err` field. Keeps the type, the code and the message up to drizzle's `params:` line,
  * and drops `params`, `query` and the stack header. The stack is rebuilt from the safe message plus its `at` frames,
@@ -44,7 +47,7 @@ const MESSAGE_CAP = 500;
  */
 export function serializeErr(err: unknown): Record<string, unknown> {
   if (!(err instanceof Error)) return { type: typeof err, message: "non-error thrown" };
-  const safe = (e: Error) => e.message.split(/\r?\nparams:/)[0]!.slice(0, MESSAGE_CAP);
+  const safe = (e: Error) => safeMessage(e.message);
   const field = (e: Error, k: string) => (e as unknown as Record<string, unknown>)[k];
   const message = safe(err);
   const type = err.constructor.name || err.name;
@@ -112,7 +115,8 @@ export function httpLogger(target: Logger = logger) {
   return pinoHttp({
     logger: target,
     genReqId: (req) => (req as { id?: string }).id ?? randomUUID(),
-    autoLogging: { ignore: (req) => req.url === "/health" },
+    // The uptime checks call both every minute (WP-11); a failing check logs its own line.
+    autoLogging: { ignore: (req) => req.url === "/health" || req.url === "/api/health" },
     // pino-http builds its own child logger, so it needs the err serializer too; the parsed query is dropped whole.
     serializers: {
       err: serializeErr,

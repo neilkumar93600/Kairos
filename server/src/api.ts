@@ -5,9 +5,11 @@ import { authGateway } from "./lib/auth";
 import { env } from "./lib/env";
 import { logger } from "./lib/logger";
 import { redis } from "./lib/redis";
+import { initSentry } from "./lib/sentry";
 import { closeQueues } from "./jobs/queues";
 
 const e = env();
+initSentry("api");
 // Without it every web user shares the Vercel egress address in every IP limit, sign-in included (05-api 5.5).
 // ponytail: checked here, not in env.ts, so the worker and applier never need the secret; move into the api role schema with WP-04.
 if (e.NODE_ENV === "production" && !e.KAIROS_EDGE_SECRET) throw new Error("Invalid environment:\n  KAIROS_EDGE_SECRET: required on the api in production");

@@ -68,6 +68,12 @@ describe("envFor('applier')", () => {
     }
   });
 
+  // WP-11: a DSN and a heartbeat URL are not secrets; the applier's DSN is its own Sentry project's.
+  it("reads its own Sentry DSN, heartbeat URL and health port", () => {
+    const e = envFor("applier", { ...applierOnly, SENTRY_DSN: "https://k@o1.ingest.sentry.io/2", HEARTBEAT_URL: "https://hc.example/ping/abc", PORT: "8080" });
+    expect([e.SENTRY_DSN, e.HEARTBEAT_URL, e.PORT]).toEqual(["https://k@o1.ingest.sentry.io/2", "https://hc.example/ping/abc", 8080]);
+  });
+
   it("APPLIER_CHROMIUM_SANDBOX=0 turns the sandbox off (only after a signed risk acceptance)", () => {
     expect(envFor("applier", { ...applierOnly, APPLIER_CHROMIUM_SANDBOX: "0" }).APPLIER_CHROMIUM_SANDBOX).toBe(false);
   });

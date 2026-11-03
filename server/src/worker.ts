@@ -2,6 +2,7 @@ import { Worker, type Job } from "bullmq";
 import { closeDb } from "./db/client";
 import { setProcessRole } from "./lib/env";
 import { logger } from "./lib/logger";
+import { captureJobFailure, initSentry } from "./lib/sentry";
 import { processClassifyEmail } from "./jobs/classify-email";
 import { processCostRollup } from "./jobs/cost-rollup";
 import { processParseResume } from "./jobs/parse-resume";
@@ -11,6 +12,7 @@ import { processScoreMatches } from "./jobs/score-matches";
 import { processTailorApplication } from "./jobs/tailor-application";
 
 setProcessRole("worker");
+initSentry("worker");
 
 /** Background worker: polling, scoring, tailoring, resume parsing and reply tagging. */
 const handlers: Record<string, { run: (job: Job) => Promise<unknown>; concurrency: number }> = {
@@ -24,7 +26,10 @@ const handlers: Record<string, { run: (job: Job) => Promise<unknown>; concurrenc
 
 const workers = Object.entries(handlers).map(([name, h]) => {
   const worker = new Worker(name, h.run, { connection: redisConnection(), concurrency: h.concurrency });
-  worker.on("failed", (job, err) => logger.error({ queue: name, jobId: job?.id, err }, "job failed"));
+  worker.on("failed", (job, err) => {
+    logger.error({ queue: name, jobId: job?.id, err }, "job failed");
+    captureJobFailure(name, job, err);
+  });
   return worker;
 });
 
