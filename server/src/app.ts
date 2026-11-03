@@ -1,8 +1,9 @@
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import { toNodeHandler } from "better-auth/node";
 import type { AuthGateway } from "./lib/auth";
+import { HttpError } from "./lib/errors";
 import { httpLogger, requestId } from "./lib/logger";
 import { clientIpResolver } from "./middleware/client-ip";
 import { createLimiters } from "./middleware/rate-limit";
@@ -24,6 +25,19 @@ export interface AppDeps {
   sharedLimits?: boolean;
 }
 
+const AUTH_BODY_MAX_BYTES = 64 * 1024;
+
+/**
+ * better-call reads a whole /api/auth body with no limit (CISO mustFix 2), and Better Auth's JSON is tiny: refuse over
+ * 64 KB, and any body whose length is not declared up front. The connection closes so an unread upload is not drained.
+ */
+function capAuthBody(req: Request, res: Response, next: NextFunction) {
+  const length = req.headers["content-length"];
+  const tooLarge = length === undefined ? req.headers["transfer-encoding"] !== undefined : Number(length) > AUTH_BODY_MAX_BYTES;
+  if (tooLarge) res.setHeader("connection", "close");
+  next(tooLarge ? new HttpError(413, "payload_too_large", "The request body is too large") : undefined);
+}
+
 /** Builds the Express app. Order matters: auth and webhooks read the raw body, so they mount before express.json(). */
 export function createApp(deps: AppDeps) {
   const app = express();
@@ -39,6 +53,7 @@ export function createApp(deps: AppDeps) {
   app.use(cors({ origin: deps.corsOrigins, credentials: true, allowedHeaders: ["content-type", "authorization", "x-request-id"], exposedHeaders: ["x-request-id"] }));
 
   app.use(healthRouter(deps.healthChecks));
+  app.use("/api/auth", capAuthBody);
   app.all("/api/auth/*splat", toNodeHandler(deps.auth.handler));
   app.use("/api/webhooks", limits.webhook, webhooksRouter);
 
