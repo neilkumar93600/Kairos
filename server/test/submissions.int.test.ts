@@ -69,6 +69,17 @@ describe.skipIf(!hasTestDb)("submissions against Postgres", () => {
     await expect(approveApplications(db, userId, [ready, stillTailoring], "extension")).resolves.toEqual([ready]);
   });
 
+  it("a shortfall is 402 payment_required with details { available, requested }, and nothing moves", async () => {
+    const userId = await seedUser(db, { credits: 1 });
+    const ids = [await draft(userId, "a"), await draft(userId, "b"), await draft(userId, "c")];
+    await expect(approveApplications(db, userId, ids, "extension")).rejects.toMatchObject({
+      status: 402,
+      code: "payment_required",
+      details: { available: 1, requested: 3 },
+    });
+    expect(await Promise.all(ids.map(statusOf))).toEqual(["draft", "draft", "draft"]);
+  });
+
   it("availableCreditsNow reads balance minus in-flight in one statement", async () => {
     const { availableCreditsNow } = await import("../src/services/credits");
     const userId = await seedUser(db, { credits: 3 });

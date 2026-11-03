@@ -45,7 +45,9 @@ export async function approveApplications(db: Db, userId: string, ids: string[],
         ),
       )
       .returning({ id: applications.id });
-    if (updated.length > available) throw paymentRequired(`You have ${available} credits left for ${updated.length} applications`);
+    if (updated.length > available) {
+      throw paymentRequired(`You have ${available} credits left for ${updated.length} applications`, { available, requested: updated.length });
+    }
     return updated.map((u) => u.id);
   });
 }
