@@ -1,4 +1,4 @@
-import type { Job } from "bullmq";
+import { DelayedError, type Job } from "bullmq";
 import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import type { Browser, Frame, Page } from "playwright-core";
@@ -6,7 +6,9 @@ import { submissionReportSchema, type ApplicationAnswer, type ResumeLine, type S
 import { db } from "../db/client";
 import { applications, jobs } from "../db/schema";
 import { applierEnv } from "../lib/env";
+import { getFlags } from "../lib/flags";
 import { logger } from "../lib/logger";
+import { count, slo } from "../lib/metrics";
 import { signal } from "../lib/sentry";
 import { claimForCloud, cloudAllowed, FAILURE_MESSAGES, recordSubmission, type FailureCode } from "../services/submissions";
 import { admitOrPark, type ApplyGate } from "./apply-gate";
@@ -240,6 +242,15 @@ export async function processCloudApply(job: Job<JobData["cloud-apply"]>, opts: 
   if (!row || row.app.status !== "approved" || row.app.channel !== "cloud") return { skipped: true };
 
   const ats = atsOfApplyUrl(row.applyUrl);
+  // The operator flags (lib/flags.ts) are read before every claim, so a flip stops new claims within 10 s. A parked run
+  // leaves the application approved and unclaimed; it resumes when the flag is lifted.
+  const flags = await getFlags();
+  if (flags.pauseCloudApply || flags.approvalsFrozen || (ats !== undefined && flags.extensionOnly.has(ats))) {
+    logger.info({ jobId: job.id, ats }, "cloud apply parked by an ops flag");
+    count("cloud.parked", 1, ats ?? "");
+    await job.moveToDelayed(Date.now() + 15_000 + Math.floor(Math.random() * 5_000), opts.token);
+    throw new DelayedError();
+  }
   const leave = opts.gate && ats ? await admitOrPark(opts.gate, ats, job, opts.token) : undefined;
   try {
     const outcome = await claimAndApply(row);
@@ -256,6 +267,8 @@ export async function processCloudApply(job: Job<JobData["cloud-apply"]>, opts: 
 async function claimAndApply(row: { app: typeof applications.$inferSelect; applyUrl: string; closedAt: Date | null }): Promise<{ submitted: boolean; detail?: string } | null> {
   // The read above can be stale: a withdraw may land in between. Only the conditional claim decides.
   if (!(await claimForCloud(db(), row.app.id))) return null;
+  // S4: 95% of approved cloud attempts start within 10 minutes (README Reliability).
+  slo("s4", !row.app.approvedAt || Date.now() - row.app.approvedAt.getTime() <= 10 * 60_000);
 
   let outcome: CloudOutcome;
   try {
@@ -274,6 +287,9 @@ async function claimAndApply(row: { app: typeof applications.$inferSelect; apply
   }
 
   await recordSubmission(db(), row.app.userId, toReport(row.app, outcome), "cloud");
+  // S5 counts the settle (99.9% within 10 minutes of approval); the outcome counters feed alert A-SUB-1 (jobs/alerts.ts).
+  slo("s5", !row.app.approvedAt || Date.now() - row.app.approvedAt.getTime() <= 10 * 60_000);
+  count("cloud.run", 1, outcome.submitted ? "submitted" : outcome.code);
   logger.info({ applicationId: row.app.id, submitted: outcome.submitted, ...(outcome.submitted ? {} : { code: outcome.code, detail: outcome.detail }) }, "cloud apply result");
   return outcome.submitted ? { submitted: true } : { submitted: false, detail: outcome.detail };
 }

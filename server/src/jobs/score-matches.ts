@@ -4,7 +4,7 @@ import { getPlan, type PlanId } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, companies, creditLedger, facts, jobs, matches, profiles, session, subscriptions } from "../db/schema";
 import { userDailyUsage } from "../db/schema/platform";
-import { env } from "../lib/env";
+import { getFlags } from "../lib/flags";
 import { nextUtcMidnight } from "../lib/errors";
 import { logger, logUserHash } from "../lib/logger";
 import { AgentError } from "../llm/errors";
@@ -70,14 +70,14 @@ const fromMember = (m: string) => ({ jobId: m.split(":")[0]!, attempt: Number(m.
  * jobs a user could plausibly want; each passing user gets the posting in their scoring lane, and the model calls run
  * per user, a chunk at a time (processScoreUser), so one user's backlog never holds up another's (scale-06).
  *
- * Interim controls (WP-06) until the matching pipeline of WP-42 replaces this loop: PAUSE_SCORING stops it, only
+ * Interim controls (WP-06) until the matching pipeline of WP-42 replaces this loop: the pause_scoring flag stops it, only
  * candidates() are considered, each call first reserves one of the plan's dailyScoringCap slots, and a retryable model
  * failure comes back as a delayed follow-up of this job for that user (userIds and attempt set).
  */
 export async function processScoreMatches(job: Job<JobData["score-matches"]>) {
-  if (env().PAUSE_SCORING) {
+  if ((await getFlags()).pauseScoring) {
     // ponytail: postings that arrive while paused are not scored later; the nightly re-score of WP-42 picks them up.
-    logger.info({ jobId: job.data.jobId }, "scoring paused (PAUSE_SCORING)");
+    logger.info({ jobId: job.data.jobId }, "scoring paused (pause_scoring)");
     return { queued: 0, paused: true };
   }
   const [row] = await db()
@@ -122,7 +122,7 @@ export async function runChunk<R>(from: Lane, userId: string, score: (members: s
 /** Scores the next chunk of one user's lane. Only matches at or above the user's threshold are stored. */
 export async function processScoreUser(job: Job<JobData["score-user"]>) {
   // Paused: the lane keeps its members; the user's next posting wakes it once scoring resumes.
-  if (env().PAUSE_SCORING) return { stored: 0, retrying: 0, paused: true };
+  if ((await getFlags()).pauseScoring) return { stored: 0, retrying: 0, paused: true };
   return runChunk(scoreLane(), job.data.userId, (members) => scoreChunk(job.data.userId, members));
 }
 

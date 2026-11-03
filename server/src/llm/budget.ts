@@ -82,7 +82,9 @@ export class Budget {
 
   constructor(
     private readonly store: SpendStore,
-    private readonly shedLevel: () => 0 | 1 | 2 | 3 = () => 0,
+    private readonly shedLevel: () => 0 | 1 | 2 | 3 | Promise<0 | 1 | 2 | 3> = () => 0,
+    /** The llm_paused ops flag (WP-27): every model call is refused while true. */
+    private readonly paused: () => boolean | Promise<boolean> = () => false,
   ) {}
 
   recordSpend(agentId: string, ctx: AgentCallContext, usd: number, workspace: "batch" | "interactive"): void {
@@ -129,8 +131,8 @@ export class Budget {
     const snap = await this.snapshot(day);
     const globalUsd = snap.globalUsd + this.processDelta;
 
-    // Scope 2: shed level (9.5), the higher of the env level and the one global spend implies.
-    if (shedRefuses(Math.max(this.shedLevel(), shedLevelFor(globalUsd)), spec, ctx.plan, budgetClass, workspace)) {
+    // Scope 2: shed level (9.5), the higher of the manual level (ops flag, env) and the one global spend implies; llm_paused stops all.
+    if ((await this.paused()) || shedRefuses(Math.max(await this.shedLevel(), shedLevelFor(globalUsd)), spec, ctx.plan, budgetClass, workspace)) {
       return { ok: false, scope: "shed", retryAfter: "now" };
     }
 

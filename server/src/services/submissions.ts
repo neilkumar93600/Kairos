@@ -1,9 +1,10 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getPlan, type PlanId, type SubmissionReport, type SubmitChannel } from "@auto-career/shared";
 import type { Db } from "../db/client";
-import { applications, subscriptions } from "../db/schema";
+import { applications, jobs, subscriptions } from "../db/schema";
 import { baseEnv, type BaseEnv } from "../lib/env";
-import { conflict, forbidden, notFound, paymentRequired } from "../lib/errors";
+import { conflict, forbidden, HttpError, notFound, paymentRequired } from "../lib/errors";
+import { getFlags } from "../lib/flags";
 import { effectivePlan } from "./billing-events";
 import { availableCreditsNow, chargeSubmission } from "./credits";
 
@@ -16,6 +17,16 @@ export async function planFor(db: Db, userId: string): Promise<PlanId> {
   return row ? effectivePlan(row) : "free";
 }
 
+/** The ATS of an apply URL, for the extension_only flags; mirrors APPLY_HOSTS in jobs/cloud-apply.ts (not imported: it loads Playwright). */
+function atsOf(url: string): string {
+  try {
+    const host = new URL(url).hostname;
+    return /(^|\.)greenhouse\.io$/.test(host) ? "greenhouse" : /(^|\.)lever\.co$/.test(host) ? "lever" : /(^|\.)ashbyhq\.com$/.test(host) ? "ashby" : "";
+  } catch {
+    return "";
+  }
+}
+
 /**
  * Who may use the cloud channel: the owners on any plan (they test it), everyone else only once CLOUD_APPLIER_OPEN
  * is set and their plan has cloudApplier (CISO mustFix 1: closed until WP-04 passes on staging and S-AP4 is settled).
@@ -25,7 +36,7 @@ export function cloudOpenTo(userId: string, plan: PlanId, e: Pick<BaseEnv, "OWNE
 }
 
 export async function cloudAllowed(db: Db, userId: string): Promise<boolean> {
-  return cloudOpenTo(userId, await planFor(db, userId), baseEnv());
+  return cloudOpenTo(userId, await planFor(db, userId), { OWNER_USER_IDS: baseEnv().OWNER_USER_IDS, CLOUD_APPLIER_OPEN: (await getFlags(db)).cloudApplierOpen });
 }
 
 /**
@@ -51,8 +62,16 @@ export type FailureCode = keyof typeof FAILURE_MESSAGES;
  * which rolls the whole approval back.
  */
 export async function approveApplications(db: Db, userId: string, ids: string[], channel: SubmitChannel): Promise<string[]> {
-  if (channel === "cloud" && !(await cloudAllowed(db, userId))) {
-    throw forbidden(baseEnv().CLOUD_APPLIER_OPEN ? "The cloud applier is on Pro and Max" : "The cloud applier is not open yet");
+  const flags = await getFlags(db);
+  // A money invariant broke (jobs/invariants.ts) or the owner froze approvals: nothing new is approved until it is lifted.
+  if (flags.approvalsFrozen) throw new HttpError(503, "approvals_frozen", "Approvals are paused while we check an issue. Your drafts are safe; try again soon.");
+  if (channel === "cloud") {
+    if (flags.pauseCloudApply) throw new HttpError(503, "cloud_paused", "The cloud applier is paused. Send from the extension, or try again later.");
+    if (!(await cloudAllowed(db, userId))) throw forbidden(flags.cloudApplierOpen ? "The cloud applier is on Pro and Max" : "The cloud applier is not open yet");
+    if (flags.extensionOnly.size > 0) {
+      const rows = await db.select({ url: jobs.applyUrl }).from(applications).innerJoin(jobs, eq(jobs.id, applications.jobId)).where(and(eq(applications.userId, userId), inArray(applications.id, ids)));
+      if (rows.some((r) => flags.extensionOnly.has(atsOf(r.url)))) throw new HttpError(409, "extension_only", "This employer's cloud sending is off for now. Send it from the extension.");
+    }
   }
 
   return db.transaction(async (tx) => {
