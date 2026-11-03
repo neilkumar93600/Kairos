@@ -17,7 +17,7 @@ import { gatewayCtx } from "../llm/wire";
 import { tailorResume, tailorSuggestions } from "../services/tailor";
 import { topFacts } from "../services/job-fit";
 import { loadResume, userFacts, visibleJob, writerLimiter } from "./resume";
-import { copyFor, createCopy, defaultBase, toDetail } from "../services/resume-library";
+import { aliasFallback, copyFor, createCopy, toDetail } from "../services/resume-library";
 
 /** Pasted-link job import. Mounted at /api/jobs. */
 export const jobsRouter = Router();
@@ -104,10 +104,8 @@ export async function tailorForJob(me: SessionUser, res: Response, jobId: string
   const existing = opts.reuse ? await copyFor(me.id, jobId) : undefined;
   const copy =
     existing ??
-    (await createCopy(me, plan, { id: jobId, title: visible.title, company: visible.company }, opts.baseResumeId).catch(async (err: unknown) => {
-      // Before migration 0011 a copy cannot be saved. The frozen alias (reuse) keeps today's answer: proposals against
-      // the default base, nothing saved. POST /resumes/tailor answers the 503. ponytail: drop this once 0011 has run.
-      if (opts.reuse && err instanceof HttpError && (err.details as { reason?: string } | undefined)?.reason === "resumes_user_uq") return defaultBase(me.id, plan);
+    (await createCopy(me, plan, { id: jobId, title: visible.title, company: visible.company }, opts.baseResumeId).catch(async (err: unknown): ReturnType<typeof createCopy> => {
+      if (opts.reuse) return aliasFallback(err, me.id, plan, jobId);
       throw err;
     }));
   const { job, factRows, fit } = await fitFor(me, jobId, copy.document);

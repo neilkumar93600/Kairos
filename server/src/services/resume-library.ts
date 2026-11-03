@@ -427,6 +427,21 @@ export function bestBaseFor<B extends { targetRoles: string[]; updatedAt: Date; 
   return best ?? bases.find((b) => b.isDefault) ?? bases[0];
 }
 
+/**
+ * What the frozen POST /jobs/:jobId/tailor alias answers when saving a copy fails (Contract-reviewer, f40c9bb): a
+ * double-fired call whose twin won (409 exists) gets the twin's copy, as a 200; before the contract migration drops
+ * resumes_user_uq it gets today's answer, the default base, nothing saved. Anything else is rethrown.
+ * ponytail: the resumes_user_uq branch goes once that migration has run everywhere.
+ */
+export async function aliasFallback(err: unknown, userId: string, plan: PlanId, jobId: string): Promise<Row> {
+  if (err instanceof HttpError && err.code === "exists") {
+    const won = await copyFor(userId, jobId);
+    if (won) return won;
+  }
+  if (err instanceof HttpError && (err.details as { reason?: string } | undefined)?.reason === "resumes_user_uq") return defaultBase(userId, plan);
+  throw err;
+}
+
 /** The active tailored copy of a job, if any. */
 export async function copyFor(userId: string, jobId: string): Promise<Row | undefined> {
   const [row] = await db()
@@ -470,7 +485,9 @@ export async function createCopy(user: Pick<SessionUser, "id">, plan: PlanId, jo
     .onConflictDoNothing()
     .returning();
   if (!row) {
-    // A lost race on resumes_user_job_uq is a copy that exists; anything else is resumes_user_uq before 0011.
+    // ON CONFLICT DO NOTHING without a target, so either unique index can be the conflict: resumes_user_job_uq (a twin
+    // request saved this job's copy first: 409 exists) or, before the contract migration, resumes_user_uq (the user's
+    // one resume: 503).
     const raced = await copyFor(user.id, job.id);
     throw raced ? exists(raced.id) : ONE_RESUME_UNTIL_0011();
   }
