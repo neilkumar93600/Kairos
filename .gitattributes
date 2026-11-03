@@ -1,0 +1,2 @@
+# Vitest writes snapshots with LF; a CRLF checkout (core.autocrlf on Windows) made every run rewrite them.
+*.snap text eol=lf
