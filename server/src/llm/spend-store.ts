@@ -1,7 +1,7 @@
 import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { llmCostDaily, userDailyUsage } from "../db/schema/platform";
-import { env } from "../lib/env";
+import { getFlags } from "../lib/flags";
 import { Budget, type SpendSnapshot, type SpendStore, type UserSpend } from "./budget";
 
 /**
@@ -70,5 +70,9 @@ void gte;
 void lt;
 void sql;
 
-/** The process-wide budget: Postgres counters; the manual shed level comes from env until ops_flags lands (WP-27). */
-export const defaultBudget = new Budget(postgresSpendStore(), () => env().LLM_SHED_LEVEL as 0 | 1 | 2 | 3);
+/** The process-wide budget: Postgres counters; the manual shed level and the pause come from ops_flags (env is the floor). */
+export const defaultBudget = new Budget(
+  postgresSpendStore(),
+  async () => (await getFlags()).llmShedLevel,
+  async () => (await getFlags()).llmPaused,
+);

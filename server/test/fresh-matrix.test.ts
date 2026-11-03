@@ -5,6 +5,8 @@ import { MATRIX } from "./helpers/authz-matrix";
 
 // The age check on approve is opt-in until the web can handle reauth_required (FRESH_SESSION_ENFORCE); billing always enforces.
 process.env.FRESH_SESSION_ENFORCE = "true";
+// The admin routes are session-fresh too (15 minutes); u1 is the admin here, so the stale session is what stops it.
+process.env.ADMIN_USER_IDS = "u1";
 const { createApp } = await import("../src/app");
 
 /**
@@ -29,17 +31,19 @@ const app = createApp({
 const entries = Object.entries(MATRIX).filter((e): e is [string, TenantEntry] => "request" in e[1]);
 
 describe("session-fresh matrix", () => {
-  it("flags at least approve, checkout and portal", () => {
-    expect(entries.filter(([, e]) => e.fresh).map(([k]) => k).sort()).toEqual(["POST /api/applications/approve", "POST /api/billing/checkout", "POST /api/billing/portal"]);
+  it("flags approve, checkout, portal and every admin route", () => {
+    const flagged = entries.filter(([, e]) => e.fresh).map(([k]) => k);
+    expect(flagged.filter((k) => !k.includes("/api/admin/")).sort()).toEqual(["POST /api/applications/approve", "POST /api/billing/checkout", "POST /api/billing/portal"]);
+    expect(entries.filter(([k]) => k.includes("/api/admin/")).every(([, e]) => e.fresh)).toBe(true);
   });
 
-  it.each(entries.filter(([, e]) => e.fresh))("%s refuses a 25 h old session and reads it uncached", async (key, entry) => {
+  it.each(entries.filter(([, e]) => e.fresh))("%s refuses a stale session (25 h; 15 min on admin) and reads it uncached", async (key, entry) => {
     const [method] = key.split(" ") as [string];
     const { path, body } = entry.request(ids);
     calls.length = 0;
     const res = await request(app)[method.toLowerCase() as "post"](path).set("origin", "http://localhost:3000").send(body);
     expect(res.status).toBe(403);
-    expect(res.body.error).toMatchObject({ code: "reauth_required", details: { maxAgeSec: 86_400 } });
+    expect(res.body.error).toMatchObject({ code: "reauth_required", details: { maxAgeSec: path.startsWith("/api/admin/") ? 900 : 86_400 } });
     expect(calls).toEqual([true]);
   });
 

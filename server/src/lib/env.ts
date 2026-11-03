@@ -220,10 +220,21 @@ const envSchema = z.object({
   /** api only. Proxies between Railway's edge and the api, skipped from the right of X-Forwarded-For. Set only from the S-B1 probe. */
   TRUSTED_PROXY_HOPS_DIRECT: z.coerce.number().int().min(0).max(3).default(0),
 
-  // AI spend controls (WP-06). The shed level is set by hand until ops_flags lands (WP-27); global spend raises it too.
+  // AI spend controls (WP-06). The shed level is a floor under the llm_shed_level ops flag (WP-27); global spend raises it too.
   LLM_SHED_LEVEL: z.coerce.number().int().min(0).max(3).default(0),
   /** Kill switch for the scoring loop (true, 1, on): new postings are not scored while set. */
   PAUSE_SCORING: z.preprocess(emptyToUndefined, z.stringbool().default(false)),
+  /**
+   * Comma-separated user ids that may use /api/admin (WP-27), on top of a verified email and a session under 15 minutes
+   * old. Empty: the admin routes answer 404 to everyone. PAUSE_SCORING above stays a pause-only override of ops_flags.
+   */
+  ADMIN_USER_IDS: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .default("")
+      .transform((raw) => raw.split(",").map((id) => id.trim()).filter(Boolean)),
+  ),
   /**
    * api only. Enforce the 24 h session age on POST /api/applications/approve (05-api 5.2). Off until the web has a sign-in-again
    * flow for reauth_required (frontend-handoff/WP-30.md); the cookie-cache bypass on that route is on regardless.

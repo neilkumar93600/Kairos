@@ -1,5 +1,7 @@
 import type { Job, RepeatOptions } from "bullmq";
+import { processAlerts, processMetricsPrune, processMetricsSample } from "./alerts";
 import { processBackupCheck } from "./backup-check";
+import { processInvariantsHourly, processInvariantsNightly } from "./invariants";
 import { processJournalReconcile, processMoneyJournal } from "./money-journal";
 import { processMailRetention, processNotifyReconcile } from "./notify";
 import { processPartitions } from "./partitions";
@@ -53,6 +55,11 @@ export const SCHEDULES: Schedule[] = [
   { queue: "maintenance", id: "journal-reconcile", repeat: { pattern: "40 * * * *", tz: "UTC" }, run: () => processJournalReconcile() },
   // The backup-age alert and the manifest warnings of the pgbackup cron service's dumps (WP-13, ops-65).
   { queue: "maintenance", id: "backup-check", repeat: { pattern: "20 * * * *", tz: "UTC" }, run: () => processBackupCheck() },
+  // Queue gauges, the alert evaluator, the invariant checks and the metrics prune (WP-27).
+  { queue: "maintenance", id: "metrics-sample", repeat: { every: MINUTE }, run: () => processMetricsSample() },
+  { queue: "maintenance", id: "alerts", repeat: { pattern: "*/5 * * * *", tz: "UTC" }, run: () => processAlerts() },
+  { queue: "maintenance", id: "invariants-hourly", repeat: { pattern: "5 * * * *", tz: "UTC" }, run: () => processInvariantsHourly() },
+  { queue: "maintenance", id: "invariants-nightly", repeat: { pattern: "45 3 * * *", tz: "UTC" }, run: async () => [await processInvariantsNightly(), await processMetricsPrune()] },
   // Stuck email claims, emails whose enqueue was lost, and the owner alert for given-up sends (WP-44, messaging-46).
   { queue: "maintenance", id: "notify-reconcile", repeat: { every: 5 * MINUTE }, run: processNotifyReconcile },
   // email_sends after 120 days, notifications after 90, signed links 7 days past expiry (WP-44).

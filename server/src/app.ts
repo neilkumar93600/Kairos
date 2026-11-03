@@ -7,6 +7,7 @@ import { HttpError } from "./lib/errors";
 import { httpLogger, requestId } from "./lib/logger";
 import { signal, type Signal } from "./lib/sentry";
 import { clientIpResolver } from "./middleware/client-ip";
+import { requestMetrics } from "./middleware/metrics";
 import { originGuard } from "./middleware/origin-guard";
 import { createLimiters } from "./middleware/rate-limit";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
@@ -66,11 +67,14 @@ export function createApp(deps: AppDeps) {
   app.disable("x-powered-by");
 
   app.use(requestId);
+  app.use(requestMetrics());
   // Before the logger, so the edge secret never reaches a log line; req.ip is not used for limits (05-api 5.5).
   app.use(clientIpResolver(deps.edgeSecret, deps.proxyHops));
   app.use(helmet());
   app.use(httpLogger());
-  app.use(cors({ origin: deps.corsOrigins, credentials: true, allowedHeaders: CORS_ALLOWED, exposedHeaders: CORS_EXPOSED, maxAge: 600 }));
+  const corsMiddleware = cors({ origin: deps.corsOrigins, credentials: true, allowedHeaders: CORS_ALLOWED, exposedHeaders: CORS_EXPOSED, maxAge: 600 });
+  // 05-api 2.1: /api/admin is same-origin only (the web's /api rewrite); it never gets CORS headers, so no page on another origin can read it.
+  app.use((req, res, next) => (req.path.startsWith("/api/admin") ? next() : corsMiddleware(req, res, next)));
 
   app.use("/api", (_req, res, next) => {
     res.set("kairos-contract", CONTRACT_DATE);

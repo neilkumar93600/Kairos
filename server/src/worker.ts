@@ -4,6 +4,7 @@ import { closeDb, db, sizeDbPool } from "./db/client";
 import { env, setProcessRole } from "./lib/env";
 import { closeServer, deadline, onShutdown, serveHealth, startHeartbeat } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
+import { startMetricsFlush } from "./lib/metrics";
 import { assertNoEviction, redis } from "./lib/redis";
 import { captureJobFailure, initSentry } from "./lib/sentry";
 import { processClassifyEmail } from "./jobs/classify-email";
@@ -67,4 +68,8 @@ const health = serveHealth(env().PORT, checks);
 startHeartbeat(env().HEARTBEAT_URL, checks);
 
 // 30 s for jobs in flight (architecture D9); a job still running then is retried by BullMQ as stalled.
-onShutdown("worker", 30_000, () => Promise.all(workers.map((w) => w.close())), () => Promise.allSettled([closeServer(health), closeQueues().then(() => redis().quit()), closeDb()]));
+const stopMetrics = startMetricsFlush();
+onShutdown("worker", 30_000, () => Promise.all(workers.map((w) => w.close())), async () => {
+  await stopMetrics();
+  await Promise.allSettled([closeServer(health), closeQueues().then(() => redis().quit()), closeDb()]);
+});

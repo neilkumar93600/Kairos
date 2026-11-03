@@ -7,8 +7,6 @@ const files = (dir: string): string[] =>
   readdirSync(dir).flatMap((f) => (statSync(join(dir, f)).isDirectory() ? files(join(dir, f)) : f.endsWith(".ts") ? [join(dir, f)] : []));
 const sources = files("src").map((file) => [file, readFileSync(file, "utf8")] as const);
 
-/** Codes whose HttpError lives on a branch that is not merged here yet (WP-27); remove an entry once its code is used. */
-const NOT_MERGED_YET = new Set(["approvals_frozen", "cloud_paused", "extension_only", "unknown_flag"]);
 
 describe("error catalog", () => {
   it("lists every code and status that src/ passes to HttpError", () => {
@@ -33,7 +31,7 @@ describe("error catalog", () => {
 
   it("lists no code that nothing emits", () => {
     const all = sources.map(([, t]) => t).join("\n");
-    const dead = Object.keys(ERROR_CATALOG).filter((code) => !NOT_MERGED_YET.has(code) && !all.includes(`"${code}"`));
+    const dead = Object.keys(ERROR_CATALOG).filter((code) => !all.includes(`"${code}"`));
     expect(dead).toEqual([]);
   });
 

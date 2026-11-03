@@ -51,6 +51,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     err = aiError(err);
   }
   if (err instanceof HttpError) {
+    res.locals.errorCode = err.code; // for requestMetrics: a designed 503 is not downtime
     const retry = (err.details as { retryAfterSec?: unknown } | undefined)?.retryAfterSec;
     if (typeof retry === "number" && Number.isFinite(retry) && !res.hasHeader("retry-after")) res.set("retry-after", String(retry));
     res.status(err.status).json({ error: { code: err.code, message: err.message, details: err.details, ...rid } });

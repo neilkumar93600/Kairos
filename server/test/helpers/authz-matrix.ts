@@ -114,6 +114,14 @@ export const MATRIX: Record<string, MatrixEntry> = {
 
   "GET /api/files/*key": { request: (t) => ({ path: `/api/files/${t.fileKey}` }) },
 
+  // WP-27: ADMIN_USER_IDS is empty in the matrix run, so every signed-in caller is a non-admin and gets the 404 of a route
+  // that does not exist. The admin behaviour itself (a 15-minute session, audit rows) is test/ops.int.test.ts, and test/fresh-matrix.test.ts holds the `fresh` flags.
+  "GET /api/admin/flags": { ...own("/api/admin/flags"), fresh: true },
+  "PUT /api/admin/flags/:key": { ...own("/api/admin/flags/approvals_frozen", { value: true }), fresh: true },
+  "GET /api/admin/info": { ...own("/api/admin/info"), fresh: true },
+  "GET /api/admin/companies": { ...own("/api/admin/companies"), fresh: true },
+  "POST /api/admin/companies/:id/activate": { ...own("/api/admin/companies/00000000-0000-4000-8000-000000000001/activate"), fresh: true },
+  "POST /api/admin/companies/:id/deactivate": { ...own("/api/admin/companies/00000000-0000-4000-8000-000000000001/deactivate"), fresh: true },
   // WP-44: every statement filters by the caller's user id; read-all touches only the caller's unread rows.
   "GET /api/notifications": own("/api/notifications"),
   "POST /api/notifications/read": own("/api/notifications/read", { all: true }),

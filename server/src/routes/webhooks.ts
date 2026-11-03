@@ -7,6 +7,7 @@ import { emailSuppressions, inboundEmails, profiles, stripeEvents, subscriptions
 import { env } from "../lib/env";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
+import { slo } from "../lib/metrics";
 import { addressHash } from "../lib/mailer";
 import { enqueue } from "../jobs/queues";
 import { couponIdsOf, fetchStripeState, processStripeEvent } from "../services/billing-events";
@@ -23,7 +24,7 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 // 1 MB: a real event is under 100 KB, but an invoice with many lines can pass Express's 100 KB default.
-webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
+async function stripeWebhook(req: Request, res: Response) {
   const { STRIPE_WEBHOOK_SECRET, STRIPE_WEBHOOK_SECRET_PREVIOUS } = env();
   const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
   const event = verifyStripeEvent(body, req.header("stripe-signature"), [STRIPE_WEBHOOK_SECRET, STRIPE_WEBHOOK_SECRET_PREVIOUS]);
@@ -58,8 +59,19 @@ webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1
       grantCredits: async (grant) => void (await grantPlanCredits(tx, grant)),
     }),
   );
+  slo("s7", true);
   logger.info({ eventId: event.id, type: event.type, outcome }, "stripe event");
   res.json(outcome === "duplicate" ? { received: true, duplicate: true } : { received: true });
+}
+
+// S7 counts the events we tried to process: a bad signature (a 4xx) is not one, anything that throws is a miss.
+webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
+  try {
+    await stripeWebhook(req, res);
+  } catch (err) {
+    if (!(err instanceof HttpError && err.status < 500)) slo("s7", false);
+    throw err;
+  }
 });
 
 const postmarkInbound = z.object({

@@ -9,7 +9,7 @@ A PITR restore never touches the source service: Railway creates a sibling `post
 A restored database can show an application as `approved` that the employer already received. On it, the worker's `reconcile-apply` re-queues every approved cloud application within 2 minutes and the extension can claim it again. So nothing may run against the restored database until step 5 is done.
 
 1. Declare the incident ([incident.md](incident.md), SEV1 when money or sends are involved). Write times down in UTC as you go.
-2. If the database still answers: set `CLOUD_APPLIER_OPEN=0` and `PAUSE_SCORING=1` on the api and worker and redeploy, so the old database stops changing while you work. (The `ops_flags` switches of 06-infrastructure 5.6 arrive with WP-27.)
+2. If the database still answers: set the admin flags `pause_cloud_apply`, `pause_scoring` and `approvals_frozen` (they take effect within 10 s), and also `CLOUD_APPLIER_OPEN=0` and `PAUSE_SCORING=1` on the api and worker with a redeploy, so the old database stops changing while you work.
 3. Do not point any service at the sibling before step 5.
 
 ## 2. Choose the restore point (10 minutes)

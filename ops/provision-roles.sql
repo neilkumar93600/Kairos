@@ -181,10 +181,25 @@ BEGIN
   END LOOP;
 END $$;
 
--- kairos_metrics (Grafana): aggregates only, never a user id or free text. metrics_minute and the ops_*_v views join
--- it when they exist (WP-27).
+-- kairos_metrics (Grafana): aggregates only, never a user id or free text. metrics_minute joins it below (WP-27).
 GRANT SELECT ON llm_cost_daily TO kairos_metrics;
 
+-- Operator flags, audit and metrics (WP-27, 0009). ops_audit is insert-only for every runtime role (and a trigger blocks
+-- the owner). Nothing writes feature_flags yet, so it is read-only. The applier reads the flags and writes no table of
+-- its own metrics: it counts into Redis and the worker folds the counts into metrics_minute (jobs/alerts.ts), so the
+-- internet-facing process cannot overwrite invariant_violations or an slo counter.
+-- Deviation from the 02-database 4.2 matrix: the api holds SELECT, INSERT, UPDATE on metrics_minute for its own request
+-- counters (lib/metrics.ts); it still cannot delete, and only the worker prunes.
+GRANT SELECT, INSERT, UPDATE ON ops_flags TO kairos_api, kairos_worker;
+GRANT SELECT ON feature_flags TO kairos_api, kairos_worker, kairos_applier;
+GRANT SELECT, INSERT ON ops_audit TO kairos_api, kairos_worker;
+-- Erasure (WP-25) pseudonymises the actor column only, as a worker step after the user row is deleted; the trigger allows
+-- nothing else and only rows whose actor is no longer a user. The api holds no UPDATE here.
+GRANT UPDATE (actor) ON ops_audit TO kairos_worker;
+GRANT SELECT, INSERT, UPDATE ON metrics_minute TO kairos_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON metrics_minute TO kairos_worker;
+GRANT SELECT ON ops_flags TO kairos_applier;
+GRANT SELECT ON metrics_minute TO kairos_metrics;
 -- WP-42: the lifecycle tables (_db/applications.md 2.3, 02-database 7.7). No runtime role updates or deletes
 -- application_events (its trigger stops the owner too) or deletes submission_attempts. The worker holds INSERT and
 -- UPDATE of the link and stage columns on tracker_items, not 7.7's SELECT: recordEvent creates or links an

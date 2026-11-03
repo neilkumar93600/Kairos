@@ -4,6 +4,7 @@ import { db } from "../db/client";
 import { applications, companies, inboundEmails, jobs } from "../db/schema";
 import { classifyByRules } from "../services/email-classifier";
 import type { JobData } from "./queues";
+import { slo } from "../lib/metrics";
 
 /** Tags a forwarded reply and links it to the most recent submitted application at the company it names. */
 export async function processClassifyEmail(job: Job<JobData["classify-email"]>) {
@@ -30,5 +31,7 @@ export async function processClassifyEmail(job: Job<JobData["classify-email"]>) 
 
   // An 'offer' tag changes no billing state: pausing Stripe on a regex match let a forwarded fake offer keep a paid plan
   // for free (CISO mustFix 5). The offer_pause_candidates flow (user confirmation, 48-hour undo) replaces it later.
+  // S8: 99% of replies classified within 10 minutes of arriving.
+  slo("s8", Date.now() - email.receivedAt.getTime() <= 10 * 60_000);
   return { kind, linked: Boolean(linked) };
 }

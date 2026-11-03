@@ -112,6 +112,32 @@ const SIGNALS = {
   backup_stale: 1,
   /** The latest dump's manifest has a warning: a table shrank, the dump shrank, or it nears R2's 5 GiB put (WP-13). */
   backup_warning: 1,
+  /** ops_flags could not be read: the kill switches are running on their last answer or the env alone (WP-27). */
+  flags_unreadable: 1,
+  /** A money or approval invariant failed (jobs/invariants.ts): approvals_frozen was set (WP-27). Pages. */
+  invariant_breach: 1,
+  /** A fast SLO burn: 14.4x over 1 hour (WP-27). */
+  slo_burn_fast: 1,
+  /** A slow SLO burn: 6x over 6 hours (WP-27). */
+  slo_burn_slow: 1,
+  /** S1 or S5 passed half of its 30-day budget: only reliability work ships (README error-budget policy). */
+  slo_budget_half: 1,
+  /** Today's model spend passed 80% of the global cap (half-rate warning) (WP-27). */
+  llm_envelope_80: 1,
+  /** Today's model spend reached the global cap (page) (WP-27). */
+  llm_envelope_100: 1,
+  /** Tier-up (escalation) calls passed their share cap today (WP-27). */
+  llm_escalation_cap: 1,
+  /** Model spend per submission today is over the ceiling (WP-27). */
+  cost_per_submission: 1,
+  /** A queue's oldest waiting job is older than its lag bar (WP-27). */
+  queue_lag: 1,
+  /** A-SUB-1: over half of the last 30 minutes of cloud runs failed (WP-27). */
+  cloud_run_failures: 1,
+  /** The nightly cross-tenant scan found a child row owned by another user than its parent (WP-27). Pages. */
+  cross_tenant_row: 1,
+  /** The nightly PII scan found an address, phone or token shape in a column that must hold none (WP-27). */
+  pii_in_column: 1,
   /** Postmark refused the token (401): no notify email is going out (A-EMAIL-7, SEV1; WP-44). */
   postmark_unauthorized: 1,
   /** email_sends rows given up after 5 claims: those emails were never confirmed sent (WP-44 notify-reconcile). */

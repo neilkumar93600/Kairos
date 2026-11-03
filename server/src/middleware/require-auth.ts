@@ -23,6 +23,11 @@ export interface AuthOptions {
   maxAgeSec?: number;
   /** Whether the age is enforced for this request; default always. The cache bypass (revocation check) never switches off. */
   enforceAge?: () => boolean;
+  /**
+   * Who may pass at all. A user it refuses gets the 404 of a route that does not exist, before the email and age checks, so
+   * only an allowed user ever learns the rest of the gate (middleware/require-admin.ts).
+   */
+  allow?: (user: SessionUser) => boolean;
 }
 
 /**
@@ -36,6 +41,7 @@ export function requireAuth(gateway: AuthGateway, kind: AuthKind | ((req: Reques
     const fresh = (typeof kind === "function" ? kind(req) : kind) === "session-fresh";
     const session = await gateway.getSession(fromNodeHeaders(req.headers), { fresh });
     if (!session) return next(new HttpError(401, "unauthorized", "Sign in to continue"));
+    if (opts.allow && !opts.allow(session.user)) return next(new HttpError(404, "route_not_found", "No such route"));
     if (!session.user.emailVerified) return next(new HttpError(403, "email_unverified", "Verify your email first"));
     if (fresh && (opts.enforceAge?.() ?? true)) {
       const maxAgeSec = opts.maxAgeSec ?? FRESH_SESSION_MAX_AGE_SEC;
