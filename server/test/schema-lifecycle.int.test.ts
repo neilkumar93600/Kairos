@@ -227,7 +227,7 @@ describe.skipIf(!hasTestDb)("lifecycle expand: guards", () => {
     });
 
     it("an inactive company names its reason; a job's URL stays on the allowlist and its close names its closer", async () => {
-      expect(await failure(() => db.insert(schema.companies).values({ name: "Off", ats: "lever", boardToken: "off", active: false }))).toBe("23514");
+      expect(await failure(() => db.insert(schema.companies).values({ name: "Off", ats: "lever", boardToken: "off", active: false, inactiveReason: "invalid" as never }))).toBe("23514");
       expect(
         await failure(() => db.insert(schema.companies).values({ name: "Off", ats: "lever", boardToken: "off", active: false, inactiveReason: "import_pending" })),
       ).toBe("ok");

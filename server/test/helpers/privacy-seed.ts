@@ -83,6 +83,7 @@ export async function seedEverything(db: Db, email: string, mark = MARK) {
     ats: "greenhouse",
     phase: "reported",
     state: "submitted",
+    finishedAt: new Date(),
   });
   await db.insert(schema.emailSends).values({
     kind: "digest",
