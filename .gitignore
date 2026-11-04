@@ -16,3 +16,5 @@ next-env.d.ts
 .tmp/
 .ruff_cache/
 .superpowers/
+.claude/
+
