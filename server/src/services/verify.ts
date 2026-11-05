@@ -211,13 +211,13 @@ export async function verifyClaims(items: ClaimItem[], facts: ReadonlyMap<string
 }
 
 /**
- * Rejects past the budget with a retryable timeout, which a route answers as 503 ai_unavailable with a refund. The judging
+ * Rejects past the budget with a retryable verifier_budget, which a route answers as 503 ai_unavailable with a refund. The judging
  * itself runs on, bounded by each agent's own timeouts, and still fills the memo.
  */
 async function withinBudget<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const late = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new AgentError("timeout", "claim verification over its time budget", true)), ms);
+    timer = setTimeout(() => reject(new AgentError("verifier_budget", "claim verification over its time budget", true)), ms);
     timer.unref();
   });
   try {

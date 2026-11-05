@@ -25,6 +25,8 @@ export type LlmErrorCode =
   | "budget_stopped"
   | "circuit_open"
   | "agent_disabled"
+  /** services/verify.ts ran out its own time budget: not a provider timeout, and no send was refused for it. */
+  | "verifier_budget"
   | "llm_paused"
   | "precheck_failed"
   | "limiter_timeout";

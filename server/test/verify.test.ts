@@ -157,11 +157,11 @@ describe("verifyClaims modes", () => {
     await expect(verifyClaims([item("a", "a line that hangs")], FACTS, opts)).resolves.toMatchObject({ dropped: [], verdicts: new Map() });
   });
 
-  it("an enforced verification over its budget fails closed as a refundable retryable timeout, not at the route's deadline", async () => {
+  it("an enforced verification over its budget fails closed with its own code, refundable and retryable, not at the route's deadline", async () => {
     const hung: AnthropicLike = { messages: { create: () => new Promise(() => {}) } };
     setup("enforce", { ...fakeModels({}), client: hung }, { enforceBudgetMs: 10 });
     const err: unknown = await verifyClaims([item("a", "an enforced line that hangs")], FACTS, opts).catch((e: unknown) => e);
-    expect(err).toMatchObject({ code: "timeout", retryable: true });
+    expect(err).toMatchObject({ code: "verifier_budget", retryable: true });
     expect(refundable(err)).toBe(true);
   });
 
