@@ -83,7 +83,9 @@ describe.skipIf(!hasTestDb)("saved searches, digests and reminders against Postg
       expect(made.status).toBe(201);
       expect(made.body.search).toMatchObject({ name: "Remote", frequency: "weekly", filters: { remoteOnly: true, minScore: 70 } });
       expect(new Date(made.body.search.nextDigestAt).getUTCDay()).toBe(1);
-      expect((await request(app).post("/api/saved-searches").set(as).send({ name: "REMOTE" })).body.error.code).toBe("exists");
+      const dup = await request(app).post("/api/saved-searches").set(as).send({ name: "REMOTE" });
+      expect(dup.status).toBe(409);
+      expect(dup.body.error.code).toBe("exists");
 
       const off = await request(app).patch(`/api/saved-searches/${made.body.search.id}`).set(as).send({ frequency: "off" });
       expect(off.body.search).toMatchObject({ frequency: "off", nextDigestAt: null });

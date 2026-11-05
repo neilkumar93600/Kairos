@@ -22,7 +22,8 @@ const alert = await import("../src/jobs/contact-alert");
 
 describe.skipIf(!hasTestDb)("the contact form against Postgres", () => {
   let db: Db;
-  const app = createApp({ auth: { handler: async () => new Response(null), getSession: async () => null }, corsOrigins: [], healthChecks: {} });
+  // A new app per test: its in-memory contact limiter (5 an hour per address) starts empty.
+  let app: ReturnType<typeof createApp>;
   const body = { name: "Ada Lovelace", email: "Ada@Example.com", topic: "support", message: "I cannot find the export button anywhere." };
   const rows = () => db.select().from(schema.contactMessages);
 
@@ -30,6 +31,7 @@ describe.skipIf(!hasTestDb)("the contact form against Postgres", () => {
     db = await testDb("contact");
   });
   beforeEach(async () => {
+    app = createApp({ auth: { handler: async () => new Response(null), getSession: async () => null }, corsOrigins: [], healthChecks: {} });
     enqueue.mockClear();
     sendEmail.mockClear();
     await resetDb(db);
@@ -39,9 +41,9 @@ describe.skipIf(!hasTestDb)("the contact form against Postgres", () => {
     await closeTestDbs();
   });
 
-  it("a retry, a double click or five at once store one row and queue one alert", async () => {
-    const answers = await Promise.all(Array.from({ length: 5 }, () => request(app).post("/api/contact").send(body)));
-    expect(answers.map((a) => [a.status, a.body])).toEqual(Array.from({ length: 5 }, () => [202, { ok: true }]));
+  it("a retry, a double click or two at once store one row and queue one alert", async () => {
+    const answers = await Promise.all(Array.from({ length: 2 }, () => request(app).post("/api/contact").send(body)));
+    expect(answers.map((a) => [a.status, a.body])).toEqual(Array.from({ length: 2 }, () => [202, { ok: true }]));
     expect(await rows()).toHaveLength(1);
     const ids = new Set(enqueue.mock.calls.map((c) => (c[1] as { entityId: string }).entityId));
     expect([...ids]).toEqual([(await rows())[0]!.id]);

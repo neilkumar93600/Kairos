@@ -117,7 +117,7 @@ type Reminder = {
   id: string;
   kind: "no_reply" | "saved_job_ageing";
   application_id: string;
-  due_at: Date;
+  due_at: string | Date;
   status: string;
   stage: string | null;
   draft_state: string;
@@ -147,7 +147,7 @@ export async function dueReminders(userId: string, optedOut: boolean): Promise<R
   for (const r of rows) {
     const reason = optedOut
       ? "user_opted_out"
-      : r.due_at.getTime() < stale
+      : new Date(r.due_at).getTime() < stale
         ? "expired"
         : r.kind === "no_reply"
           ? r.status === "submitted" && (r.stage === null || r.stage === "applied") && !r.has_reply

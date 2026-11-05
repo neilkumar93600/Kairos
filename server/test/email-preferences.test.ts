@@ -41,7 +41,9 @@ describe("email preference and saved-search requests", () => {
 
   it("PATCH and DELETE of a malformed id are 400 invalid_param before any query", async () => {
     const transaction = vi.spyOn(db(), "update");
-    expect((await request(app).patch("/api/saved-searches/nope").set(as).send({ name: "a" })).body.error.code).toBe("invalid_param");
+    const patched = await request(app).patch("/api/saved-searches/nope").set(as).send({ name: "a" });
+    expect(patched.status).toBe(400);
+    expect(patched.body.error.code).toBe("invalid_param");
     expect((await request(app).delete("/api/saved-searches/nope").set(as)).status).toBe(400);
     expect(transaction).not.toHaveBeenCalled();
     transaction.mockRestore();
