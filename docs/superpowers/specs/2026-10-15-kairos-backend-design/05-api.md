@@ -786,7 +786,7 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `extension.resumePdf` | `GET /api/extension/applications/:id/resume.pdf?t=` | signed-token . pdf_link | query `t` | 200 `application/pdf` | `link_expired` | none | new | P3 |
 | `webhooks.stripe` | `POST /api/webhooks/stripe` | stripe-signature . webhook_ip | raw JSON | 200 `{ received, duplicate? }` | `bad_signature` | workflow-id | frozen | P2 |
 | `webhooks.postmark.inbound` | `POST /api/webhooks/postmark/inbound/:pathSecret` | postmark-basic-path . webhook_ip | Postmark JSON | 200 `{ stored, duplicate? }` | 400 `invalid_body`, 404 `route_not_found` (a failed check, WP-24) | workflow-id | new | P1 |
-| `webhooks.inbound.legacy` | `POST /api/webhooks/inbound-email?token=` | public (query token) . webhook_ip | Postmark JSON | 200 `{ stored }` | `unauthorized`, `invalid_body` | workflow-id | frozen (sunset) | P1 to P2 + 7 days |
+| `webhooks.inbound.legacy` | `POST /api/webhooks/inbound-email?token=` | public (query token) . webhook_ip | Postmark JSON | 200 `{ stored }` | 403 `forbidden`, 422 `invalid_body` | workflow-id | frozen (sunset) | P1 to P2 + 7 days |
 
 **Admin** (all `admin` auth, `admin_write` on writes, never CORS; section 16)
 
@@ -1700,7 +1700,7 @@ A failure at step 5 or 6 answers 503 and Postmark retries. If the process dies b
 
 ### 14.4 The legacy route `POST /api/webhooks/inbound-email?token=`
 
-Kept exactly as the skeleton has it (401 `unauthorized` for a bad token, 422 `invalid_body` for a bad payload, 200 `{ stored }`), but it now calls the same `storeInboundEmail` and workflow as 14.3, so both URLs feed one table [`_db/messaging.md`]. It exists for the week in which Postmark is reconfigured to the new URL.
+Kept as WP-00 left it (403 `forbidden` for a bad token, 422 `invalid_body` for a bad payload, 200 `{ stored }`), but it now calls the same `storeInboundEmail` and workflow as 14.3, so both URLs feed one table [`_db/messaging.md`]. It exists for the week in which Postmark is reconfigured to the new URL.
 
 - Every call increments `kairos_legacy_inbound_calls_total` and logs a warning; the `token` query parameter is redacted.
 - Removal gate: the new route has received at least one real message, the legacy counter has been zero for 48 hours, and 7 days have passed since the reconfiguration. Removal is one deleted route and one deleted env var (`INBOUND_WEBHOOK_SECRET`).
