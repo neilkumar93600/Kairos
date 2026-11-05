@@ -307,6 +307,7 @@ Every error from `/api/*` except Better Auth's own routes (4.6) leaves as
 |---|---|---|---|---|
 | `unauthorized` | 401 | every `session` route | none | |
 | `email_unverified` | 403 | every `session` route | none | |
+| `resume_refused` | 409 | `POST /api/admin/outbox/:id/resume`: the row is not dead, or a cloud apply may be past the browser step (WP-22) | `{ reason: "not_dead" \| "past_browser_step" \| "not_approved" \| "no_application" }` | |
 | `forbidden` | 403 | plan gates (`cloud applier is on Pro and Max`, `cover letters`, resume profile limit), Autopilot unavailable, admin | `{ reason?: string }` | |
 | `reauth_required` | 403 | `session-fresh` routes | `{ maxAgeSec }` | yes |
 | `origin_not_allowed` | 403 | `originGuard` | `{ origin: string \| null }` | yes |
@@ -807,6 +808,8 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `admin.workflows.fork` | `POST /api/admin/workflows/:workflowId/fork` | `adminForkSchema` | 200 `{ workflowId }` (replays from step 0 on another application version) | P2 |
 | `admin.queues.list` | `GET /api/admin/queues` | | 200 `adminQueuesResponseSchema`: each queue's registered options and live counts | P2 |
 | `admin.queues.set` | `PUT /api/admin/queues/:name` | `adminQueueSetSchema` | 200 `{ queue }` (`globalConcurrency` or `workerConcurrency` only) | P2 |
+| `admin.outbox.list` | `GET /api/admin/outbox?status=pending\|enqueued\|dead&limit&cursor` | `status` defaults to `dead` | 200 `{ summary: { pending, enqueued, dead, oldestPendingS }, items, nextCursor }` (WP-22; ids and codes only; replaces `admin.workflows.list` under ADR-001 Revision 3's outbox) | built |
+| `admin.outbox.resume` | `POST /api/admin/outbox/:id/resume` | `{ reason }`, a code matching `^[a-z0-9_-]{3,64}$` (it lands in `ops_audit`, which holds no free text) | 200 `{ id, status: "pending" }`; 409 `resume_refused` `{ reason: not_dead \| past_browser_step \| not_approved \| no_application }`; audited (WP-22; replaces `admin.workflows.resume`) | built |
 | `admin.boardRequests.list` | `GET /api/admin/board-requests` | `pageQuerySchema` | 200 `{ requests }` | P3 |
 | `admin.boardRequests.resolve` | `POST /api/admin/board-requests/:id/resolve` | `adminBoardRequestResolveSchema` | 200 `{ request }` | P3 |
 | `admin.companies.list` | `GET /api/admin/companies` | `adminCompaniesQuerySchema` | 200 `{ companies }` | P3 |

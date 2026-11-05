@@ -10,6 +10,21 @@ Recommended: **(c) Hybrid**. Secure closed beta in about 4-5 weeks on wired code
 - (b) Evolve Express+BullMQ only: Fastest. Sweepers and an outbox give at-least-once, but the money and sending path has no checkpointed steps.
 - (c) Hybrid: Keep Express, Better Auth and BullMQ; sweepers and BullMQ hardening now (WP-09, WP-45); DBOS (outbox fallback) only for approve, applyCloud, settle, Stripe and offer-pause, gated by S-D1 and a chaos test (WP-22). DBOS-only catalog items rebuilt on BullMQ or deferred in WP-40.
 
+### ADR-001 Revision 3, as built (WP-22, 2026-11-05)
+
+Decided by the coordinator under the owner's delegation; the owner may revisit it.
+
+- **Path (c), the hybrid, is accepted**, with the outbox as its durable seam. Express, Better Auth and BullMQ stay. Durable guarantees sit only on money and sending.
+- **The seam is a Postgres outbox drained by BullMQ, not DBOS.** A row is written in the transaction of the business change (`server/src/durable/outbox.ts`), a worker loop drains it with `FOR UPDATE SKIP LOCKED`, the job id is the row's stable key, and delivery is at least once to idempotent consumers. No new dependency, no `kairos_dbos` database, no `ops/provision-dbos.sql`.
+- **Why the fallback.** The plan built DBOS only after the Railway half of S-D1 passed. That half could not be run (no Railway access from the build), and no result is recorded anywhere, so the gate is unmet.
+- **What S-D1 showed.** The local half passed (`_research/spike-s-d1-local.md`: recovery, orphan recovery by another executor, exactly-once transactions). The Railway half was not run: executor ids across a redeploy, the datasource behind PgBouncer, the 50 forced crashes across process types. So this is not a finding against DBOS. It is a decision not to wait on an unmet gate when Postgres and BullMQ are already here.
+- **What would justify revisiting DBOS** (each with the Railway half of S-D1 run first, and its own ADR):
+  - a duplicate send or a double charge in production traced to hand-written phase logic that a checkpointed step would have prevented;
+  - more than 2 stuck-work incidents in a month that the sweep did not heal within 15 minutes (A.11's trigger, now pointed the other way);
+  - a money or sending flow whose steps cannot be expressed as a business column plus a re-runnable consumer, for example long fan-outs with per-step memoization;
+  - a decision to retire Redis (B.14 P7), which would remove what the outbox drains into.
+- **Not yet shown.** The 1,000-approval chaos acceptance has not run: it needs a real Postgres and Redis (`.github/workflows/chaos.yml`, by hand).
+
 ## What scale target replaces '10K-1M requests per millisecond'?
 
 Recommended: **Product-derived 12-month target**. Measurable on Railway, derived from real drivers (DAU x requests per DAU x peak factor, applications per day, model RPM), with a 2x margin over the spec's own 150 rps.
