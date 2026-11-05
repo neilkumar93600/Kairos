@@ -63,7 +63,7 @@ export const newsletterHeaders = (subscriberId: string) => [
  * says nothing about whether the token exists.
  */
 export const unsubscribeRedirect = (token: unknown) =>
-  typeof token === "string" && TOKEN.test(token) ? webPage("unsubscribe", token) : `${webOrigin()}/newsletter?status=invalid`;
+  typeof token === "string" && TOKEN.test(token) ? webPage("unsubscribe", token) : `${webOrigin()}/newsletter/unsubscribe`;
 
 /**
  * Records a sign-up and returns the notify entity of the confirm email to queue, `<id>:<confirm_seq>`. A new address is

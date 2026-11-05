@@ -133,7 +133,7 @@ describe("the token routes", () => {
     const update = vi.spyOn(db(), "update");
     const repeated = `token=${WELL_FORMED}&token=${"b".repeat(43)}`;
     expect((await request(app()).post(`/api/newsletter/confirm?${repeated}`)).status).toBe(404);
-    expect((await request(app()).get(`/api/newsletter/unsubscribe?${repeated}`)).headers.location).toBe(`${WEB}/newsletter?status=invalid`);
+    expect((await request(app()).get(`/api/newsletter/unsubscribe?${repeated}`)).headers.location).toBe(`${WEB}/newsletter/unsubscribe`);
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -157,7 +157,7 @@ describe("the token routes", () => {
   it.each(HOSTILE)("GET /unsubscribe never echoes %j: it goes to the fixed invalid page", async (token) => {
     const res = await request(app()).get("/api/newsletter/unsubscribe").query({ token });
     expect(res.status).toBe(303);
-    expect(res.headers.location).toBe(`${WEB}/newsletter?status=invalid`);
+    expect(res.headers.location).toBe(`${WEB}/newsletter/unsubscribe`);
     expect(res.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "no-referrer" });
     expect(res.headers["set-cookie"]).toBeUndefined();
   });
