@@ -22,6 +22,7 @@ describe("request logs never contain secrets", () => {
     app.get("/x", (_req, res) => {
       res.setHeader("set-cookie", "better-auth.session_token=SESSIONSECRET; Path=/; HttpOnly");
       res.setHeader("set-auth-token", "BEARERSECRET");
+      res.setHeader("location", "https://web.example/newsletter/unsubscribe#token=LOCATIONSECRET");
       res.json({ ok: true });
     });
 
@@ -29,7 +30,7 @@ describe("request logs never contain secrets", () => {
     await new Promise((r) => setImmediate(r));
 
     expect(out).toContain("\"method\":\"GET\""); // the line was written and kept non-secret fields
-    for (const secret of ["INBOUNDSECRET", "OAUTHCODE", "SESSIONSECRET", "BEARERSECRET", "QUERYEMAIL"]) expect(out).not.toContain(secret);
+    for (const secret of ["INBOUNDSECRET", "OAUTHCODE", "SESSIONSECRET", "BEARERSECRET", "QUERYEMAIL", "LOCATIONSECRET"]) expect(out).not.toContain(secret);
     expect(out).not.toContain("\"query\""); // pino-http's parsed req.query is dropped whole, not just token and code
   });
 
