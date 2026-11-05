@@ -7,7 +7,8 @@ import type { Email } from "./mailer";
 
 /**
  * What makes mail non-transactional (05-api 12.1, messaging-55): the kinds that go out on the broadcast stream, each
- * with the profiles.mail_opt_out key that stops it. One table, so a broadcast kind without an opt-out cannot exist;
+ * with the profiles.mail_opt_out key that stops it. One table, so a broadcast kind without an opt-out cannot exist. Its kinds
+ * must always be queued with a user id (the opt-out is looked up by it; without one the email is refused as `no_recipient`);
  * jobs/notify.ts refuses these kinds to an opted-out user at send time and adds the headers and footer below.
  */
 export type EmailKind = (typeof EMAIL_KINDS)[number];
@@ -54,9 +55,9 @@ export function broadcastMissing(): string[] {
 }
 
 /**
- * The unsubscribe link of one broadcast email: a single-use signed token for (user, kind), valid 90 days from the start
- * of the current UTC day, so every mail of a day carries the same token and a retried send mints nothing new. A link
- * used up (the person unsubscribed, then turned the kind on again) is replaced by the next day's mail.
+ * The unsubscribe link of one broadcast email: a signed token for (user, kind), valid 90 days from the start of the
+ * current UTC day, so every mail of a day carries the same token and a retried send mints nothing new. The link is
+ * reusable (routes/unsubscribe.ts): clicking it twice, or after Gmail's one-click POST, still answers "unsubscribed".
  */
 export async function unsubscribeUrl(db: Db, userId: string, key: MailOptOut, now = Date.now()): Promise<string> {
   const expiresAt = new Date(Math.floor(now / DAY) * DAY + 90 * DAY);

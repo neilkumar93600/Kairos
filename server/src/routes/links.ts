@@ -28,8 +28,14 @@ export interface LinkAction {
    * resend an application or undo an offer pause; those need the form's own field.
    */
   oneClick?: true;
+  /**
+   * The link is not used up: GET and POST check the signature and that the row exists and has not expired, and ignore
+   * used_at. Only for an action that is idempotent and only ever turns one thing off (unsubscribe), so single use protects
+   * nothing and a second click (a client's one-click POST, then the footer link, then a refresh) must still succeed.
+   */
+  reusable?: true;
   /** The 410 page for this action, when the generic "expired" one would mislead (unsubscribe: "already used" mostly means done). */
-  gone?: LinkPage;
+  gone?: LinkPage | (() => LinkPage);
   show(target: LinkTarget, req: Request): Promise<LinkPage | null>;
   act(tx: Tx, target: LinkTarget, req: Request): Promise<LinkPage | null>;
 }
@@ -84,26 +90,26 @@ const REFUSED = new Error("signed link refused");
  */
 export function signedLinkRouter(action: LinkAction): Router {
   const router = Router({ mergeParams: true });
-  const gone = action.gone ?? EXPIRED;
+  const gonePage = (): LinkPage => (typeof action.gone === "function" ? action.gone() : (action.gone ?? EXPIRED));
 
   router.get("/", async (req, res) => {
     const token = tokenOf(req.query.t);
-    if (keyMissing()) return render(res, 410, gone);
-    const target = await peekActionToken(db(), token, action.purpose);
+    if (keyMissing()) return render(res, 410, gonePage());
+    const target = await peekActionToken(db(), token, action.purpose, undefined, action.reusable === true);
     const page = target && (await action.show(target, req));
-    if (!page) return render(res, 410, gone);
+    if (!page) return render(res, 410, gonePage());
     render(res, 200, page, token);
   });
 
   // The form posts `t` as a field; only a one-click action also reads it from the query string.
   router.post("/", express.urlencoded({ extended: false, limit: "2kb", parameterLimit: 10 }), async (req, res) => {
     const token = tokenOf(req.body?.t) || (action.oneClick ? tokenOf(req.query.t) : "");
-    if (keyMissing()) return render(res, 410, gone);
+    if (keyMissing()) return render(res, 410, gonePage());
     // A forged token never opens a transaction or touches the database.
-    if (!verifyLink(token, action.purpose)) return render(res, 410, gone);
+    if (!verifyLink(token, action.purpose)) return render(res, 410, gonePage());
     const page = await db()
       .transaction(async (tx) => {
-        const target = await consumeActionToken(tx, token, action.purpose);
+        const target = action.reusable ? await peekActionToken(tx, token, action.purpose, undefined, true) : await consumeActionToken(tx, token, action.purpose);
         const done = target && (await action.act(tx, target, req));
         // A refused target rolls the use back too: the link was not the right one for this page, so it stays usable.
         if (!done) throw REFUSED;
@@ -113,7 +119,7 @@ export function signedLinkRouter(action: LinkAction): Router {
         if (err === REFUSED) return null;
         throw err;
       });
-    render(res, page ? 200 : 410, page ?? gone);
+    render(res, page ? 200 : 410, page ?? gonePage());
   });
 
   return router;
