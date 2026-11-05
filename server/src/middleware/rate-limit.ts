@@ -128,7 +128,7 @@ export function createLimiters(shared: boolean) {
     upload: limiter("upload", 10, 3_600_000, true, (req) => req.method !== "POST"),
     /** Stripe and Postmark send from shared ranges: this only blunts floods. Runs before any body is read. */
     webhook: limiter("webhook_ip", 600, 60_000, false),
-    /** Signed-link pages, GET and POST (WP-44, routes/links.ts), and the newsletter's token links (WP-50): a guessed or replayed link costs its sender here. */
+    /** Signed-link pages, GET and POST (WP-44, routes/links.ts), and the newsletter's token routes (WP-50): a guessed or replayed link costs its sender here. */
     link: limiter("link", 20, 60_000, false),
   };
 }

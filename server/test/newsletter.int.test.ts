@@ -10,7 +10,6 @@ import { closeTestDbs, hasTestDb, resetDb, testDb, testDbUrl } from "./helpers/t
 // one-click unsubscribe and re-subscribe. Postmark and Redis are stubbed: enqueue and sendEmail are mocks, and each
 // queued job is run here with processNotify.
 process.env.DATABASE_URL = testDbUrl("newsletter");
-process.env.API_PUBLIC_ORIGIN = "https://api.kairos.test";
 
 type Job = { kind: "newsletter_confirm"; entityId: string; userId: null };
 const queued: Job[] = [];
@@ -25,18 +24,17 @@ describe.skipIf(!hasTestDb)("newsletter against Postgres (WP-50)", () => {
   let db: Db;
   let app: ReturnType<typeof import("../src/app").createApp>;
   let notify: typeof import("../src/jobs/notify");
-  const WEB = "http://localhost:3000/newsletter?status=";
 
   const signUp = (email: string, source = "popup") => request(app).post("/api/newsletter").send({ email, source });
+  const confirm = (token: string) => request(app).post(`/api/newsletter/confirm?token=${token}`);
   /** Runs every queued confirm job, as the worker would. */
   const drain = async () => {
     const out = [];
     while (queued.length) out.push(await notify.processNotify({ data: queued.shift()! }));
     return out;
   };
-  const tokenIn = (s: string, path: string) => s.match(new RegExp(`/api/newsletter/${path}\\?token=([A-Za-z0-9_-]{43})`))![1]!;
-  const confirmToken = (mail: Sent) => tokenIn(mail.text, "confirm");
-  const unsubToken = (mail: Sent) => tokenIn(mail.headers!.find((h) => h.Name === "List-Unsubscribe")!.Value, "unsubscribe");
+  const confirmToken = (mail: Sent) => mail.text.match(/\/newsletter\/confirm#token=([A-Za-z0-9_-]{43})/)![1]!;
+  const unsubToken = (mail: Sent) => mail.headers!.find((h) => h.Name === "List-Unsubscribe")!.Value.match(/\/api\/newsletter\/unsubscribe\?token=([A-Za-z0-9_-]{43})/)![1]!;
   const rowOf = async (email: string) => (await db.select().from(schema.newsletterSubscribers).where(eq(schema.newsletterSubscribers.email, email)))[0];
 
   beforeAll(async () => {
@@ -65,23 +63,37 @@ describe.skipIf(!hasTestDb)("newsletter against Postgres (WP-50)", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ to: "ada@example.com", stream: "transactional" });
     expect(sent[0]!.headers).toContainEqual({ Name: "List-Unsubscribe-Post", Value: "List-Unsubscribe=One-Click" });
-    const confirm = confirmToken(sent[0]!);
+    const token = confirmToken(sent[0]!);
     const unsub = unsubToken(sent[0]!);
     // Only hashes: neither token is in any column of the schema.
-    expect(await columnsHolding(db, confirm)).toEqual([]);
+    expect(await columnsHolding(db, token)).toEqual([]);
     expect(await columnsHolding(db, unsub)).toEqual([]);
 
-    const ok = await request(app).get(`/api/newsletter/confirm?token=${confirm}`);
-    expect(ok.status).toBe(303);
-    expect(ok.headers.location).toBe(`${WEB}confirmed`);
+    const ok = await confirm(token);
+    expect([ok.status, ok.body]).toEqual([200, { ok: true }]);
     expect(await rowOf("ada@example.com")).toMatchObject({ status: "confirmed", confirmTokenHash: null, confirmExpiresAt: null });
-    expect((await request(app).get(`/api/newsletter/confirm?token=${confirm}`)).headers.location).toBe(`${WEB}invalid`); // single use
+    expect((await confirm(token)).status).toBe(404); // single use
+  });
+
+  it("no GET changes anything: a mail scanner opening every link neither confirms nor unsubscribes", async () => {
+    await signUp("ada@example.com");
+    await drain();
+    const token = confirmToken(sent[0]!);
+    const unsub = unsubToken(sent[0]!);
+    expect((await request(app).get(`/api/newsletter/confirm?token=${token}`)).status).toBe(404);
+    const opened = await request(app).get(`/api/newsletter/unsubscribe?token=${unsub}`);
+    expect([opened.status, opened.headers.location]).toEqual([303, `http://localhost:3000/newsletter/unsubscribe#token=${unsub}`]);
+    expect(await rowOf("ada@example.com")).toMatchObject({ status: "pending", unsubscribedAt: null });
+    expect((await confirm(token)).status).toBe(200); // the person's click still works
+
+    await request(app).get(`/api/newsletter/unsubscribe?token=${unsub}`);
+    expect(await rowOf("ada@example.com")).toMatchObject({ status: "confirmed", unsubscribedAt: null });
   });
 
   it("answers a confirmed address exactly as a new one, and mails it nothing new", async () => {
     await signUp("ada@example.com");
     await drain();
-    await request(app).get(`/api/newsletter/confirm?token=${confirmToken(sent[0]!)}`);
+    await confirm(confirmToken(sent[0]!));
     const again = await signUp("ada@example.com", "about");
     const fresh = await signUp("bob@example.com", "about");
     expect([again.status, again.body]).toEqual([fresh.status, fresh.body]);
@@ -102,8 +114,8 @@ describe.skipIf(!hasTestDb)("newsletter against Postgres (WP-50)", () => {
     await signUp("ada@example.com");
     expect(await rowOf("ada@example.com")).toMatchObject({ confirmSeq: 2 });
     expect(await drain()).toEqual([{ result: "sent" }]);
-    expect((await request(app).get(`/api/newsletter/confirm?token=${first}`)).headers.location).toBe(`${WEB}invalid`);
-    expect((await request(app).get(`/api/newsletter/confirm?token=${confirmToken(sent[1]!)}`)).headers.location).toBe(`${WEB}confirmed`);
+    expect((await confirm(first)).status).toBe(404);
+    expect((await confirm(confirmToken(sent[1]!))).status).toBe(200);
   });
 
   it("an older confirm job that runs after a newer sign-up is skipped", async () => {
@@ -115,43 +127,50 @@ describe.skipIf(!hasTestDb)("newsletter against Postgres (WP-50)", () => {
     expect(await drain()).toEqual([{ result: "sent" }]);
   });
 
-  it("an expired confirm link is invalid", async () => {
+  it("an expired confirm link is 404 and leaves the address pending", async () => {
     await signUp("ada@example.com");
     await drain();
     await db.update(schema.newsletterSubscribers).set({ confirmExpiresAt: sql`now() - interval '1 second'` });
-    expect((await request(app).get(`/api/newsletter/confirm?token=${confirmToken(sent[0]!)}`)).headers.location).toBe(`${WEB}invalid`);
+    expect((await confirm(confirmToken(sent[0]!))).status).toBe(404);
     expect(await rowOf("ada@example.com")).toMatchObject({ status: "pending" });
   });
 
   it("one-click unsubscribe works without cookies, is idempotent, and re-subscribing runs double opt-in again", async () => {
     await signUp("ada@example.com");
     await drain();
-    await request(app).get(`/api/newsletter/confirm?token=${confirmToken(sent[0]!)}`);
+    await confirm(confirmToken(sent[0]!));
     const unsub = unsubToken(sent[0]!);
+    const oneClick = () => request(app).post(`/api/newsletter/unsubscribe?token=${unsub}`).type("form").send("List-Unsubscribe=One-Click");
 
-    const post = await request(app).post(`/api/newsletter/unsubscribe?token=${unsub}`).type("form").send("List-Unsubscribe=One-Click");
-    expect(post.status).toBe(200);
-    expect(post.body).toEqual({ ok: true });
+    const post = await oneClick();
+    expect([post.status, post.body, post.headers.location]).toEqual([200, { ok: true }, undefined]);
     const first = await rowOf("ada@example.com");
     expect(first).toMatchObject({ status: "unsubscribed" });
-    const get = await request(app).get(`/api/newsletter/unsubscribe?token=${unsub}`);
-    expect([get.status, get.headers.location]).toEqual([303, `${WEB}unsubscribed`]);
+    expect((await oneClick()).status).toBe(200);
     expect((await rowOf("ada@example.com"))!.unsubscribedAt).toEqual(first!.unsubscribedAt);
 
     await signUp("ada@example.com", "blog-post");
     expect(await rowOf("ada@example.com")).toMatchObject({ status: "pending", source: "blog-post", confirmSeq: 2, confirmedAt: null, unsubscribedAt: null });
     expect(await drain()).toEqual([{ result: "sent" }]);
     expect(unsubToken(sent[1]!)).toBe(unsub); // the same link keeps working in every mail
-    expect((await request(app).get(`/api/newsletter/confirm?token=${confirmToken(sent[1]!)}`)).headers.location).toBe(`${WEB}confirmed`);
+    expect((await confirm(confirmToken(sent[1]!))).status).toBe(200);
+  });
+
+  it("the body link's unsubscribe token works on the same POST as the header's", async () => {
+    await signUp("ada@example.com");
+    await drain();
+    const body = sent[0]!.text.match(/\/newsletter\/unsubscribe#token=([A-Za-z0-9_-]{43})/)![1]!;
+    expect(body).toBe(unsubToken(sent[0]!));
+    expect((await request(app).post(`/api/newsletter/unsubscribe?token=${body}`)).status).toBe(200);
+    expect(await rowOf("ada@example.com")).toMatchObject({ status: "unsubscribed", confirmTokenHash: null });
   });
 
   it("an unknown well-formed token changes nothing", async () => {
     await signUp("ada@example.com");
     await drain();
     const unknown = "A".repeat(43);
-    expect((await request(app).get(`/api/newsletter/unsubscribe?token=${unknown}`)).headers.location).toBe(`${WEB}invalid`);
     expect((await request(app).post(`/api/newsletter/unsubscribe?token=${unknown}`)).status).toBe(404);
-    expect((await request(app).get(`/api/newsletter/confirm?token=${unknown}`)).headers.location).toBe(`${WEB}invalid`);
+    expect((await confirm(unknown)).status).toBe(404);
     expect(await rowOf("ada@example.com")).toMatchObject({ status: "pending" });
   });
 

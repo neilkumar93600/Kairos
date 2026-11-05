@@ -15,6 +15,9 @@ import { emailHashIfKeyed } from "./erasure";
  * (one upsert, one enqueue) whatever the address's state, and answers the same 202: nothing tells a caller whether an
  * address is on the list.
  *
+ * No GET changes anything, because mail scanners open every link: emailed links go to a web page whose button POSTs the
+ * token, and the token sits in that URL's fragment, so it never reaches a server or a log.
+ *
  * Tokens are 32 bytes, base64url (43 characters), and only their SHA-256 is stored, looked up by hash:
  *  - confirm: random, 7 days, single use (the confirming UPDATE nulls it);
  *  - unsubscribe: HMAC-SHA256(USER_HASH_KEY, "newsletter-unsubscribe:" + id). Derived, so any later newsletter mail can
@@ -38,23 +41,29 @@ export function unsubscribeToken(subscriberId: string): string {
   return createHmac("sha256", key).update(`newsletter-unsubscribe:${subscriberId}`).digest("base64url");
 }
 
-function apiUrl(path: "confirm" | "unsubscribe", token: string): string {
-  const origin = env().API_PUBLIC_ORIGIN;
-  if (!origin) throw new Error("API_PUBLIC_ORIGIN is not set");
-  return `${origin}/api/newsletter/${path}?token=${token}`;
-}
+const webOrigin = () => new URL(env().WEB_ORIGIN).origin;
+/** A web page with a button that POSTs the token, never a link that acts on GET. */
+const webPage = (page: "confirm" | "unsubscribe", token: string) => `${webOrigin()}/newsletter/${page}#token=${token}`;
 
-export const newsletterUnsubscribeUrl = (subscriberId: string) => apiUrl("unsubscribe", unsubscribeToken(subscriberId));
+/** The unsubscribe link for an email's body. */
+export const newsletterUnsubscribeUrl = (subscriberId: string) => webPage("unsubscribe", unsubscribeToken(subscriberId));
 
-/** RFC 2369 and RFC 8058 one-click: every newsletter email carries both (DKIM must cover them: owner-actions/WP-50.md). */
+/**
+ * RFC 2369 and RFC 8058 one-click, through the web's /api rewrite: every newsletter email carries both (DKIM must cover
+ * them: owner-actions/WP-50.md).
+ */
 export const newsletterHeaders = (subscriberId: string) => [
-  { Name: "List-Unsubscribe", Value: `<${newsletterUnsubscribeUrl(subscriberId)}>` },
+  { Name: "List-Unsubscribe", Value: `<${webOrigin()}/api/newsletter/unsubscribe?token=${unsubscribeToken(subscriberId)}>` },
   { Name: "List-Unsubscribe-Post", Value: "List-Unsubscribe=One-Click" },
 ];
 
-export type NewsletterStatus = "confirmed" | "invalid" | "unsubscribed";
-/** The only places the newsletter routes redirect to: a fixed path on WEB_ORIGIN, with a fixed status. */
-export const newsletterPage = (status: NewsletterStatus) => `${new URL(env().WEB_ORIGIN).origin}/newsletter?status=${status}`;
+/**
+ * Where GET /unsubscribe sends a client that opened the header URL: the web page for a token of our shape, the invalid
+ * page for anything else. The shape check keeps caller input out of the Location header; no row is read, so the redirect
+ * says nothing about whether the token exists.
+ */
+export const unsubscribeRedirect = (token: unknown) =>
+  typeof token === "string" && TOKEN.test(token) ? webPage("unsubscribe", token) : `${webOrigin()}/newsletter?status=invalid`;
 
 /**
  * Records a sign-up and returns the notify entity of the confirm email to queue, `<id>:<confirm_seq>`. A new address is
@@ -137,10 +146,12 @@ export async function renderNewsletterConfirm(entityId: string): Promise<Rendere
     text: [
       "Someone, hopefully you, asked for the Kairos newsletter at this address.",
       "",
-      `Confirm your subscription: ${apiUrl("confirm", confirm)}`,
+      `Confirm your subscription: ${webPage("confirm", confirm)}`,
       "",
       "The link works once, for 7 days. If you did not ask for this, ignore this email: you will not be subscribed, and",
       "we delete the address within 30 days.",
+      "",
+      `Unsubscribe: ${newsletterUnsubscribeUrl(id)}`,
     ].join("\n"),
     headers: newsletterHeaders(id),
   };

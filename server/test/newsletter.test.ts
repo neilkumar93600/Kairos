@@ -3,9 +3,8 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The no-database half of the newsletter (WP-50): every valid sign-up looks the same from outside, the honeypot stores
-// nothing, malformed tokens never reach Postgres, redirects go to fixed pages only, and the token helpers. The upsert,
-// the single-use confirm and the renderer against a real database run in newsletter.int.test.ts (CI).
-process.env.API_PUBLIC_ORIGIN = "https://api.kairos.test";
+// nothing, malformed tokens never reach Postgres, no GET changes anything, and the token and mail helpers. The upsert,
+// the single-use confirm and the ledger against a real database run in newsletter.int.test.ts (CI).
 
 const enqueue = vi.fn(async () => undefined);
 vi.mock("../src/jobs/queues", async (orig) => ({ ...(await orig<typeof import("../src/jobs/queues")>()), enqueue }));
@@ -20,6 +19,9 @@ const { RENDERERS } = await import("../src/jobs/notify");
 
 const signedOut = { handler: async () => new Response(null), getSession: async () => null };
 const app = () => createApp({ auth: signedOut, corsOrigins: [], healthChecks: {} });
+const WEB = "http://localhost:3000";
+const WELL_FORMED = "a".repeat(43);
+const HOSTILE = ["", "short", "x".repeat(44), `${"a".repeat(42)}=`, "../../evil", "https://evil.example/", `${WELL_FORMED}\r\nSet-Cookie: x=1`];
 
 beforeEach(() => {
   enqueue.mockClear();
@@ -70,44 +72,62 @@ describe("POST /api/newsletter", () => {
   });
 });
 
-describe("GET /api/newsletter/confirm and /unsubscribe", () => {
-  const BAD = ["", "short", "x".repeat(44), "a".repeat(42) + "=", "../../evil", "https://evil.example/"];
-
-  it.each(BAD)("a malformed token %j redirects 303 to the fixed invalid page without a database call", async (token) => {
+describe("the token routes", () => {
+  it.each(["confirm", "unsubscribe"])("POST /%s with a malformed token is 404, never a redirect, without a database call", async (path) => {
     const update = vi.spyOn(db(), "update");
-    for (const path of ["confirm", "unsubscribe"]) {
-      const res = await request(app()).get(`/api/newsletter/${path}`).query({ token });
-      expect(res.status).toBe(303);
-      expect(res.headers.location).toBe("http://localhost:3000/newsletter?status=invalid");
-      expect(res.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "no-referrer" });
+    for (const token of HOSTILE) {
+      const res = await request(app()).post(`/api/newsletter/${path}`).query({ token }).type("form").send("List-Unsubscribe=One-Click");
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe("not_found");
+      expect(res.headers.location).toBeUndefined();
     }
+    expect((await request(app()).post(`/api/newsletter/${path}`)).status).toBe(404);
     expect(update).not.toHaveBeenCalled();
   });
 
   it("a repeated token parameter is not a token", async () => {
     const update = vi.spyOn(db(), "update");
-    const res = await request(app()).get(`/api/newsletter/confirm?token=${"a".repeat(43)}&token=${"b".repeat(43)}`);
-    expect(res.headers.location).toBe("http://localhost:3000/newsletter?status=invalid");
+    const repeated = `token=${WELL_FORMED}&token=${"b".repeat(43)}`;
+    expect((await request(app()).post(`/api/newsletter/confirm?${repeated}`)).status).toBe(404);
+    expect((await request(app()).get(`/api/newsletter/unsubscribe?${repeated}`)).headers.location).toBe(`${WEB}/newsletter?status=invalid`);
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("a HEAD (link scanners) changes nothing", async () => {
+  it("there is no GET confirm: a scanner opening an old or forged link reaches nothing", async () => {
     const update = vi.spyOn(db(), "update");
-    for (const path of ["confirm", "unsubscribe"]) expect((await request(app()).head(`/api/newsletter/${path}?token=${"a".repeat(43)}`)).status).toBe(204);
+    const res = await request(app()).get(`/api/newsletter/confirm?token=${WELL_FORMED}`);
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe("route_not_found");
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("POST /unsubscribe (RFC 8058 one-click) with a malformed token is 404, never a redirect", async () => {
-    const res = await request(app()).post(`/api/newsletter/unsubscribe?token=nope`).type("form").send("List-Unsubscribe=One-Click");
-    expect(res.status).toBe(404);
-    expect(res.headers.location).toBeUndefined();
+  it("GET /unsubscribe changes and reads nothing: it sends a well-formed token to the web page, in the fragment", async () => {
+    const spies = [vi.spyOn(db(), "update"), vi.spyOn(db(), "select"), vi.spyOn(db(), "execute")];
+    const res = await request(app()).get(`/api/newsletter/unsubscribe?token=${WELL_FORMED}`);
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe(`${WEB}/newsletter/unsubscribe#token=${WELL_FORMED}`);
+    expect(res.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "no-referrer" });
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
   });
 
-  it("the link class allows 20 a minute per client IP", async () => {
+  it.each(HOSTILE)("GET /unsubscribe never echoes %j: it goes to the fixed invalid page", async (token) => {
+    const res = await request(app()).get("/api/newsletter/unsubscribe").query({ token });
+    expect(res.status).toBe(303);
+    expect(res.headers.location).toBe(`${WEB}/newsletter?status=invalid`);
+    expect(res.headers).toMatchObject({ "cache-control": "no-store", "referrer-policy": "no-referrer" });
+    expect(res.headers["set-cookie"]).toBeUndefined();
+  });
+
+  it.each([
+    ["POST", "confirm", 404],
+    ["POST", "unsubscribe", 404],
+    ["GET", "unsubscribe", 303],
+  ] as const)("the link class allows 20 of %s /%s a minute per client IP", async (method, path, expected) => {
     const a = app();
+    const send = () => (method === "POST" ? request(a).post(`/api/newsletter/${path}?token=bad`) : request(a).get(`/api/newsletter/${path}?token=bad`));
     const statuses: number[] = [];
-    for (let i = 0; i < 21; i++) statuses.push((await request(a).get("/api/newsletter/confirm?token=bad")).status);
-    expect(statuses.slice(0, 20).every((s) => s === 303)).toBe(true);
+    for (let i = 0; i < 21; i++) statuses.push((await send()).status);
+    expect(statuses.slice(0, 20).every((s) => s === expected)).toBe(true);
     expect(statuses[20]).toBe(429);
   });
 });
@@ -132,15 +152,13 @@ describe("newsletter tokens and mail (services/newsletter.ts)", () => {
     expect(t).not.toBe(createHash("sha256").update(id).digest("base64url"));
   });
 
-  it("newsletter mail carries RFC 2369 and RFC 8058 headers pointing at the api's one-click route", () => {
+  it("the one-click header is the api path on the web origin; the body link is the web page, token in the fragment", () => {
+    const t = nl.unsubscribeToken(id);
     expect(nl.newsletterHeaders(id)).toEqual([
-      { Name: "List-Unsubscribe", Value: `<https://api.kairos.test/api/newsletter/unsubscribe?token=${nl.unsubscribeToken(id)}>` },
+      { Name: "List-Unsubscribe", Value: `<${WEB}/api/newsletter/unsubscribe?token=${t}>` },
       { Name: "List-Unsubscribe-Post", Value: "List-Unsubscribe=One-Click" },
     ]);
-  });
-
-  it("redirects only to fixed pages on WEB_ORIGIN", () => {
-    expect(nl.newsletterPage("confirmed")).toBe("http://localhost:3000/newsletter?status=confirmed");
+    expect(nl.newsletterUnsubscribeUrl(id)).toBe(`${WEB}/newsletter/unsubscribe#token=${t}`);
   });
 
   it("is the newsletter_confirm renderer, and skips an entity it did not mint without a database call", async () => {
@@ -150,5 +168,24 @@ describe("newsletter tokens and mail (services/newsletter.ts)", () => {
       expect(await nl.renderNewsletterConfirm(entity), entity).toEqual({ skip: "bad_entity" });
     }
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("renders both links as web pages and stores only the tokens' hashes", async () => {
+    const stored: Record<string, unknown>[] = [];
+    const chain = { set: (v: Record<string, unknown>) => (stored.push(v), chain), where: () => chain, returning: async () => [{ email: "ada@example.com" }] };
+    vi.spyOn(db(), "update").mockReturnValue(chain as never);
+    const mail = await nl.renderNewsletterConfirm(`${id}:1`);
+    if ("skip" in mail) throw new Error("expected an email");
+    expect(mail.to).toBe("ada@example.com");
+    const confirm = mail.text.match(/\/newsletter\/confirm#token=([A-Za-z0-9_-]{43})(\s|$)/)![1]!;
+    expect(mail.text).toContain(`${WEB}/newsletter/confirm#token=${confirm}`);
+    expect(mail.text).toContain(`Unsubscribe: ${WEB}/newsletter/unsubscribe#token=${nl.unsubscribeToken(id)}`);
+    expect(mail.text).not.toContain("/api/newsletter");
+    expect(mail.headers).toEqual(nl.newsletterHeaders(id));
+    expect(stored[0]).toMatchObject({
+      confirmTokenHash: createHash("sha256").update(confirm).digest(),
+      unsubscribeTokenHash: createHash("sha256").update(nl.unsubscribeToken(id)).digest(),
+    });
+    expect(JSON.stringify(stored)).not.toContain(confirm);
   });
 });
