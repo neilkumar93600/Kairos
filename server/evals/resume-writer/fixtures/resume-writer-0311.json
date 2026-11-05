@@ -1,0 +1,31 @@
+{
+  "caseId": "resume-writer-0311",
+  "promptVersion": 2,
+  "promptSha256": "c3c04dda961bb6896a1159994fdf42895a6fb7c1a7fe8a3c73bb874b86343692",
+  "inputHash": "de861ea8035b6031da879652649b6f65a06616eec3ae70dc696ac2a353fd5a02",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "headline",
+            "entryId": null,
+            "lineId": null,
+            "action": "add",
+            "after": "Mobile Engineer · Kotlin",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f1",
+              "f3"
+            ],
+            "needsFact": null,
+            "tag": "show_scope",
+            "priority": "high",
+            "appendYears": true
+          }
+        ]
+      }
+    }
+  ]
+}

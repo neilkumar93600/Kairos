@@ -1,0 +1,45 @@
+{
+  "caseId": "resume-writer-0277",
+  "promptVersion": 2,
+  "promptSha256": "c3c04dda961bb6896a1159994fdf42895a6fb7c1a7fe8a3c73bb874b86343692",
+  "inputHash": "64dce4e2e860648f0788ebe0652dda4f6c1e7dae1dd4095435389d36b3e9b83b",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": "l1",
+            "action": "rewrite",
+            "after": "Cut regression test time by 60%",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f2"
+            ],
+            "needsFact": null,
+            "tag": "lead_with_result",
+            "priority": "high",
+            "appendYears": false
+          },
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": null,
+            "action": "add",
+            "after": "Cut regression test time by 60%",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f2"
+            ],
+            "needsFact": null,
+            "tag": "lead_with_result",
+            "priority": "medium",
+            "appendYears": false
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "caseId": "resume-writer-0130",
+  "promptVersion": 2,
+  "promptSha256": "c3c04dda961bb6896a1159994fdf42895a6fb7c1a7fe8a3c73bb874b86343692",
+  "inputHash": "432fa3f4992ae43a33836722bb08a1c7a4cfb37cf7a599e43bf15f5129965c1f",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "skl",
+            "entryId": null,
+            "lineId": null,
+            "action": "add",
+            "after": "Cut invoice processing time by 30%",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f2"
+            ],
+            "needsFact": null,
+            "tag": "use_your_numbers",
+            "priority": "high",
+            "appendYears": false
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "caseId": "resume-writer-0237",
+  "promptVersion": 2,
+  "promptSha256": "c3c04dda961bb6896a1159994fdf42895a6fb7c1a7fe8a3c73bb874b86343692",
+  "inputHash": "447ef6db64de653a9c116c24b911097c6a45d0cf72f72e40eb7d28851bfd340d",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": "l1",
+            "action": "rewrite",
+            "after": "Lowered incident response time by 25%",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f2"
+            ],
+            "needsFact": null,
+            "tag": "remove_filler",
+            "priority": "high",
+            "appendYears": false
+          },
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": null,
+            "action": "add",
+            "after": "Lowered incident response time by 25%",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f2"
+            ],
+            "needsFact": null,
+            "tag": "remove_filler",
+            "priority": "medium",
+            "appendYears": false
+          }
+        ]
+      }
+    }
+  ]
+}

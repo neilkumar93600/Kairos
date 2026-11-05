@@ -1,0 +1,30 @@
+{
+  "caseId": "resume-writer-0154",
+  "promptVersion": 2,
+  "promptSha256": "c3c04dda961bb6896a1159994fdf42895a6fb7c1a7fe8a3c73bb874b86343692",
+  "inputHash": "2c679a608f8e6720980bff9ff000b11b7fe27edf5525e1d7e7518fd3f8f1cd63",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "sum",
+            "entryId": null,
+            "lineId": null,
+            "action": "add",
+            "after": "Reduced report delivery time by 45%",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f2"
+            ],
+            "needsFact": null,
+            "tag": "use_your_numbers",
+            "priority": "high",
+            "appendYears": false
+          }
+        ]
+      }
+    }
+  ]
+}

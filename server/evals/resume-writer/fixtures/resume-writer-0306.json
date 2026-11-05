@@ -1,0 +1,31 @@
+{
+  "caseId": "resume-writer-0306",
+  "promptVersion": 2,
+  "promptSha256": "c3c04dda961bb6896a1159994fdf42895a6fb7c1a7fe8a3c73bb874b86343692",
+  "inputHash": "93b1c9e7dd4c15a62f0b43bbac9895f31f5fdb146e65a15287e75f49adc4abfd",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "headline",
+            "entryId": null,
+            "lineId": null,
+            "action": "add",
+            "after": "Frontend Engineer · React",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f1",
+              "f3"
+            ],
+            "needsFact": null,
+            "tag": "show_scope",
+            "priority": "high",
+            "appendYears": false
+          }
+        ]
+      }
+    }
+  ]
+}

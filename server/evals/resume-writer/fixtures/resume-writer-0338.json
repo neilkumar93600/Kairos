@@ -1,0 +1,30 @@
+{
+  "caseId": "resume-writer-0338",
+  "promptVersion": 2,
+  "promptSha256": "c3c04dda961bb6896a1159994fdf42895a6fb7c1a7fe8a3c73bb874b86343692",
+  "inputHash": "0de76e7a9c951e2285736ffbc6eb171a5fb199bec1b817aa478b47405e8f9c8c",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": "l1",
+            "action": "rewrite",
+            "after": "Reduced inference cost by 35%",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f2"
+            ],
+            "needsFact": null,
+            "tag": "fix_spelling",
+            "priority": "low",
+            "appendYears": false
+          }
+        ]
+      }
+    }
+  ]
+}

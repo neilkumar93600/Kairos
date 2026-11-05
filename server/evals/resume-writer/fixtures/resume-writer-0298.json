@@ -1,0 +1,33 @@
+{
+  "caseId": "resume-writer-0298",
+  "promptVersion": 2,
+  "promptSha256": "c3c04dda961bb6896a1159994fdf42895a6fb7c1a7fe8a3c73bb874b86343692",
+  "inputHash": "c9e54758b62b1278357ce29832080178bbd35b5f479511ac8359b89c44671ffe",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": null,
+            "action": "add",
+            "after": null,
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f1"
+            ],
+            "needsFact": {
+              "kind": "metric",
+              "question": "How many people were on the team you led?"
+            },
+            "tag": "show_scope",
+            "priority": "high",
+            "appendYears": false
+          }
+        ]
+      }
+    }
+  ]
+}
