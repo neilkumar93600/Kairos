@@ -69,7 +69,7 @@ matchesRouter.post("/:id/queue", async (req, res) => {
 
   const [created] = await db()
     .insert(applications)
-    .values({ userId: me.id, jobId: match.jobId, matchId: match.id })
+    .values({ userId: me.id, jobId: match.jobId, matchId: match.id, gateOverride: !match.passedFilters })
     .onConflictDoNothing({ target: [applications.userId, applications.jobId] })
     .returning({ id: applications.id });
   await db().transaction(async (tx) => {

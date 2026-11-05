@@ -5,8 +5,10 @@ import { z } from "zod";
 import { FACT_KINDS, confirmFactsRequestSchema, getPlan, httpUrl, preferencesSchema } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, employments, facts, profiles, resumeProfiles, resumes, savedAnswers } from "../db/schema";
+import { enqueue } from "../jobs/queues";
 import { asActor } from "../lib/actor";
 import { HttpError, forbidden, notFound } from "../lib/errors";
+import { logger, logUserHash } from "../lib/logger";
 import { FACT_COLUMNS, PROFILE_COLUMNS, RESUME_PROFILE_COLUMNS } from "../lib/serializers";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
@@ -16,6 +18,16 @@ import { planFor } from "../services/submissions";
 
 /** Profile, preferences, resumes, facts and saved answers. Mounted at /api/profile. */
 export const profileRouter = Router();
+
+/**
+ * Asks for one capped backfill (matching-69), coalesced per user per minute. Best effort: the save already committed, and a
+ * lost backfill only means the feed fills from the next postings.
+ */
+function requestBackfill(userId: string): void {
+  enqueue("score-matches", { backfillUserId: userId }, `backfill-${userId}-${Math.floor(Date.now() / 60_000)}`).catch((err: unknown) =>
+    logger.warn({ err, userHash: logUserHash(userId) }, "backfill not queued"),
+  );
+}
 
 /** Links are printed on resumes and rendered as hrefs: http(s) only, as profiles_urls_ck also insists. */
 const link = httpUrl(300).nullable();
@@ -49,6 +61,7 @@ profileRouter.put("/preferences", validateBody(preferencesSchema), async (req, r
     .set({ preferences: req.body, onboardingStep: "done", updatedAt: new Date() })
     .where(eq(profiles.userId, currentUser(req).id))
     .returning({ preferences: profiles.preferences });
+  requestBackfill(currentUser(req).id);
   res.json({ preferences: profile?.preferences ?? null });
 });
 
@@ -83,8 +96,10 @@ profileRouter.post("/facts/confirm", validateBody(confirmFactsRequestSchema), as
   const me = currentUser(req);
   const ids = [...new Set((req.body as { ids: string[] }).ids)];
   if (!ids.every((id) => z.uuid().safeParse(id).success)) throw notFound("Fact");
+  let first = false;
   const confirmedFacts = await db().transaction(async (tx) => {
     await asActor(tx, "user");
+    first = (await tx.select({ id: facts.id }).from(facts).where(and(eq(facts.userId, me.id), eq(facts.confirmed, true))).limit(1)).length === 0;
     const mine = and(inArray(facts.id, ids), eq(facts.userId, me.id));
     const owned = await tx.select({ id: facts.id, employmentId: facts.employmentId }).from(facts).where(mine);
     if (owned.length !== ids.length) throw notFound("Fact");
@@ -98,6 +113,7 @@ profileRouter.post("/facts/confirm", validateBody(confirmFactsRequestSchema), as
     }
     return rows;
   });
+  if (first && confirmedFacts.length) requestBackfill(me.id);
   res.json({ facts: confirmedFacts });
 });
 

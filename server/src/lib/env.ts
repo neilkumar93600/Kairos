@@ -227,6 +227,11 @@ const envSchema = z.object({
   /** Kill switch for the scoring loop (true, 1, on): new postings are not scored while set. */
   PAUSE_SCORING: z.preprocess(emptyToUndefined, z.stringbool().default(false)),
   /**
+   * A ceiling on every plan's dailyScoringCap until the owner pins the per-plan caps (owner-actions/WP-23.md). Default: Pro's
+   * cap, so only Max (350 in plans.ts) runs under its plan number. Lower it to cut spend at once; 0 stops pipeline scoring.
+   */
+  MATCHING_DAILY_CAP_MAX: z.coerce.number().int().min(0).max(1000).default(140),
+  /**
    * Comma-separated user ids that may use /api/admin (WP-27), on top of a verified email and a session under 15 minutes
    * old. Empty: the admin routes answer 404 to everyone. PAUSE_SCORING above stays a pause-only override of ops_flags.
    */
