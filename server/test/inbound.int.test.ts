@@ -90,7 +90,18 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
       .set("authorization", `Basic ${Buffer.from(`postmark:${PASSWORD}`).toString("base64")}`)
       .send(body);
   const mail = (over: object = {}) => ({ MessageID: randomUUID(), From: "Acme Talent <jobs@acme.com>", To: address, Subject: "Hello", TextBody: "A note.", ...over });
-  const rows = () => db.select().from(schema.inboundEmails);
+  const rows = () => db.select().from(schema.inboundEmails).orderBy(schema.inboundEmails.receivedAt, schema.inboundEmails.id);
+  /** The inbox, with its status checked first, so a failure reads as a wrong status and not `undefined`. */
+  const inbox = async (query = "") => {
+    const res = await request(app).get(`/api/inbox${query}`);
+    expect(res.status).toBe(200);
+    return res.body.emails as { subject: string; preview: string }[];
+  };
+  const panel = async () => {
+    const res = await request(app).get("/api/forwarding/status");
+    expect(res.status).toBe(200);
+    return res.body;
+  };
 
   /** A sent application at a company. */
   async function sentApplication(name = "Acme Robotics", domains = ["acme.com"], status: "submitted" | "submitting" = "submitted") {
@@ -111,6 +122,7 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
   describe("storing", () => {
     it("writes the body encrypted, and in clear only while the dual write is on", async () => {
       const res = await post(mail({ MessageID: "m1", TextBody: "x".repeat(50_000), Attachments: [{ Name: "cv.pdf", ContentType: "application/pdf", ContentLength: 7, Content: "AAAA" }] }));
+      expect(res.status).toBe(200);
       expect(res.body).toEqual({ stored: true });
       const [row] = await rows();
       expect(row!.textBody).toHaveLength(16_384);
@@ -198,7 +210,7 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
       expect(row!.spamScore).toBeCloseTo(8.1);
       expect(row!.classifiedAt).not.toBeNull();
       expect(enqueue).not.toHaveBeenCalled();
-      expect((await request(app).get("/api/inbox")).body.emails).toEqual([]);
+      expect(await inbox()).toEqual([]);
     });
 
     it("at 5 the row shows, links by domain only, and makes no notification", async () => {
@@ -292,23 +304,21 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
       await db.insert(schema.inboundEmails).values({ userId, providerMessageId: "legacy", sender: "a@b.co", subject: "Old", textBody: "z".repeat(5_000), receivedAt: new Date(Date.now() - 60_000) });
       await db.insert(schema.inboundEmails).values({ userId, providerMessageId: "gone", sender: "a@b.co", subject: "Spam", textBody: null, hiddenReason: "spam", classifiedAt: new Date() });
 
-      const res = await request(app).get("/api/inbox");
-      expect(res.status).toBe(200);
-      expect(res.body.emails.map((e: { subject: string }) => e.subject)).toEqual(["Interview", "Old"]);
-      expect(res.body.emails[0].preview).toBe(`Hello there ${"y".repeat(268)}`);
-      expect(res.body.emails[1].preview).toHaveLength(280);
-      expect(Object.keys(res.body.emails[0]).sort()).toEqual(["applicationId", "id", "kind", "preview", "receivedAt", "sender", "subject"]);
+      const emails = await inbox();
+      expect(emails.map((e) => e.subject)).toEqual(["Interview", "Old"]);
+      expect(emails[0]!.preview).toBe(`Hello there ${"y".repeat(268)}`);
+      expect(emails[1]!.preview).toHaveLength(280);
+      expect(Object.keys(emails[0]!).sort()).toEqual(["applicationId", "id", "kind", "preview", "receivedAt", "sender", "subject"]);
 
       const [row] = await db.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, "i1"));
       await processClassifyEmail({ data: { inboundEmailId: row!.id } });
-      const filtered = await request(app).get(`/api/inbox?applicationId=${id}`);
-      expect(filtered.body.emails.map((e: { subject: string }) => e.subject)).toEqual(["Interview"]);
+      expect((await inbox(`?applicationId=${id}`)).map((e) => e.subject)).toEqual(["Interview"]);
       expect((await request(app).get("/api/inbox?applicationId=nope")).status).toBe(400);
     });
 
     it("a body past retention shows an empty preview", async () => {
       await db.insert(schema.inboundEmails).values({ userId, providerMessageId: "purged", sender: "a@b.co", subject: "Old", textBody: null });
-      expect((await request(app).get("/api/inbox")).body.emails[0].preview).toBe("");
+      expect((await inbox())[0]!.preview).toBe("");
     });
   });
 
@@ -328,10 +338,8 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
       expect(row).toMatchObject({ hiddenReason: "forwarding_confirmation", textBody: null, textBodyEnc: null, previewEnc: null, subject: "Gmail Forwarding Confirmation" });
       expect(JSON.stringify(row)).not.toContain(CODE);
 
-      const status = await request(app).get("/api/forwarding/status");
-      expect(status.status).toBe(200);
-      expect(status.body).toMatchObject({ state: "awaiting_verification", address, lastMailAt: null, verification: { provider: "gmail", code: CODE, confirmUrl: LINK } });
-      expect((await request(app).get("/api/inbox")).body.emails).toEqual([]);
+      expect(await panel()).toMatchObject({ state: "awaiting_verification", address, lastMailAt: null, verification: { provider: "gmail", code: CODE, confirmUrl: LINK } });
+      expect(await inbox()).toEqual([]);
 
       const [note] = await db.select().from(schema.notifications);
       expect(note).toMatchObject({ kind: "forwarding_code" });
@@ -348,8 +356,8 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
       expect(await db.select().from(schema.forwardingVerifications)).toEqual([]);
       expect(await db.select().from(schema.notifications)).toEqual([]);
       expect(enqueue).not.toHaveBeenCalled();
-      expect((await request(app).get("/api/forwarding/status")).body).toMatchObject({ state: "not_started", verification: null });
-      expect((await request(app).get("/api/inbox")).body.emails).toEqual([]);
+      expect(await panel()).toMatchObject({ state: "not_started", verification: null });
+      expect(await inbox()).toEqual([]);
       for (const row of await rows()) expect(row).toMatchObject({ hiddenReason: "spam", textBody: null, textBodyEnc: null, previewEnc: null });
     });
 
@@ -358,18 +366,22 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
       await db.update(schema.profiles).set({ forwardingState: "active" }).where(eq(schema.profiles.userId, userId));
       await post(confirmation({ MessageID: "g2", Subject: "(#987654321) Gmail Forwarding Confirmation", TextBody: "Confirmation code: 987654321\n", RawEmail: signedConfirmation(address) }));
       expect(await db.select().from(schema.forwardingVerifications)).toHaveLength(1);
-      const status = (await request(app).get("/api/forwarding/status")).body;
+      const status = await panel();
       expect(status.state).toBe("active");
       expect(status.verification.code).toBe("987654321");
     });
 
     it("POST /api/forwarding/confirm records the acknowledgement once and never moves an active state back", async () => {
       await post(confirmation({ RawEmail: signedConfirmation(address) }));
-      expect((await request(app).post("/api/forwarding/confirm").send({ provider: "gmail" })).body).toEqual({ state: "verified_pending_first_mail" });
+      const confirmed = await request(app).post("/api/forwarding/confirm").send({ provider: "gmail" });
+      expect(confirmed.status).toBe(200);
+      expect(confirmed.body).toEqual({ state: "verified_pending_first_mail" });
       const [v] = await db.select().from(schema.forwardingVerifications);
       expect(v!.acknowledgedAt).not.toBeNull();
       await db.update(schema.profiles).set({ forwardingState: "active" }).where(eq(schema.profiles.userId, userId));
-      expect((await request(app).post("/api/forwarding/confirm").send({ provider: "outlook" })).body).toEqual({ state: "active" });
+      const again = await request(app).post("/api/forwarding/confirm").send({ provider: "outlook" });
+      expect(again.status).toBe(200);
+      expect(again.body).toEqual({ state: "active" });
       expect((await request(app).post("/api/forwarding/confirm").send({ provider: "pigeon" })).status).toBe(422);
     });
   });
@@ -431,8 +443,7 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
       const { rows: left } = await db.execute<{ n: number }>(sql`select count(*)::int as n from inbound_emails where text_body is not null`);
       expect(left[0]!.n).toBe(0);
       // The inbox still reads every row.
-      const inbox = await request(app).get("/api/inbox");
-      expect(inbox.body.emails.map((e: { preview: string }) => e.preview).sort()).toEqual(["", "more words", "plain words"]);
+      expect((await inbox()).map((e) => e.preview).sort()).toEqual(["", "more words", "plain words"]);
     });
   });
 
@@ -440,6 +451,6 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
     const other = await seedUser(db);
     await db.insert(schema.profiles).values({ userId: other, forwardingAddress: "u-other@replies.test" });
     await db.insert(schema.forwardingVerifications).values({ userId: other, provider: "gmail", code: CODE, expiresAt: new Date(Date.now() + 3600_000) });
-    expect((await request(app).get("/api/forwarding/status")).body).toMatchObject({ address, verification: null });
+    expect(await panel()).toMatchObject({ address, verification: null });
   });
 });

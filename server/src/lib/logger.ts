@@ -126,7 +126,7 @@ export function httpLogger(target: Logger = logger) {
     // pino-http builds its own child logger, so it needs the err serializer too; the parsed query is dropped whole.
     serializers: {
       err: serializeErr,
-      req: (req: { url: string }) => Object.assign(req, { url: redactUrl(req.url), query: undefined }),
+      req: (req: { url: string }) => Object.assign(req, { url: redactUrl(req.url), query: undefined, params: undefined }),
     },
   });
 }

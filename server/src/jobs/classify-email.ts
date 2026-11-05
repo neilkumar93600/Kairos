@@ -99,7 +99,7 @@ export async function processClassifyEmail(job: Pick<Job<JobData["classify-email
       UPDATE applications SET stage = ${stage}
        WHERE id = ${appId} AND user_id = ${email.userId}
          AND stage IS DISTINCT FROM 'rejected'
-         AND (stage IS NULL OR ${stage} = 'rejected' OR array_position(${STAGE_RANKS}, stage) < array_position(${STAGE_RANKS}, ${stage}::text))`);
+         AND (stage IS NULL OR ${stage}::text = 'rejected' OR array_position(${STAGE_RANKS}, stage) < array_position(${STAGE_RANKS}, ${stage}::text))`);
     const stageChanged = (moved.rowCount ?? 0) > 0;
     const event = await recordEvent(tx, {
       userId: email.userId,

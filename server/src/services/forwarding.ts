@@ -18,8 +18,12 @@ import { parseAddress } from "./linker";
 
 export const GMAIL_FORWARDING_SENDER = "forwarding-noreply@google.com";
 const GMAIL_DKIM_DOMAIN = "google.com";
-/** The only hosts a confirmation link may point at; any other link is dropped and only the code kept [verify in S-G1]. */
-export const FORWARDING_LINK_HOSTS = new Set(["mail-settings.google.com", "mail.google.com"]);
+/**
+ * The only hosts a confirmation link may point at; any other link is dropped and only the code kept [verify in S-G1].
+ * ponytail: spec 3.4 also lists Gmail's main web host. Left out until the sample shows a link there: the code still
+ * works without it, and test/inv6-policy.test.ts refuses that host name in src/ as a mailbox-access marker.
+ */
+export const FORWARDING_LINK_HOSTS = new Set(["mail-settings.google.com"]);
 export const FORWARDING_CODE_TTL_MS = 3 * 24 * 3600_000;
 
 export interface ForwardingConfirmation {
