@@ -127,9 +127,10 @@ export const marketingCopy = {
       matches: "{n} of {total} posts", // status line while a search is typed
     },
     empty: {
-      title: "No posts match “{q}”.",
+      title: "No posts match", // the search term follows, in quotes
       body: "Try one word, such as credits or visas.",
       clear: "Clear search",
+      fanCaption: "Or start with the newest posts",
     },
     minRead: "{n} min read",
     // The left column on a post, from 1200 px.

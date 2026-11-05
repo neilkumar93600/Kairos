@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { SlidersHorizontal } from "@phosphor-icons/react";
 import { useProfile } from "@/hooks/use-profile";
 import { Button } from "../../shared/button";
-import { EmptyState } from "../../shared/empty-state";
+import { EmptyEm, EmptyState } from "../../shared/empty-state";
+import { postFans } from "@/content/blog-meta";
 import { Skeleton } from "../../shared/skeleton";
 import { RetryNote } from "../profile/fact-list";
 import { PreferencesForm, RULE_ROW } from "./preferences-form";
@@ -24,9 +25,10 @@ export function PreferencesPanel() {
       <div className="max-w-4xl">
         <EmptyState
           icon={SlidersHorizontal}
-          title="No fit rules yet"
+          title={<>No <EmptyEm>fit rules</EmptyEm> yet</>}
           body="Kairos matches nothing until you say which roles, places and limits fit you."
           action={<Button onClick={() => setStarted(true)}>Set your fit rules</Button>}
+          fan={postFans.setup}
         />
       </div>
     );

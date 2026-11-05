@@ -2,6 +2,8 @@
 
 import { MagnifyingGlass } from "@phosphor-icons/react/ssr";
 import { useId, useRef, useState } from "react";
+import { Button } from "@/components/shared/button";
+import { EmptyEm, EmptyState } from "@/components/shared/empty-state";
 import { Input } from "@/components/shared/field";
 import { marketingCopy } from "@/content/marketing-copy";
 import type { PostSummary } from "@/lib/blog";
@@ -61,13 +63,16 @@ export function PostArchive({ posts }: { posts: PostSummary[] }) {
           ))}
         </div>
       ) : (
-        <div className="blog-none">
-          <p className="lp-h4">{empty.title.replace("{q}", term)}</p>
-          <p className="lp-body-sm">{empty.body}</p>
-          <button type="button" className="lp-link blog-none__clear" onClick={clear}>
-            {empty.clear}
-          </button>
-        </div>
+        <EmptyState
+          title={
+            <>
+              {empty.title} <EmptyEm>“{term}”</EmptyEm>
+            </>
+          }
+          body={empty.body}
+          action={<Button onClick={clear}>{empty.clear}</Button>}
+          fan={{ caption: empty.fanCaption, posts: posts.slice(0, 3) }}
+        />
       )}
     </section>
   );

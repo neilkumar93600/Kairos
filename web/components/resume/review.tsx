@@ -5,7 +5,7 @@ import type { ResumeSuggestion, SuggestionRequest } from "@auto-career/shared";
 import type { Fact } from "@/hooks/use-profile";
 import { cn } from "@/lib/utils";
 import { Button } from "../shared/button";
-import { EmptyState } from "../shared/empty-state";
+import { EmptyEm, EmptyState } from "../shared/empty-state";
 import { Textarea } from "../shared/field";
 import { ConfirmFacts, FactChips, HIT, InlineError, NewFactNote, SuggestionSkeletons } from "./bits";
 import { acceptState, unconfirmedIds, type FactMap } from "./model";
@@ -228,7 +228,7 @@ export function ReviewTab() {
       {!state.busy && !groups.length ? (
         <EmptyState
           flat
-          title={state.ran ? "No changes to suggest from your facts" : "No suggestions yet"}
+          title={state.ran ? <>No <EmptyEm>changes</EmptyEm> to suggest from your facts</> : <>No <EmptyEm>suggestions</EmptyEm> yet</>}
           body={state.ran ? "Nothing is waiting for you. Add or confirm facts on Profile, then review again." : "Run a review and Kairos proposes edits from your confirmed facts."}
         />
       ) : null}

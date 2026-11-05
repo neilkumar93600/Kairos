@@ -8,7 +8,8 @@ import { useApplication, useApplicationActions, useApplications } from "@/hooks/
 import { useMe } from "@/hooks/use-me";
 import { cn } from "@/lib/utils";
 import { Button, ButtonLink } from "../../shared/button";
-import { EmptyState } from "../../shared/empty-state";
+import { EmptyEm, EmptyState } from "../../shared/empty-state";
+import { postFans } from "@/content/blog-meta";
 import { ErrorNote } from "../../shared/error-note";
 import { Panel } from "../../shared/panel";
 import { Skeleton } from "../../shared/skeleton";
@@ -96,13 +97,14 @@ export function QueueList() {
         <EmptyState
           icon={TrayArt}
           large
-          title="Your queue is empty"
+          title={<>Your <EmptyEm>queue</EmptyEm> is empty</>}
           body="Pick matches and press Prepare draft. Drafts land here for you to check and approve."
           action={
-            <ButtonLink href="/matches" variant="secondary">
+            <ButtonLink href="/matches">
               See matches
             </ButtonLink>
           }
+          fan={postFans.review}
         />
       </div>
     );

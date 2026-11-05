@@ -125,9 +125,6 @@
   .lp .blog-card__body > .blog-meta { margin-block-start: auto; padding-block-start: 6px; }
   .lp .blog-card--compact .lp-h4 { font-size: 18px; line-height: 1.3; }
 
-  .lp .blog-none { display: grid; justify-items: start; gap: 8px; padding-block: 32px; }
-  .lp .blog-none__clear { display: inline-flex; align-items: center; min-block-size: 44px; font: 500 16px / 1.25 var(--font-ui); cursor: pointer; }
-
   .lp .blog-news { margin-block-start: var(--gap-intro); }
   /* The reveal sits on the card itself, not a wrapper: no backdrop-filter under a moving ancestor (2.4). Same rise as .lp-reveal. */
   @supports (animation-timeline: view()) {

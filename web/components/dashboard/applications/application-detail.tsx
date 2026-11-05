@@ -7,7 +7,7 @@ import { useApplication } from "@/hooks/use-applications";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ButtonLink } from "../../shared/button";
-import { EmptyState } from "../../shared/empty-state";
+import { EmptyEm, EmptyState } from "../../shared/empty-state";
 import { ErrorNote } from "../../shared/error-note";
 import { PageTitle } from "../../shared/page-title";
 import { Skeleton } from "../../shared/skeleton";
@@ -28,10 +28,10 @@ export function ApplicationDetailView() {
       <>
         <PageTitle title="Application not found" />
         <EmptyState
-          title="Nothing at this link"
+          title={<>Nothing at <EmptyEm>this link</EmptyEm></>}
         body="It may have been withdrawn and removed, or the link is wrong."
         action={
-          <ButtonLink href="/applications" variant="secondary">
+          <ButtonLink href="/applications">
               Back to applications
             </ButtonLink>
           }

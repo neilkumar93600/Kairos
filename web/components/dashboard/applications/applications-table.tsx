@@ -6,7 +6,8 @@ import { APPLICATION_STATUS_ORDER } from "./status-order";
 import { useApplications, type ApplicationRow } from "@/hooks/use-applications";
 import { formatDate } from "@/lib/utils";
 import { ButtonLink } from "../../shared/button";
-import { EmptyState } from "../../shared/empty-state";
+import { EmptyEm, EmptyState } from "../../shared/empty-state";
+import { postFans } from "@/content/blog-meta";
 import { ErrorNote } from "../../shared/error-note";
 import { Panel } from "../../shared/panel";
 import { Skeleton } from "../../shared/skeleton";
@@ -71,9 +72,10 @@ function List() {
   if (!data?.length)
     return (
       <EmptyState
-        title="No applications yet"
+        title={<>No <EmptyEm>applications</EmptyEm> yet</>}
         body="Approve a match and its application, with a receipt once sent, shows up here."
-        action={<ButtonLink href="/matches" variant="secondary">Go to matches</ButtonLink>}
+        action={<ButtonLink href="/matches">Go to matches</ButtonLink>}
+        fan={postFans.review}
       />
     );
 

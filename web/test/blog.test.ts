@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { postMeta } from "../content/blog-meta";
+import { postFans, postMeta } from "../content/blog-meta";
 import { getPost, posts, relatedPosts } from "../lib/blog";
 import { matchesPost } from "../lib/blog-search";
 
@@ -30,6 +30,10 @@ describe("blog content", () => {
       expect(body).toContain(p.pull.text);
       expect(p.sections[p.pull.after]).toBeDefined();
     }
+  });
+
+  it("links empty states only to posts that exist", () => {
+    for (const fan of Object.values(postFans)) expect(fan.posts).toHaveLength(3);
   });
 
   it("relates two other posts, same category first", () => {

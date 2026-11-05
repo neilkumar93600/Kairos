@@ -1,0 +1,80 @@
+/* EmptyState (docs/DESIGN.md "Empty states", owner reference, spec D16). Prefixed es-. Flat by design: Paper White cards with
+   the hairline ring on Bone, no drop shadow. The app rule is colour changes only, so nothing here moves in the app. */
+@layer theme, base, components, utilities;
+
+@layer components {
+  /* overflow: clip with a margin paints the guide lines 12 px past the corners and cannot add scrollable overflow. The app and
+     marketing gutters are 16 px or more, so the overrun stays inside them. */
+  .es--frame { position: relative; overflow: clip; overflow-clip-margin: 12px; }
+
+  /* 1 px, 5 on, 5 off, fading out at both ends. */
+  .es-guide { position: absolute; pointer-events: none; }
+  .es-guide--x {
+    inset-inline: -12px; block-size: 1px;
+    background: repeating-linear-gradient(90deg, var(--rule) 0 5px, transparent 5px 10px);
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  }
+  .es-guide--y {
+    inset-block: -12px; inline-size: 1px;
+    background: repeating-linear-gradient(180deg, var(--rule) 0 5px, transparent 5px 10px);
+    -webkit-mask-image: linear-gradient(180deg, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(180deg, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  }
+  .es-guide--top { inset-block-start: 0; }
+  .es-guide--bottom { inset-block-end: 0; }
+  .es-guide--left { inset-inline-start: 0; }
+  .es-guide--right { inset-inline-end: 0; }
+
+  /* Buttons stack full width on phones (the row's classes), and every action is at least 44 px tall, including the sm size. */
+  .es-actions > * { min-block-size: 44px; }
+
+  /* ===== The fan. Default: rows, one per post, because rotated side cards are not readable in a narrow box. ===== */
+  .es-fan-box { container-type: inline-size; display: grid; gap: 16px; inline-size: 100%; margin-block-start: 12px; }
+  .es-fan { display: grid; gap: 8px; }
+  .es-card {
+    display: flex; align-items: center; min-block-size: 64px; overflow: hidden; text-align: start;
+    border-radius: 16px; background: var(--surface); box-shadow: var(--edge); color: var(--ink);
+  }
+  .es-card__art {
+    position: relative; flex: none; align-self: stretch; inline-size: 72px; background: var(--surface);
+    -webkit-mask-image: linear-gradient(to right, #000 50%, transparent); mask-image: linear-gradient(to right, #000 50%, transparent);
+  }
+  .es-card__title {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; padding: 10px 14px 10px 8px;
+    font: 500 15px / 1.3 var(--font-urbanist), ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.01em;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .es-card:hover .es-card__title { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  }
+  /* The ring goes on the link; the item rises above its neighbours, so the ring is never covered. overflow: hidden does not clip a link's own outline. */
+  .es-card:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+  .es-fan__item { position: relative; }
+  .es-fan__item:is(:hover, :focus-within) { z-index: 3; }
+
+  /* ===== Enough room: three overlapping cards. The centre card is larger and on top; the side cards are pulled in and turned
+     10 degrees about their bottom edge, so the top fans out and the titles stay clear of the centre card. ===== */
+  @container (min-width: 600px) {
+    .es-fan { display: flex; align-items: flex-end; justify-content: center; gap: 0; padding-block: 44px 16px; }
+    .es-fan__item { inline-size: 184px; z-index: 1; transform-origin: 50% 100%; }
+    .es-fan__item:first-child { rotate: -10deg; translate: 16px 0; }
+    .es-fan__item:last-child { rotate: 10deg; translate: -16px 0; }
+    .es-fan__item:nth-child(2) { inline-size: 216px; z-index: 2; }
+    .es-card { flex-direction: column; align-items: stretch; min-block-size: 204px; border-radius: var(--r-card); }
+    .es-fan__item:nth-child(2) .es-card { min-block-size: 248px; }
+    .es-card__art {
+      inline-size: auto; flex: 1; min-block-size: 112px; align-self: auto;
+      -webkit-mask-image: linear-gradient(to bottom, #000 50%, transparent); mask-image: linear-gradient(to bottom, #000 50%, transparent);
+    }
+    .es-card__title { padding: 4px 14px 16px; font-size: 14px; }
+    .es-fan__item:first-child .es-card__title { padding-inline-end: 28px; }
+    .es-fan__item:last-child .es-card__title { padding-inline-start: 28px; }
+    .es-fan__item:nth-child(2) .es-card__title { font-size: 15px; }
+
+    /* Straighten on hover: marketing pages only, and only when motion is on. */
+    html[data-motion="full"] .lp .es-fan__item { transition: rotate var(--dur-lift) var(--ease-out); }
+    @media (hover: hover) and (pointer: fine) {
+      html[data-motion="full"] .lp .es-fan__item:hover { rotate: 0deg; }
+    }
+  }
+}

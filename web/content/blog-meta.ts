@@ -100,3 +100,26 @@ export const postMeta: PostMeta[] = [
     },
   },
 ];
+
+/** Three real posts linked from an empty state (components/shared/empty-state.tsx). */
+export interface PostFan {
+  caption: string;
+  posts: Pick<PostMeta, "slug" | "title" | "image">[];
+}
+
+function pick(...slugs: string[]): PostMeta[] {
+  return slugs.flatMap((slug) => postMeta.filter((post) => post.slug === slug));
+}
+
+export const postFans = {
+  // Matches and Preferences.
+  setup: {
+    caption: "Three notes on setting your rules",
+    posts: pick("setting-search-rules-after-a-layoff", "us-roles-from-india-location-and-sponsorship-rules", "opt-job-search-sponsorship-filter"),
+  },
+  // Queue and Applications.
+  review: {
+    caption: "Three notes on what happens before anything is sent",
+    posts: pick("how-the-truth-lock-works", "what-a-credit-pays-for", "why-we-cap-applications-per-company"),
+  },
+} satisfies Record<string, PostFan>;
