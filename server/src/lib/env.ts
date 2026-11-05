@@ -94,6 +94,11 @@ export const APPLIER_FORBIDDEN = [
   // Outbound mail (WP-44): the broadcast stream's token and the Postmark delivery-event webhook's secret.
   "POSTMARK_BROADCAST_TOKEN",
   "POSTMARK_EVENTS_SECRET",
+  // Inbound mail (WP-24): the new route's path secret and Basic password, current and previous.
+  "POSTMARK_INBOUND_PATH_SECRET",
+  "POSTMARK_INBOUND_PATH_SECRET_PREVIOUS",
+  "POSTMARK_INBOUND_BASIC_PASSWORD",
+  "POSTMARK_INBOUND_BASIC_PASSWORD_PREVIOUS",
 ] as const;
 
 const applierSchema = z.object(applierShape);
@@ -126,8 +131,26 @@ const envSchema = z.object({
 
   POSTMARK_SERVER_TOKEN: z.preprocess(emptyToUndefined, z.string().optional()),
   EMAIL_FROM: z.string().default("Kairos <hello@kairos.app>"),
+  /** The forwarding addresses' domain, which Postmark's inbound server receives (owner-actions/WP-24.md: replies vs reply). */
   INBOUND_EMAIL_DOMAIN: z.string().default("replies.kairos.app"),
+  /** The legacy ?token= inbound route's secret (05-api 14.4); removed a week after Postmark points at the new route. */
   INBOUND_WEBHOOK_SECRET: z.string().min(16),
+  /**
+   * api only. POST /api/webhooks/postmark/inbound/:pathSecret (05-api 14.3): the path secret and the HTTP Basic pair
+   * embedded in Postmark's webhook URL. The _PREVIOUS values are accepted too while a rotation is in progress. Unset
+   * path secret or password: the route answers every call as a route that does not exist.
+   */
+  POSTMARK_INBOUND_PATH_SECRET: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
+  POSTMARK_INBOUND_PATH_SECRET_PREVIOUS: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
+  POSTMARK_INBOUND_BASIC_USER: z.preprocess(emptyToUndefined, z.string().min(1).max(100).optional()),
+  POSTMARK_INBOUND_BASIC_PASSWORD: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
+  POSTMARK_INBOUND_BASIC_PASSWORD_PREVIOUS: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
+  /**
+   * api only. Also write the reply body in clear to inbound_emails.text_body, for the previous release, which reads only
+   * that column (expand/contract, owner-actions/WP-24.md). Turn off one release after this one is live everywhere, then
+   * run `backfill-inbound --null-plaintext`. Without DATA_KEKS (development) the body is always written in clear.
+   */
+  INBOUND_PLAINTEXT_DUAL_WRITE: flag("1"),
   /** Dev and test only: the mailer appends each email as a JSON line here instead of sending it (scripts/smoke.mjs reads the code). */
   MAIL_SINK_FILE: z.preprocess(emptyToUndefined, z.string().optional()),
   // Outbound mail core (WP-44, messaging-44): two Postmark streams, so a digest burst never queues behind OTPs.

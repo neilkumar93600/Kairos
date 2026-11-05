@@ -53,9 +53,11 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
       { claimHash: Buffer.alloc(32, 2), verdict: "unsupported", checkSource: "verifier", expiresAt: new Date(Date.now() + 3_600_000) },
     ]);
 
-    expect(await retention.processRetention()).toEqual({ inbound_body: 1, contact_messages: 1, matches_below_bar: 0, jobs_closed: 4, verified_claims: 1 });
+    expect(await retention.processRetention()).toEqual({
+      inbound_body: 1, inbound_hidden: 0, forwarding_codes: 0, forwarding_stale: 0, contact_messages: 1, matches_below_bar: 0, jobs_closed: 4, verified_claims: 1,
+    });
     expect((await db.select().from(schema.verifiedClaims)).map((r) => r.verdict)).toEqual(["unsupported"]);
-    expect((await db.select().from(schema.inboundEmails)).map((r) => r.textBody).sort()).toEqual(["", "new"]);
+    expect((await db.select().from(schema.inboundEmails)).map((r) => r.textBody)).toEqual(expect.arrayContaining([null, "new"]));
     expect((await db.select().from(schema.contactMessages)).map((r) => r.message)).toEqual(["new"]);
     const jobs = await db.select().from(schema.jobs);
     expect(jobs.map((j) => j.id).sort()).toEqual([referenced, recent, saved, tailored].sort());
@@ -63,7 +65,9 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
     expect(jobs.find((j) => j.id === referenced)).toMatchObject({ descriptionText: "", raw: null });
     expect(jobs.find((j) => j.id === saved)).toMatchObject({ descriptionText: "", raw: null });
     // A second run changes nothing.
-    expect(await retention.processRetention()).toEqual({ inbound_body: 0, contact_messages: 0, matches_below_bar: 0, jobs_closed: 0, verified_claims: 0 });
+    expect(await retention.processRetention()).toEqual({
+      inbound_body: 0, inbound_hidden: 0, forwarding_codes: 0, forwarding_stale: 0, contact_messages: 0, matches_below_bar: 0, jobs_closed: 0, verified_claims: 0,
+    });
   });
 
   it("blanks sensitive values 7 days after submitted or withdrawn, once, and leaves the rest", async () => {
