@@ -42,8 +42,15 @@ export const profiles = pgTable(
     timezone: text("timezone").notNull().default("UTC"),
     preferencesVersion: integer("preferences_version").notNull().default(0),
     factsVersion: integer("facts_version").notNull().default(0),
-    /** Non-transactional mail kinds the user stopped. */
-    mailOptOut: text("mail_opt_out").array().$type<(typeof MAIL_OPT_OUTS)[number][]>().notNull().default(sql`'{}'::text[]`),
+    /**
+     * Non-transactional mail kinds the user stopped, so the default is every kind: marketing mail needs consent
+     * (WP-35). bootstrapUser sets it from MAIL_CONSENT_DEFAULT; the unsubscribe page and the email preferences change it.
+     */
+    mailOptOut: text("mail_opt_out")
+      .array()
+      .$type<(typeof MAIL_OPT_OUTS)[number][]>()
+      .notNull()
+      .default(sql`ARRAY['digest','outcome_report','autopilot_summary','reminders']::text[]`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

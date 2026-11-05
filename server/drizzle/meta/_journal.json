@@ -127,6 +127,13 @@
       "when": 1793719264585,
       "tag": "0017_facts_import_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793720589830,
+      "tag": "0018_unsubscribe_digests",
+      "breakpoints": true
     }
   ]
 }

@@ -282,3 +282,52 @@ export const notificationsResponseSchema = z.object({
 });
 export const notificationsReadSchema = z.union([z.strictObject({ ids: z.array(z.uuid()).min(1).max(100) }), z.strictObject({ all: z.literal(true) })]);
 export type NotificationsRead = z.infer<typeof notificationsReadSchema>;
+
+/* ---- Email preferences and saved searches (WP-35, 05-api 10.8 and 12.1) ---- */
+
+/** The optional mail kinds a person can turn on or off; true means "send me this". Account mail (codes, receipts, resend links, billing notices) is not here: it cannot be turned off. */
+export const emailPreferencesSchema = z.strictObject({
+  digest: z.boolean(),
+  outcomeReport: z.boolean(),
+  autopilotSummary: z.boolean(),
+  reminders: z.boolean(),
+});
+export type EmailPreferences = z.infer<typeof emailPreferencesSchema>;
+export const emailPreferencesPatchSchema = emailPreferencesSchema.partial().refine((o) => Object.keys(o).length > 0, "Send at least one preference");
+export type EmailPreferencesPatch = z.infer<typeof emailPreferencesPatchSchema>;
+export const emailPreferencesResponseSchema = z.object({ emailPreferences: emailPreferencesSchema });
+
+/** Filters over the user's own matches; they add no scoring. Mirrors saved_search_filters_valid() in the database. */
+export const savedSearchFiltersSchema = z.strictObject({
+  minScore: z.number().int().min(0).max(100).optional(),
+  roles: z.array(z.string().trim().min(2).max(80)).max(10).optional(),
+  companies: z.array(z.string().trim().min(1).max(120)).max(20).optional(),
+  remoteOnly: z.boolean().optional(),
+});
+export type SavedSearchFilters = z.infer<typeof savedSearchFiltersSchema>;
+export const SAVED_SEARCH_FREQUENCY_VALUES = ["off", "daily", "weekly"] as const;
+export const savedSearchInputSchema = z.strictObject({
+  name: z.string().trim().min(1).max(60),
+  filters: savedSearchFiltersSchema.default({}),
+  frequency: z.enum(SAVED_SEARCH_FREQUENCY_VALUES).default("daily"),
+});
+export type SavedSearchInput = z.infer<typeof savedSearchInputSchema>;
+export const savedSearchPatchSchema = z
+  .strictObject({
+    name: z.string().trim().min(1).max(60),
+    filters: savedSearchFiltersSchema,
+    frequency: z.enum(SAVED_SEARCH_FREQUENCY_VALUES),
+  })
+  .partial()
+  .refine((o) => Object.keys(o).length > 0, "Send at least one field");
+export type SavedSearchPatch = z.infer<typeof savedSearchPatchSchema>;
+export const savedSearchSchema = z.object({
+  id: z.uuid(),
+  name: z.string(),
+  filters: savedSearchFiltersSchema,
+  frequency: z.enum(SAVED_SEARCH_FREQUENCY_VALUES),
+  /** When the next digest is due; null while frequency is off. */
+  nextDigestAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type SavedSearch = z.infer<typeof savedSearchSchema>;

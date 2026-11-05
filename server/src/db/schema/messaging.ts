@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, jsonb, pgTable, primaryKey, smallint, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, date, index, jsonb, pgTable, primaryKey, smallint, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { applications } from "./applications";
 import { user } from "./auth";
 import { emailKind } from "./enums";
@@ -38,9 +38,17 @@ export const contactMessages = pgTable(
     message: text("message").notNull(),
     /** WP-25: keyed hash of the normalized sender address, so erasure finds a +tag or dotted alias of the account's address. */
     emailHash: text("email_hash"),
+    /** WP-35: sha256(lower(email) 
+ topic 
+ message); with received_on it makes a retried or double-clicked form store one row. Null on older rows. */
+    messageHash: bytea("message_hash"),
+    /** The UTC day of receipt, the other half of the dedupe key. */
+    receivedOn: date("received_on", { mode: "string" }).notNull().default(sql`(now() AT TIME ZONE 'UTC')::date`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    uniqueIndex("contact_messages_dedupe_uq").on(t.messageHash, t.receivedOn),
+    check("contact_messages_hash_ck", sql`octet_length(${t.messageHash}) = 32`),
     check("contact_messages_topic_ck", sql`topic IN ('support','billing','partnership','press','other')`),
     check("contact_messages_email_hash_ck", sql`email_hash ~ '^[0-9a-f]{64}$'`),
     index("contact_messages_email_hash_idx").on(t.emailHash).where(sql`${t.emailHash} is not null`),
