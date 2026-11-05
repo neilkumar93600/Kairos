@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, doublePrecision, index, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, doublePrecision, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 // The column type only; platform.ts's tables stay out of schema/index.ts.
 import { bytea } from "./platform";
 
@@ -88,5 +88,43 @@ export const verifiedClaims = pgTable(
     check("verified_claims_source_ck", sql`${t.checkSource} in ('verifier', 'escalation')`),
     check("verified_claims_expiry_ck", sql`${t.expiresAt} > ${t.createdAt} and ${t.expiresAt} <= ${t.createdAt} + interval '24 hours'`),
     index("verified_claims_expires_idx").on(t.expiresAt),
+  ],
+);
+
+/**
+ * The durable seam for money and sending (WP-22, ADR-001 Revision 3): one row per piece of follow-up work, written in the
+ * same transaction as the business change (durable/outbox.ts), so a crash after the commit cannot lose it. Ids and codes
+ * only: the checks below are the floor under emitOutbox's own check, and invariant OX-1 scans what got past both.
+ * Not in the privacy registry, on purpose: no user id, and emitOutbox and OX-1 refuse one. An application id left in a row
+ * points at nothing once the account's rows cascade, the consumer skips it, and retention removes the row (7 or 90 days).
+ * available_at is when someone should next look at the row: the drain for pending, the sweep for enqueued.
+ */
+export const outbox = pgTable(
+  "outbox",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    queue: text("queue").notNull(),
+    /** The BullMQ job id: one key is one job, however often it is added. */
+    dedupeKey: text("dedupe_key").notNull(),
+    payload: jsonb("payload").notNull(),
+    status: text("status").$type<"pending" | "enqueued" | "done" | "dead">().notNull().default("pending"),
+    /** Deliveries that came to nothing (a failed or lost job). A refused add does not count: Redis being down is not the work failing. */
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("outbox_dedupe_key_uq").on(t.dedupeKey),
+    // ponytail: the admin list sorts its status's rows in memory; live rows are few. Done rows stay out of the index.
+    index("outbox_live_idx").on(t.status, t.availableAt).where(sql`${t.status} <> 'done'`),
+    check("outbox_status_ck", sql`status IN ('pending','enqueued','done','dead')`),
+    // BullMQ refuses most ids with a colon, so the keys use hyphens (apply-<id>, not the apply:<id> of A.11).
+    check("outbox_key_ck", sql`dedupe_key ~ '^[A-Za-z0-9._-]{1,128}$'`),
+    check("outbox_queue_ck", sql`queue ~ '^[a-z-]{1,40}$'`),
+    check("outbox_payload_ck", sql`jsonb_typeof(payload) = 'object' AND pg_column_size(payload) <= 1024`),
+    check("outbox_attempts_ck", sql`attempts >= 0`),
+    check("outbox_error_ck", sql`last_error IS NULL OR last_error ~ '^[a-z0-9_]{1,40}$'`),
   ],
 );
