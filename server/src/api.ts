@@ -5,6 +5,8 @@ import { authGateway } from "./lib/auth";
 import { env } from "./lib/env";
 import { closeServer, deadline, isDraining, onShutdown } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
+import { gatewayFlags } from "./lib/flags";
+import { configureGateway } from "./llm/gateway";
 import { startMetricsFlush } from "./lib/metrics";
 import { assertNoEviction, redis } from "./lib/redis";
 import { initSentry } from "./lib/sentry";
@@ -13,6 +15,8 @@ import { csrfOrigins } from "./middleware/origin-guard";
 
 const e = env();
 initSentry("api");
+// Kill switches, pins, canaries and shadows from ops_flags, read through the 10 s flag cache (03-agent-runtime 4.5).
+configureGateway({ flags: gatewayFlags });
 // Without it every web user shares the Vercel egress address in every IP limit, sign-in included (05-api 5.5).
 // ponytail: checked here, not in env.ts, so the worker and applier never need the secret; move into the api role schema with WP-04.
 if (e.NODE_ENV === "production" && !e.KAIROS_EDGE_SECRET) throw new Error("Invalid environment:\n  KAIROS_EDGE_SECRET: required on the api in production");

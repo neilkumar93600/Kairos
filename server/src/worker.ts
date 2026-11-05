@@ -4,6 +4,8 @@ import { closeDb, db, sizeDbPool } from "./db/client";
 import { env, setProcessRole } from "./lib/env";
 import { closeServer, deadline, onShutdown, serveHealth, startHeartbeat } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
+import { gatewayFlags } from "./lib/flags";
+import { configureGateway } from "./llm/gateway";
 import { startMetricsFlush } from "./lib/metrics";
 import { assertNoEviction, redis } from "./lib/redis";
 import { captureJobFailure, initSentry } from "./lib/sentry";
@@ -20,6 +22,8 @@ import { processTailorApplication } from "./jobs/tailor-application";
 
 setProcessRole("worker");
 initSentry("worker");
+// Kill switches, pins, canaries and shadows from ops_flags, read through the 10 s flag cache (03-agent-runtime 4.5).
+configureGateway({ flags: gatewayFlags });
 
 /** Background worker: polling, scoring, tailoring, resume parsing, reply tagging and the maintenance schedules. */
 const handlers: Partial<Record<QueueName, (job: Job) => Promise<unknown>>> = {
