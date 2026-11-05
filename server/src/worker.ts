@@ -4,7 +4,7 @@ import { closeDb, db, sizeDbPool } from "./db/client";
 import { env, setProcessRole } from "./lib/env";
 import { closeServer, deadline, onShutdown, serveHealth, startHeartbeat } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
-import { gatewayFlags } from "./lib/flags";
+import { gatewayFlags, getFlags } from "./lib/flags";
 import { configureGateway } from "./llm/gateway";
 import { startMetricsFlush } from "./lib/metrics";
 import { assertNoEviction, redis } from "./lib/redis";
@@ -45,6 +45,8 @@ const concurrency = workerConcurrency(env().QUEUE_CONCURRENCY);
 // One connection per job slot plus the health check and the scheduler upserts (scale-v12).
 const slots = Object.keys(handlers).reduce((n, name) => n + concurrency[name as QueueName]!, 0);
 sizeDbPool(slots + 2);
+// After the pool is sized, before any worker takes a job: see api.ts.
+await deadline(getFlags(), 5_000).catch((err: unknown) => logger.warn({ err }, "flags not read at boot; model calls refused until they are"));
 
 const workers = (Object.entries(handlers) as [QueueName, (job: Job) => Promise<unknown>][]).map(([name, run]) => {
   const worker = new Worker(name, run, workerOptions(name, concurrency[name]!));

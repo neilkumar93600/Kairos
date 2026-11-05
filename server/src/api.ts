@@ -5,7 +5,7 @@ import { authGateway } from "./lib/auth";
 import { env } from "./lib/env";
 import { closeServer, deadline, isDraining, onShutdown } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
-import { gatewayFlags } from "./lib/flags";
+import { gatewayFlags, getFlags } from "./lib/flags";
 import { configureGateway } from "./llm/gateway";
 import { startMetricsFlush } from "./lib/metrics";
 import { assertNoEviction, redis } from "./lib/redis";
@@ -22,6 +22,9 @@ configureGateway({ flags: gatewayFlags });
 if (e.NODE_ENV === "production" && !e.KAIROS_EDGE_SECRET) throw new Error("Invalid environment:\n  KAIROS_EDGE_SECRET: required on the api in production");
 // The api enqueues approvals and drafts: a Redis that evicts would drop them silently (platform-68).
 await deadline(assertNoEviction(), 10_000);
+// A deploy during a pause must not let calls through: kill switches are read before the server takes work, bounded so a
+// database outage cannot hold the boot (gatewayFlags refuses model calls until a load succeeds).
+await deadline(getFlags(), 5_000).catch((err: unknown) => logger.warn({ err }, "flags not read at boot; model calls refused until they are"));
 const app = createApp({
   auth: authGateway(),
   corsOrigins: [e.WEB_ORIGIN, ...(e.EXTENSION_ORIGIN ? [e.EXTENSION_ORIGIN] : [])],

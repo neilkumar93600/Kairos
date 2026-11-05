@@ -178,7 +178,7 @@ export function verifierModeOf(flags: Flags, path: VerifierPath, loadedOnce: boo
  * answer, starting a load when it is stale. Before the first load completes this is the env's answer alone.
  */
 export function flagsNow(): Flags {
-  if (!cache || Date.now() - cache.at >= CACHE_MS) void getFlags();
+  if (!cache || Date.now() - cache.at >= CACHE_MS) void getFlags().catch(() => {});
   return cache?.flags ?? resolveFlags(new Map(), new Map(), baseEnv());
 }
 
@@ -186,7 +186,9 @@ export function flagsNow(): Flags {
 export function gatewayFlags() {
   const f = flagsNow();
   return {
-    llmPaused: f.llmPaused,
+    // Until a load has succeeded the owner's kill switches are unknown, so model calls stay refused. Boot waits for that
+    // load (api.ts, worker.ts); only a database down at boot leaves this on, and the next read retries it.
+    llmPaused: f.llmPaused || !everLoaded,
     batchPaused: false, // ponytail: llm_batch_paused is not a key yet; no batch agent exists (10.5)
     disabled: Object.fromEntries([...f.agentDisabled].map((id) => [id, true])),
     promptPin: Object.fromEntries(f.promptPin),

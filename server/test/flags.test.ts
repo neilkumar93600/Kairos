@@ -2,7 +2,8 @@ import { getTableName } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
 import { readFileSync } from "node:fs";
-import { CACHE_MS, getFlags, resetFlagCache, resolveFlags, schemaFor, setFlag, verifierModeOf } from "../src/lib/flags";
+import { CACHE_MS, gatewayFlags, getFlags, resetFlagCache, resolveFlags, schemaFor, setFlag, verifierModeOf } from "../src/lib/flags";
+import { namesUnloadedVersion } from "../src/routes/admin";
 
 /** WP-27: ops_flags with a 10 s cache; the env values of WP-04 and WP-06 stay as fallback and pause-only override. */
 const off = { PAUSE_SCORING: false, LLM_SHED_LEVEL: 0, CLOUD_APPLIER_OPEN: false };
@@ -82,6 +83,28 @@ describe("per-agent flags and verifier_mode (WP-26)", () => {
     expect(resolveFlags(rows({}), none, off).verifierMode.size).toBe(0);
   });
 
+  it("the admin route refuses a pin, canary or shadow naming a version the agent has not loaded", () => {
+    expect(namesUnloadedVersion("prompt_pin:fit-scorer", 1)).toBe(false);
+    expect(namesUnloadedVersion("prompt_pin:fit-scorer", 7)).toBe(true);
+    expect(namesUnloadedVersion("prompt_canary:fit-scorer", { version: 7, percent: 10 })).toBe(true);
+    expect(namesUnloadedVersion("prompt_shadow:claim-verifier", { version: 1, percent: 5 })).toBe(false);
+    expect(namesUnloadedVersion("prompt_shadow:claim-verifier", { version: 2, percent: 5 })).toBe(true);
+    expect(namesUnloadedVersion("prompt_pin:jd-analyst", 1)).toBe(true); // planned, not registered
+    expect(namesUnloadedVersion("agent_disabled:fit-scorer", true)).toBe(false);
+    expect(namesUnloadedVersion("model_pin:fit-scorer", "claude-sonnet-5-5")).toBe(false);
+  });
+
+  it("boot reads the flags before taking work, bounded: the api before it listens, the worker before any Worker", () => {
+    const src = (f: string) => readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8");
+    const api = src("api.ts");
+    const worker = src("worker.ts");
+    const read = "await deadline(getFlags(), 5_000)";
+    expect(api.indexOf(read)).toBeGreaterThan(-1);
+    expect(api.indexOf(read)).toBeLessThan(api.indexOf("app.listen("));
+    expect(worker.indexOf(read)).toBeGreaterThan(worker.indexOf("sizeDbPool(slots"));
+    expect(worker.indexOf(read)).toBeLessThan(worker.indexOf("new Worker("));
+  });
+
   describe("verifier mode when the table cannot be read", () => {
     const fakeDb = (fails: () => boolean, table: Record<string, unknown>) =>
       ({
@@ -96,6 +119,18 @@ describe("per-agent flags and verifier_mode (WP-26)", () => {
       expect(f.loaded).toBe(false);
       expect(verifierModeOf(f, "tailor")).toBe("enforce");
       expect(verifierModeOf(f, "suggestions")).toBe("enforce");
+    });
+
+    it("kill switches fail closed too: model calls are refused until a load has succeeded, and open after it", async () => {
+      resetFlagCache();
+      await getFlags(fakeDb(() => true, {}));
+      expect(gatewayFlags().llmPaused).toBe(true);
+      resetFlagCache();
+      await getFlags(fakeDb(() => false, {}));
+      expect(gatewayFlags().llmPaused).toBe(false);
+      resetFlagCache();
+      await getFlags(fakeDb(() => false, { llm_paused: true }));
+      expect(gatewayFlags().llmPaused).toBe(true);
     });
 
     it("after one good load the last answer stands through a failure, and a loaded process with no row is in shadow", async () => {
