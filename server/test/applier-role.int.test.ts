@@ -193,6 +193,8 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       tracker_items: ["SIUD", "SI", ""],
       application_events: ["SI", "SI", "S"],
       submission_attempts: ["SIU", "SIU", "cols"],
+      // WP-50: the worker renders the confirm email and runs retention; it never takes a sign-up.
+      newsletter_subscribers: ["SIUD", "SUD", ""],
     };
     const ROLES = ["kairos_api", "kairos_worker", "kairos_readonly"] as const;
     const PRIVS = { S: "SELECT", I: "INSERT", U: "UPDATE", D: "DELETE" } as const;

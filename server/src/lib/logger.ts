@@ -9,7 +9,8 @@ const pretty = process.env.NODE_ENV === "development";
 
 /**
  * Secrets that can reach a log line: auth headers, the inbound webhook's ?token=, the OAuth callback's ?code=,
- * and the session cookie and bearer token Better Auth sets on responses.
+ * the session cookie and bearer token Better Auth sets on responses, and a redirect's Location, which can carry a token
+ * (the newsletter's unsubscribe redirect, an OAuth callback).
  */
 const REDACT_PATHS = [
   "req.headers.authorization",
@@ -18,6 +19,7 @@ const REDACT_PATHS = [
   "req.query.code",
   'res.headers["set-cookie"]',
   'res.headers["set-auth-token"]',
+  "res.headers.location",
   'req.headers["stripe-signature"]',
   "*.password",
   "*.otp",

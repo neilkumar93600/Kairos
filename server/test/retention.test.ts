@@ -7,6 +7,7 @@ describe("retention rules (WP-25)", () => {
     expect(Object.fromEntries(Object.entries(RETENTION_RULES).map(([k, r]) => [k, r.days]))).toEqual({
       inbound_body: 180,
       contact_messages: 365,
+      newsletter_inactive: 30,
       matches_below_bar: 30,
       jobs_closed: 180,
       scrub_applications: 7,

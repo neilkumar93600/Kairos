@@ -5,7 +5,7 @@
  */
 //
 // details shapes the web may read (05-api 4.5): rate_limited { reason: "user_limit" | "ip_limit" | "daily_allowance" |
-// "service_budget", bucket?: limiter class (anon, user_api, billing, contact, webhook_ip, ai_burst), retryAfterSec?,
+// "service_budget", bucket?: limiter class (anon, user_api, billing, contact, newsletter, newsletter_one_click, link, webhook_ip, ai_burst), retryAfterSec?,
 // resetsAt? }; reauth_required { maxAgeSec }; service_unavailable { retryAfterSec?, reason? } (reason "resumes_user_uq": a
 // second resume before the contract migration of WP-17 runs; it carries no Retry-After, a retry cannot succeed).
 // WP-17's resume library and imports: exists { resumeId }, limit_reached { limit }, truth_lock { lineIds, reasons? },
