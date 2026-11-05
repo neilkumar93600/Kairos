@@ -85,6 +85,8 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
     "update credit_ledger set delta = 100",
     "delete from credit_ledger",
     "select llm_calls_drop_old_partitions(0)",
+    "select * from outbox",
+    "update outbox set status = 'done'",
   ])("refuses: %s", async (query) => {
     await expect(asApplier(query)).rejects.toMatchObject({ code: "42501" });
   });
@@ -191,6 +193,8 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       ops_flags: ["SIU", "SIU", ""],
       feature_flags: ["S", "S", ""],
       ops_audit: ["SI", "SI", ""],
+      // WP-22: the applier holds nothing here (the refusal list above), and the readonly role reads nothing.
+      outbox: ["SIU", "SUD", ""],
       metrics_minute: ["SIU", "SIUD", ""],
       tracker_items: ["SIUD", "SI", ""],
       application_events: ["SI", "SI", "S"],

@@ -16,6 +16,8 @@ describe("retention rules (WP-25)", () => {
       board_requests: 180,
       jobs_closed: 180,
       verified_claims: 1,
+      outbox_done: 7,
+      outbox_dead: 90,
       scrub_applications: 7,
     });
   });

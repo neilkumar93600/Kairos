@@ -10,7 +10,6 @@ import { keysetBefore, pageParams, slicePage, tsKey } from "../lib/pagination";
 import { APPLICATION_COLUMNS, JOB_COLUMNS } from "../lib/serializers";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
-import { enqueue } from "../jobs/queues";
 import { recordEvent } from "../services/events";
 import { draftAnswer, draftCoverLetter } from "../services/draft-writer";
 import { classifySensitive, isProfileQuestion } from "../services/sensitive";
@@ -141,11 +140,7 @@ applicationsRouter.patch("/:id", validateBody(updateApplicationSchema), async (r
 applicationsRouter.post("/approve", validateBody(approveApplicationsSchema), async (req, res) => {
   const me = currentUser(req);
   const { applicationIds, channel } = req.body as z.infer<typeof approveApplicationsSchema>;
-  const approved = await approveApplications(db(), me.id, applicationIds, channel);
-  if (channel === "cloud") {
-    await Promise.all(approved.map((id) => enqueue("cloud-apply", { applicationId: id }, `apply-${id}`)));
-  }
-  res.json({ approved });
+  res.json({ approved: await approveApplications(db(), me.id, applicationIds, channel) });
 });
 
 /** Drafts one answer or the cover letter from confirmed facts. Saves nothing: the user accepts it through PATCH. */

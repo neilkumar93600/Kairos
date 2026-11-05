@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { applications, creditLedger, erasedEmails, inboundEmails, profiles, session, subscriptions, user, verification } from "../db/schema";
+import { cloudApplyKey } from "../durable/outbox";
+import { applications, creditLedger, erasedEmails, inboundEmails, outbox, profiles, session, subscriptions, user, verification } from "../db/schema";
 import { logger } from "../lib/logger";
 import { signal } from "../lib/sentry";
 import { bootstrapUser } from "../services/bootstrap";
@@ -30,7 +31,7 @@ async function each(task: string, ids: string[], fn: (id: string) => Promise<boo
   return done;
 }
 
-/** Every 30 seconds, so a claim leaves submitting within 10.5 minutes (the acceptance allows 11). */
+/** Every 30 seconds, so a claim leaves submitting within 8.5 minutes (WP-22's chaos acceptance allows 10 from the approval). */
 export async function processSweepSubmitting(): Promise<{ swept: number }> {
   const swept = await sweepStuckSubmitting(db());
   if (swept.length) {
@@ -41,21 +42,28 @@ export async function processSweepSubmitting(): Promise<{ swept: number }> {
 }
 
 /**
- * Every minute: an approved cloud application with no live cloud-apply job (the approve route enqueues after its
- * commit, so a Redis blip or a lost job leaves the credit reserved and nothing sending). Two minutes old first, so the
- * route's own enqueue lands. The job goes through the applier's claim and its plan and posting prechecks, which are
- * what decide; a finished job is replaced, since an approved row was never claimed and so nothing was sent.
- * ponytail: the oldest 200 per tick, one Redis lookup each; a backlog larger than that hides newer losses. Add an
- * enqueued_at column, or WP-22's outbox, when the applier queue runs that deep.
+ * Every minute: the safety net under the outbox (WP-22). An approved cloud application whose outbox row is finished or
+ * was never written (approved before the outbox, or by the previous release mid-deploy) and has no live cloud-apply job.
+ * A live or dead row is the outbox's to move or to show an operator, so it is left alone. Two minutes old first, so a
+ * job on its way lands. The job goes through the applier's claim and its plan and posting prechecks, which are what
+ * decide; a finished job is replaced, since an approved row was never claimed and so nothing was sent.
+ * ponytail: the oldest 200 per tick, one Redis lookup each; a backlog larger than that hides newer losses.
  */
 export async function processReconcileApply(): Promise<{ checked: number; added: number }> {
   const rows = await db()
     .select({ id: applications.id })
     .from(applications)
-    .where(and(eq(applications.status, "approved"), eq(applications.channel, "cloud"), sql`${applications.approvedAt} < now() - interval '2 minutes'`))
+    .where(
+      and(
+        eq(applications.status, "approved"),
+        eq(applications.channel, "cloud"),
+        sql`${applications.approvedAt} < now() - interval '2 minutes'`,
+        sql`not exists (select 1 from ${outbox} where ${outbox.dedupeKey} = 'apply-' || ${applications.id}::text and ${outbox.status} <> 'done')`,
+      ),
+    )
     .orderBy(asc(applications.approvedAt))
     .limit(200);
-  const added = await each("reconcile-apply", rows.map((r) => r.id), (id) => redrive("cloud-apply", { applicationId: id }, `apply-${id}`, true));
+  const added = await each("reconcile-apply", rows.map((r) => r.id), (id) => redrive("cloud-apply", { applicationId: id }, cloudApplyKey(id), true));
   if (added) logger.warn({ added }, "lost cloud-apply jobs re-added");
   return { checked: rows.length, added };
 }

@@ -290,3 +290,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON verified_claims TO kairos_worker;
 -- kairos_readonly gets nothing: the table is addresses.
 GRANT SELECT, INSERT, UPDATE, DELETE ON newsletter_subscribers TO kairos_api;
 GRANT SELECT, UPDATE, DELETE ON newsletter_subscribers TO kairos_worker;
+
+-- The durable seam (WP-22, migration 0026). The api writes a row in the approval's transaction and resumes dead rows from
+-- /api/admin/outbox, so it reads and updates too. The worker drains and sweeps (S, U) and runs the retention delete; it
+-- inserts nothing yet (WP-29's settle joins here when it emits from the worker). The applier has no grant at all: the
+-- sweep reads completion from BullMQ, so the process that opens hostile pages cannot touch a row. Nobody else reads it.
+GRANT SELECT, INSERT, UPDATE ON outbox TO kairos_api;
+GRANT SELECT, UPDATE, DELETE ON outbox TO kairos_worker;

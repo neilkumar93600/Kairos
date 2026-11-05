@@ -1,6 +1,7 @@
 import { Worker, type Job } from "bullmq";
 import { sql } from "drizzle-orm";
 import { closeDb, db, sizeDbPool } from "./db/client";
+import { startOutboxDrain } from "./durable/outbox";
 import { env, setProcessRole } from "./lib/env";
 import { closeServer, deadline, onShutdown, serveHealth, startHeartbeat } from "./lib/lifecycle";
 import { logger } from "./lib/logger";
@@ -42,9 +43,9 @@ const handlers: Partial<Record<QueueName, (job: Job) => Promise<unknown>>> = {
 // A Redis that evicts loses jobs silently: refuse to start (platform-68). 10 s, so a Redis that is down fails the boot too.
 await deadline(assertNoEviction(), 10_000);
 const concurrency = workerConcurrency(env().QUEUE_CONCURRENCY);
-// One connection per job slot plus the health check and the scheduler upserts (scale-v12).
+// One connection per job slot plus the health check, the scheduler upserts and the outbox drain (scale-v12, WP-22).
 const slots = Object.keys(handlers).reduce((n, name) => n + concurrency[name as QueueName]!, 0);
-sizeDbPool(slots + 2);
+sizeDbPool(slots + 3);
 // After the pool is sized, before any worker takes a job: see api.ts.
 await deadline(getFlags(), 5_000).catch((err: unknown) => logger.warn({ err }, "flags not read at boot; model calls refused until they are"));
 
@@ -58,7 +59,7 @@ const workers = (Object.entries(handlers) as [QueueName, (job: Job) => Promise<u
 });
 
 for (const s of SCHEDULES) await queue(s.queue).upsertJobScheduler(s.id, s.repeat, { name: s.id, data: { schedule: true } });
-logger.info({ concurrency, dbPool: slots + 2 }, "worker started");
+logger.info({ concurrency, dbPool: slots + 3 }, "worker started");
 
 /** Postgres, the Redis connection of a consumer (ioredis "ready") and every consumer still running. */
 const checks = {
@@ -75,7 +76,8 @@ startHeartbeat(env().HEARTBEAT_URL, checks);
 
 // 30 s for jobs in flight (architecture D9); a job still running then is retried by BullMQ as stalled.
 const stopMetrics = startMetricsFlush();
-onShutdown("worker", 30_000, () => Promise.all(workers.map((w) => w.close())), async () => {
+const stopDrain = startOutboxDrain();
+onShutdown("worker", 30_000, () => Promise.all([stopDrain(), ...workers.map((w) => w.close())]), async () => {
   await stopMetrics();
   await Promise.allSettled([closeServer(health), closeQueues().then(() => redis().quit()), closeDb()]);
 });

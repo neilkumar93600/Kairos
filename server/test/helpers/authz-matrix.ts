@@ -157,6 +157,8 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "GET /api/admin/companies": { ...own("/api/admin/companies"), fresh: true },
   "POST /api/admin/companies/:id/activate": { ...own("/api/admin/companies/00000000-0000-4000-8000-000000000001/activate"), fresh: true },
   "GET /api/admin/board-requests": { ...own("/api/admin/board-requests"), fresh: true },
+  "GET /api/admin/outbox": { ...own("/api/admin/outbox"), fresh: true },
+  "POST /api/admin/outbox/:id/resume": { ...own("/api/admin/outbox/00000000-0000-4000-8000-000000000001/resume", { reason: "matrix" }), fresh: true },
   "POST /api/admin/companies/:id/deactivate": { ...own("/api/admin/companies/00000000-0000-4000-8000-000000000001/deactivate"), fresh: true },
   // WP-44: every statement filters by the caller's user id; read-all touches only the caller's unread rows.
   "GET /api/notifications": own("/api/notifications"),

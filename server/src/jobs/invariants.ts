@@ -49,7 +49,7 @@ export const HOURLY: Check[] = [
   {
     id: "I-6",
     freezes: false,
-    what: "an application in submitting for over 30 minutes (the 10-minute sweep did not settle it)",
+    what: "an application in submitting for over 30 minutes (the 8-minute sweep did not settle it)",
     query: count(sql`select id from applications where status = 'submitting' and updated_at < now() - interval '30 minutes'`),
   },
   {
@@ -62,6 +62,8 @@ export const HOURLY: Check[] = [
          and j.closed_at is null and j.source = 'manual_url'
       having count(*) > 100`),
   },
+  // Hourly on purpose: outbox_dead fires once when a row dies, and this keeps asking until an operator has looked.
+  { id: "OX-2", freezes: false, what: "a dead outbox row: money or sending work waits on an operator (GET /api/admin/outbox)", query: count(sql`select id from outbox where status = 'dead'`) },
   { id: "BL-2", freezes: false, what: "a negative credit balance", query: count(sql`select user_id from credit_ledger group by user_id having sum(delta) < 0`) },
   {
     id: "LEDGER-1",
@@ -72,6 +74,13 @@ export const HOURLY: Check[] = [
 ];
 
 export const NIGHTLY: Check[] = [
+  {
+    id: "OX-1",
+    freezes: false,
+    // Stricter than the PII shapes below: a space, an @ or a nested object in any value fails, so free text cannot pass as an id.
+    what: "an outbox payload value that is not id-shaped, or a user id: outbox rows carry row ids, never personal text (WP-22)",
+    query: count(sql`select o.id from outbox o cross join lateral jsonb_each_text(o.payload) kv where kv.value !~ '^[A-Za-z0-9._-]{1,128}$' or kv.key = 'userId'`),
+  },
   {
     id: "M-4",
     freezes: false,
@@ -122,6 +131,9 @@ const PII_COLUMNS = [
   ["ops_audit", "target"],
   ["ops_audit", "before"],
   ["ops_audit", "after"],
+  ["outbox", "payload"],
+  ["outbox", "dedupe_key"],
+  ["outbox", "last_error"],
 ] as const;
 
 const hasPii = (table: string, column: string) =>
