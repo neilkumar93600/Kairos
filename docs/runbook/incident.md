@@ -33,6 +33,8 @@ The owner is the incident commander and decides everything below: kill switches,
 | Inbound mail | Rotate `INBOUND_WEBHOOK_SECRET`. Postmark retries the deliveries it could not make |
 | A bad deploy | [R-DEPLOY-1](R-DEPLOY-1.md) |
 
+What a pause does to queued work (`llm_paused`, `agent_disabled:<agent>`): resume imports wait as pending without losing an attempt and resume within about 15 minutes of lifting it. Drafts with no lines are retried for a day. Scoring follows its own retries, so lift a pause within minutes or expect pairs to wait for the next re-score. A budget stop is different: it still counts against an import's three attempts, and three of them mark it failed.
+
 4. For SEV1 availability, post "Investigating" on the status page. Mention no cause and no data.
 
 ## Secret rotation order

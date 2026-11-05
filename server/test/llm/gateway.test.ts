@@ -269,6 +269,28 @@ describe("runAgent", () => {
     expect(fake.requests).toHaveLength(1);
   });
 
+  it("a kill switch is retryable for a defer agent, so a pause holds its work, and final for the others", async () => {
+    const defers: Record<keyof typeof AGENTS, boolean> = {
+      "fit-scorer": true,
+      "resume-parser": true,
+      "resume-tailor": true,
+      "answer-drafter": true,
+      "cover-letter-writer": true,
+      "resume-writer": false,
+      "claim-verifier": false,
+      "claim-verifier-escalation": false,
+    };
+    const all = Object.fromEntries(Object.keys(AGENTS).map((id) => [id, true]));
+    for (const [code, flags] of [["llm_paused", { llmPaused: true, disabled: {} }], ["agent_disabled", { llmPaused: false, disabled: all }]] as const) {
+      configureGateway({ ...deps, flags: () => ({ batchPaused: false, promptPin: {}, ...flags }) });
+      for (const [id, spec] of Object.entries(AGENTS)) {
+        const err = await runAgent(spec as typeof fitScorer, MAX_INPUTS[id as keyof typeof AGENTS] as never, {}).catch((e: unknown) => e);
+        expect(err, `${id} ${code}`).toMatchObject({ code, retryable: defers[id as keyof typeof AGENTS] });
+      }
+    }
+    expect(rows).toHaveLength(0);
+  });
+
   it("throws AgentError for a non-retryable invalid request and defers (fit-scorer is a batch agent)", async () => {
     configureGateway({ ...deps, client: () => fakeAnthropic([{ status: 400, type: "invalid_request_error" }]) });
     await expect(runAgent(fitScorer, fitInput, {})).rejects.toMatchObject({ code: "invalid_request", retryable: true });
@@ -469,6 +491,42 @@ describe("pins, canaries and shadows (03-agent-runtime 4.5, 14.2; WP-26)", () =>
     expect(fake.requests).toHaveLength(2);
     const shadowRow = rows.find((r) => r.callKind === "shadow")!;
     expect(shadowRow).toMatchObject({ promptVersion: 2, budgetClass: "ops" });
+  });
+
+  it("a shadow never counts against the user: no user hash on its row, no user spend, no per-user delta", async () => {
+    const spends: unknown[] = [];
+    const fake = fakeAnthropic(okFit());
+    const budget = new Budget(memorySpendStore());
+    const recorded: (string | undefined)[] = [];
+    const recordSpend = budget.recordSpend.bind(budget);
+    budget.recordSpend = (agentId, ctx, usd, workspace) => {
+      recorded.push(ctx.userId);
+      recordSpend(agentId, ctx, usd, workspace);
+    };
+    const done = new Promise<void>((resolve) => {
+      configureGateway({
+        client: () => fake,
+        budget,
+        writeRow: async (r, spend) => {
+          rows.push(r);
+          spends.push(spend);
+          if (r.callKind === "shadow") setTimeout(resolve, 0);
+          return "x";
+        },
+        now: () => Date.now(),
+        sleep: async () => {},
+        flags: flagsWith({ promptShadow: { "fit-scorer": { version: 2, percent: 5 } } }),
+      });
+    });
+    const user = Array.from({ length: 2_000 }, (_, i) => `user-${i}`).find((u) => rolloutBucket("fit-scorer", { userId: u })! < 5)!;
+    await runAgent(v2, fitInput, { userId: user });
+    await done;
+    const at = rows.findIndex((r) => r.callKind === "shadow");
+    expect(rows[at]!.userHash).toBeNull();
+    expect(spends[at]).toBeNull();
+    expect(spends[at === 0 ? 1 : 0]).not.toBeNull(); // production still counts
+    expect(recorded[at]).toBeUndefined();
+    expect(recorded[at === 0 ? 1 : 0]).toBe(user);
   });
 
   it("no shadow outside its share, and a failing shadow never touches production", async () => {

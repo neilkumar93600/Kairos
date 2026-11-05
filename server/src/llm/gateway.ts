@@ -117,7 +117,8 @@ export async function runAgent<I, O>(spec: AgentSpec<I, O>, input: I, ctx: Agent
 
 /**
  * The prompt shadow (4.5): after a production success, a share of calls runs the shadow version on the same input, in
- * the background, as call_kind 'shadow' and budget class 'ops' (never the user's caps). Its output only reaches
+ * the background, as call_kind 'shadow' and budget class 'ops'. It runs with no user id, so it never counts against the
+ * user's caps or the per-user counters; the global and per-agent spend still see it. Its output only reaches
  * opts.onShadow; a failure is logged. The production result is already returned.
  */
 function startShadow<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCallContext, opts: RunOptions, production: AgentResult<O>): void {
@@ -126,7 +127,7 @@ function startShadow<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCallContex
   if (!shadow || shadow.version === production.promptVersion || !spec.prompts[shadow.version]) return;
   const bucket = rolloutBucket(spec.id, ctx);
   if (bucket === null || bucket >= Math.min(shadow.percent, 5)) return;
-  const { signal: _signal, deadlineAt: _deadline, ...rest } = ctx;
+  const { signal: _signal, deadlineAt: _deadline, userId: _userId, ...rest } = ctx;
   runUncached(spec, input, { ...rest, budgetClass: "ops" }, { callKind: "shadow", promptVersion: shadow.version }).then(
     (r) => opts.onShadow?.(r.data, production.data),
     (err: unknown) => logger.warn({ agent: spec.id, version: shadow.version, code: (err as { code?: string }).code }, "prompt shadow failed"),
@@ -147,9 +148,11 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
 
   // Kill switches (4.5): before any spend.
   const flags = d.flags();
-  if (flags.llmPaused) throw new AgentError("llm_paused", "all model calls are paused", false);
-  if (flags.disabled[spec.id]) throw new AgentError("agent_disabled", `agent ${spec.id} is disabled`, false);
-  if (spec.workspace === "batch" && flags.batchPaused) throw new AgentError("llm_paused", "batch model work is paused", false);
+  // A pause holds work back, it does not end it: a defer agent's caller may try again later (4.5). Routes answer 503 either way.
+  const defers = spec.onFailure === "defer" || spec.onFailure === "tier_up_then_defer";
+  if (flags.llmPaused) throw new AgentError("llm_paused", "all model calls are paused", defers);
+  if (flags.disabled[spec.id]) throw new AgentError("agent_disabled", `agent ${spec.id} is disabled`, defers);
+  if (spec.workspace === "batch" && flags.batchPaused) throw new AgentError("llm_paused", "batch model work is paused", defers);
 
   // Deterministic checks before any spend (3.1).
   if (spec.preCheck) {
