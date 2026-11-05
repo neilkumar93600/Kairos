@@ -21,8 +21,11 @@ import { alignedDomains, atsOfDomain, linkCandidates, parseAddress } from "./lin
 const FROM_MAX = 320;
 const SUBJECT_MAX = 500;
 const HEADER_VALUE_MAX = 100;
-/** Over this the raw message is not read at all, so the mail is simply unauthenticated: a confirmation is a few KB. */
-export const RAW_EMAIL_MAX = 1024 * 1024;
+/**
+ * Over this the raw message is not read at all, so the mail is simply unauthenticated. Attachments sit base64-encoded in
+ * the raw mail, so a real rejection with a 700 KB PDF must fit; two signatures and memoised body hashes keep the work bounded.
+ */
+export const RAW_EMAIL_MAX = 4 * 1024 * 1024;
 const cut = (max: number) => z.string().transform((v) => v.slice(0, max));
 
 /**

@@ -212,10 +212,10 @@ describe("verifiedDomains, the verdict on any mail", () => {
     expect(names).toHaveLength(1);
   });
 
-  it("is fast on a raw message of the largest size read", async () => {
+  it("is fast on a raw message of the largest size read, 4 MiB", async () => {
     const started = Date.now();
-    const raw = signedMail({ d: "acme.example", h: ["from"], headers: [["From", FROM]], body: `${"line of text\r\n".repeat(70_000)}` });
-    expect(raw.length).toBeGreaterThan(900_000);
+    const raw = signedMail({ d: "acme.example", h: ["from"], headers: [["From", FROM]], body: `${"line of text\r\n".repeat(290_000)}` });
+    expect(raw.length).toBeGreaterThan(4_000_000);
     expect(await verifiedDomains(raw, { fromAddress: FROM, accept: () => true }, lookupAny)).toEqual(["acme.example"]);
     expect(Date.now() - started).toBeLessThan(2_000);
   });
