@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import { FeaturedPost, PostRow } from "@/components/blog/post-card";
+import { PostArchive } from "@/components/blog/post-archive";
+import { CoverPost, LatestRow } from "@/components/blog/post-card";
 import { Entry10Start } from "@/components/landing/entries/entry-10-start";
 import { Breadcrumbs } from "@/components/marketing/breadcrumbs/breadcrumbs";
 import { NewsletterForm } from "@/components/marketing/newsletter/newsletter-form";
-import { PageHero } from "@/components/marketing/page-hero";
 import { marketingCopy } from "@/content/marketing-copy";
-import { posts } from "@/lib/blog";
+import { postSummaries } from "@/lib/blog";
 
 const { blog: copy, breadcrumbs } = marketingCopy;
 
@@ -16,28 +16,36 @@ export const metadata: Metadata = {
 };
 
 export default function BlogPage() {
-  const [latest, ...rest] = posts;
+  const [cover, ...rest] = postSummaries;
   return (
-    <>
-      <PageHero
-        titleId="blog-title"
-        crumbs={<Breadcrumbs items={[{ label: breadcrumbs.home, href: "/" }, { label: copy.meta.title }]} />}
-        title={copy.hero.title}
-        lead={copy.hero.lead}
-        art={{ src: "/landing/art/step-2-truth-lock.png", alt: copy.hero.artAlt }}
-      />
-      <section aria-label={copy.listLabel} className="lp-wrap lp-wrap--main blog-list">
-        <FeaturedPost post={latest} />
-        <div className="blog-rows glass-panel">
-          {rest.map((p) => (
-            <PostRow key={p.slug} post={p} />
-          ))}
+    <div className="blog-page">
+      <header className="lp-wrap lp-wrap--main blog-head">
+        <Breadcrumbs items={[{ label: breadcrumbs.home, href: "/" }, { label: copy.meta.title }]} />
+        <div className="blog-head__row">
+          <h1 className="blog-head__title" tabIndex={-1}>
+            {copy.hero.title}
+          </h1>
+          <p className="lp-lead blog-head__lead">{copy.hero.lead}</p>
         </div>
-        <div className="blog-news">
-          <NewsletterForm variant="card" source="blog-index" />
-        </div>
-      </section>
+      </header>
+      <div className="lp-wrap lp-wrap--main blog-top">
+        <CoverPost post={cover} />
+        <section aria-labelledby="blog-latest" className="blog-latest">
+          <h2 id="blog-latest" className="lp-h3">
+            {copy.latest}
+          </h2>
+          <ul className="blog-latest__list">
+            {rest.slice(0, 4).map((post) => (
+              <LatestRow key={post.slug} post={post} />
+            ))}
+          </ul>
+        </section>
+      </div>
+      <PostArchive posts={postSummaries} />
+      <div className="lp-wrap lp-wrap--main blog-news">
+        <NewsletterForm variant="card" source="blog-index" />
+      </div>
       <Entry10Start />
-    </>
+    </div>
   );
 }

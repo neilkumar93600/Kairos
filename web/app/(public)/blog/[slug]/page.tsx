@@ -1,13 +1,16 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
-import { Suspense } from "react";
 import { notFound } from "next/navigation";
-import { PostMeta } from "@/components/blog/post-card";
+import { Fragment, Suspense } from "react";
+import { PostCard, PostChip, PostMeta } from "@/components/blog/post-card";
+import { ShareRow } from "@/components/blog/share-row";
 import { BlogSidebar } from "@/components/marketing/blog-sidebar/blog-sidebar";
 import { Breadcrumbs } from "@/components/marketing/breadcrumbs/breadcrumbs";
 import { CtaBand, InlineCta } from "@/components/marketing/cta/cta";
+import { LogoMark } from "@/components/shared/logo";
 import { marketingCopy } from "@/content/marketing-copy";
-import { getPost, posts, type PostSection } from "@/lib/blog";
+import { getPost, posts, relatedPosts, type PostSection } from "@/lib/blog";
 import { siteConfig } from "@/lib/site";
 import "@/components/blog/blog.css";
 
@@ -45,9 +48,7 @@ async function Post({ params }: { params: Promise<{ slug: string }> }) {
   const post = getPost((await params).slug);
   if (!post) notFound();
 
-  const i = posts.findIndex((p) => p.slug === post.slug);
-  const newer = posts[i - 1];
-  const older = posts[i + 1];
+  const url = `${siteConfig.url}/blog/${post.slug}`;
 
   // Static first-party data only; "<" is escaped so the JSON cannot close the script tag.
   const jsonLd = JSON.stringify({
@@ -56,57 +57,104 @@ async function Post({ params }: { params: Promise<{ slug: string }> }) {
     headline: post.title,
     description: post.summary,
     datePublished: post.date,
-    mainEntityOfPage: `${siteConfig.url}/blog/${post.slug}`,
+    image: `${siteConfig.url}${post.image.src}`,
+    mainEntityOfPage: url,
     author: { "@type": "Organization", name: siteConfig.company },
     publisher: { "@type": "Organization", name: siteConfig.name },
   }).replace(/</g, "\\u003c");
 
   return (
-    <article className="post">
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />
-      {/* Outside the glass sheet: a backdrop-filter ancestor would trap position: fixed. */}
-      <div aria-hidden="true" className="post__progress" />
-      <div className="lp-wrap post__wrap">
-        <Breadcrumbs items={[{ label: breadcrumbs.home, href: "/" }, { label: copy.meta.title, href: "/blog" }, { label: post.title }]} />
-        <div className="post__grid">
-          <div className="post__sheet glass-panel">
-            <header className="post__head">
-              <PostMeta post={post} />
-              <h1 className="post__title" tabIndex={-1}>
-                {post.title}
-              </h1>
-            </header>
+    <div className="post-page">
+      <article className="post">
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />
+        <div aria-hidden="true" className="post__progress" />
+        <header className="lp-wrap lp-wrap--main post__head">
+          <Breadcrumbs items={[{ label: breadcrumbs.home, href: "/" }, { label: copy.meta.title, href: "/blog" }, { label: post.title }]} />
+          <h1 className="post__title" tabIndex={-1}>
+            {post.title}
+          </h1>
+          <div className="post__meta">
+            <PostChip post={post} />
+            <PostMeta post={post} />
+          </div>
+        </header>
+        <div className="lp-wrap lp-wrap--main post__grid">
+          {/* From 1200 only; below that the "Written by" box after the article links to /about instead. */}
+          <aside aria-labelledby="post-about" className="post__about">
+            <div className="post__about-inner">
+              <h2 id="post-about" className="post__side-h">
+                {copy.about.heading}
+              </h2>
+              <div className="post__about-art">
+                <Image src="/landing/art/closing-dusk-door.png" alt="" fill sizes="216px" style={{ objectPosition: "50% 70%" }} />
+              </div>
+              <p className="lp-body-sm">{copy.about.body}</p>
+              <InlineCta {...copy.about.link} />
+            </div>
+          </aside>
+          <div className="post__main">
+            <div className="post__hero">
+              <Image
+                src={post.image.src}
+                alt={post.image.alt}
+                fill
+                preload
+                sizes="(min-width: 1200px) 600px, (min-width: 900px) 62vw, 100vw"
+                style={{ objectPosition: post.image.position }}
+              />
+            </div>
             <div className="prose">
               {post.sections.map((section, s) => (
-                <SectionBody key={s} {...section} />
+                <Fragment key={s}>
+                  <SectionBody {...section} />
+                  {/* Repeats a sentence from the article, so a screen reader does not hear it twice. */}
+                  {post.pull.after === s ? (
+                    <p aria-hidden="true" className="post__pull">
+                      {post.pull.text}
+                    </p>
+                  ) : null}
+                </Fragment>
               ))}
             </div>
-            <p className="post__more">
-              <InlineCta {...cta.blogPostEnd} />
-            </p>
-            {newer || older ? (
-              <nav aria-label={copy.postNav.label} className="post__nav">
-                {older ? (
-                  <Link href={`/blog/${older.slug}`} rel="prev">
-                    <span className="lp-micro">{copy.postNav.older}</span>
-                    <span className="post__nav-title">{older.title}</span>
+            <ShareRow url={url} title={post.title} />
+            <div className="post-author">
+              <span className="post-author__mark">
+                <LogoMark className="h-8" />
+              </span>
+              <div>
+                <p className="post-author__title">
+                  <Link href={copy.author.link.href} className="blog-link">
+                    {copy.author.title}
                   </Link>
-                ) : null}
-                {newer ? (
-                  <Link href={`/blog/${newer.slug}`} rel="next" className="post__nav-next">
-                    <span className="lp-micro">{copy.postNav.newer}</span>
-                    <span className="post__nav-title">{newer.title}</span>
-                  </Link>
-                ) : null}
-              </nav>
-            ) : null}
+                </p>
+                <p className="lp-body-sm">{copy.author.body.replace("{company}", siteConfig.company)}</p>
+              </div>
+            </div>
+            <section aria-labelledby="post-related" className="post-related">
+              <h2 id="post-related" className="lp-h4">
+                {copy.related}
+              </h2>
+              <div className="post-related__grid">
+                {relatedPosts(post).map((p) => (
+                  <PostCard key={p.slug} post={p} compact sizes="(min-width: 1200px) 290px, (min-width: 480px) 45vw, 100vw" />
+                ))}
+              </div>
+            </section>
           </div>
-          <BlogSidebar current={post} />
+          <div className="post__side">
+            <BlogSidebar current={post} />
+          </div>
         </div>
-      </div>
-      {/* D8: the one dark band, blog posts only. No secondary: InlineCta above already goes to How it works. */}
-      <CtaBand variant="dark" heading={cta.newsletterConfirmed.heading} body={cta.newsletterConfirmed.body} primary={cta.newsletterConfirmed.primary} />
-    </article>
+      </article>
+      {/* D8: the one dark band, blog posts only. */}
+      <CtaBand
+        variant="dark"
+        heading={cta.newsletterConfirmed.heading}
+        body={cta.newsletterConfirmed.body}
+        primary={cta.newsletterConfirmed.primary}
+        secondary={cta.newsletterConfirmed.secondary}
+      />
+    </div>
   );
 }
 

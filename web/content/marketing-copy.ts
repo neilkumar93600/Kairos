@@ -89,7 +89,6 @@ export const marketingCopy = {
   // Dark or quiet is DS-direction's call. /about and /blog close with Entry10Start (landingCopy.closing), not a band here.
   cta: {
     aboutSteps: { label: "See every step", href: "/how-it-works" }, // InlineCta under about.rules
-    blogPostEnd: { label: "See how Kairos works", href: "/how-it-works" }, // InlineCta after the post body
     legalContact: { label: "Questions about this page? Contact us", href: "/contact" }, // InlineCta at the end of legal pages
     newsletterConfirmed: {
       heading: "Try it on your own search.",
@@ -118,12 +117,42 @@ export const marketingCopy = {
     hero: {
       title: "Notes on applying well.",
       lead: "How Kairos decides, drafts and sends, written plainly.",
-      artAlt: "A writing desk by a window, a single sheet laid out on it.",
     },
-    listLabel: "All posts",
-    back: "Back to blog",
+    latest: "Latest",
+    all: {
+      heading: "All posts",
+      searchLabel: "Search posts",
+      placeholder: "Search posts",
+      count: "{n} posts",
+      matches: "{n} of {total} posts", // status line while a search is typed
+    },
+    empty: {
+      title: "No posts match “{q}”.",
+      body: "Try one word, such as credits or visas.",
+      clear: "Clear search",
+    },
     minRead: "{n} min read",
-    postNav: { label: "More posts", older: "Older", newer: "Newer" },
+    // The left column on a post, from 1200 px.
+    about: {
+      heading: "About Kairos",
+      body: "Kairos finds jobs that fit, drafts from facts you confirmed, and sends nothing until you approve.",
+      link: { label: "More about us", href: "/about" },
+    },
+    share: {
+      label: "Share this post",
+      copy: "Copy link",
+      copied: "Link copied",
+      failed: "Could not copy. The address bar has the link.",
+      linkedin: "LinkedIn",
+      x: "X",
+      newTab: "(opens in a new tab)",
+    },
+    author: {
+      title: "Written by the Kairos team",
+      body: "We build Kairos at {company}, and we check what these posts say against the product.",
+      link: { href: "/about" },
+    },
+    related: "Related posts",
   },
 
   // Arc: the problem, the three rules that answer it, three refusals, who it is for, who builds it, an invitation.

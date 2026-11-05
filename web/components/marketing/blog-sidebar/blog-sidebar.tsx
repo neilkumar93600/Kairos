@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { marketingCopy } from "@/content/marketing-copy";
 import { posts, type Post } from "@/lib/blog";
-import { formatDate } from "@/lib/utils";
 import { InlineCta } from "../cta/cta";
 import { NewsletterForm } from "../newsletter/newsletter-form";
 import "./blog-sidebar.css";
@@ -9,14 +8,14 @@ import "./blog-sidebar.css";
 const { blogSidebar: copy, newsletter, blog } = marketingCopy;
 
 /**
- * The blog post's aside (design direction 3.8): recent posts on the landing's rail and pins, the compact newsletter, one
- * quiet link to sign-up. Sticky from 1024 where it fits; below the article on phones, without the link (the dark band follows).
- * The post page owns the grid. Moving sticky glass re-blurs every frame, so nothing here animates.
+ * The blog post's right column (owner reference, spec D15): recent posts on the landing's rail and pins, the compact newsletter,
+ * one quiet link to sign-up. No surface: it sits on the haze beside a hairline, like the article. Sticky from 900 where it fits;
+ * below the article on narrower screens, without the link (the dark band follows). The post page owns the grid.
  */
 export function BlogSidebar({ current }: { current?: Post }) {
   const recent = posts.filter((p) => p.slug !== current?.slug).slice(0, 3);
   return (
-    <aside aria-label={copy.label} className="bs glass-panel">
+    <aside aria-label={copy.label} className="bs">
       {recent.length > 0 ? (
         <section className="bs-block">
           <h2 className="bs-h">{copy.recent}</h2>
@@ -28,7 +27,7 @@ export function BlogSidebar({ current }: { current?: Post }) {
                   {p.title}
                 </Link>
                 <p className="lp-caption">
-                  <time dateTime={p.date}>{formatDate(p.date)}</time> · {blog.minRead.replace("{n}", String(p.readingMinutes))}
+                  <time dateTime={p.date}>{p.dateLabel}</time> · {blog.minRead.replace("{n}", String(p.readingMinutes))}
                 </p>
               </li>
             ))}

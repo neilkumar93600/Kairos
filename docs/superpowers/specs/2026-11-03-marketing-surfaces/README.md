@@ -25,6 +25,7 @@ Base moved 2026-11-05: the owner merged `frontend/all-pages` and `backend/comple
 | D13 | Owner 2026-11-05: extension side panel rebuilt inside DESIGN.md, and its plan checked. Task 17 in `docs/06-implementation-plan.md` is updated, with new steps for the real company name and the claim lease. |
 
 | D14 | Owner 2026-11-05: "you decide everything, I want the best result". Coordinator decisions: dark CTA stays on blog posts (D8 confirmed). Refund: 14 days from a charge with its credits unused, otherwise reviewed by a person. Newsletter issues carry a summary and a link, sender name Kairos; the sender is not built yet and needs a postal address. 404 links move to the dark sky on phones. Stale copy removed: pause on the billing button, the unenforced rollover limit, the offer-pause line. The rainbow ring on Start free stays: the owner added it, although DESIGN.md does not list it. |
+| D15 | Owner 2026-11-05, with layout references ("blank" post page, "essos" index, Aceternity "The journal"): blog rebuilt. Index: cover post beside a Latest list, then All posts with search and image cards. Post: centred title, three columns with hairlines from 1200 px, each post with its own painting, share row, author box, related cards. Overrides DESIGN.md's "blog posts carry no painting" (updated) and design direction 4.2 and 4.3. Urbanist only on these pages, including the shared closing line and dark band. |
 
 ## Sources of truth (read before building)
 

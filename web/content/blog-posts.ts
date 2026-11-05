@@ -2,6 +2,10 @@
 // Every product claim here was checked against server/src and shared/src on 2026-11-05. Reasoning that is
 // judgment rather than product fact is written as reasoning. No statistics, quotes or customer stories.
 // Banned characters (house style): em dash, en dash.
+// Titles, summaries, dates, categories and paintings live in blog-meta.ts, so a client list can link to a post without
+// shipping the articles. This file is server only in practice: import it through lib/blog.ts.
+
+import { postMeta, type PostMeta } from "./blog-meta";
 
 export interface PostSection {
   heading?: string;
@@ -9,22 +13,25 @@ export interface PostSection {
   list?: string[];
 }
 
-export interface PostDraft {
-  slug: string;
-  title: string;
-  summary: string;
-  date: string;
+/** The sentence set large in the article. Words copied exactly from the post (test/blog.test.ts); shown after section `after`. */
+export interface PullQuote {
+  after: number;
+  text: string;
+}
+
+interface PostBody {
+  pull: PullQuote;
   sections: PostSection[];
 }
 
-/** Newest first. */
-export const postDrafts: PostDraft[] = [
-  {
-    slug: "what-a-credit-pays-for",
-    title: "What a Kairos credit pays for, and when it is not spent",
-    summary:
-      "A credit is spent when an application is reported submitted, and only then. Failed sends, drafts, edits and fit scoring cost none. Approval also reserves credits.",
-    date: "2026-11-05",
+export interface PostDraft extends PostMeta, PostBody {}
+
+const bodies: Record<string, PostBody> = {
+  "what-a-credit-pays-for": {
+    pull: {
+      after: 1,
+      text: "A failed send is never charged.",
+    },
     sections: [
       {
         heading: "One credit, one submitted application",
@@ -70,12 +77,11 @@ export const postDrafts: PostDraft[] = [
       },
     ],
   },
-  {
-    slug: "us-roles-from-india-location-and-sponsorship-rules",
-    title: "Applying to US roles from India: the rules that matter",
-    summary:
-      "Location is a text match, there is no country or time zone setting, and sponsorship is a phrase filter. How to set them and read a fit score.",
-    date: "2026-11-05",
+  "us-roles-from-india-location-and-sponsorship-rules": {
+    pull: {
+      after: 1,
+      text: "Kairos does not give immigration advice, and the filter is not a legal check.",
+    },
     sections: [
       {
         heading: "Location is a text match",
@@ -117,12 +123,11 @@ export const postDrafts: PostDraft[] = [
       },
     ],
   },
-  {
-    slug: "setting-search-rules-after-a-layoff",
-    title: "Setting your search rules after a layoff",
-    summary:
-      "Role matching, seniority, salary floor and keywords work in specific ways. Know them before you trust the queue, and learn to read a set-aside reason.",
-    date: "2026-11-05",
+  "setting-search-rules-after-a-layoff": {
+    pull: {
+      after: 3,
+      text: "A role list that is too literal is a common cause after a layoff, when the titles you would accept are wider than the ones you first typed.",
+    },
     sections: [
       {
         heading: "Roles match on title words",
@@ -172,12 +177,11 @@ export const postDrafts: PostDraft[] = [
       },
     ],
   },
-  {
-    slug: "opt-job-search-sponsorship-filter",
-    title: "OPT job search: what the sponsorship filter skips",
-    summary:
-      "Set your work authorization to OPT or STEM OPT and Kairos skips postings that say they will not sponsor. It reads wording only and is not immigration advice.",
-    date: "2026-11-05",
+  "opt-job-search-sponsorship-filter": {
+    pull: {
+      after: 1,
+      text: "The filter saves you reading postings that say no. It does not tell you whether a yes is safe to rely on.",
+    },
     sections: [
       {
         heading: "Turning it on",
@@ -218,12 +222,11 @@ export const postDrafts: PostDraft[] = [
       },
     ],
   },
-  {
-    slug: "why-we-cap-applications-per-company",
-    title: "Why we cap applications per company",
-    summary:
-      "By default Kairos allows two applications to one company in any 30 days. You can raise it to five. How the count works, and why the default is low.",
-    date: "2026-10-13",
+  "why-we-cap-applications-per-company": {
+    pull: {
+      after: 3,
+      text: "We cannot see how any employer reads applications, so the default is a judgment and not a measurement.",
+    },
     sections: [
       {
         heading: "What the cap does",
@@ -262,12 +265,11 @@ export const postDrafts: PostDraft[] = [
       },
     ],
   },
-  {
-    slug: "how-the-truth-lock-works",
-    title: "How the truth lock works",
-    summary:
-      "Every tailored resume line must cite a fact you confirmed. Lines the model writes that fail are left out, and a failing edit is flagged and cannot be saved.",
-    date: "2026-10-13",
+  "how-the-truth-lock-works": {
+    pull: {
+      after: 2,
+      text: "A false rejection costs you an edit. A false acceptance would send an invented claim to an employer.",
+    },
     sections: [
       {
         heading: "It starts with facts you confirm",
@@ -311,4 +313,7 @@ export const postDrafts: PostDraft[] = [
       },
     ],
   },
-];
+};
+
+/** Newest first, the order of content/blog-meta.ts. */
+export const postDrafts: PostDraft[] = postMeta.map((meta) => ({ ...meta, ...bodies[meta.slug] }));
