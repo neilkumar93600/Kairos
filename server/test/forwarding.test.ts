@@ -82,7 +82,7 @@ describe("a genuine confirmation", () => {
   });
 
   it("drops an http link, and a link with credentials or a port on the right host", async () => {
-    const textBody = "Confirmation code: 123456789\nhttp://mail.google.com/a\nhttps://u:p@mail.google.com/b\nhttps://mail.google.com:8443/c";
+    const textBody = "Confirmation code: 123456789\nhttp://mail-settings.google.com/a\nhttps://u:p@mail-settings.google.com/b\nhttps://mail-settings.google.com:8443/c";
     expect(await confirmation(signedMail(), { textBody })).toEqual({ code: "123456789", confirmUrl: null });
   });
 

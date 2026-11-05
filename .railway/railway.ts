@@ -42,6 +42,8 @@ const SERVER = [
   "USER_HASH_KEY", "DATA_KEKS", "SENTRY_DSN", "OWNER_USER_IDS", "R2_ENDPOINT", "ADMIN_USER_IDS",
   // Outbound mail and signed links (WP-44): the worker mints links and sends; the api verifies them.
   "LINK_SIGNING_KEY", "API_PUBLIC_ORIGIN", "POSTMARK_BROADCAST_TOKEN", "POSTMARK_BROADCAST_STREAM", "ALERT_EMAIL_TO", "CONTACT_ALERT_TO",
+  // Inbound mail (WP-24): the api writes by it and the worker's backfill refuses to empty text_body while it is on.
+  "INBOUND_PLAINTEXT_DUAL_WRITE",
 ];
 const WATCH = ["server/**", "shared/**", "package-lock.json"];
 
@@ -90,7 +92,7 @@ export default defineRailway((ctx) => {
     {
       LLM_GATEWAY: "anthropic",
       // DATABASE_UNPOOLED_URL is the migrator's direct URL: only the service that migrates holds it.
-      ...byHand("DATABASE_URL", "DATABASE_UNPOOLED_URL", ...SERVER, "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "KAIROS_EDGE_SECRET", ...r2("UPLOADS", "RENDERS", "SNAPSHOTS", "TOMBSTONES"), "POSTMARK_EVENTS_SECRET"),
+      ...byHand("DATABASE_URL", "DATABASE_UNPOOLED_URL", ...SERVER, "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "KAIROS_EDGE_SECRET", ...r2("UPLOADS", "RENDERS", "SNAPSHOTS", "TOMBSTONES"), "POSTMARK_INBOUND_PATH_SECRET", "POSTMARK_INBOUND_PATH_SECRET_PREVIOUS", "POSTMARK_INBOUND_BASIC_USER", "POSTMARK_INBOUND_BASIC_PASSWORD", "POSTMARK_INBOUND_BASIC_PASSWORD_PREVIOUS", "POSTMARK_EVENTS_SECRET"),
     },
     "node dist/migrate.js",
   );
