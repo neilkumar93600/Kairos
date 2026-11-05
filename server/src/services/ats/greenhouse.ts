@@ -45,7 +45,11 @@ export function normalizeGreenhouse(body: unknown, boardToken: string): Normaliz
   });
 }
 
-/** Public Job Board API: GET boards-api.greenhouse.io/v1/boards/{token}/jobs, no key needed. content=true boards run large: 24 MiB, 20 s. */
+/**
+ * Public Job Board API: GET boards-api.greenhouse.io/v1/boards/{token}/jobs, no key needed. content=true boards run large:
+ * measured 2026-11, Databricks 926 postings and 10 MB, so about 11 KB a posting and 16 MB for 1,500. 24 MiB is about 2,300
+ * postings, and a board over it fails every poll, so the cap stays there. The memory it costs is in services/safe-fetch.ts.
+ */
 export const greenhouse: AtsAdapter = {
   provider: "greenhouse",
   async fetchBoard(boardToken, req = {}) {

@@ -1,4 +1,5 @@
 import type { LookupAddress } from "node:dns";
+import https from "node:https";
 import { Readable } from "node:stream";
 import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
@@ -109,6 +110,30 @@ describe("the connect-time lookup", () => {
     const second = await lookupOnce(r, false);
     expect((second.err as SafeFetchError).code).toBe("ssrf_address");
     expect(r.calls).toBe(2);
+  });
+
+  // What is pinned is Node's merge order in Agent#createSocket: { ...requestOptions, ...agent.options }. The agent's lookup
+  // reaches the connection even when a request names its own, so no call site can step around the check. createConnection
+  // is stubbed, so no socket opens; everything before it is Node's real path.
+  it("the agent-option merge order: the guarded lookup wins over a request's own", async () => {
+    const agent = createSafeAgent(scripted(["10.0.0.1"]));
+    const guarded = (agent as unknown as { options: { lookup: unknown } }).options.lookup;
+    let seen: { lookup?: unknown } | undefined;
+    (agent as unknown as { createConnection: unknown }).createConnection = (opts: { lookup?: unknown }, cb: (e: Error) => void) => {
+      seen = opts;
+      cb(new Error("stop before any socket"));
+    };
+    const rogue = () => undefined;
+    const failed = await new Promise<Error>((done) => {
+      const req = https.request(`https://${HOST}/x`, { agent, lookup: rogue as never });
+      req.on("error", done);
+      req.end();
+    });
+    expect(failed.message).toBe("stop before any socket");
+    expect(seen?.lookup).toBe(guarded);
+    expect(seen?.lookup).not.toBe(rogue);
+    const refused = await new Promise<unknown>((done) => (guarded as (h: string, o: object, cb: (e: unknown) => void) => void)(HOST, {}, done));
+    expect((refused as SafeFetchError).code).toBe("ssrf_address");
   });
 
   it("is the lookup of the agent every board request uses, so the check runs when the socket connects", async () => {

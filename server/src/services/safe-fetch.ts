@@ -182,7 +182,14 @@ function decoder(encoding: string | undefined): NodeJS.ReadWriteStream | null | 
   }
 }
 
-/** Reads the body through its decoder, counting decompressed bytes: a gzip bomb stops at maxBytes like a plain body. */
+/**
+ * Reads the body through its decoder, counting decompressed bytes: a gzip bomb stops at maxBytes like a plain body.
+ *
+ * The memory budget, on purpose: chunks plus Buffer.concat peak at twice the cap, and the string and the parsed object add
+ * to it, so a 24 MiB Greenhouse board costs about 100 MB for a moment (01-ingest-poller 9). maxSockets 4 holds that to about
+ * 400 MB per worker process even if every board in flight is at the cap, within the worker's 1.5 GB. A typical board is
+ * under 10 MB. Lowering a cap saves memory only by failing the boards above it on every poll.
+ */
 async function readCapped(res: RawResponse, maxBytes: number, signal: AbortSignal): Promise<Buffer> {
   const declared = Number(res.headers["content-length"]);
   if (Number.isFinite(declared) && declared > maxBytes) {
