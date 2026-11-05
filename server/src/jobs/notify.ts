@@ -35,6 +35,11 @@ export const RENDERERS: Partial<Record<EmailKind, Renderer>> = { newsletter_conf
 
 /** Non-transactional mail (05-api 12.1): the broadcast stream and the back of the queue. Everything else is transactional. */
 export const BROADCAST_KINDS: ReadonlySet<EmailKind> = new Set(["digest", "outcome_report", "autopilot_hourly"]);
+/**
+ * Transactional kinds a spam complaint still stops, because anyone can type the address: the mail is not about the
+ * person's own account. Not broadcast kinds, which would queue them behind digest bursts.
+ */
+export const COMPLAINT_RESPECTING_KINDS: ReadonlySet<EmailKind> = new Set(["newsletter_confirm"]);
 /** BullMQ takes jobs without a priority first, so a transactional email never waits behind a broadcast burst. */
 export const BROADCAST_PRIORITY = 1000;
 
@@ -127,9 +132,9 @@ export async function processNotify(job: Pick<Job<JobData["notify"]>, "data">): 
   }
   const hash = addressHash(email.to);
   const [suppressed] = await db().select({ reason: emailSuppressions.reason }).from(emailSuppressions).where(eq(emailSuppressions.addressHash, hash));
-  // A spam complaint stops broadcast mail only: the user still gets resend links, offer-pause notices and forwarding
-  // codes about their own account. A hard bounce or a manual suppression stops everything.
-  if (suppressed && (suppressed.reason !== "spam_complaint" || stream === "broadcast")) {
+  // A spam complaint stops broadcast mail and COMPLAINT_RESPECTING_KINDS: the user still gets resend links, offer-pause
+  // notices and forwarding codes about their own account. A hard bounce or a manual suppression stops everything.
+  if (suppressed && (suppressed.reason !== "spam_complaint" || stream === "broadcast" || COMPLAINT_RESPECTING_KINDS.has(kind))) {
     await finish(kind, entityId, "suppressed", { code: suppressed.reason });
     return { result: "suppressed", code: suppressed.reason };
   }
