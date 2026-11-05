@@ -2,7 +2,8 @@ import { Router } from "express";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client";
-import { boardRequests, companies, metricsMinute, opsAudit, opsFlags } from "../../db/schema";
+import { boardRequests, companies, metricsMinute, opsAudit, opsFlags, outbox } from "../../db/schema";
+import { outboxSummary, resumeOutbox } from "../../durable/outbox";
 import { env } from "../../lib/env";
 import { HttpError, notFound } from "../../lib/errors";
 import { getFlags, schemaFor, setFlag } from "../../lib/flags";
@@ -73,7 +74,7 @@ adminRouter.get("/info", async (_req, res) => {
     db()
       .selectDistinctOn([metricsMinute.name, metricsMinute.label], { name: metricsMinute.name, label: metricsMinute.label, value: metricsMinute.value, minute: metricsMinute.minute })
       .from(metricsMinute)
-      .where(sql`${metricsMinute.name} in ('queue_waiting','queue_failed','queue_lag_s','invariant_violations') and ${metricsMinute.minute} > now() - interval '15 minutes'`)
+      .where(sql`${metricsMinute.name} in ('queue_waiting','queue_failed','queue_lag_s','invariant_violations','outbox_dead','outbox_pending') and ${metricsMinute.minute} > now() - interval '15 minutes'`)
       .orderBy(metricsMinute.name, metricsMinute.label, desc(metricsMinute.minute)),
     db().select({ id: opsAudit.id, at: opsAudit.at, actor: opsAudit.actor, action: opsAudit.action, target: opsAudit.target, before: opsAudit.before, after: opsAudit.after }).from(opsAudit).orderBy(desc(opsAudit.at)).limit(20),
   ]);
@@ -149,4 +150,44 @@ adminRouter.get("/board-requests", async (req, res) => {
     .limit(limit + 1);
   const page = slicePage(rows, limit, "admin-board-requests", (r) => [r.cursorTs], (r) => r.id);
   res.json({ boardRequests: page.rows.map(({ cursorTs: _, ...row }) => row), nextCursor: page.nextCursor });
+});
+
+const outboxQuery = z.object({ status: z.enum(["pending", "enqueued", "dead"]).default("dead") });
+
+/**
+ * The outbox's stuck work (WP-22), dead rows unless asked, newest first, with the counts on top. Ids and codes only: the row
+ * holds nothing else. Paged by cursor. A `pending` row with attempts is waiting out its back-off; `enqueued` has a job.
+ */
+adminRouter.get("/outbox", async (req, res) => {
+  const { status } = parseParam(outboxQuery, req.query);
+  const { limit, after } = pageParams(req.query, 50, "admin-outbox", ["ts"]);
+  const rows = await db()
+    .select({
+      id: outbox.id,
+      queue: outbox.queue,
+      dedupeKey: outbox.dedupeKey,
+      payload: outbox.payload,
+      status: outbox.status,
+      attempts: outbox.attempts,
+      lastError: outbox.lastError,
+      availableAt: outbox.availableAt,
+      createdAt: outbox.createdAt,
+      updatedAt: outbox.updatedAt,
+      cursorTs: tsKey(outbox.createdAt),
+    })
+    .from(outbox)
+    .where(and(eq(outbox.status, status), after && keysetBefore([outbox.createdAt], ["timestamptz"], outbox.id, after)))
+    .orderBy(desc(outbox.createdAt), desc(outbox.id))
+    .limit(limit + 1);
+  const page = slicePage(rows, limit, "admin-outbox", (r) => [r.cursorTs], (r) => r.id);
+  res.json({ summary: await outboxSummary(), items: page.rows.map(({ cursorTs: _, ...row }) => row), nextCursor: page.nextCursor });
+});
+
+// A code, not a sentence: it lands in ops_audit, which holds no free text (the nightly PII scan reads it).
+const resumeBody = z.strictObject({ reason: z.string().regex(/^[a-z0-9_-]{3,64}$/) });
+
+/** Sends a dead row round again, audited. 409 resume_refused for anything else, and for a cloud apply that may be past the browser step. */
+adminRouter.post("/outbox/:id/resume", validateBody(resumeBody), async (req, res) => {
+  const id = parseParam(z.uuid(), req.params.id);
+  res.json(await resumeOutbox(id, currentUser(req).id, (req.body as z.infer<typeof resumeBody>).reason));
 });
