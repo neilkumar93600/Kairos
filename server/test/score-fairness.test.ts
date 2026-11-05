@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { CHUNK, runChunk } from "../src/jobs/score-matches";
+import { afterEach, describe, expect, it } from "vitest";
+import { CHUNK, PAUSE_RETRY_MS, retryDelayMs, runChunk } from "../src/jobs/score-matches";
+import { AgentError } from "../src/llm/errors";
+import { configureGateway } from "../src/llm/gateway";
+import { refundable } from "../src/services/allowance";
+import { scoreFit } from "../src/services/fit";
 import { memoryLane } from "./helpers/lanes";
 
 /**
@@ -53,5 +57,41 @@ describe("per-user scoring lanes", () => {
     await lane.add("u", ids("p", 7));
     await expect(runChunk(lane, "u", async () => Promise.reject(new Error("database down")))).rejects.toThrow(/database/);
     expect(lane.pending.get("u")).toEqual(ids("p", 7));
+  });
+});
+
+describe("a lane held by a refusal (F6)", () => {
+  it("runChunk marks done only what was not held, and does not queue the user again", async () => {
+    const lane = memoryLane();
+    await lane.add("u", ["a", "b", "c"]);
+    await lane.drain((userId) => runChunk(lane, userId, async (members) => ({ held: members.slice(1) })));
+    expect(lane.pending.get("u")).toEqual(["b", "c"]);
+    // Nothing is waiting: the drain ended after one run, so a refusal cannot spin.
+    expect(await lane.drain(async () => "ran again")).toEqual([]);
+  });
+});
+
+describe("the gateway's flag refusals, as the scoring lane reads them (F6)", () => {
+  const paused = (over: object) => () => ({ llmPaused: false, batchPaused: false, disabled: {}, promptPin: {}, ...over });
+  const job = { title: "Engineer", companyName: "Acme", location: null, remote: false, descriptionText: "Build.", salaryMaxUsd: null };
+  afterEach(() => configureGateway({ flags: paused({}) }));
+
+  it.each([
+    ["llm_paused", { llmPaused: true }],
+    ["agent_disabled", { disabled: { "fit-scorer": true } }],
+  ])("%s from the real gateway: retried on the long delay at any attempt, and refunded", async (code, over) => {
+    configureGateway({ flags: paused(over) });
+    const err = await scoreFit(job, "- (skill) TypeScript", { userId: "u", jobId: "j" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AgentError);
+    expect(err).toMatchObject({ code, retryable: true });
+    for (const attempt of [0, 2, 9]) expect(retryDelayMs(err, attempt)).toBe(PAUSE_RETRY_MS);
+    expect(refundable(err)).toBe(true);
+  });
+
+  it("other retryable errors keep their short ladder and their attempt limit", () => {
+    const err = new AgentError("overloaded", "x", true);
+    expect(retryDelayMs(err, 0)).toBe(60_000);
+    expect(retryDelayMs(err, 1)).toBe(120_000);
+    expect(retryDelayMs(err, 2)).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { Preferences } from "@auto-career/shared";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
 import { memoryLane } from "./helpers/lanes";
 import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from "./helpers/test-db";
@@ -298,6 +298,88 @@ describe.skipIf(!hasTestDb)("scoring controls against Postgres", () => {
       const usage = await db.select({ scored: platform.userDailyUsage.scored }).from(platform.userDailyUsage);
       expect(usage).toHaveLength(N);
       expect(Math.max(...usage.map((u) => u.scored))).toBe(20);
+    });
+  });
+
+  // F6: a pause holds work back. The refusal here is the real gateway's, not a mock's: scoreFit is mocked in this file, so
+  // the mock calls through to the actual function with a context, and configureGateway supplies the flags.
+  describe("WP-23: a lane through a pause", () => {
+    const flagsWith = (over: { llmPaused?: boolean; disabled?: Record<string, boolean> }) => () => ({ llmPaused: false, batchPaused: false, disabled: {}, promptPin: {}, ...over });
+    const callThrough = async () => {
+      const actual = await vi.importActual<typeof import("../src/services/fit")>("../src/services/fit");
+      scoreFit.mockImplementation(((job: Parameters<typeof actual.scoreFit>[0], summary: string) => actual.scoreFit(job, summary, { userId: "u", jobId: "j" })) as never);
+    };
+    afterEach(async () => {
+      const { configureGateway } = await import("../src/llm/gateway");
+      configureGateway({ flags: flagsWith({}) });
+      const { resetFlagCache } = await import("../src/lib/flags");
+      resetFlagCache();
+    });
+
+    it.each([
+      ["llm_paused", { llmPaused: true }],
+      ["agent_disabled", { disabled: { "fit-scorer": true } }],
+    ])("the gateway refusing with %s marks no pair done, takes no slot and looks again later", async (_code, over) => {
+      const { configureGateway } = await import("../src/llm/gateway");
+      configureGateway({ flags: flagsWith(over) });
+      await callThrough();
+      const id = await candidate();
+      const jobId = await job(0);
+      const second = await job(1);
+      await run(jobId);
+      await run(second);
+      expect(lane.pending.get(id)).toEqual([jobId, second]);
+      expect(await matchOf(id, jobId)).toBeUndefined();
+      const usage = await db.select().from(platform.userDailyUsage).where(eq(platform.userDailyUsage.userId, id));
+      expect(usage.reduce((n, u) => n + u.scored, 0)).toBe(0);
+      const wakes = enqueue.mock.calls.filter((c) => c[0] === "score-user");
+      expect(wakes.length).toBeGreaterThan(0);
+      expect(wakes[0]![1]).toEqual({ userId: id });
+      expect(wakes[0]![3]).toBe(scoring.PAUSE_RETRY_MS);
+      expect(enqueue.mock.calls.filter((c) => c[0] === "score-matches")).toEqual([]);
+
+      // The flag lifts: the next look scores what was held, and each pair is paid for once.
+      configureGateway({ flags: flagsWith({}) });
+      scoreFit.mockImplementation(async () => ({ score: 90, reasons: ["Strong match"] }));
+      await scoring.processScoreUser({ data: { userId: id } } as Parameters<typeof scoring.processScoreUser>[0]);
+      await drain();
+      expect(lane.pending.get(id)).toEqual([]);
+      expect(await matchOf(id, jobId)).toMatchObject({ status: "new", score: 90 });
+      expect(await matchOf(id, second)).toMatchObject({ status: "new", score: 90 });
+      expect(scoreFit).toHaveBeenCalledTimes(4); // refused once on each run, then the two scored
+    });
+
+    it.each([
+      ["llm_paused", "llm_paused", true],
+      ["agent_disabled:fit-scorer", "agent_disabled:fit-scorer", true],
+      ["pause_scoring", "pause_scoring", true],
+    ])("with %s set the lane is not drained, and a user job only looks again later", async (_name, key, value) => {
+      const id = await candidate();
+      const jobId = await job(0);
+      await run(jobId); // scored, so the lane is empty
+      const next = await job(1);
+      await scoring.processScoreMatches({ data: { jobId: next } } as Parameters<typeof scoring.processScoreMatches>[0]);
+      const { setFlag, resetFlagCache } = await import("../src/lib/flags");
+      await setFlag(key, value, "system:test");
+      resetFlagCache();
+      scoreFit.mockClear();
+      enqueue.mockClear();
+      const out = await scoring.processScoreUser({ data: { userId: id } } as Parameters<typeof scoring.processScoreUser>[0]);
+      expect(out).toMatchObject({ paused: true });
+      expect(scoreFit).not.toHaveBeenCalled();
+      expect(lane.pending.get(id)).toEqual([next]);
+      expect(enqueue).toHaveBeenCalledTimes(1);
+      expect(enqueue.mock.calls[0]![0]).toBe("score-user");
+    });
+
+    it("a follow-up that comes due during a pause waits in its user's lane", async () => {
+      const id = await candidate();
+      const jobId = await job(0);
+      const { setFlag, resetFlagCache } = await import("../src/lib/flags");
+      await setFlag("llm_paused", true, "system:test");
+      resetFlagCache();
+      await scoring.processScoreMatches({ data: { jobId, userIds: [id], attempt: 1 } } as Parameters<typeof scoring.processScoreMatches>[0]);
+      expect(lane.pending.get(id)).toEqual([`${jobId}:1`]);
     });
   });
 

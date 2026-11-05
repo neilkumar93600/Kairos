@@ -75,11 +75,32 @@ const fitJob = (row: Posting) => ({
   salaryMaxUsd: row.job.salaryMaxUsd,
 });
 
-/** pause_scoring, or flags nobody could read: spend stops rather than runs blind. */
+/**
+ * pause_scoring, a stop on the model itself (llm_paused, agent_disabled:fit-scorer), or flags nobody could read: spend
+ * stops rather than runs blind, and a lane keeps its members instead of having the gateway refuse them one by one.
+ */
 async function scoringPaused(): Promise<boolean> {
   const f = await getFlags();
-  return f.pauseScoring || !f.loaded;
+  return f.pauseScoring || f.llmPaused || f.agentDisabled.has(fitScorer.id) || !f.loaded;
 }
+
+/** How long a lane held by a pause waits before it looks again. */
+export const PAUSE_RETRY_MS = 15 * 60_000;
+
+/**
+ * The gateway refusing on a flag this process has not read yet: its flag cache and ours can differ by up to 10 s. Nothing
+ * was billed and the pair is fine, so it is held, not failed.
+ */
+const refusedByFlag = (err: unknown): boolean => err instanceof AgentError && (err.code === "llm_paused" || err.code === "agent_disabled");
+
+/**
+ * Looks at the user's lane again after a pause, so it resumes by itself rather than on the user's next posting. One job a
+ * user per PAUSE_RETRY_MS while paused. A plain delayed job, not the lane's own wake: BullMQ's keepLastIfActive stores the
+ * next job from inside the active one, and this must not come back at once.
+ * ponytail: it can overlap a posting's wake of the same user at the moment scoring resumes; scoreChunk's matches check then
+ * limits the cost to a pair in flight.
+ */
+const wakeLater = (userId: string, delayMs: number) => enqueue("score-user", { userId }, `wake-${userId}-${Math.floor(Date.now() / PAUSE_RETRY_MS)}`, delayMs);
 
 /** A lane member: the posting, the follow-up attempt after a retryable model failure, and a backfill's mark. */
 const toMember = (jobId: string, attempt: number) => (attempt ? `${jobId}:${attempt}` : jobId);
@@ -114,7 +135,12 @@ export const f1Floor = (confirmedFactCount: number): number => (confirmedFactCou
 export async function processScoreMatches(job: Job<JobData["score-matches"]>) {
   if (await scoringPaused()) {
     // ponytail: postings that arrive while paused are not scored later; the nightly re-score of WP-34 picks them up.
-    logger.info("scoring paused (pause_scoring)");
+    logger.info("scoring paused");
+    // A follow-up already belongs to its users: it waits in their lanes. Each wakes, sees the pause and looks again later.
+    if ("jobId" in job.data && job.data.userIds) {
+      const member = toMember(job.data.jobId, job.data.attempt ?? 0);
+      await Promise.all(job.data.userIds.map((userId) => scoreLane().add(userId, [member])));
+    }
     return { queued: 0, paused: true };
   }
   if ("backfillUserId" in job.data) return backfill(job.data.backfillUserId);
@@ -185,20 +211,25 @@ async function backfill(userId: string): Promise<{ queued: number }> {
 
 /**
  * One chunk of a user's lane: up to CHUNK members through `score`, marked done only once scored (a run that throws
- * leaves them for BullMQ's retry), then the user queued again behind every other user if members remain.
+ * leaves them for BullMQ's retry), then the user queued again behind every other user if members remain. Members the run
+ * reports as `held` stay, and the user is not queued again: whoever held them has arranged the next look.
  */
 export async function runChunk<R>(from: Lane, userId: string, score: (members: string[]) => Promise<R>): Promise<R> {
   const members = await from.peek(userId, CHUNK);
   const result = await score(members);
-  await from.done(userId, members);
-  await from.next(userId);
+  const held = (result as { held?: string[] } | undefined)?.held ?? [];
+  await from.done(userId, members.filter((m) => !held.includes(m)));
+  if (held.length === 0) await from.next(userId);
   return result;
 }
 
 /** Scores the next chunk of one user's lane. A score under the user's bar is stored as below_bar, so it is never paid for twice. */
 export async function processScoreUser(job: Job<JobData["score-user"]>) {
-  // Paused: the lane keeps its members; the user's next posting wakes it once scoring resumes.
-  if (await scoringPaused()) return { stored: 0, retrying: 0, paused: true };
+  // Paused: the lane keeps its members and looks again later, so it resumes by itself.
+  if (await scoringPaused()) {
+    if ((await scoreLane().peek(job.data.userId, 1)).length) await wakeLater(job.data.userId, PAUSE_RETRY_MS);
+    return { stored: 0, retrying: 0, paused: true };
+  }
   return runChunk(scoreLane(), job.data.userId, (members) => scoreChunk(job.data.userId, members));
 }
 
@@ -207,8 +238,8 @@ const UNSCORED_IMPORT = sql`(${matches.status} = 'new' and ${matches.score} is n
 
 const planOf = (c: { plan: PlanId | null; status: string | null }): PlanId => (c.plan && PAID_STATUSES.includes(c.status ?? "") ? c.plan : "free");
 
-async function scoreChunk(userId: string, members: string[]): Promise<{ stored: number; belowBar: number; retrying: number }> {
-  const out = { stored: 0, belowBar: 0, retrying: 0 };
+async function scoreChunk(userId: string, members: string[]): Promise<{ stored: number; belowBar: number; retrying: number; held?: string[] }> {
+  const out: { stored: number; belowBar: number; retrying: number; held?: string[] } = { stored: 0, belowBar: 0, retrying: 0 };
   // Read again: the user may have run out of credits or paused billing since the fan-out.
   const [candidate] = await candidates([userId]);
   if (!candidate?.preferences) return out;
@@ -232,7 +263,7 @@ async function scoreChunk(userId: string, members: string[]): Promise<{ stored: 
     (await db().select({ jobId: matches.jobId }).from(matches).where(and(eq(matches.userId, userId), inArray(matches.jobId, ids), sql`not ${UNSCORED_IMPORT}`))).map((m) => m.jobId),
   );
 
-  for (const { jobId, attempt, selection } of pairs) {
+  for (const [index, { jobId, attempt, selection }] of pairs.entries()) {
     const row = postings.find((p) => p.job.id === jobId);
     if (!row || row.job.closedAt || scored.has(jobId)) continue;
     const prerank = prerankScore({ id: jobId, title: row.job.title, companyName: row.companyName, descriptionText: row.job.descriptionText }, rows, prefs);
@@ -254,6 +285,13 @@ async function scoreChunk(userId: string, members: string[]): Promise<{ stored: 
       // No reply was billed: the slot goes back, so the follow-up can take it.
       if (refundable(err)) await releaseScoring(userId);
       const delay = retryDelayMs(err, attempt);
+      if (refusedByFlag(err)) {
+        // This pair and the rest of the chunk stay in the lane: every one of them would be refused the same way.
+        out.held = members.slice(index);
+        await wakeLater(userId, delay!);
+        logger.info({ userHash: logUserHash(userId), held: out.held.length }, "scoring refused by a flag; lane held");
+        return out;
+      }
       if (delay !== null) {
         await enqueue("score-matches", { jobId, userIds: [userId], attempt: attempt + 1 }, `rescore-${jobId}-${userId}-${attempt + 1}`, delay);
         out.retrying += 1;
@@ -315,11 +353,13 @@ async function releaseScoring(userId: string): Promise<void> {
 }
 
 /**
- * When a failed pair is tried again, or null for never: a retryable AgentError comes back after 1, 2, then 4 minutes,
- * or at 00:00 UTC when a daily budget stopped it. A bad input, an injection echo or a per-call cost refusal would fail
- * the same way again, so it is not retried.
+ * When a failed pair is tried again, or null for never: a pause or a disabled agent after PAUSE_RETRY_MS, however many
+ * attempts it has had, since neither is the pair's fault. Any other retryable AgentError comes back after 1, 2, then 4
+ * minutes, or at 00:00 UTC when a daily budget stopped it. A bad input, an injection echo or a per-call cost refusal
+ * would fail the same way again, so it is not retried.
  */
-function retryDelayMs(err: unknown, attempt: number): number | null {
+export function retryDelayMs(err: unknown, attempt: number): number | null {
+  if (refusedByFlag(err)) return PAUSE_RETRY_MS;
   if (!(err instanceof AgentError) || !err.retryable || attempt + 1 >= MAX_ATTEMPTS) return null;
   if (err.code === "invalid_request" || err.code === "precheck_failed" || err.code === "injection_echo" || err.budget?.scope === "call") return null;
   if (err.budget?.retryAfter === "next_utc_day") return Math.max(60_000, Date.parse(nextUtcMidnight()) - Date.now());
