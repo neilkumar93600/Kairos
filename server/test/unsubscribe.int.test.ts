@@ -19,7 +19,7 @@ const { createApp } = await import("../src/app");
 const { closeDb } = await import("../src/db/client");
 const schema = await import("../src/db/schema");
 const notify = await import("../src/jobs/notify");
-const { addressHash } = await import("../src/lib/mailer");
+const { optOutHash } = await import("../src/services/mail-preferences");
 
 describe.skipIf(!hasTestDb)("unsubscribe, preferences and the send-time opt-out against Postgres", () => {
   let db: Db;
@@ -108,8 +108,15 @@ describe.skipIf(!hasTestDb)("unsubscribe, preferences and the send-time opt-out 
     expect(click.status).toBe(200);
     expect(click.text).toContain("You are unsubscribed");
     expect(await optOut()).toEqual(["digest"]);
-    expect((await request(app).post(path).type("form").send("List-Unsubscribe=One-Click")).status).toBe(410);
-    expect((await request(app).get(path)).status).toBe(410);
+    // The link is not used up (a client's one-click POST, then the footer link, then a refresh): every click succeeds.
+    const second = await request(app).post(path).type("form").send("List-Unsubscribe=One-Click");
+    expect(second.status).toBe(200);
+    expect(second.text).toContain("You are unsubscribed");
+    const reopened = await request(app).get(path);
+    expect(reopened.status).toBe(200);
+    expect(reopened.text).toContain("already unsubscribed");
+    expect(reopened.text).not.toContain("<form");
+    expect(await optOut()).toEqual(["digest"]);
 
     // And the next digest is refused at the door.
     expect(await notify.processNotify(digest("s2:2026-11-03"))).toEqual({ result: "suppressed", code: "unsubscribed" });
@@ -126,15 +133,15 @@ describe.skipIf(!hasTestDb)("unsubscribe, preferences and the send-time opt-out 
     expect(consent!.withdrawnAt).toBeInstanceOf(Date);
     const kept = await db.select().from(schema.mailOptOuts);
     expect(kept).toMatchObject([{ kind: "digest" }]);
-    expect(kept[0]!.addressHash.equals(addressHash(`${userId}@test.local`))).toBe(true);
+    expect(kept[0]!.addressHash.equals(optOutHash(`${userId}@test.local`))).toBe(true);
 
-    // The account is erased; a new account with the same address starts opted out of digests even when the default is opt-in.
+    // The account is erased; a new account with the same address, even spelled as an alias, starts opted out of digests when the default is opt-in.
     await db.delete(schema.user).where(eq(schema.user.id, userId));
     expect(await db.select().from(schema.mailOptOuts)).toHaveLength(1);
     const { env } = await import("../src/lib/env");
     const { bootstrapUser } = await import("../src/services/bootstrap");
     const again = "again-user";
-    await db.insert(schema.user).values({ id: again, name: "Again", email: `${userId}@test.local`, emailVerified: true });
+    await db.insert(schema.user).values({ id: again, name: "Again", email: `${userId}+news@test.local`, emailVerified: true });
     Object.assign(env(), { MAIL_CONSENT_DEFAULT: "opt_in" });
     try {
       await bootstrapUser(db, again);
@@ -149,7 +156,7 @@ describe.skipIf(!hasTestDb)("unsubscribe, preferences and the send-time opt-out 
 
   it("turning a kind back on deletes the kept opt-out and records the grant again", async () => {
     await profile(userId, ["digest"]);
-    await db.insert(schema.mailOptOuts).values({ addressHash: addressHash(`${userId}@test.local`), kind: "digest" });
+    await db.insert(schema.mailOptOuts).values({ addressHash: optOutHash(`${userId}@test.local`), kind: "digest" });
     const res = await request(app).patch("/api/email-preferences").set(as()).send({ digest: true });
     expect(res.body.emailPreferences.digest).toBe(true);
     expect(await db.select().from(schema.mailOptOuts)).toEqual([]);

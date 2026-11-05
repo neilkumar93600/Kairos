@@ -11,6 +11,9 @@ const { env } = await import("../src/lib/env");
 const { db } = await import("../src/db/client");
 const { unsubscribeRouter } = await import("../src/routes/unsubscribe");
 const { verifyLink } = await import("../src/lib/action-tokens");
+const { optOutHash } = await import("../src/services/mail-preferences");
+const { addressHash } = await import("../src/lib/mailer");
+const { createApp } = await import("../src/app");
 
 // The no-database half of WP-35's unsubscribe: what makes mail "broadcast", the headers and footer it must carry, and
 // the link page's refusals. Opt-out at send time, the single-use POST and consent run in unsubscribe.int.test.ts.
@@ -94,5 +97,27 @@ describe("GET and POST /api/unsubscribe", () => {
     expect(res.text).toContain("under Settings");
     expect(transaction).not.toHaveBeenCalled();
     transaction.mockRestore();
+  });
+});
+
+describe("opt-out key and limits", () => {
+  it("one person's aliases are one opt-out, and the list cannot be joined to the suppression list", () => {
+    const same = ["Jane.Doe+news@gmail.com", "janedoe@gmail.com", " JANEDOE@googlemail.com "].map((e) => optOutHash(e).toString("hex"));
+    expect(new Set(same).size).toBe(1);
+    expect(optOutHash("jane@example.com").equals(optOutHash("JANE+x@example.com"))).toBe(true);
+    expect(optOutHash("jane@example.com").equals(optOutHash("joan@example.com"))).toBe(false);
+    expect(optOutHash("jane@example.com").equals(addressHash("jane@example.com"))).toBe(false);
+    expect(optOutHash("jane@example.com")).toHaveLength(32);
+  });
+
+  it("the per-address limit applies to the GET page, not to a mail client's one-click POST", async () => {
+    const app = createApp({ auth: { handler: async () => new Response(null), getSession: async () => null }, corsOrigins: [], healthChecks: {} });
+    const statuses = async (send: () => Promise<{ status: number }>) => {
+      const out: number[] = [];
+      for (let i = 0; i < 25; i++) out.push((await send()).status);
+      return out;
+    };
+    expect(await statuses(() => request(app).post("/api/unsubscribe?t=forged.token").type("form").send("List-Unsubscribe=One-Click"))).not.toContain(429);
+    expect(await statuses(() => request(app).get("/api/unsubscribe?t=forged.token"))).toContain(429);
   });
 });
