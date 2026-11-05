@@ -216,6 +216,8 @@ How the shared names are used now:
 
 Espresso `#160f0c` fill, white label (19.0:1), Inter 500, pill radius, no border, no shadow. Three sizes: 56 px tall with 28 px side padding and a 16 px label (hero and closing), 44 px with 20 px padding and a 15 px label (nav and inline), 36 px with 16 px padding and a 14 px label (dense app rows). Hover changes the fill to `--action-hover` `#2b211c` over 300 ms ease-out; nothing moves. Focus: 2 px `--ink` outline, 3 px offset. At most one per section; the landing hero has exactly one.
 
+**Owner override (2026-10-29):** the hero CTA and the navbar "Start free" are the Rainbow Button (`components/shared/rainbow-button.tsx`, Magic UI's mechanism rebuilt in-house): Espresso face with the white label, 8 px radius, a 2 px rainbow ring on all four sides and a soft glow under it (opacity 0.5) in the valley's own hues at higher chroma (sky, haze, amber, meadow, lilac; interpolated in oklch so no stop mixes to olive), drifting over 2 s. Hover keeps the Espresso face and instead saturates the ring and glow and adds a hairline inner top highlight. They are the only two gradient surfaces on the site and the only place art hues touch UI; the face always covers the glow, so the label stays 19:1. Every button and button-like link lifts 2 px on hover (200 ms `--ease-out`) and presses to 97 percent, 95 percent for buttons 44 px tall and under (90 ms in, 320 ms back), filled buttons dipping slightly in brightness; one shared rule in `app/globals.css`, `data-no-press` opts out. Reduced motion keeps the colour change only: no lift, no press scale, the rainbow holds still.
+
 ### Ghost Button
 **Role:** Secondary action
 
@@ -309,7 +311,7 @@ Landing (2026-10-15, owner references Roomservice, A/B card, "Built for Growth",
 ### Closing Art Band
 **Role:** The last action
 
-Full-bleed closing painting (the door at dusk) behind the procedural dusk glow, whose Linen centre ellipse is the scrim behind the text. Serif closing line at `--t-closing`, a 16 px subline, one 56 px Espresso pill. Its lower edge fades into the footer so the two read as one sky.
+Rebuilt 2026-10-30 (owner: "make landing page cta background image using in footer and for cta section"). Two columns on the haze from 1024 (text 5 of 12, the window 7 of 12 running to the viewport edge): the serif closing line at `min(--t-closing, 7.4cqi)`, the ApprovedLine subline and one 56 px Espresso pill with a label-roll hover. On the right the hero's app window (`AppMockup`, its own strong glass, no second frame) hangs from the ridge line and moves with scroll parallax (120 to −120 px; 48 to −24 below 768). In front of it the footer's dusk-hills painting (`footer-dusk-hills-2880x840.png`) runs full width across the bottom with its own parallax (200 to −200 px; 80 to −40 below 768), its sky masked out and its edges dissolving into Linen; the section runs 56 px under the footer (the colophon's `--ft-fade`) so Linen blends into the footer's paper with no seam. Below 1024: text, then the window in flow, then the band. Reduced motion: no transforms. Scripts off: the final frame. The door painting (`closing-dusk-door.png`) is no longer used on the landing.
 
 ### Footer
 **Role:** Site footer
@@ -478,11 +480,11 @@ Thin geometric line icons in Charcoal `#292421`, 1.25 px stroke, round caps and 
 ### Logo
 
 - One colour: Aubergine Ink `#1b0624` on Linen `#f7f7f5`. Reversed, Linen on Aubergine Ink, for the app icon and on the dark card. No lime, no gradients, no shadow.
-- Thin, even, geometric strokes that stay legible at 16 px. Clear space equals half the mark width; the wordmark gap equals half the mark width.
-- **Recommended mark: the open door** (`prompt.md` option 1): a thin rectangle standing slightly open with a small solid dot of light at the gap, the same door the paintings lead to. The K mark in the code today is interim until this mark is drawn.
-- Lockup: mark plus the word "Kairos" in Inter 500, -0.022em, Aubergine Ink; 22 px mark in the nav, 28 px lockup in the footer.
-- The shipped logo is SVG in `web/components/shared/logo.tsx`. Raster files from `prompt.md` (#13 to #15) are references for drawing it, not the shipped mark.
-- Favicon and app icons: `web/app/icon.svg`, `web/app/icon.png` (512), `web/app/apple-icon.png` (180), all reversed (Linen mark on a full-bleed Aubergine square, no rounded corners, mark at about 56 percent with a slightly heavier stroke). Delete `web/app/favicon.ico` once `icon.png` exists.
+- Filled, geometric shapes only (no strokes), nothing thinner than 1/24 of the mark height. Clear space equals half the mark width; the wordmark gap equals half the mark width, measured from the right jamb.
+- **The mark is the open door (shipped 2026-10-29):** a Π frame standing on the ground line (viewBox `0 0 36 40`, frame 34 by 38, jambs 4.4, lintel 4, outer top corners r 2, inner corners sharp), the leaf swung inward on a left hinge (free edge spans half the hinge edge), and a shaft of light: a tall lozenge 6 wide, centred between the leaf and the right jamb, standing on the ground line and rising through a 6-unit notch in the lintel to the top of the box. The broken lintel is the signature (revised 2026-10-29 after the brand critique: a plain open door reads as the log-out icon beside "Log in"). The hinge stays on the left and the opening faces the wordmark: never mirror it, never close the notch, never add a sill or a knob. The same lozenge is used at every size.
+- Lockup: mark plus the word "Kairos" in Urbanist 500, -0.02em, Aubergine Ink; 20 px mark box in the nav (about 19 px of door beside 20 px type), 28 px lockup in the footer.
+- The shipped logo is SVG in `web/components/shared/logo.tsx` (`currentColor`, Ink by default); `web/public/brand/kairos-mark.svg` is the same mark. Raster files from `prompt.md` (#13 to #15) are references, not the shipped mark.
+- Favicon: `web/app/icon.svg` is a hand-hinted 16 px cut (2 px frame, a 1 px channel between the hinge post and a 3 px leaf, the lozenge shaft through a 4 px lintel notch, no radii), Ink on transparent, switching to Linen in dark tabs. App icons `web/app/icon.png` (512) and `web/app/apple-icon.png` (180) are reversed: Linen mark on a full-bleed Aubergine square, no rounded corners (the OS masks it), frame at about 58 percent of the tile, centred optically, rendered from the paths in `kairos-mark.svg` so the two never drift. Delete `web/app/favicon.ico` once `icon.png` exists.
 - Extension icons: `extension/icons/icon-16.png`, `icon-32.png`, `icon-48.png`, `icon-128.png`, resized from `icon.png`.
 
 ### Open Graph
@@ -519,7 +521,232 @@ The owner shared Dribbble "Synthex UI, Analytics SaaS Dashboard" (RonDesignLab) 
 - **Milky glass.** Card radius 20 px; blur 24 px from 768 (14 px below), saturate 125 percent; Glass Edge at 0.55. Panels may nest one level as Bone or transparent blocks, never glass on glass.
 - **Big figures and hatched charts.** Overview figures are large light numerals (Urbanist 300, 44 to 56 px, ink) over a small Deep Ash label. Charts: a dotted line (ink points, 1.5 px line) over a hatched area fill (1 px diagonal lines at 45 degrees, Stone at 45 percent), dashed hairline gridlines, and thin pill bars where a bar chart fits. Achromatic, real data only.
 - **Floating stat tiles.** A small glass tile over a chart calls out one real figure (for example "3 drafts are waiting") with a close button; never an invented number.
-- **Filter chips.** Pill dropdown chips above lists ("Status", "Board", "Date"), glass-soft on the backdrop, Bone when active, each opening a menu of the real values with counts.
+- **Filter chips.** Pill dropdown chips above lists ("Status", "Board", "Date"), glass-soft on the backdrop, Bone when active, each opening a menu of the real values with counts. Superseded on 2026-10-29 by the glass filter bar below.
+
+### Reference layer (owner, 2026-10-29)
+
+The owner shared thirteen references (an AI-agency landing, a Framer SaaS template, a ticketing landing, a data-analytics landing, a payments landing over a painted meadow, a task dashboard over sky and hills, a fintech app site, two pricing cards, two profile pages, a counselling dashboard, a designer portfolio) and picked eight patterns. Every pattern below stays inside the rules above: Espresso is the only accent, the UI is achromatic, art hues never colour UI, Urbanist only, the glass rules hold, and nothing shows customer logos, testimonials, user counts or invented metrics.
+
+**Not taken, by rule:** orange, blue, violet or teal buttons and glows; coloured or pill-highlighted words in headlines; logo clouds, testimonials, photos of people, "trusted by" lines; strikethrough discount prices; gradient rings, gradient borders and gradient CTA bases; percentages that are not real data; brand logos for the ATS boards (names in text with a neutral icon only).
+
+**Marketing**
+
+- **ATS hub.** A small figure: three Bone chips (Greenhouse, Lever, Ashby), each a neutral 16 px Phosphor light icon plus the name, wired by curved 1 px Stone connectors (dash 4 4) into a 56 px Paper White disc with the ring holding the Kairos mark in ink. Below it the existing line "We do not automate LinkedIn." Sits on `/how-it-works`; the landing strip uses the "ATS route" variant in "Landing v3". Below 768 the chips stack in one column and the connectors become straight vertical dashes. Idle motion: the dash offset drifts slowly along each connector toward the disc (one clock, paused off screen, none under reduced motion). `<figure>` with a `<figcaption>`; connectors `aria-hidden`.
+- **Mini-UI cards.** (On the landing the trio is now one SAMPLE spreadsheet, see "Problem trio" in "Landing v3"; the stage vocabulary below lives on in the step and bento cards.) The problem trio's 96 px line icon zone becomes a 168 px stage (Bone, 12 px radius, inset in the card) holding a small SAMPLE snippet built from real UI primitives (status words, badges, a resume line, a send receipt), achromatic except the lime status dot, with the SAMPLE micro chip in its corner. The stage is `aria-hidden`; the card title and body carry the meaning. On fine pointers one micro-motion per stage on card hover (for example a cursor pressing a disabled Edit), 300 ms ease-out; none under reduced motion.
+- **Pinned paper step cards.** On `/how-it-works` the step cards are paper: solid Paper White (paper is not glass), the ring plus the over-art shadow, 20 px radius, alternately rotated −1.5 and +1.2 degrees (±0.8 below 768), each with a 10 px ink pin (a disc with a 2 px Linen ring) at its top centre, joined by one dashed Stone connector. Hover on fine pointers settles the card to 0 degrees and lifts it 3 px ("settle like paper"), 300 ms ease-out. Rotation is static and stays under reduced motion; the hover settle does not.
+- **Hero card stack.** The landing hero keeps its one Floating Sample Card on the left and gains up to two more strong-glass SAMPLE cards over the painting (a draft waiting for approval; a sent receipt), tilted −2 to +2 degrees, from 1024 only; below 1024 the hero keeps one card. No card covers the H1, the lead or the CTA, and none sits outside a calm sky or meadow zone.
+- **Billing toggle saving.** The Quarterly segment carries a Bone micro chip "Save up to N%", N computed from `shared/src/plans.ts` (best quarterly saving against three monthly payments across paid plans, rounded down). Never hard-coded, never a strikethrough price.
+
+**App**
+
+- **Profile header.** `/profile` opens with a banner: a painting crop (the app's one art panel, owner 2026-10-29), 168 px tall (120 below 768), 20 px top radius, masked so it dissolves into the panel. An 88 px initials disc (Paper White, ink Urbanist 500, 4 px Linen ring) overlaps the banner's bottom-left by half its height, beside the name (`--t-h3`) and the email with a 16 px icon, and one quiet Edit action. Under it a stats row of real counts only (facts confirmed, facts waiting, resumes, applications sent), separated by vertical hairlines, numerals in the big-figure style at 32 to 40 px.
+- **Details grid.** Contact fields and facts render as a grid (3 columns from 1024, 2 from 640, 1 below) of icon (20 px Phosphor light, `--icon`), Deep Ash caption label, ink value, and a state chip: "Confirmed" (Bone chip, lime dot with ink ring) or "Needs a fact" (hollow ink square). The chip carries the truth lock; nothing reads as confirmed unless the user confirmed it.
+- **Match cards.** `/matches` is a card grid (2 columns from 1024, 1 below), one glass panel per card: role (`--t-h4`), company with board and location in Deep Ash, the fit badge ("Fit 82" with the lime dot when it passes the user's rules, a hollow square when it does not), up to three Bone reason chips plus a "+N" chip that expands the rest inline, and a footer with the posted date and the two actions (Queue as the Ghost button, Skip as the quiet button). No Espresso fill on cards: the page keeps at most one primary action.
+- **Glass filter bar.** List filters live in one glass panel row: each filter (Status, Board, Date) is a labelled segment (Deep Ash caption over the ink value and a caret) separated by vertical hairlines, each opening the menu of real values with counts; a "Clear" quiet button appears when any filter is set. Below 640 the segments wrap two per row. Replaces the separate filter chips everywhere they were used.
+- **Greeting header.** The overview's page title greets by first name and local time of day ("Good morning, Sam"), with the one-line status of the day beside or under it (the existing next-step sentence). Rendered after hydration so server and client never disagree; the route's metadata title stays "Overview".
+- **Sign-in methods callout.** Settings gets one glass callout card listing Email and password, Google, Apple, GitHub and LinkedIn with their marks, each "Connected" (lime dot word) or a quiet Connect action, from the account's real linked accounts. Unlinking is offered only while another method stays linked.
+
+### Landing v3 (owner, 2026-10-29)
+
+The owner asked for a complete landing redesign from a second set of references (a fintech site over sky, a data-analytics landing with a dashboard hero and an integration hub, a ticketing landing with tilted step cards, a Framer SaaS template with pinned cards, a payments landing over a painted meadow, a task dashboard over hills). Owner choices: the Kairos app itself is the hero centrepiece; the warm dawn valley paintings and haze stay; a new section structure replaces the Ledger zig-zag; Instrument Serif keeps its lines. Everything in "Reference layer" above still holds. This supersedes the landing order in "Layout".
+
+**Order.** Nav; hero (app mockup); ATS route strip; problem trio (one SAMPLE spreadsheet); three pinned step cards; feature bento (the resume suite); dark CTA card; pricing (raised recommended plan); two-column FAQ; closing band; footer. Removed from `/`: the five zig-zag steps, the spotlight and the compare table (the full compare stays on `/pricing`; the five steps stay on `/how-it-works`). Density budget per section is unchanged.
+
+- **Hero app mockup.** Under the serif H1, lead and one Espresso CTA, a slice of the real Kairos app rises out of the valley painting: a strong-glass window (20 px radius, Glass Edge, over-art shadow, about 1040 px wide from 1280, 92 percent of the container from 768) whose bottom is cut off by the painting's meadow fade. Inside, built from the app's own primitives with SAMPLE data: a slim icon rail, the "Review queue" header with "3 drafts waiting", three draft rows (role and company, fit badge, status word) and a detail pane with two resume lines citing facts ("cites #03") and an Approve control drawn as the Ghost button (the page's Espresso stays the hero CTA). One SAMPLE chip on the window. The mockup is `role="img"` with an `aria-label` summarising it; nothing inside is focusable. Two tilted strong-glass SAMPLE cards float at its sides from 1024 (a fit card, a sent receipt). Below 768 the window shows a one-line header (title, "3 drafts waiting", the SAMPLE chip) and the three draft rows at full container width, and the side cards are hidden. Entrance: the window rises 24 px and fades in once (transform and opacity), none under reduced motion. The painting stays the LCP image. As built: the painting is anchored to the window's top edge so the sun sits just above it at every width, the door sits behind the frosted window (the sun and ridges in the V carry the composition), and between 1024 and 1399 the fit card drops below the rows instead of covering them. This supersedes the "Hero card stack" bullet in "Reference layer".
+- **ATS route (landing strip, 2026-10-29).** Under the hero, centred in `--c-main`: a 15 px Deep Ash caption, then the 56 px Paper White disc with the Kairos mark in ink and one dashed 1 px Stone route running out of it through three Bone stops (Greenhouse, Lever, Ashby; 44 px pills, 17 to 18 px ink Inter 500 label, neutral 18 px Phosphor light browser icon, no brand logos), then the caption "We do not automate LinkedIn." A row from 768 (segments 40 to 112 px), one column below (the route runs down from the disc). Idle motion: the dashes drift outward from the disc, moving a gradient strip inside each clipped segment (transform only), one clock, paused off screen, none under reduced motion. `<figure>` with `<figcaption>`; segments `aria-hidden`. Only boards Kairos really covers are listed.
+- **Problem trio (2026-10-29, resume suite PRD).** Label "The usual way", one H2, three pains of a job search done by hand: one resume for every job, applying blind, losing track. One visual: a single SAMPLE spreadsheet in one glass panel ("Job search": Company, Role, Resume, Fit, Status; five synthetic rows with the same `resume_final.pdf` on every row, a Bone "?" for every fit, and a status column of guesses and dashed blanks). Three 18 px ink pins with Linen numerals sit on the Resume, Fit and Status headers and match the 22 px pins of the three items (title at `--t-h4`, one line). From 1024 the intro and items take 5 of 12 columns on the left and the sheet 7 on the right; below 1024 intro, sheet, then the items (a row of three from 768). Role steps out below 640 and from 1024 to 1279. On fine pointers, hovering an item tints its column (colour only, no movement). The sheet is `role="img"` with an `aria-label`; the items carry the meaning. Replaces the three mini-UI cards.
+- **Step cards.** Label "How it works", one H2, then three cards in a row from 1024 (one column below): each a glass panel, 20 px radius, hanging from a 10 px ink pin (2 px Linen ring) at its top centre and tilted −2, +1.5 and −1 degrees around it (`transform-origin` on the pin; half the tilt below 768). The middle card sits 40 px lower, so one dashed Stone thread through the three pins dips to it (an SVG behind the cards from 1024, drawn left to right on scroll; a vertical dashed line through the pins below 1024). One SAMPLE job (Data Engineer · Company 014) runs through all three stages: the fit gate passes it and skips two others; its own tailored copy ("Tailored copy", "Company 014 · from your Backend resume") with a resume line and the confirmed fact it cites; its receipt (approved, sent, confirmation page saved, one credit). Caption "Step 1" in Deep Ash micro plus one short line in ink. Scroll-driven entrance: each card swings from 2.5 times its tilt to its tilt as it enters (a registered `--swing` angle added to `rotate`). Hover on fine pointers settles the tilt to 0 and lifts 3 px. Reduced motion keeps the static tilt only. A quiet text link "See every step" to `/how-it-works`.
+- **Feature bento (2026-10-29, the resume suite).** Label "What you get", one H2, then glass panels: from 1024 a tall card on the left (7 of 12, spanning two rows) and two stacked on the right; from 768 the tall card spans both columns over the other two; one column below. (1) Resumes for each kind of role: two base resumes and one job's saved copy as three fanned Paper White pages (abstract pill bars, never real type; footers "Data analyst", "Backend" with a Default badge, "Company 014" with a lock and "Sent") over a white template gallery of six thumbnails (Classic, Modern, Serif, Compact, Executive, Minimal) with an ink selection ring and PDF and DOCX chips. Hover spreads the fan, slides the ring to the next template and the front page changes layout with it. (2) A tracker that moves itself: a mini board (Drafting, Applied, and Interviewing from 1400) where the Company 014 card travels from Drafting to Applied as the card scrolls in and gains "Sent · moved by Kairos" with the lime dot; final state at rest, without view timelines and under reduced motion. (3) Review tuned to your level: "Reviewing as" with an Early, Mid, Senior, Lead switch over one suggestion (tag, priority, the struck old line, the new line with its fact chip); hover moves the level to Senior and the tag changes with it. Accent colours are not drawn (they would add hues to the page); templates differ by layout only. Every claim in this card set ships with R1 to R4 and is marked in `landing-copy.ts`.
+- **Dark CTA card (2026-10-29).** Same surface, mesh, night painting and Inverse Button as "Dark CTA Card" above. From 1024 two columns: on the left a dark-glass pill with the word καιρός (`lang="el"`), the serif H2 start-aligned, the line in `--on-dark`, the Inverse Button and the dark-glass fact chip; on the right a dark-glass SAMPLE timeline card (16 px radius, Linen text only) of one application: 08:12 matched, 08:14 drafted, and "Now · Waiting for you" with a hollow Linen square, the lime dot on the two done rows. Below 1024 one centred column with the timeline under the button. The rows rise in one after another on scroll; none under reduced motion.
+- **Pricing.** Plan cards are glass, four in a row from 1024 (two by two from 768); the recommended plan is raised 16 px from 1024 with the hover shadow and keeps its ink edge and "Recommended" pill. The billing toggle with its saving chip stays. A quiet link "Compare every plan" goes to `/pricing`.
+- **FAQ.** Two columns from 1024: left the H2, one subline and a quiet "Contact us" link; right one glass panel of hairline-separated questions (native `details` or the existing accordion). One column below.
+
+### Landing v3 mid-page chapter (owner, 2026-10-29)
+
+The owner said "hero, footer, pricing, cta, and faq are fine" and asked for a complete redesign or upgrade of everything between the hero and the dark card, built to the awwwards, motion, ecc:motion-advanced and 3d-scroll-website bar, with Magic UI and Aceternity UI read as mechanism catalogues. Concept "Held" won the concept round (judges 139; runners-up The Signature Line 129, Schedule A 120, The Walk 106, Paper trail 99), with grafts from the runners-up listed below.
+
+This replaces parts of "Landing v3" above: the "Step cards" and "Feature bento" bullets, and the middle of the Order line (ATS hub strip; problem trio; three tilted step cards; feature bento). On `/` it also replaces the "Mini-UI cards" pattern in "Reference layer" and the ATS hub idle drift. `/how-it-works` keeps the drift. Everything else in this file stands: palette, Urbanist, glass rules, density budget and truth rules.
+
+**Point of view.** Kairos (καιρός) is the right moment, as against chronos, clock time. Other tools send on the clock. Kairos checks one application in front of you, stands it up and holds it until you press Approve. The visitor's press is the only real time shown anywhere on the page. The span tells four things in order: where it applies, what goes wrong with other tools (the clock), the three checks on one sheet that then waits (the signature), and what comes back after you approve (the clock runs again). The dark card then says "You choose it."
+
+**Order** (the component names stay, the contents are rewritten): `Strip` (where it applies), `Entry01Reported` (what goes wrong), `EntrySteps` (the three checks, the signature), `EntryBento` (what you get), then `DarkCard`.
+
+**One sample, everywhere.** All data is SAMPLE and synthetic, because the repo is public. The held application is the one open in the hero window: `hero.app.rows[0]` (Backend Engineer · Company 109 · Remote, Fit 86) and `hero.app.lines` ("Led the move of the payments API to an event queue." cites #03; "Wrote the on-call runbook the team still uses." cites #07). The new shared key `landingCopy.sample` holds the rest, so no section's data can drift from another's:
+
+| Item | Value | Where it appears |
+|---|---|---|
+| Facts | Fact #03 · payments API; Fact #07 · on-call runbook | Chapter notes |
+| Line with no fact | "Led a team of 12 engineers" | Problem panel (other tools send it); chapter (marked not saved) |
+| Postings outside the rules | Night Auditor · Company 078 (Skipped · title); Sales Director · Company 107 (Skipped · location) | Problem panel (078 sent); chapter (both struck) |
+| Only in the problem panel | Data Clerk · Company 212 | Problem panel |
+| Only in the coda | the receipt, the replies and the credit rows of Company 109 | Coda panel |
+
+#### 1. Where it applies (`Strip`)
+
+- **Label:** Where it applies. **H2:** "Through the employer's own career page." **Subline:** "Kairos fills the Greenhouse, Lever or Ashby form with your details and the answers you approved." **Items:** the three board chips. **Visual:** the ATS hub figure. **Figcaption:** "We do not automate LinkedIn." **No CTA.**
+- **Visual.** The existing ATS hub, geometry unchanged: three Bone chips (Greenhouse, Lever, Ashby, each with the neutral 16 px Phosphor light Browser icon), 1 px Stone dash-4-4 wires and the 56 px Paper White disc holding the Kairos mark. On `/` the figure drops its top caption, because the H2 says it, and the LinkedIn line becomes the `<figcaption>`. No glass, no painting.
+- **Motion (Magic UI Animated Beam, rebuilt).** From 768 up, each wire gets a second path carrying one solid Charcoal 24 px dash (1.25 px, round caps). The dash travels from the Kairos disc out to the chip, because Kairos applies through the board. It moves by `stroke-dashoffset` from `-length` to `24px` over 1.6 s on `--ease-out`, then rests 0.8 s, so each wire runs a 2.4 s cycle, offset 0, 0.8 and 1.6 s on one clock. One dash is moving at any moment. This replaces the dash drift on those wires; a wire never runs both. Below 768 the straight rail keeps today's drift. Both run only under `html[data-motion="full"]` and the existing `data-live` observer, so they pause off screen. `stroke-dashoffset` on these three tiny paths is the one sanctioned non-transform property; the hub already animates it under the owner's 2026-10-29 approval. Reduced motion and scripts off: still dashed wires, no dash.
+- **Layout.** 1440 and 1024: a centred `SectionIntro` in `--c-copy`, the 528 x 152 figure centred 48 px below, and the figcaption 16 px under it. 768: the same. 390: the intro, then the chips stacked on the vertical dashed rail with 16 px gaps and the disc 24 px below. Section spacing is the usual `lp-section` padding.
+- **Glass in view:** 0, plus the nav.
+
+#### 2. What goes wrong (`Entry01Reported`)
+
+- **Pill:** Reported, not measured. **H2:** "What people report about auto-apply tools." **Subline:** "Each one is a check Kairos runs before anything is sent." **Items** (an ordered list with indices 001 to 003 in Deep Ash 14 px tabular, each an `lp-h4` title plus one `lp-body-sm` line): Poor matches, "Applications sent to jobs that do not fit."; Invented resumes, "Skills the person does not have."; No edit step, "A draft you cannot change." **No CTA.**
+- **Visual: the clock rail.** One `.glass-panel` (20 px radius, 24 px padding; 16 px below 768), `aria-hidden`. Its header row reads "Sent today" (Ink 15 px 500) with the Bone SAMPLE chip. Inside is a vertical 1 px Stone rail, 12 px from the panel's inner left edge. It carries 4 px Stone tick hairlines every 24 px, which read as a ruler or clock face, with no times printed. Three Bone slips (8 px radius, 12 px 16 px padding, static tilts of −1, +0.8 and −0.5 deg) hang at even 120 px intervals (110 below 768), each with a 10 px ink pin on the rail:
+  1. "Night Auditor · Company 078", then the hollow square and "Outside your rules".
+  2. "Led a team of 12 engineers", with a 12 percent ink marker band under "12", then the hollow square and "No fact behind this".
+  3. "Data Clerk · Company 212", with a dead "Edit" pill (Stone border, opacity 0.55), then the hollow square and "Sent before you read it".
+
+  Slip text is 14 px Ink on Bone for the title and 12 px 500 for the status word. There is no lime anywhere in this panel. The slips are Bone because the Synthex layer allows one nested level inside glass, and paper inside glass would be two.
+- **Motion (CSS scroll-driven, no island).** The rail draws top to bottom with the panel's view progress: `.lp-trace` is the existing `lp-draw` clip-path inset on `animation-timeline: view()`, range entry 10% to cover 50%. This is Aceternity Tracing Beam's line that extends with scroll, without the spring, the gradient or the dot. Each slip rises 16 px and fades in as it enters (`.lp-reveal`, `--i` 1 to 3), which is Magic UI Animated List's one-by-one arrival without the scale-from-zero spring. The marker band under "12" sweeps `scaleX` 0 to 1 from the left on its own view timeline, range cover 30% to cover 45%. This is Magic UI Highlighter's marker done as the en01 claim band, with no rough strokes and no colour. The panel itself does not move, so the blur never travels. Reduced motion, scripts off, or no support for `animation-timeline`: the rail is drawn, the slips are in place and the band is full.
+- **Layout.** At 1440 (`--c-main` 1280) a two-column grid, `minmax(0,5fr) minmax(0,7fr)`, 64 px gap: the intro aligned start plus the items in the text column (about 507 px), and the panel in the other (about 709 x 440), top-aligned with the pill. At 1024 the same grid with a 48 px gap (367 / 513). At 768 one column: intro, items in a row of three (16 px gap), then the panel at full width. At 390: intro, items stacked 16 px apart, then the panel at full width, about 380 px tall.
+- **Glass in view:** 1, plus the nav.
+
+#### 3. The three checks: the signature (`EntrySteps`)
+
+- **Pill:** How it works. **H2:** "Three checks before anything is sent." **Subline:** "The last check is yours: the application waits, untouched, until you approve it." **Items** (three captions in an ordered list, each a Deep Ash micro "Step n", one `lp-h3` line and one `lp-body-sm` line):
+  1. "Jobs that break your rules are skipped." / "Role, location, salary and visa are hard rules, checked before any model runs."
+  2. "Every resume line cites a fact you confirmed." / "A line with no confirmed fact behind it is not saved."
+  3. "Sent only after you approve, with a receipt." / "Try it on the sample. Nothing is sent."
+
+  **The one control** is the Ghost button "Approve sample" inside caption 3. "See every step" moves to the coda.
+- **Visual: the stage.** A 24 px radius art panel with 8 percent grain and `--art-placeholder` behind the art, holding `step-2-truth-lock.png` (1536 x 1152). From 768 the panel is 4:3, the painting's own ratio, so nothing is cropped. Below 768 it is 3:4 with `object-position: 95% 50%`, keeping the desk, notes and pen. Over it is real DOM, placed in stage percentages so that each of the two geometry sets lands on the painted objects at every width. The whole stage is one `role="img"` with an `aria-label`, and nothing inside it is focusable.
+  - **Sheet.** Paper White, 16 px radius, the ring plus `--sh-over-art`, 16 px padding (12 below 768). Standing, it sits at 34 percent of the stage width, with its bottom edge at y 77 percent and centred at x 62 percent, so it covers the painted resume while the painted pen stays visible below. Below 768: 58 percent wide, centred at x 43 percent, top at y 15 percent, bottom at y 77 percent. Content: the SAMPLE chip; "Backend Engineer" (15 px 500 Ink); "Company 109 · Remote" (13 px Deep Ash); the lime dot with "Fit 86 · passes your rules" (14 px tabular); the micro "Tailored resume"; the two cited lines at 14 px (12 below 768), each with a right-aligned Bone cite chip; the third line, "Led a team of 12 engineers", with an ink strike and below it the hollow square and "No fact behind this · not saved". A 1 px dashed Stone thread of 48 px (40 below 768) leaves the sheet's left edge and ends in a hollow square, reaching for a fact that is not there, towards the painted blowing slip. The foot row is a hairline, then the hollow square "Waiting for your approval" and a Ghost "Approve" span. After approval the foot reads the lime dot "Approved by you · 14:32" (the visitor's local time).
+  - **Fact notes.** Two pinned paper notes laid over the painted notes: Paper White, 8 px radius, the ring plus `--sh-over-art`, a 10 px ink pin at the top centre, static tilts of −2 and +1.5 deg. Desktop: 16 percent of the stage wide, at x 82 to 98 / y 58 to 68 and x 83 to 99 / y 70 to 80. Each holds "Fact #03" (12 px 500), "payments API" (12 px Deep Ash) and the lime dot "Confirmed by you". Below 768 they are 88 px wide at x 74 to 99, showing only "Fact #03" and the lime dot "Confirmed".
+  - **Threads.** One 1 px Charcoal quadratic per cited line, with round caps and a 12 px downward sag (8 px below 768). Each runs from the sheet's right edge at its chip to the note's pin. Each thread is its own small absolutely positioned SVG, sized from layout offsets, so it draws with clip-path.
+  - **Skipped slips.** Two Paper White slips (8 px radius, ring plus over-art shadow, 22 percent of the stage wide; 46 percent below 768): "Night Auditor · Company 078" with a Deep Ash "Skipped · title", and "Sales Director · Company 107" with "Skipped · location". Their role lines are struck in ink. They rest set aside at the desk's front edge, left of the pen: desktop x 39 to 61, y 78 to 88, rotated −6 and −9 deg.
+
+  The painting's own threads, cream notes and pen stay visible as the scene's echo. Every position is a starting value, to be tuned by up to 3 percent against a screenshot overlay.
+- **Signature mechanism.** See "Signature moment" below.
+- **Layout.**
+  - 1440 (`--c-main` 1280): the centred intro, then the track, a 12-column grid. The stage is in columns 1 to 8 (845 x 634), `position: sticky` at `top: calc(var(--nav-h) + 24px)`, `align-self: start`, with `max-height: calc(100svh - var(--nav-h) - 48px)` and `aspect-ratio: 4/3`. The captions are in columns 9 to 12 with 32 px of start padding (about 380 px). Caption blocks have min-heights of 90svh, 90svh and 60svh, with their content vertically centred.
+  - 1024 to 1279: stage in 7 of 12 columns (531 x 398), captions in 5.
+  - 768 to 1023: one column. The stage, 4:3 at `min(100%, 640px)`, is visually first (sticky at `nav-h + 16px`), and the caption blocks (min-heights 60svh, 60svh, 45svh) scroll in the band below it.
+  - 390: one column. The stage is 3:4 at the full container width, with height capped at 56svh (width follows), sticky at `nav-h + 8px`. Captions as at 768, with the line at 26 px.
+  - DOM order at every width: intro, captions (with the button), stage. The stage is placed visually by the grid, and its sticky item has `align-self: start`. The track has no overflow clip and no transform on any ancestor.
+  - Short viewports, `(max-height: 640px)` (this also covers 200 percent zoom): not sticky. The complete final sheet sits above the captions, blocks have natural height and nothing arms.
+- **Glass in view:** 0, plus the nav. The captions sit on the haze in Ink and Graphite, and the sheet is paper.
+
+#### 4. What you get (`EntryBento`)
+
+- **Pill:** What you get. **H2:** "Everything that went out, and what came back." **Subline:** "The same sample application, after you approve it." **Items:** the three existing `bento.cards` (A receipt for every send; Replies, sorted; Credits only for sends that land), with their G3 "(in beta)" lines until G3 passes. Each item has a 10 px ink pin as its bullet, matching the panel's stations. **CTA:** the quiet link "See every step" to `/how-it-works`. On hover and focus-visible its 16 px Phosphor light arrow travels 4 px; the underline stays at rest.
+- **Visual: the rail again.** One `.glass-panel` (20 px radius, 24 px padding; 16 below 768), `aria-hidden`, with the header "Backend Engineer · Company 109" and the SAMPLE chip. Inside, a 1.25 px Charcoal rail (ink this time, with no ticks) joins three stations. Each station has a 10 px pin, a label row and one Bone block (8 px radius, 12 px 16 px padding):
+  1. Label: lime dot, "Approved by you", and " · {time}" once the visitor has approved. Block "Receipt": Form · Employer's page; Answers · 7 · approved by you; Resume · Lines you approved; then the lime dot "Confirmation page saved".
+  2. Label: "Replies, sorted". Block: two 44 px rows, in final DOM order: "Are you free on Thursday?" with the lime dot "Interview"; "Thank you for applying" with the hollow square "Other".
+  3. Label: "Credits". Block: Credit · −1 · charged once; then "A failed submit · 0 credits" in Deep Ash.
+
+  Rows are 14 px Ink, labels 12 px Deep Ash on Bone (6.0:1).
+- **Motion.**
+  - The rail draws with scroll (`.lp-trace`, Tracing Beam idea), and the three stations rise in with `.lp-reveal` (`--i` 1 to 3).
+  - The replies block plays Magic UI Animated List once it is 50 percent in view. The engine's `Reveal` writes `data-post` as pending, then live. The list starts translated up one row with both rows hidden. "Other" fades in at the top (0 to 300 ms). At 700 ms the list slides down one 44 px row (400 ms, `--ease-out`) while "Interview" fades in above it. The newest reply lands on top: sorting is shown, not stated. Transform and opacity only, no spring, no scale, no layout animation.
+  - The approved time is a tiny client read of the existing ledger store.
+  - Reduced motion and scripts off: the rail is drawn, both rows are in order and nothing moves.
+- **Layout.** At 1440 a grid `minmax(0,5fr) minmax(0,7fr)` with a 64 px gap: text left (intro aligned start, items, link) and the panel right (about 709 px wide, about 600 tall). At 1024 a 48 px gap. At 768 and 390 one column: intro, items, link, then the panel at full width. The dark card follows at the usual section gap.
+- **Glass in view:** 1, plus the nav.
+
+**Glass budget across the span:** at most two panels plus the nav in any viewport (two sections meeting). There is no glass on glass, and no backdrop-filter element moves or sits under a transform.
+
+#### Signature moment: how it works
+
+1. **Engine.** `ScrollStage`, from `components/landing/motion/`, wraps the track. It owns one motion `useScroll({ target: track, offset: ["start 0.1", "end end"] })`. It writes `data-armed`, `data-active="0|1|2"` and `data-reached="0 1 2"`, a space-separated list matched with `~=`, onto the track element with `setAttribute`, only when a value changes and never through React state. Steps come from an IntersectionObserver on the three caption blocks (`[data-step]`), using a centre band (rootMargin `-45% 0px -45% 0px` from 1024) or a lower band below the stacked stage (`-78% 0px -16% 0px`). A block that has passed above the band also counts as reached, so a fast flick cannot skip a beat. This is Aceternity Sticky Scroll Reveal's active index without per-frame state.
+2. **The rise (scrubbed: the only per-frame work).** The sheet's motion.div binds `useTransform(progress, [0, 0.18], ...)` to four values: `rotateX` 72 to 0 deg, `rotateZ` 18 to 0 deg, `scale` 0.66 to 1, and `x` 12% to 0%. It has `transform-origin: 50% 100%` under a 1100 px perspective (origin 60% 20%) on the stage's overlay layer. At progress 0 the sheet lies on the painted desk over the painted page; the painted page's top edge sits right of its bottom edge, so the Z turn is clockwise. Tune the sign and values against a screenshot. By 18 percent it stands. This is Container Scroll Animation's `rotate [20, 0]` with the angle widened to fit the painting, and without the 1.05 overshoot scale or the header translate. No `useSpring`, because Lenis supplies the smoothing. `will-change: transform` is set only while the track carries `data-live` and progress is under 0.2, so the resting sheet rasterises crisp text.
+3. **The beats (discrete, time-based CSS transitions under `[data-armed]`, `--ease-out`).**
+   - `data-reached~="0"` (fit gate): slip strikes draw with `clip-path: inset(0 100% 0 0)` to `inset(0)` (360 ms, the second 120 ms later); their status words fade in; at 480 ms both slips slide from under the sheet to their set-aside rest (about −96 px, +48 px; 400 ms); at 600 ms the sheet's fit line rises 8 px and fades in (300 ms).
+   - `~="1"` (truth lock): line 1 writes by clip-path (400 ms), chip #03 appears at 400 ms, note #03 rises 8 px at 300 ms, thread 1 draws by clip-path at 500 ms (400 ms); line 2, chip #07, note #07 and thread 2 follow at 500, 900, 800 and 1000 ms; line 3 writes at 1100 ms, its strike draws at 1600 ms (360 ms) and the line settles to Deep Ash; the dashed thread draws outward at 1700 ms (300 ms); the square and "No fact behind this · not saved" fade in at 2000 ms.
+   - `~="2"` (approval): the foot row rises 8 px and fades in (300 ms).
+   - Captions: the active line is Ink and the others Deep Ash (`--dur-colour`); all Ink when not armed.
+4. **The hold and the press.** Nothing scroll-driven happens after step 3. About 20svh, roughly 8 percent of the track, is left before the stage releases. The Ghost "Approve sample" in caption 3 (44 px, Paper White with the 1 px Stone border; Espresso stays on the hero CTA) is Aceternity Stateful Button rebuilt:
+   - **idle:** "Approve sample".
+   - **pending:** 600 ms, label "Approving", `aria-busy`, a 1 px ink hairline inside the pill's bottom growing `scaleX` 0 to 1 (0 ms under reduced motion).
+   - **done:** the lime dot plus "Approved", `aria-disabled="true"`, focus kept.
+
+   On done it calls `ledgerStore.approve(new Date().toISOString())`, the existing store. The sheet's foot swaps to `<Stamp>` "Approved by you · {formatTime}" (`lp-sign`, 500 ms), and the on-sheet Approve span fades out. The coda's first station and the closing band's existing `ApprovedLine` ("You approved the sample at {time}. Every real application waits the same way.") update from the same store. A polite live region says "Approved. Sample receipt updated. Nothing was sent." Approval persists for the session (sessionStorage), so a reload shows the done state. Scroll never triggers any of this.
+5. **States.**
+
+| State | Stage | Captions | Button |
+|---|---|---|---|
+| Full motion, tall viewport | rise scrubbed, beats by step | active Ink, others Deep Ash | works, 600 ms pending |
+| Reduced (`html[data-motion="reduced"]`, or the media query unless Full was chosen) | final frame, standing; `transform: none !important` beats motion's inline style | all Ink | works, states instant |
+| Scripts off | final frame from the server HTML (start states exist only under `[data-armed]`, which only the island writes); sticky still works in CSS | all Ink | hidden (`data-requires-js`) |
+| Short viewport (max-height 640px) or 200 percent zoom | not sticky, final frame above the captions | all Ink | works |
+
+   The final frame is the sheet standing; slips struck and set aside; the fit line; lines 1 and 2 with chips, notes and threads; line 3 struck with its dashed thread, square and status; and the foot reading "Waiting for your approval", or the signature once approved.
+6. **Performance.**
+   - One AVIF painting, about 90 KB at 845 w, lazy, with sizes `(min-width: 1280px) 845px, (min-width: 1024px) 50vw, (min-width: 768px) 640px, 100vw`. The hero stays the only eager image and the LCP.
+   - One scroll listener, motion's, which can hand transform to ScrollTimeline. Four transform values on one element. Attribute writes at most three times per pass.
+   - Thread geometry is measured from `offsetLeft`/`offsetTop` sums, which ignore transforms, on mount, on `ResizeObserver(stage)` and on `document.fonts.ready`.
+   - No blur, filter, box-shadow or layout animation. CLS 0, because the stage has a fixed aspect and the overlay is absolute.
+   - Target: compositor frames at 60 fps at 390 x 844 under 4x CPU throttle.
+
+**Lenis.** Lenis smooth scroll runs on `/` only, through `SmoothScroll` (lerp 0.1, wheel only, never touch). It is off under reduced motion and stopped while `html[data-dialog]` is set. `position: sticky` and `useScroll` read native scroll, so behaviour is identical with Lenis off.
+
+**Accessibility.**
+- Each section is labelled by its H2.
+- The panels and the stage are decorative or `role="img"`, and every fact they show is also in the visible text column.
+- Status words always carry the dot or the square beside them.
+- Text at 12 to 14 px sits only on Paper, Bone or strong glass.
+- Focus ring: 2 px ink at 3 px. Hit areas: 44 px.
+- `forced-colors`: CanvasText borders on the sheet, notes, slips, stage and Bone blocks, and threads stroked CanvasText.
+- `prefers-reduced-transparency`: panels go solid Paper (existing class fallbacks).
+
+**Truth check (docs/01-prd.md; resume-suite PRD R1 to R4 not built).**
+- Shown claims, each built:
+  - Greenhouse, Lever and Ashby through the employer's form, never LinkedIn.
+  - Hard rules before any model (fit gate).
+  - Every line cites a confirmed fact, and an uncited line is not saved but listed in the editor (truth lock).
+  - Nothing is sent until approval.
+  - The receipt keeps form, answers, resume lines and confirmation (extension, "(in beta)" until G3).
+  - Replies filed to the application as interview or other (forwarding address, "(in beta)").
+  - One credit per submission, and a failed submit costs nothing.
+- Not shown or promised: named base resumes or versions, file import, templates or DOCX, level-calibrated review, the headline generator, the tracker, interviews, contacts and insights. There are no counts, logos, testimonials or metrics, and no times except the visitor's own press. The problem rail prints no times, and the panel is labelled "Reported, not measured".
+
+**Rule breaks from the judging, and their fixes.**
+- Fragment H2 "Applies through employer career pages on": now a real label, H2 and subline.
+- "Other tools send by the clock." stated competitor behaviour as fact: the H2 is now the existing "What people report about auto-apply tools.", and "the clock" lives only in the unlabelled ticks.
+- Fixed sample clock times: removed. The only time is the visitor's.
+- Paper slips inside glass: the problem and coda blocks are Bone, one nested level.
+- Two loops on one wire: the pulse replaces the drift on the curves, and the rail keeps only the drift.
+- 24 percent dead hold: now about 8 percent, with a real press as the payoff.
+- Decorative Approve span: a real click-only button, in reading order, with a live region.
+- Thin fit-gate beat: ink strikes, then set aside.
+- No negative proof on stage: the struck uncited line with its dashed thread to a hollow square.
+- Half-written lines on a paused scroll: the beats are discrete time-based states, and only the rise is scrubbed.
+- Two CTAs in one section: "See every step" moved to the coda.
+- Coda thin on replies: the sorted list with the interview landing on top.
+- Short laptops and 200 percent zoom: the non-sticky fallback.
+- Data drift: `landingCopy.sample`.
+- Matching the pose to the painting: two fixed-aspect geometry sets in stage percentages, with a 3 percent tuning allowance.
+- Offset-path Safari risk: `stroke-dashoffset` on the existing wires.
+- Sticky inside a clip: the track and its ancestors carry no overflow clip or transform; only the stage panel clips.
+
+**Library mechanisms, by section.**
+- Strip: Magic UI Animated Beam (pulse along a path).
+- Problem: Aceternity Tracing Beam (the rail drawn by scroll); Magic UI Animated List (one-by-one arrival); Magic UI Highlighter (the marker band).
+- Chapter: Aceternity Sticky Scroll Reveal (the stage and the active index); Container Scroll Animation (the rise); Tracing Beam (threads drawn); Magic UI Animated Beam (a path between two measured refs, recomputed by ResizeObserver, used for the threads); Highlighter rebuilt as an ink strike; Aceternity Stateful Button (Approve).
+- Coda: Tracing Beam; Animated List (newest on top); Magic UI Interactive Hover Button (the arrow travel only).
+- All are rebuilt in-house with motion/react and CSS on Kairos tokens. Neither library is a dependency.
+
+**Not taken, by rule.**
+- Every glow and gradient: Animated Beam's gradient head, Tracing Beam's coloured gradient and travelling dot, Border Beam, Shine, Spotlight and the rest.
+- Springs and overshoot: Tracing Beam's `useSpring`, Animated List's 350/40 spring and scale-from-zero, Container Scroll's 1.05 scale, and the stamp press of 1.15 to 1.
+- Sticky Scroll Reveal's 0.3 opacity on inactive text (fails contrast; Deep Ash instead) and its hidden-below-lg stage (the stage stays on phones).
+- Highlighter's rough-notation dependency and sketch strokes.
+- Stateful Button's spinner, green check and layoutId; Interactive Hover Button's 100x dot fill and text swap.
+- Text Generate, Text Reveal and word-by-word scrubbed type: half-states and a low-contrast duplicate.
+- The Compare slider (Paper trail): a second interactive control in the span, and it doubles the text.
+- Lens: the threads already zoom into the citation.
+- 3D card tilt: pointer tilt under backdrop blur costs frames.
+- Dot and grid patterns: rails and grain are the only texture.
+- Marquee, logo clouds, number tickers, stats, testimonials and device mockups.
+- From the runners-up:
+  - The Walk's four-painting walk: horizons do not match, about 480svh of scroll, and the footbridge painting would repeat just before pricing.
+  - Paper trail's approval and stamp triggered by scroll: approval is the visitor's act.
+  - The Signature Line's struck complaint titles: they read as "never happens".
+  - Schedule A's numbered clauses: index collisions, and micro is reserved for chips and indices.
+  - Dropping the uncited line off the sheet: the product's editor keeps listing it, so it stays struck.
+  - Held's 4 px float during the hold: a third loop, and the threads would detach.
+  - Parallax inside the stage: it would misalign the DOM notes from the painted ones.
+- WebGL, canvas and frame sequences: none. The hero painting stays the LCP and the only eager image.
 
 ## Inner pages (2026-10-23)
 
@@ -538,11 +765,11 @@ Every route other than `/` follows the landing's system at a quieter scale. The 
 | `/contact` | `step-4-replies.png` | The mailbox |
 | `/blog` | `step-2-truth-lock.png` | The writing desk |
 | `/login`, `/sign-up`, other auth | `scene-a-dawn-valley-portrait.png` | Portrait crop for the auth side panel |
-| 404 | `dark-card-night.png` | The valley at night, one light left on: the way back |
+| 404 | `/landing/footer/meadow.mp4` | The 404 is a standalone full-viewport scene on the footer's meadow video (poster under reduced motion), with no LandingShell, nav or footer. Geist Mono 600 sets the numerals and the message (owner reference, 2026-10-30), and the Kairos lockup is the only link. |
 
-Blog posts, the legal pages and the error page carry no painting: they are reading pages on plain Linen.
+Blog posts, the legal pages and the error page (`error.tsx`) carry no painting: they are reading pages on plain Linen. The 404 is the exception described in the table: a standalone scene on the footer's meadow video.
 
-**Closing.** Pages that ask for sign-up (`/how-it-works`, `/pricing`, `/about`, `/careers`, `/blog`) end with the landing's closing band (`Entry10Start`), which keeps its serif line; it is the same element everywhere, not a new serif line. Legal pages, `/contact`, blog posts and the 404 end at the footer.
+**Closing.** Pages that ask for sign-up (`/how-it-works`, `/pricing`, `/about`, `/careers`, `/blog`) end with the landing's closing band (`Entry10Start`), which keeps its serif line; it is the same element everywhere, not a new serif line. Legal pages, `/contact` and blog posts end at the footer; the 404 has no shell at all (owner reference, 2026-10-30).
 
 **Density.** The landing budget holds per section (label of 1 to 3 words, headline of at most 8 words, one subline of at most 20 words, at most 3 short items, one visual, one CTA). Legal text and blog posts are exempt: they are long-form reading at `--c-copy` with a 66ch measure, 17 to 18 px body and 1.6 leading.
 

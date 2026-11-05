@@ -8,7 +8,7 @@ import { safeNext } from "@/lib/safe-next";
 import { Button } from "../shared/button";
 import { Field, Input } from "../shared/field";
 import { EMAIL_RE, FormError, FormNotice, INPUT, OrDivider, PasswordInput, useFieldErrors } from "./fields";
-import { GoogleButton } from "./google-button";
+import { SocialButtons } from "./social-buttons";
 
 export function LoginForm() {
   const router = useRouter();
@@ -41,7 +41,7 @@ export function LoginForm() {
   return (
     <div className="flex flex-col gap-5">
       {params.get("reset") ? <FormNotice>Password updated. Sign in with the new one.</FormNotice> : null}
-      <GoogleButton next={next} />
+      <SocialButtons next={next} />
       <OrDivider />
       <form noValidate onSubmit={onSubmit} onInput={clear} className="flex flex-col gap-4">
         <Field label="Email" htmlFor="email" error={errors.email}>

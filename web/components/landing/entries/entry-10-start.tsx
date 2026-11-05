@@ -1,43 +1,56 @@
 import Image from "next/image";
 import Link from "next/link";
+import type { CSSProperties } from "react";
 import { landingCopy } from "@/content/landing-copy";
+import { AppMockup } from "../hero/app-mockup";
 import { ApprovedLine } from "../islands/approved-line";
+import { StartParallax } from "../islands/start-parallax";
 import "./entry-10-start.css";
 
 const c = landingCopy.closing;
+const i = (n: number) => ({ "--i": n }) as CSSProperties;
 
 /**
- * A10 closing band (08 1.10): serif line over the dusk door painting (prompt.md #10) and the procedural dusk glow,
- * one button. Server component; the only client piece is ApprovedLine, which swaps the subline once the visitor has
- * approved. The painting sits behind the glow (.lp-glow-dusk; hot colours drop below the text under 1024), whose
- * Linen ellipse is the text scrim and which stands in if the file is missing; a mask dissolves the art layers into
- * the site haze above and the footer below so no hard edge shows.
+ * A10 closing band (owner 2026-10-30: the footer's dusk hills as the CTA's foreground). Two columns from 1024: the
+ * serif line, one subline and one Espresso pill on the left; the hero's app window on the right, sinking behind the
+ * dusk-hills painting that runs full width across the bottom and dissolves into Linen, where the footer's paper
+ * takes over. Server component; the client pieces are ApprovedLine (the subline swap) and StartParallax (the two
+ * scroll parallax layers). Copy enters with the lp-reveal stagger; with scripts off or Reduced everything sits in
+ * its final place.
  */
 export function Entry10Start() {
   const [before, after] = c.sublineApproved.split("{approvedTime}");
-  // The last two words never split at 640px and up, so the break is always "Try it on 25 / real applications."
-  const words = c.h2.split(" ");
-  const tail = words.splice(-2).join(" ");
   return (
-    <section id="entry-10" aria-labelledby="entry-10-title" className="lp-start lp-glow-dusk lp-drift">
-      <div className="lp-start__art">
-        {/* Cover by height, so it is drawn 3 x the band's min-height wide (entry-10-start.css). */}
+    <StartParallax
+      mock={<AppMockup className="lp-start__app" />}
+      hills={
         <Image
-          src="/landing/art/closing-dusk-door.png"
-          alt="At dusk the path reaches the open door, light spilling across the meadow."
+          src="/landing/art/footer-dusk-hills-2880x840.png"
+          alt=""
           fill
-          sizes="(min-width: 1280px) 2460px, (min-width: 1024px) 1800px, (min-width: 768px) 1680px, 1920px"
+          loading="lazy"
+          // Drawn at max(100vw, band floor x 2880 / 840): 830, 1100, 1240 and 1440 px at the floors (entry-10-start.css).
+          sizes="(min-width: 1440px) 100vw, (min-width: 1280px) 1440px, (min-width: 1024px) 1280px, (min-width: 768px) 1100px, 830px"
         />
-      </div>
-      <div className="lp-wrap lp-wrap--copy lp-start__stack">
-        <h2 id="entry-10-title" className="lp-serif-closing">
-          {words.join(" ")} <span className="lp-start__tail">{tail}</span>
+      }
+    >
+      <div className="lp-start__copy">
+        <h2 id="entry-10-title" className="lp-serif-closing lp-reveal" style={i(0)}>
+          {c.h2}
         </h2>
-        <ApprovedLine id="entry-10-body" defaultText={c.subline} before={before} after={after} />
-        <Link href="/sign-up" className="lp-btn lp-btn--lg lp-start__cta">
-          {c.cta}
-        </Link>
+        <div className="lp-reveal" style={i(1)}>
+          <ApprovedLine id="entry-10-body" defaultText={c.subline} before={before} after={after} />
+        </div>
+        {/* lp-reveal drives `translate` on the wrapper, so the button keeps the shared hover lift (globals.css). */}
+        <div className="lp-reveal lp-start__act" style={i(2)}>
+          <Link href="/sign-up" className="lp-btn lp-btn--lg lp-start__cta">
+            <span className="lp-roll">
+              <span>{c.cta}</span>
+              <span aria-hidden="true">{c.cta}</span>
+            </span>
+          </Link>
+        </div>
       </div>
-    </section>
+    </StartParallax>
   );
 }

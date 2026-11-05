@@ -29,7 +29,7 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
     const [co] = await db.insert(schema.companies).values({ name: "Co", ats: "greenhouse", boardToken: randomUUID() }).returning();
     const [j] = await db
       .insert(schema.jobs)
-      .values({ companyId: co!.id, externalId: randomUUID(), title: "E", descriptionText: "desc", applyUrl: "https://job-boards.greenhouse.io/x/jobs/1", raw: { a: 1 }, closedAt: closedDaysAgo === null ? null : ago(closedDaysAgo) })
+      .values({ companyId: co!.id, externalId: randomUUID(), title: "E", descriptionText: "desc", applyUrl: "https://job-boards.greenhouse.io/x/jobs/1", raw: { a: 1 }, closedAt: closedDaysAgo === null ? null : ago(closedDaysAgo), closedBy: closedDaysAgo === null ? null : "poll" })
       .returning();
     return j!.id;
   }

@@ -1,18 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useState } from "react";
+import { Suspense, useId, useState } from "react";
 import { useMatchActions, useMatches, type Match } from "@/hooks/use-matches";
 import { ButtonLink } from "../../shared/button";
 import { EmptyState } from "../../shared/empty-state";
 import { ErrorNote } from "../../shared/error-note";
-import { Panel } from "../../shared/panel";
 import { Skeleton } from "../../shared/skeleton";
 import { FilterBar, FilterEmpty, FilterMenu, useClearFilters, useUrlParam } from "../applications/filter-chips";
 import { GateArt } from "../queue/empty-art";
 import { apiMessage, inlineLink } from "../queue/send-controls";
 import { JobUrlImport } from "./job-url-import";
-import { MatchCard, SET_ASIDE } from "./match-card";
+import { boardLabel, MatchCard, SET_ASIDE } from "./match-card";
 
 const BOARDS = ["greenhouse", "lever", "ashby"];
 const WORK = [
@@ -56,11 +55,11 @@ function Matches() {
   const feed = shown.filter((m) => !SET_ASIDE[m.status]);
   const aside = shown.filter((m) => SET_ASIDE[m.status]);
   const filtered = board !== "all" || work !== "all";
-  const boardOptions = boards.map((b) => ({ value: b, label: b.charAt(0).toUpperCase() + b.slice(1), count: all.filter((m) => m.company.ats === b && match(m, "board")).length }));
+  const boardOptions = boards.map((b) => ({ value: b, label: boardLabel(b), count: all.filter((m) => m.company.ats === b && match(m, "board")).length }));
   const workOptions = works.map((w) => ({ ...w, count: all.filter((m) => workOf(m) === w.value && match(m, "work")).length }));
   const busy = queue.isPending || skip.isPending;
 
-  const row = (m: Match) => (
+  const card = (m: Match) => (
     <MatchCard
       key={m.id}
       match={m}
@@ -81,7 +80,7 @@ function Matches() {
   return (
     <div className="flex flex-col gap-6">
       <JobUrlImport />
-      <p role="status" className={notice ? "rounded-card bg-sunk px-4 py-3 text-sm text-ink" : "sr-only"}>
+      <p role="status" className={notice ? "glass-panel rounded-card px-5 py-3 text-sm text-ink" : "sr-only"}>
         {notice?.kind === "queue" ? (
           <>
             Preparing a draft for {notice.match.job.title} at {notice.match.company.name}. It appears in your{" "}
@@ -105,18 +104,17 @@ function Matches() {
       ) : null}
 
       {feed.length ? (
-        <Panel
-          flush
+        <MatchSection
           title="Passed your fit bar"
           description={`${feed.length} ${feed.length === 1 ? "job" : "jobs"}, best fit first.`}
           action={
-            <Link href="/preferences" className={`${inlineLink} inline-flex min-h-11 items-center text-sm`}>
+            <Link href="/preferences" className={`${inlineLink} inline-flex min-h-11 items-center`}>
               Change fit rules
             </Link>
           }
         >
-          <ul>{feed.map(row)}</ul>
-        </Panel>
+          {feed.map(card)}
+        </MatchSection>
       ) : filtered && all.length ? (
         <FilterEmpty noun="matches" onClear={clearAll} />
       ) : (
@@ -134,47 +132,85 @@ function Matches() {
       )}
 
       {aside.length ? (
-        <Panel flush title="Set aside" description="Skipped by you or the fit gate, with the reason it gave.">
-          <ul>{aside.map(row)}</ul>
-        </Panel>
+        <MatchSection title="Set aside" description="Skipped by you or the fit gate, with the reason it gave.">
+          {aside.map(card)}
+        </MatchSection>
       ) : null}
     </div>
   );
 }
 
-/** Same frame as the loaded feed: panel header, then rows of score, title, meta, reasons and actions. */
+const GRID = "grid grid-cols-1 gap-4 lg:grid-cols-2";
+
+/** A heading on the backdrop (16px and up, so no glass needed), then the card grid: glass per card, never glass on glass. */
+function MatchSection({ title, description, action, children }: { title: string; description: string; action?: React.ReactNode; children: React.ReactNode }) {
+  const id = useId();
+  return (
+    <section aria-labelledby={id} className="flex flex-col gap-4">
+      <header className="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h2 id={id} className="text-lg font-medium tracking-[-0.01em] text-ink">
+            {title}
+          </h2>
+          <p className="max-w-[65ch] text-base text-body">{description}</p>
+        </div>
+        {action}
+      </header>
+      <ul className={GRID}>{children}</ul>
+    </section>
+  );
+}
+
+/** Same frame as the loaded page: import panel, filter bar, section heading, then the card grid. */
 function MatchListSkeleton() {
   return (
-    <div className="flex flex-col gap-6">
-    <div className="flex flex-col gap-3 glass-panel rounded-card p-6">
-      <Skeleton className="h-6 w-40" />
-      <Skeleton className="h-11 w-full" />
-    </div>
-    <div className="-mb-2 flex gap-2">
-      <Skeleton className="h-11 w-24 rounded-pill" />
-      <Skeleton className="h-11 w-32 rounded-pill" />
-    </div>
-    <section aria-busy="true" aria-label="Loading matches" className="glass-panel rounded-card">
-      <div className="flex flex-col gap-2 px-6 pt-6 pb-4">
-        <Skeleton className="h-6 w-48" />
-        <Skeleton className="h-4 w-32" />
+    <div role="status" aria-busy="true" className="flex flex-col gap-6">
+      <span className="sr-only">Loading matches</span>
+      <div className="glass-panel flex flex-col gap-3 rounded-card p-6">
+        <Skeleton className="h-6 w-40" />
+        <Skeleton className="h-11 w-full" />
       </div>
-      {Array.from({ length: 4 }, (_, i) => (
-        <div key={i} className="grid grid-cols-[3rem_minmax(0,1fr)] gap-4 border-t border-line px-4 py-5 sm:px-6 md:grid-cols-[3.5rem_minmax(0,1fr)_14rem] md:gap-x-6">
-          <Skeleton className="h-7 w-10" />
-          <div className="flex flex-col gap-2">
-            <Skeleton className="h-5 w-3/5" />
-            <Skeleton className="h-4 w-2/5" />
-            <Skeleton className="mt-2 h-4 w-4/5" />
-            <Skeleton className="h-4 w-3/5" />
+      <div className="glass-panel mb-4 grid grid-cols-2 gap-1 rounded-card p-1 sm:flex">
+        {[0, 1].map((i) => (
+          <div key={i} className="flex min-h-14 flex-col justify-center gap-1.5 px-4 sm:w-52">
+            <Skeleton className="h-3 w-14" />
+            <Skeleton className="h-4 w-24" />
           </div>
-          <div className="col-start-2 flex gap-2 md:col-start-3 md:row-start-1 md:justify-end">
-            <Skeleton className="h-11 w-20 rounded-pill" />
-            <Skeleton className="h-11 w-32 rounded-pill" />
-          </div>
+        ))}
+      </div>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-6 w-48" />
+          <Skeleton className="h-5 w-36" />
         </div>
-      ))}
-    </section>
+        <div className={GRID}>
+          {Array.from({ length: 4 }, (_, i) => (
+            <div key={i} className="glass-panel flex flex-col rounded-card">
+              <div className="flex flex-col gap-4 p-5 sm:p-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex flex-1 flex-col gap-2">
+                    <Skeleton className="h-7 w-3/5" />
+                    <Skeleton className="h-4 w-2/5" />
+                  </div>
+                  <Skeleton className="h-8 w-20 rounded-pill" />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Skeleton className="h-7 w-48 rounded-pill" />
+                  <Skeleton className="h-7 w-40 rounded-pill" />
+                  <Skeleton className="h-7 w-56 rounded-pill" />
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-4 border-t border-line px-5 py-3 sm:px-6">
+                <Skeleton className="h-4 w-24" />
+                <div className="flex gap-2">
+                  <Skeleton className="h-11 w-18 rounded-pill" />
+                  <Skeleton className="h-11 w-22 rounded-pill" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

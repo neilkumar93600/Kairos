@@ -113,9 +113,9 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
   },
   // WP-27. The admin who acted, as a user id or 'system:<job>'. Rewritten to the pseudonym by the erasure worker; the
   // ops_audit trigger (migration 0015) accepts only that. metrics_minute holds no user data (counters by name and label).
-  { table: "ops_audit", column: "actor", erase: "pseudonymise", export: ALL },
-  { table: "ops_flags", column: "updated_by", erase: "pseudonymise", export: ALL },
-  { table: "feature_flags", column: "updated_by", erase: "pseudonymise", export: ALL },
+  { table: "ops_audit", column: "actor", erase: "pseudonymise", export: false, why: "internal operator audit log, not user data; pseudonymised at erasure" },
+  { table: "ops_flags", column: "updated_by", erase: "pseudonymise", export: false, why: "internal operator switches, not user data; pseudonymised at erasure" },
+  { table: "feature_flags", column: "updated_by", erase: "pseudonymise", export: false, why: "internal feature flags, not user data; pseudonymised at erasure" },
   {
     table: "llm_calls",
     column: "user_hash",

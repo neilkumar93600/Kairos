@@ -177,6 +177,10 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       llm_cost_daily: ["S", "SIU", "S"],
       user_daily_usage: ["SIU", "SIUD", "S"],
       ai_usage: ["SIU", "SD", ""],
+      action_tokens: ["SI", "SIUD", ""],
+      notifications: ["SI", "SIUD", ""],
+      email_suppressions: ["SIUD", "SI", ""],
+      email_sends: ["", "SIUD", ""],
       // WP-25: the archive and the erased-address list are never rewritten; readonly sees none of the four.
       deletion_tasks: ["SIU", "SIU", ""],
       consent_records: ["SIU", "SIU", ""],
