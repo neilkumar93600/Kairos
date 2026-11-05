@@ -189,6 +189,8 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       tracker_items: ["SIUD", "SI", ""],
       application_events: ["SI", "SI", "S"],
       submission_attempts: ["SIU", "SIU", "cols"],
+      // WP-24: the api stores and acknowledges a Gmail code; the worker reads it for the email and deletes it.
+      forwarding_verifications: ["SIU", "SD", ""],
     };
     const ROLES = ["kairos_api", "kairos_worker", "kairos_readonly"] as const;
     const PRIVS = { S: "SELECT", I: "INSERT", U: "UPDATE", D: "DELETE" } as const;
