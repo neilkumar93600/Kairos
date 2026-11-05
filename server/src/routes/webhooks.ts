@@ -13,6 +13,7 @@ import { enqueue } from "../jobs/queues";
 import { couponIdsOf, fetchStripeState, processStripeEvent } from "../services/billing-events";
 import { grantPlanCredits } from "../services/credits";
 import { stripeCustomerHash } from "../services/erasure";
+import { optOutOfBroadcast } from "../services/mail-preferences";
 import { INLINE_REQUEST, stripe, verifyStripeEvent } from "../services/stripe";
 
 /** Provider webhooks. Mounted at /api/webhooks BEFORE express.json(), because Stripe signs the raw body. */
@@ -139,6 +140,7 @@ const postmarkEvent = z.discriminatedUnion("RecordType", [
     Recipient: z.string().min(3).max(320),
     SuppressSending: z.boolean(),
     SuppressionReason: z.string().nullish(),
+    MessageStream: z.string().nullish(),
   }),
 ]);
 
@@ -163,6 +165,14 @@ webhooksRouter.post("/postmark-events", requireEventsToken, express.json({ limit
     throw new HttpError(422, "invalid_body", "Unreadable delivery event");
   }
   const e = parsed.data;
+  // Postmark suppresses a recipient who unsubscribes on a broadcast stream with ManualSuppression. That is an objection
+  // to optional mail, not to account mail (sign-in codes, resend links, forwarding codes): it goes through the
+  // preferences, never into the address-wide suppression list.
+  if (e.RecordType === "SubscriptionChange" && e.SuppressSending && e.SuppressionReason === "ManualSuppression" && e.MessageStream === env().POSTMARK_BROADCAST_STREAM) {
+    await db().transaction((tx) => optOutOfBroadcast(tx, e.Recipient));
+    logger.info({ recordType: e.RecordType, stream: "broadcast" }, "postmark broadcast unsubscribe");
+    return void res.json({ recorded: true });
+  }
   const hash = addressHash(e.RecordType === "SubscriptionChange" ? e.Recipient : e.Email);
   if (e.RecordType === "SpamComplaint" || (e.RecordType === "SubscriptionChange" && e.SuppressSending && e.SuppressionReason === "SpamComplaint")) {
     await db().insert(emailSuppressions).values({ addressHash: hash, reason: "spam_complaint" }).onConflictDoUpdate({ target: emailSuppressions.addressHash, set: { reason: "spam_complaint" } });

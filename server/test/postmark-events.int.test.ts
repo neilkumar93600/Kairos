@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
@@ -57,5 +58,27 @@ describe.skipIf(!hasTestDb)("Postmark delivery events against Postgres", () => {
     expect((await tdb.select().from(schema.emailSuppressions))[0]).toMatchObject({ reason: "hard_bounce" });
     await post({ RecordType: "SubscriptionChange", Recipient: "b@test.local", SuppressSending: false });
     expect(await tdb.select().from(schema.emailSuppressions)).toEqual([]);
+  });
+
+  it("an unsubscribe on the broadcast stream turns optional mail off and leaves account mail alone (WP-35)", async () => {
+    const res = await post({ RecordType: "SubscriptionChange", Recipient: `${userId}@test.local`, SuppressSending: true, SuppressionReason: "ManualSuppression", MessageStream: "broadcast" });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ recorded: true });
+    expect(await tdb.select().from(schema.emailSuppressions)).toEqual([]);
+    const [profile] = await tdb.select().from(schema.profiles).where(eq(schema.profiles.userId, userId));
+    expect([...profile!.mailOptOut].sort()).toEqual(["autopilot_summary", "digest", "outcome_report", "reminders"]);
+    expect(await tdb.select().from(schema.mailOptOuts)).toHaveLength(4);
+    expect(await notify.processNotify({ data: { kind: "digest", entityId: "s:1", userId } })).toEqual({ result: "suppressed", code: "unsubscribed" });
+    // An account email (transactional) still goes out.
+    notify.RENDERERS.forwarding_code = async (_e, uid) => ({ to: `${uid}@test.local`, subject: "code", text: "123456" });
+    expect(await notify.processNotify({ data: { kind: "forwarding_code", entityId: `${userId}:gmail:1`, userId } })).toEqual({ result: "sent" });
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("the same event on the transactional stream is an address-wide suppression", async () => {
+    await post({ RecordType: "SubscriptionChange", Recipient: `${userId}@test.local`, SuppressSending: true, SuppressionReason: "ManualSuppression", MessageStream: "outbound" });
+    expect(await tdb.select().from(schema.emailSuppressions)).toMatchObject([{ reason: "manual" }]);
+    const [profile] = await tdb.select().from(schema.profiles).where(eq(schema.profiles.userId, userId));
+    expect(profile!.mailOptOut).toEqual([]);
   });
 });
