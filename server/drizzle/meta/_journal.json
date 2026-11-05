@@ -131,15 +131,22 @@
     {
       "idx": 18,
       "version": "7",
-      "when": 1793852402126,
-      "tag": "0018_inbound_v2",
+      "when": 1793720777315,
+      "tag": "0018_verified_claims",
       "breakpoints": true
     },
     {
       "idx": 19,
       "version": "7",
-      "when": 1793852404159,
-      "tag": "0019_inbound_v2_indexes",
+      "when": 1793872583336,
+      "tag": "0019_inbound_v2",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793872585445,
+      "tag": "0020_inbound_v2_indexes",
       "breakpoints": true
     }
   ]

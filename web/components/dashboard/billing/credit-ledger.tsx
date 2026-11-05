@@ -27,7 +27,7 @@ function Balance({ label, value, note }: { label: string; value: number; note: s
     <div className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1 rounded-input p-5 sm:grid-cols-1 sm:items-start sm:gap-y-0 lg:p-6">
       <span className="text-sm text-faint">{label}</span>
       <span className="row-span-2 text-[44px] leading-none font-light tracking-[-0.02em] text-ink tabular-nums sm:row-span-1 sm:mt-6 lg:text-[52px] xl:text-[56px]">
-        {value}
+        {value.toLocaleString("en-US")}
       </span>
       <span className="text-sm text-body sm:mt-3">{note}</span>
     </div>
@@ -120,7 +120,7 @@ export function CreditLedger() {
                 <span className="order-1 min-w-0 flex-1 text-ink sm:order-2">{REASON[e.reason] ?? e.reason}</span>
                 <span className={`order-2 text-lg tabular-nums sm:order-3 sm:w-14 sm:text-right ${e.delta > 0 ? "text-ink" : "text-body"}`}>
                   <span className="sr-only">{e.delta > 0 ? "Added " : "Used "}</span>
-                  {e.delta > 0 ? `+${e.delta}` : String(e.delta).replace("-", "−")}
+                  {`${e.delta > 0 ? "+" : "−"}${Math.abs(e.delta).toLocaleString("en-US")}`}
                 </span>
                 <span className="order-3 w-full text-sm text-body tabular-nums sm:order-1 sm:w-28 sm:shrink-0">{formatDate(e.createdAt)}</span>
               </DataRow>

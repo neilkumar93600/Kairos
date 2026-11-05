@@ -255,3 +255,9 @@ GRANT SELECT, INSERT ON credit_ledger_archive, erased_emails TO kairos_api, kair
 GRANT DELETE ON contact_messages TO kairos_api;
 -- The erasure worker pseudonymises an erased admin's id in feature_flags.updated_by too (WP-25); nothing else changes.
 GRANT UPDATE (updated_by) ON feature_flags TO kairos_worker;
+
+-- WP-26 (migration 0018, 02-database 4.2): the verified_claims memo holds hashes and verdicts, no text and no user id.
+-- Both processes run the verifier (the routes on the api, prepare's tailor job on the worker) and read and write it;
+-- only the worker's retention job deletes expired rows. kairos_readonly and kairos_metrics read nothing here.
+GRANT SELECT, INSERT, UPDATE ON verified_claims TO kairos_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON verified_claims TO kairos_worker;

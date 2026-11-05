@@ -339,7 +339,10 @@ const envSchema = z.object({
   // Privacy (WP-25). Defaults are the spec's; counsel signs off the values (owner-actions/WP-25.md).
   /** The terms and privacy notice version a sign-up agrees to, stored in consent_records. Bump it with each new notice. */
   PRIVACY_NOTICE_VERSION: z.string().regex(/^[A-Za-z0-9._-]{1,40}$/).default("2026-10-30"),
-  /** Retention overrides in days, as "inbound_body=180,contact_messages=365" (rule names: jobs/retention.ts RETENTION_RULES). */
+  /**
+   * Retention overrides in days, as "inbound_body=180,contact_messages=365" (rule names: jobs/retention.ts RETENTION_RULES).
+   * verified_claims takes the key but ignores it: that rule goes by each row's own expires_at.
+   */
   RETENTION_DAYS: z
     .string()
     .default("")
@@ -473,15 +476,30 @@ export function setProcessRole(next: ProcessRole): void {
   role = next;
 }
 
+export function resetEnvCache(): void {
+  cached = undefined;
+  cachedApplier = undefined;
+}
+
 /** Parses process.env once for the api and the worker. Throws in the applier, so no applier path reaches a secret. */
 export function env(): Env {
   if (role === "applier") throw new Error("env() is not available in the applier; use applierEnv() or baseEnv()");
+  if (process.env.NODE_ENV === "test") {
+    if (cached && (cached.DATABASE_URL !== process.env.DATABASE_URL || (process.env.STRIPE_SECRET_KEY && !cached.STRIPE_SECRET_KEY))) {
+      cached = undefined;
+    }
+  }
   cached ??= parseEnv(process.env);
   return cached;
 }
 
 /** The applier's own env (envFor('applier')), parsed once. */
 export function applierEnv(): ApplierEnv {
+  if (process.env.NODE_ENV === "test") {
+    if (cachedApplier && cachedApplier.DATABASE_URL !== process.env.DATABASE_URL) {
+      cachedApplier = undefined;
+    }
+  }
   cachedApplier ??= envFor("applier", process.env);
   return cachedApplier;
 }

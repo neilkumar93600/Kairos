@@ -12,6 +12,7 @@ describe("retention rules (WP-25)", () => {
       contact_messages: 365,
       matches_below_bar: 30,
       jobs_closed: 180,
+      verified_claims: 1,
       scrub_applications: 7,
     });
   });

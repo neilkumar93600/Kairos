@@ -100,6 +100,11 @@ export const RETENTION_RULES = {
       (await batched(() => sql`update jobs set description_text = '', raw = null where id in (
         select id from jobs where closed_at < ${before(d)} and (description_text <> '' or raw is not null) limit ${BATCH})`)),
   },
+  /** The verifier memo (WP-26): rows past their own expires_at (24 hours at most); the day count is not used. */
+  verified_claims: {
+    days: 1,
+    run: () => batched(() => sql`delete from verified_claims where claim_hash in (select claim_hash from verified_claims where expires_at < now() limit ${BATCH})`),
+  },
   /** Sensitive answer and receipt values, after submitted or withdrawn (processScrubApplications). */
   scrub_applications: { days: 7, run: null },
 } as const;

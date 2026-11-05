@@ -239,7 +239,7 @@ const CHAPTERS: Chapter[] = [
 
 /**
  * The five steps: a contents rail (sticky from 1024, lit by a CSS-only scroll spy in how-it-works.css) beside the
- * chapters. Each chapter: badge and label, H3, one line, its painting with one sample card, up to three facts.
+ * chapters. Each chapter: badge and label, H3, one line, its painting with one pinned paper card, up to three facts.
  */
 export function HowItWorksChapters() {
   return (
@@ -298,7 +298,8 @@ export function HowItWorksChapters() {
                     style={{ objectPosition: c.art.position }}
                   />
                 </div>
-                <FloatingCard lift className="lp-panel__card">
+                {/* Pinned paper (DESIGN "Reference layer"): solid Paper White, so not glass; tilt, pin and thread in CSS. */}
+                <FloatingCard glass={false} className="lp-panel__card hiw-paper">
                   {c.card}
                 </FloatingCard>
               </div>

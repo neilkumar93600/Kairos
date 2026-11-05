@@ -4,8 +4,9 @@ import { useState, type CSSProperties } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { CheckCircle } from "@phosphor-icons/react";
-import { PLANS, type BillingInterval, type PlanId } from "@auto-career/shared";
+import { PLANS, type BillingInterval, type PlanId } from "@auto-career/shared/plans"; // not the barrel: it pulls in zod
 import { landingCopy } from "@/content/landing-copy";
+import { quarterlySaving } from "@/components/shared/pricing-plans";
 import { computeReceipt, type CalcPlanId } from "@/lib/landing/calculator";
 import { formatCredits, formatPerApp } from "@/lib/landing/format";
 import { useHydrated } from "@/lib/landing/use-hydrated";
@@ -15,6 +16,8 @@ import "./billing-plans.css";
 const c = landingCopy.pricing;
 const INTERVALS: readonly BillingInterval[] = ["week", "month", "quarter"];
 const BETA_TAGLINES: Partial<Record<PlanId, string>> = c.betaTaglines;
+// Best quarterly saving against three monthly invoices across paid plans; quarterlySaving reads plans.ts and rounds down.
+const SAVE_UP_TO = Math.max(0, ...PLANS.map((plan) => quarterlySaving(plan) ?? 0));
 
 /** G3: "Cloud applier: sends ..." -> "Cloud applier (in beta): sends ...". */
 function gate(feature: string) {
@@ -60,6 +63,13 @@ export function BillingPlans() {
                 }}
               />
               {c.intervals[k]}
+              {/* Part of the radio's name ("Quarterly Save up to 21%"); light glass on art below 1024, Bone inside. */}
+              {v === "quarter" && SAVE_UP_TO > 0 ? (
+                <>
+                  {" "}
+                  <span className="bp-save glass">{`Save up to ${SAVE_UP_TO}%`}</span>
+                </>
+              ) : null}
             </label>
           ))}
         </fieldset>

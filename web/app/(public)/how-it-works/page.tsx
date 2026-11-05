@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Entry10Start } from "@/components/landing/entries/entry-10-start";
+import { AtsHub } from "@/components/marketing/ats-hub";
 import { PageHero } from "@/components/marketing/page-hero";
 import { HowItWorksChapters, PostingCard } from "@/components/marketing/how-it-works/chapters";
 import { HowItWorksLimits } from "@/components/marketing/how-it-works/limits";
@@ -24,6 +25,8 @@ export default function HowItWorksPage() {
       >
         <PostingCard />
       </PageHero>
+      {/* The boards the lead names, wired into Kairos, before the five steps start. */}
+      <AtsHub className="lp-section lp-wrap lp-wrap--main" />
       <HowItWorksChapters />
       <HowItWorksLimits />
       <Entry10Start />

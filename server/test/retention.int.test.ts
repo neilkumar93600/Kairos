@@ -29,7 +29,7 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
     const [co] = await db.insert(schema.companies).values({ name: "Co", ats: "greenhouse", boardToken: randomUUID() }).returning();
     const [j] = await db
       .insert(schema.jobs)
-      .values({ companyId: co!.id, externalId: randomUUID(), title: "E", descriptionText: "desc", applyUrl: "https://job-boards.greenhouse.io/x/jobs/1", raw: { a: 1 }, closedAt: closedDaysAgo === null ? null : ago(closedDaysAgo) })
+      .values({ companyId: co!.id, externalId: randomUUID(), title: "E", descriptionText: "desc", applyUrl: "https://job-boards.greenhouse.io/x/jobs/1", raw: { a: 1 }, closedAt: closedDaysAgo === null ? null : ago(closedDaysAgo), closedBy: closedDaysAgo === null ? null : "poll" })
       .returning();
     return j!.id;
   }
@@ -47,10 +47,16 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
     // So is a job a tailored resume was made for (WP-17): the copy would lose the job it names.
     const document = { name: "n", density: "comfortable" as const, contact: { name: "n", email: "", phone: "", location: "", links: [] }, sections: [] };
     await db.insert(schema.resumes).values({ userId, kind: "tailored", name: "For E", jobId: tailored, document });
+    // The verifier memo (WP-26): an expired verdict goes, a live one stays.
+    await db.insert(schema.verifiedClaims).values([
+      { claimHash: Buffer.alloc(32, 1), verdict: "supported", checkSource: "verifier", createdAt: ago(2), expiresAt: ago(1.5) },
+      { claimHash: Buffer.alloc(32, 2), verdict: "unsupported", checkSource: "verifier", expiresAt: new Date(Date.now() + 3_600_000) },
+    ]);
 
     expect(await retention.processRetention()).toEqual({
-      inbound_body: 1, inbound_hidden: 0, forwarding_codes: 0, forwarding_stale: 0, contact_messages: 1, matches_below_bar: 0, jobs_closed: 4,
+      inbound_body: 1, inbound_hidden: 0, forwarding_codes: 0, forwarding_stale: 0, contact_messages: 1, matches_below_bar: 0, jobs_closed: 4, verified_claims: 1,
     });
+    expect((await db.select().from(schema.verifiedClaims)).map((r) => r.verdict)).toEqual(["unsupported"]);
     expect((await db.select().from(schema.inboundEmails)).map((r) => r.textBody)).toEqual(expect.arrayContaining([null, "new"]));
     expect((await db.select().from(schema.contactMessages)).map((r) => r.message)).toEqual(["new"]);
     const jobs = await db.select().from(schema.jobs);
@@ -60,7 +66,7 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
     expect(jobs.find((j) => j.id === saved)).toMatchObject({ descriptionText: "", raw: null });
     // A second run changes nothing.
     expect(await retention.processRetention()).toEqual({
-      inbound_body: 0, inbound_hidden: 0, forwarding_codes: 0, forwarding_stale: 0, contact_messages: 0, matches_below_bar: 0, jobs_closed: 0,
+      inbound_body: 0, inbound_hidden: 0, forwarding_codes: 0, forwarding_stale: 0, contact_messages: 0, matches_below_bar: 0, jobs_closed: 0, verified_claims: 0,
     });
   });
 

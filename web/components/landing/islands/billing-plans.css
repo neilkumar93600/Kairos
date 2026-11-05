@@ -19,6 +19,24 @@
 .lp .bp-seg { width: 100%; }
 .lp .bp-seg > label { padding-inline: 8px; }
 
+/* Quarterly saving chip (docs/DESIGN.md "Reference layer"). It lives in the Quarterly label, so it is part of that
+   radio's name. Below 1024 a segment is too narrow for it, so it hangs under the Quarterly segment, on the painting:
+   a light glass pill (.glass, fallbacks included) with ink text, and the toggle reserves the room under itself. From
+   1024 it sits inside the segment as a Bone chip, since glass on the glass track would stack blur. */
+.lp .bp-seg { margin-block-end: 30px; }
+.lp .bp-save {
+  position: absolute; top: calc(100% + 8px); right: 0;
+  display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px; border-radius: var(--r-pill);
+  color: var(--ink); font: 500 var(--t-micro) / 1 var(--font-ui); white-space: nowrap;
+}
+@media (min-width: 1024px) {
+  .lp .bp-seg { margin-block-end: 0; }
+  .lp .bp-save {
+    position: static; border: 0; background: var(--sunk); box-shadow: none;
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+  }
+}
+
 @media (min-width: 768px) {
   .lp .bp-banner {
     flex-direction: row; align-items: flex-end; min-height: 0; aspect-ratio: 3 / 1; padding: 40px;
@@ -41,9 +59,24 @@
   display: grid; grid-template-columns: 1fr; gap: 16px;
 }
 @media (min-width: 768px) { .lp .bp-plans { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 1280px) { .lp .bp-plans { grid-template-columns: repeat(4, 1fr); } }
 /* One column: the recommended plan comes first. DOM order stays by price. */
 @media (max-width: 767px) { .lp .bp-card--featured { order: -1; } }
+
+/* Landing v3 (docs/DESIGN.md): the recommended plan keeps an ink edge at every width. From 1024 the four plans share
+   one row (a raise only reads in a single row) and it is raised 16 px with the hover shadow; the grid drops 16 px more
+   so the raised card keeps the 16 px gap to the banner. transform, not translate: .lp-reveal drives translate. The
+   raise is position, not motion, so it stays under reduced motion. */
+.lp .bp-card--featured { border-color: var(--ink); }
+@media (min-width: 1024px) {
+  .lp .bp-plans { grid-template-columns: repeat(4, 1fr); margin-top: 32px; }
+  .lp .bp-card--featured { transform: translateY(-16px); box-shadow: var(--sh-glass-hover); }
+}
+/* 1024 to 1279: four columns are 220 px, so the panel, button and numeral tighten to keep "Choose Starter" on one line. */
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .lp .bp-panel { padding: 16px; }
+  .lp .bp-btn { padding-inline: 16px; }
+  .lp .bp-price .lp-numeral { font-size: 52px; }
+}
 
 .lp .bp-card {
   display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 0;

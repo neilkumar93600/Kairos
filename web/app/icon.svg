@@ -1,8 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="46" height="40" viewBox="0 0 46 40" fill="none">
-  <g id="logomark">
-    <path d="M0 33L4.60606 25H12.2448C17.2569 25 21.4947 28.7103 22.1571 33.6784L23 40H13L11.5585 36.6365C10.613 34.4304 8.44379 33 6.04362 33H0Z" fill="#0047C1"/>
-    <path d="M46 33L41.3939 25H33.7552C28.7431 25 24.5053 28.7103 23.8429 33.6784L23 40H33L34.4415 36.6365C35.387 34.4304 37.5562 33 39.9564 33H46Z" fill="#0047C1"/>
-    <path d="M4.60608 25L18.9999 0H23L22.6032 9.52405C22.2608 17.7406 15.7455 24.3596 7.53539 24.8316L4.60608 25Z" fill="#0047C1"/>
-    <path d="M41.3939 25L27.0001 0H23L23.3968 9.52405C23.7392 17.7406 30.2545 24.3596 38.4646 24.8316L41.3939 25Z" fill="#0047C1"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="#1b0624">
+  <!-- Kairos favicon: the door mark hand-hinted to a 16 px grid (2 px frame, 1 px channel at the hinge, 3 px leaf, the light shaft rising through a 4 px lintel notch). Linen in dark tabs. -->
+  <style>@media (prefers-color-scheme: dark) { svg { fill: #f7f7f5; } }</style>
+  <path d="M1 16V1H8V3H3V16Z M12 1H15V16H13V3H12Z" shape-rendering="crispEdges"/>
+  <path d="M4 3L7 5.5V13.5L4 16Z"/>
+  <path d="M10 0L12 9L10 16L8 9Z"/>
 </svg>

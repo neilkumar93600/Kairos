@@ -21,9 +21,9 @@ describe("agent registry", () => {
     expect(crlf.system).toBe("a\nb");
   });
 
-  it("registers the six P1 agents", () => {
+  it("registers the six P1 agents and the two verifiers", () => {
     expect(Object.keys(AGENTS).sort()).toEqual(
-      ["answer-drafter", "cover-letter-writer", "fit-scorer", "resume-parser", "resume-tailor", "resume-writer"].sort(),
+      ["answer-drafter", "claim-verifier", "claim-verifier-escalation", "cover-letter-writer", "fit-scorer", "resume-parser", "resume-tailor", "resume-writer"].sort(),
     );
   });
 
@@ -74,7 +74,8 @@ describe("agent registry", () => {
 });
 
 function maxInputFor(spec: (typeof AGENTS)[keyof typeof AGENTS]): unknown {
-  // The maxTokens function of resume-writer keys off the scope; line is the small one.
+  // The maxTokens function of resume-writer keys off the scope; line is the small one. The verifier's keys off the claim count.
+  if (spec.id === "claim-verifier") return { claims: Array.from({ length: 40 }, () => ({})), facts: [], target: null };
   return { scope: "resume", refine: null, resumeView: "x", facts: [], noteFact: null, job: null, maxSuggestions: 1 };
 }
 

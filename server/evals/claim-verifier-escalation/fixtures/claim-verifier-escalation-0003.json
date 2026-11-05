@@ -1,0 +1,30 @@
+{
+  "caseId": "claim-verifier-escalation-0003",
+  "promptVersion": 1,
+  "promptSha256": "f536c5e39d3e24a1a04a86d732423b0f492a930636ee437fc02964237520761c",
+  "inputHash": "3722ae4b9a384fbe1c5aec5067e88fbf6b6e6b23370f137b2cf2fdd5d1871200",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "verdicts": [
+          {
+            "claimId": "c01",
+            "verdict": "unsupported",
+            "factRef": null
+          },
+          {
+            "claimId": "c02",
+            "verdict": "unsupported",
+            "factRef": null
+          },
+          {
+            "claimId": "c03",
+            "verdict": "supported",
+            "factRef": "f1"
+          }
+        ]
+      }
+    }
+  ]
+}

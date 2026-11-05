@@ -1,5 +1,5 @@
 {
-  "id": "75e1c255-3763-4247-b0ae-65520b5b26af",
+  "id": "29e778f6-aac1-4527-a23d-f35295bc191c",
   "prevId": "9e6eaabb-d71a-48d9-b486-cd53eea6d1e5",
   "version": "7",
   "dialect": "postgresql",
@@ -4422,105 +4422,6 @@
       },
       "isRLSEnabled": false
     },
-    "public.forwarding_verifications": {
-      "name": "forwarding_verifications",
-      "schema": "",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "provider": {
-          "name": "provider",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "code": {
-          "name": "code",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "confirm_url": {
-          "name": "confirm_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "received_at": {
-          "name": "received_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "acknowledged_at": {
-          "name": "acknowledged_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "forwarding_verifications_user_id_user_id_fk": {
-          "name": "forwarding_verifications_user_id_user_id_fk",
-          "tableFrom": "forwarding_verifications",
-          "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "forwarding_verifications_user_id_provider_pk": {
-          "name": "forwarding_verifications_user_id_provider_pk",
-          "columns": [
-            "user_id",
-            "provider"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "forwarding_verifications_provider_ck": {
-          "name": "forwarding_verifications_provider_ck",
-          "value": "provider IN ('gmail')"
-        },
-        "forwarding_verifications_payload_ck": {
-          "name": "forwarding_verifications_payload_ck",
-          "value": "code IS NOT NULL OR confirm_url IS NOT NULL"
-        },
-        "forwarding_verifications_code_ck": {
-          "name": "forwarding_verifications_code_ck",
-          "value": "code IS NULL OR code ~ '^[0-9]{6,12}$'"
-        },
-        "forwarding_verifications_url_ck": {
-          "name": "forwarding_verifications_url_ck",
-          "value": "confirm_url IS NULL OR (confirm_url ~ '^https://' AND char_length(confirm_url) <= 2048)"
-        },
-        "forwarding_verifications_expiry_ck": {
-          "name": "forwarding_verifications_expiry_ck",
-          "value": "expires_at > received_at"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.inbound_emails": {
       "name": "inbound_emails",
       "schema": "",
@@ -4566,76 +4467,12 @@
           "name": "text_body",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
-        },
-        "text_body_enc": {
-          "name": "text_body_enc",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "preview_enc": {
-          "name": "preview_enc",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "attachments": {
-          "name": "attachments",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "spam_score": {
-          "name": "spam_score",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "hidden_reason": {
-          "name": "hidden_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "verified_domains": {
-          "name": "verified_domains",
-          "type": "text[]",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::text[]"
+          "notNull": true
         },
         "kind": {
           "name": "kind",
           "type": "email_kind",
           "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "rule_kind": {
-          "name": "rule_kind",
-          "type": "email_kind",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "model_kind": {
-          "name": "model_kind",
-          "type": "email_kind",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "linked_by": {
-          "name": "linked_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "classified_at": {
-          "name": "classified_at",
-          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -4690,54 +4527,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "inbound_emails_unclassified_idx": {
-          "name": "inbound_emails_unclassified_idx",
-          "columns": [
-            {
-              "expression": "received_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"inbound_emails\".\"classified_at\" IS NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "inbound_emails_body_purge_idx": {
-          "name": "inbound_emails_body_purge_idx",
-          "columns": [
-            {
-              "expression": "received_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"inbound_emails\".\"text_body_enc\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "inbound_emails_hidden_idx": {
-          "name": "inbound_emails_hidden_idx",
-          "columns": [
-            {
-              "expression": "received_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"inbound_emails\".\"hidden_reason\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -4779,44 +4568,7 @@
         }
       },
       "policies": {},
-      "checkConstraints": {
-        "inbound_emails_hidden_reason_ck": {
-          "name": "inbound_emails_hidden_reason_ck",
-          "value": "hidden_reason IS NULL OR hidden_reason IN ('forwarding_confirmation','spam')"
-        },
-        "inbound_emails_linked_by_ck": {
-          "name": "inbound_emails_linked_by_ck",
-          "value": "linked_by IS NULL OR linked_by IN ('domain','company_name','none')"
-        },
-        "inbound_emails_one_classifier_ck": {
-          "name": "inbound_emails_one_classifier_ck",
-          "value": "rule_kind IS NULL OR model_kind IS NULL"
-        },
-        "inbound_emails_attachments_ck": {
-          "name": "inbound_emails_attachments_ck",
-          "value": "jsonb_typeof(attachments) = 'array' AND jsonb_array_length(attachments) <= 50"
-        },
-        "inbound_emails_body_preview_pair_ck": {
-          "name": "inbound_emails_body_preview_pair_ck",
-          "value": "(text_body_enc IS NULL) = (preview_enc IS NULL)"
-        },
-        "inbound_emails_body_size_ck": {
-          "name": "inbound_emails_body_size_ck",
-          "value": "octet_length(text_body_enc) <= 16448"
-        },
-        "inbound_emails_preview_size_ck": {
-          "name": "inbound_emails_preview_size_ck",
-          "value": "octet_length(preview_enc) <= 1200"
-        },
-        "inbound_emails_hidden_no_body_ck": {
-          "name": "inbound_emails_hidden_no_body_ck",
-          "value": "hidden_reason IS NULL OR (text_body IS NULL AND text_body_enc IS NULL AND preview_enc IS NULL)"
-        },
-        "inbound_emails_verified_domains_ck": {
-          "name": "inbound_emails_verified_domains_ck",
-          "value": "cardinality(verified_domains) <= 2"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.notifications": {
@@ -5666,7 +5418,84 @@
       "checkConstraints": {
         "ops_flags_key_ck": {
           "name": "ops_flags_key_ck",
-          "value": "key ~ '^(pause_cloud_apply|pause_scoring|llm_paused|approvals_frozen|cloud_applier_open|llm_shed_level|extension_only:(greenhouse|lever|ashby))$'"
+          "value": "key ~ '^(pause_cloud_apply|pause_scoring|llm_paused|approvals_frozen|cloud_applier_open|llm_shed_level|extension_only:(greenhouse|lever|ashby)|verifier_mode:(suggestions|tailor|drafts|prepare|patch)|(agent_disabled|prompt_pin|model_pin|prompt_canary|prompt_shadow):(resume-parser|jd-analyst|fit-scorer|resume-tailor|resume-writer|answer-drafter|cover-letter-writer|claim-verifier|claim-verifier-escalation|reply-classifier|outcome-analyst|interview-coach))$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.verified_claims": {
+      "name": "verified_claims",
+      "schema": "",
+      "columns": {
+        "claim_hash": {
+          "name": "claim_hash",
+          "type": "bytea",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "verdict": {
+          "name": "verdict",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "check_source": {
+          "name": "check_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "verified_claims_expires_idx": {
+          "name": "verified_claims_expires_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "verified_claims_hash_ck": {
+          "name": "verified_claims_hash_ck",
+          "value": "octet_length(\"verified_claims\".\"claim_hash\") = 32"
+        },
+        "verified_claims_verdict_ck": {
+          "name": "verified_claims_verdict_ck",
+          "value": "\"verified_claims\".\"verdict\" in ('supported', 'unsupported', 'contradicted')"
+        },
+        "verified_claims_source_ck": {
+          "name": "verified_claims_source_ck",
+          "value": "\"verified_claims\".\"check_source\" in ('verifier', 'escalation')"
+        },
+        "verified_claims_expiry_ck": {
+          "name": "verified_claims_expiry_ck",
+          "value": "\"verified_claims\".\"expires_at\" > \"verified_claims\".\"created_at\" and \"verified_claims\".\"expires_at\" <= \"verified_claims\".\"created_at\" + interval '24 hours'"
         }
       },
       "isRLSEnabled": false

@@ -1,5 +1,7 @@
 import { sql } from "drizzle-orm";
 import { boolean, check, doublePrecision, index, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+// The column type only; platform.ts's tables stay out of schema/index.ts.
+import { bytea } from "./platform";
 
 /**
  * Operator switches (WP-27): pause_cloud_apply, pause_scoring, llm_paused, approvals_frozen, llm_shed_level,
@@ -17,7 +19,8 @@ export const opsFlags = pgTable(
     // Only the keys lib/flags.ts knows: a typo written by hand cannot sit there silently doing nothing.
     check(
       "ops_flags_key_ck",
-      sql`key ~ '^(pause_cloud_apply|pause_scoring|llm_paused|approvals_frozen|cloud_applier_open|llm_shed_level|extension_only:(greenhouse|lever|ashby))$'`,
+      // WP-26 adds the per-agent families (03-agent-runtime 4.5, 14.2) and verifier_mode:<path> (agents/08 8).
+      sql`key ~ '^(pause_cloud_apply|pause_scoring|llm_paused|approvals_frozen|cloud_applier_open|llm_shed_level|extension_only:(greenhouse|lever|ashby)|verifier_mode:(suggestions|tailor|drafts|prepare|patch)|(agent_disabled|prompt_pin|model_pin|prompt_canary|prompt_shadow):(resume-parser|jd-analyst|fit-scorer|resume-tailor|resume-writer|answer-drafter|cover-letter-writer|claim-verifier|claim-verifier-escalation|reply-classifier|outcome-analyst|interview-coach))$'`,
     ),
   ],
 );
@@ -62,4 +65,28 @@ export const metricsMinute = pgTable(
     value: doublePrecision("value").notNull(),
   },
   (t) => [primaryKey({ columns: [t.minute, t.name, t.label] }), index("metrics_minute_name_minute_idx").on(t.name, t.minute)],
+);
+
+/**
+ * 02-database 7.6.5 (WP-26): the 24-hour memo of claim-verifier verdicts. No text and no user id: claim_hash is an
+ * HMAC under USER_HASH_KEY of the claim, its cited fact ids and texts, the target and the verifier version
+ * (services/verify.ts), so a guessed claim cannot be tested against it. 'uncertain' is never cached. Unlogged (a crash
+ * empties it, which only costs re-verification); migration 0018 sets that by hand.
+ */
+export const verifiedClaims = pgTable(
+  "verified_claims",
+  {
+    claimHash: bytea("claim_hash").primaryKey(),
+    verdict: text("verdict").notNull(),
+    checkSource: text("check_source").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    check("verified_claims_hash_ck", sql`octet_length(${t.claimHash}) = 32`),
+    check("verified_claims_verdict_ck", sql`${t.verdict} in ('supported', 'unsupported', 'contradicted')`),
+    check("verified_claims_source_ck", sql`${t.checkSource} in ('verifier', 'escalation')`),
+    check("verified_claims_expiry_ck", sql`${t.expiresAt} > ${t.createdAt} and ${t.expiresAt} <= ${t.createdAt} + interval '24 hours'`),
+    index("verified_claims_expires_idx").on(t.expiresAt),
+  ],
 );

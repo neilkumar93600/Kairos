@@ -19,6 +19,7 @@ import type { AgentCallContext } from "../agents/types";
 import { chatJson } from "./llm";
 import type { ProfileFact } from "./resume-doc";
 import { topFacts } from "./job-fit";
+import { requireVerifierOrShadow, verifyClaims } from "./verify";
 
 export interface WriterContext {
   resume: ResumeInput;
@@ -214,6 +215,9 @@ export async function suggestEdits(
   deps: WriterDeps,
 ): Promise<{ suggestions: ResumeSuggestion[]; factCreated: ProfileFact | null }> {
   const view = scopeView(ctx.resume, req); // before the note is saved: a bad request creates nothing
+  const viaGateway = Boolean(deps.callCtx) || (!deps.chat && gatewayEnabled());
+  // The legacy client has no layer 3: enforce refuses here, before the note and before any spend.
+  if (!viaGateway) await requireVerifierOrShadow("suggestions");
   const factCreated = req.note
     ? await deps.createFact({ kind: noteKind(req.note, req.scope === "resume" ? null : (view[0]?.kind ?? null)), text: req.note })
     : null;
@@ -236,7 +240,7 @@ export async function suggestEdits(
   const out =
     // The gateway path (LLM_GATEWAY=anthropic): suggestions come back and the same verify()
     // pipeline below applies the truth rules in code.
-    deps.callCtx || (!deps.chat && gatewayEnabled())
+    viaGateway
       ? await runAgent(
           resumeWriter,
           {
@@ -268,5 +272,14 @@ export async function suggestEdits(
     .map((m) => verify(m, targets, citable, req.refine))
     .filter((s): s is ResumeSuggestion => s !== null)
     .slice(0, max);
-  return { suggestions, factCreated };
+  if (!viaGateway) return { suggestions, factCreated };
+  // Layer 3 on text the user could accept. Suggestions neither escalate nor repair: the user is waiting on a Sonnet
+  // call already (agents/09 1), and a dropped suggestion costs only a shorter list.
+  const { dropped } = await verifyClaims(
+    suggestions.flatMap((s) => (s.after === null || s.needsFact ? [] : [{ key: s.id, kind: "resume_line" as const, text: s.after, factIds: s.factIds }])),
+    new Map([...citable].map(([id, f]) => [id, f.text])),
+    { path: "suggestions", target: null, ctx: deps.callCtx ?? {}, escalate: false },
+  );
+  const drop = new Set(dropped.map((d) => d.key));
+  return { suggestions: suggestions.filter((s) => !drop.has(s.id)), factCreated };
 }
