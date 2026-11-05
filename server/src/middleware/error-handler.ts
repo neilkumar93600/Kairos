@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/node";
 import type { NextFunction, Request, Response } from "express";
 import { HttpError, nextUtcMidnight } from "../lib/errors";
-import { logger, logUserHash } from "../lib/logger";
+import { logger, logUserHash, redactUrl } from "../lib/logger";
 import { AgentError } from "../llm/errors";
 import { LlmError } from "../services/llm";
 
@@ -38,7 +38,7 @@ function aiError(err: AgentError | LlmError): HttpError {
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   // A handler that failed after its deadline already got its 503 timeout (middleware/deadline.ts): nothing left to send.
   if (res.writableEnded) {
-    logger.warn({ requestId: res.getHeader("x-request-id"), path: req.path, method: req.method }, "error after the response ended");
+    logger.warn({ requestId: res.getHeader("x-request-id"), path: redactUrl(req.path), method: req.method }, "error after the response ended");
     return;
   }
   const requestId = res.getHeader("x-request-id");
@@ -47,7 +47,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     const code = err instanceof AgentError ? err.code : "legacy_client";
     // A bad input or precheck is our bug; the rest is the provider or a budget doing its job.
     const level = code === "invalid_request" || code === "precheck_failed" ? "error" : "warn";
-    logger[level]({ aiCode: code, requestId, path: req.path, method: req.method }, "model call failed on a route");
+    logger[level]({ aiCode: code, requestId, path: redactUrl(req.path), method: req.method }, "model call failed on a route");
     err = aiError(err);
   }
   if (err instanceof HttpError) {
@@ -67,10 +67,10 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     res.status(parser.status).json({ error: { code: "bad_request", message: "The request could not be read", ...rid } });
     return;
   }
-  logger.error({ err, requestId, path: req.path, method: req.method }, "unhandled error");
+  logger.error({ err, requestId, path: redactUrl(req.path), method: req.method }, "unhandled error");
   // Tags and the userHash only; lib/sentry.ts scrubs the rest. A no-op without SENTRY_DSN.
   Sentry.captureException(err, {
-    tags: { requestId: rid.requestId, method: req.method, path: req.path },
+    tags: { requestId: rid.requestId, method: req.method, path: redactUrl(req.path) },
     user: req.user ? { id: logUserHash(req.user.id) } : undefined,
   });
   res.status(500).json({ error: { code: "internal", message: "Something went wrong on our side", ...rid } });

@@ -282,3 +282,20 @@ export const notificationsResponseSchema = z.object({
 });
 export const notificationsReadSchema = z.union([z.strictObject({ ids: z.array(z.uuid()).min(1).max(100) }), z.strictObject({ all: z.literal(true) })]);
 export type NotificationsRead = z.infer<typeof notificationsReadSchema>;
+
+// Reply forwarding setup (WP-24, 05-api 12.x "Forwarding"). Informational: no product gate depends on the state.
+export const FORWARDING_STATES = ["not_started", "awaiting_verification", "verified_pending_first_mail", "active", "stale"] as const;
+export type ForwardingState = (typeof FORWARDING_STATES)[number];
+export const forwardingStatusSchema = z.object({
+  state: z.enum(FORWARDING_STATES),
+  address: z.string(),
+  lastMailAt: z.string().nullable(),
+  /** The Gmail code and confirmation link Kairos received for the user, for 3 days, or null. */
+  verification: z
+    .object({ provider: z.literal("gmail"), code: z.string().nullable(), confirmUrl: z.url().nullable(), expiresAt: z.string() })
+    .nullable(),
+});
+export type ForwardingStatus = z.infer<typeof forwardingStatusSchema>;
+/** "I have set it up": the only signal Gmail or Outlook gives. */
+export const forwardingConfirmSchema = z.strictObject({ provider: z.enum(["gmail", "outlook", "other"]) });
+export type ForwardingConfirm = z.infer<typeof forwardingConfirmSchema>;

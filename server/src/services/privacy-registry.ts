@@ -88,7 +88,16 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
   { table: "tracker_items", column: "user_id", erase: "cascade", export: ALL },
   { table: "application_events", column: "user_id", erase: "cascade", export: ALL },
   { table: "submission_attempts", column: "user_id", erase: "cascade", export: { omit: ["session_id", "worker_identity"] } },
-  { table: "inbound_emails", column: "user_id", erase: "cascade", export: ALL },
+  // WP-24. Body and preview are stored encrypted (AAD inbound_emails:<id>:text_body and :preview); the export decrypts
+  // them and keeps the legacy plaintext column until WP-46 drops it.
+  {
+    table: "inbound_emails",
+    column: "user_id",
+    erase: "cascade",
+    export: { decrypt: { text_body_enc: "text_body", preview_enc: "preview" } },
+  },
+  // WP-24: a Gmail forwarding code and link Kairos received for the user, kept at most 3 days.
+  { table: "forwarding_verifications", column: "user_id", erase: "cascade", export: ALL },
   { table: "subscriptions", column: "user_id", erase: "cascade", export: ALL },
   { table: "credit_ledger", column: "user_id", erase: "archive", export: ALL },
   { table: "user_daily_usage", column: "user_id", erase: "cascade", export: ALL },
@@ -142,9 +151,7 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
  * Entries for tables other packages add on branches not merged here yet. At their integration the entries move into
  * PRIVACY_REGISTRY, and the coverage tests fail until they do.
  */
-export const AT_MERGE: Record<string, readonly PrivacyEntry[]> = {
-  // WP-24 (reply encryption): inbound_emails gains decrypt { text_body_enc, preview_enc } with their AAD column names.
-};
+export const AT_MERGE: Record<string, readonly PrivacyEntry[]> = {};
 
 /** Entries whose rows carry the user id directly: the ones erasure verifies are gone and export selects by id. */
 export const userKeyed = () => PRIVACY_REGISTRY.filter((e) => !e.by && !e.parent);

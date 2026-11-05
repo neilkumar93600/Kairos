@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyByRules, senderDomain } from "../src/services/email-classifier";
+import { classifyByRules, stripQuoted } from "../src/services/email-classifier";
 
 describe("classifyByRules", () => {
   it.each([
@@ -18,9 +18,5 @@ describe("classifyByRules", () => {
 
   it("returns null when nothing matches", () => {
     expect(classifyByRules("Newsletter", "Our product update")).toBeNull();
-  });
-
-  it("extracts the sender domain", () => {
-    expect(senderDomain("Acme Recruiting <jobs@Acme.com>")).toBe("acme.com");
   });
 });

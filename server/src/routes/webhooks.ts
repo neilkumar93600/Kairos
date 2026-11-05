@@ -3,16 +3,18 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client";
-import { deletionTasks, emailSuppressions, inboundEmails, profiles, stripeEvents, subscriptions, user } from "../db/schema";
+import { deletionTasks, emailSuppressions, stripeEvents, subscriptions, user } from "../db/schema";
 import { env } from "../lib/env";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
-import { slo } from "../lib/metrics";
+import { count, slo } from "../lib/metrics";
+import { signal } from "../lib/sentry";
 import { addressHash } from "../lib/mailer";
-import { enqueue } from "../jobs/queues";
+import { bodyPermit } from "../middleware/deadline";
 import { couponIdsOf, fetchStripeState, processStripeEvent } from "../services/billing-events";
 import { grantPlanCredits } from "../services/credits";
 import { stripeCustomerHash } from "../services/erasure";
+import { postmarkInboundSchema, storeInboundEmail } from "../services/inbound";
 import { INLINE_REQUEST, stripe, verifyStripeEvent } from "../services/stripe";
 
 /** Provider webhooks. Mounted at /api/webhooks BEFORE express.json(), because Stripe signs the raw body. */
@@ -77,52 +79,68 @@ webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1
   }
 });
 
-const postmarkInbound = z.object({
-  MessageID: z.string(),
-  From: z.string(),
-  OriginalRecipient: z.string().optional(),
-  To: z.string(),
-  Subject: z.string().default(""),
-  TextBody: z.string().default(""),
+/**
+ * Inbound mail, the route Postmark posts to (05-api 14.3): `POST /api/webhooks/postmark/inbound/:pathSecret` behind
+ * three checks: the path secret, HTTP Basic credentials embedded in the webhook URL, and TLS. The current and the
+ * previous secret and password both pass while a rotation is in progress. Every comparison hashes both sides first
+ * (safeEqual), so neither content nor length leaks, and all checks run whatever the first one said. A failure answers
+ * exactly as a route that does not exist, before any byte of the body is read; the path is logged as :pathSecret.
+ */
+function requirePostmarkInbound(req: Request, _res: Response, next: NextFunction) {
+  const e = env();
+  const auth = /^Basic ([A-Za-z0-9+/]+={0,2})$/.exec(req.header("authorization") ?? "")?.[1];
+  const decoded = auth ? Buffer.from(auth, "base64").toString("utf8") : "";
+  const colon = decoded.indexOf(":");
+  const [user, password] = colon < 0 ? ["", ""] : [decoded.slice(0, colon), decoded.slice(colon + 1)];
+  const oneOf = (value: string, secrets: (string | undefined)[]) => secrets.map((s) => (s ? safeEqual(value, s) : false)).includes(true);
+  const configured = Boolean(e.POSTMARK_INBOUND_PATH_SECRET && e.POSTMARK_INBOUND_BASIC_USER && e.POSTMARK_INBOUND_BASIC_PASSWORD);
+  const pathOk = oneOf(String(req.params.pathSecret ?? ""), [e.POSTMARK_INBOUND_PATH_SECRET, e.POSTMARK_INBOUND_PATH_SECRET_PREVIOUS]);
+  const userOk = oneOf(user, [e.POSTMARK_INBOUND_BASIC_USER]);
+  const passwordOk = oneOf(password, [e.POSTMARK_INBOUND_BASIC_PASSWORD, e.POSTMARK_INBOUND_BASIC_PASSWORD_PREVIOUS]);
+  if (!(configured && pathOk && userOk && passwordOk && req.protocol === "https")) {
+    signal("inbound_token_rejected");
+    throw new HttpError(404, "route_not_found", "No such route");
+  }
+  next();
+}
+
+/** One body over 5 MB at a time per replica (05-api 2.4, 14.3); a second answers 503 and Postmark retries it. */
+const LARGE_BODY = 5 * 1024 * 1024;
+const largeBodyPermit = bodyPermit(1, 0);
+const largeBodyGate = (req: Request, res: Response, next: NextFunction) => {
+  const length = req.headers["content-length"];
+  if (length !== undefined && Number(length) <= LARGE_BODY) return next();
+  largeBodyPermit(req, res, next);
+};
+
+// Postmark accepts messages up to 35 MB and posts attachments base64-encoded in the JSON, so the body can be larger
+// still. A reply (offer or rejection) must never be lost to a size limit, hence 50 MB on these routes, but only after
+// the credentials pass. inflate:false: Postmark sends plain JSON, and a small gzip body must not expand into 50 MB.
+// ponytail: the whole body is parsed in memory; stream-parse and drop Attachments if large mail becomes common.
+const inboundJson = express.json({ limit: "50mb", inflate: false });
+
+webhooksRouter.post("/postmark/inbound/:pathSecret", requirePostmarkInbound, largeBodyGate, inboundJson, async (req, res) => {
+  const parsed = postmarkInboundSchema.safeParse(req.body);
+  // 400 on this route only (05-api 14.3): Postmark retries a non-200 a few times, then marks it "Inbound Error".
+  if (!parsed.success) throw new HttpError(400, "invalid_body", "Some fields are invalid", parsed.error.issues.map((i) => i.path.join(".")));
+  res.json(await storeInboundEmail(parsed.data));
 });
 
-/** Stored mail text is capped here, so a 35 MB reply cannot fill the table; the classifier reads the first 4,000 characters anyway. */
-const INBOUND_TEXT_MAX_BYTES = 16_384;
-
-/** Cuts to a UTF-8 byte budget; a character split by the cut decodes to U+FFFD, which is trimmed off the end. */
-const capText = (text: string) => Buffer.from(text).subarray(0, INBOUND_TEXT_MAX_BYTES).toString().replace(/\uFFFD+$/, "");
-
-/** The token rides in the query string, so it is checked before any byte of the body is read or inflated. */
+/** The legacy ?token= route (05-api 14.4), checked before any byte of the body is read; same store, one table. */
 function requireInboundToken(req: Request, _res: Response, next: NextFunction) {
   const token = typeof req.query.token === "string" ? req.query.token : "";
   if (!safeEqual(token, env().INBOUND_WEBHOOK_SECRET)) throw new HttpError(403, "forbidden", "Bad inbound token");
   next();
 }
 
-// Postmark accepts messages up to 35 MB and posts attachments base64-encoded in the JSON, so the body can be larger
-// still. A reply (offer or rejection) must never be lost to a size limit, hence 50 MB on this one route, but only
-// after the token passes. inflate:false: Postmark sends plain JSON, and a small gzip body must not expand into 50 MB.
-// ponytail: the whole body is parsed in memory; stream-parse and drop Attachments if large mail becomes common.
-webhooksRouter.post("/inbound-email", requireInboundToken, express.json({ limit: "50mb", inflate: false }), async (req, res) => {
-  const parsed = postmarkInbound.safeParse(req.body);
-  if (!parsed.success) throw new HttpError(422, "invalid_body", "Some fields are invalid", parsed.error.issues);
-  const mail = parsed.data;
-  const recipient = (mail.OriginalRecipient ?? mail.To).toLowerCase().match(/[a-z0-9._+-]+@[a-z0-9.-]+/)?.[0];
-  const [profile] = recipient ? await db().select({ userId: profiles.userId }).from(profiles).where(eq(profiles.forwardingAddress, recipient)) : [];
-  if (!profile) return void res.json({ stored: false });
-
-  const [stored] = await db()
-    .insert(inboundEmails)
-    .values({ userId: profile.userId, providerMessageId: mail.MessageID, sender: mail.From, subject: mail.Subject, textBody: capText(mail.TextBody) })
-    .onConflictDoNothing()
-    .returning({ id: inboundEmails.id });
-  // A redelivery queues the stored row again while it is unclassified: Postmark retries the 500 of an enqueue that
-  // failed after the insert (messaging-08). The job id makes a second add a no-op.
-  const [pending] = stored
-    ? [stored]
-    : await db().select({ id: inboundEmails.id }).from(inboundEmails).where(and(eq(inboundEmails.providerMessageId, mail.MessageID), isNull(inboundEmails.kind)));
-  if (pending) await enqueue("classify-email", { inboundEmailId: pending.id }, `classify-${pending.id}`);
-  res.json({ stored: Boolean(stored) });
+// Kept for the week Postmark is moved to the new URL; removal gate in owner-actions/WP-24.md.
+webhooksRouter.post("/inbound-email", requireInboundToken, inboundJson, async (req, res) => {
+  count("inbound.legacy_calls");
+  logger.warn("legacy inbound route called; point Postmark at /api/webhooks/postmark/inbound/:pathSecret");
+  const parsed = postmarkInboundSchema.safeParse(req.body);
+  if (!parsed.success) throw new HttpError(422, "invalid_body", "Some fields are invalid", parsed.error.issues.map((i) => i.path.join(".")));
+  const { stored } = await storeInboundEmail(parsed.data);
+  res.json({ stored });
 });
 
 /**

@@ -1,6 +1,12 @@
 import type { EmailKind } from "@auto-career/shared";
 
 /**
+ * Bump with any change to a rule below. A change also needs a green test/fixtures/inbox/rules-golden.jsonl and an owner
+ * review, because the offer rule is the only path to a billing pause (workers/10-inbound-email.md 3.3).
+ */
+export const RULES_VERSION = 1;
+
+/**
  * The `offer` rule must not fire on "pleased to offer you an interview": it needs an offer of a job, not of a next step.
  * The tag is informational only; it changes no billing state (see classify-email.ts).
  */
@@ -22,8 +28,17 @@ export function classifyByRules(subject: string, body: string): EmailKind | null
   return null;
 }
 
-/** Pulls the employer domain so a reply can be matched to an application at that company. */
-export function senderDomain(sender: string): string | null {
-  const match = sender.match(/@([a-z0-9.-]+\.[a-z]{2,})/i);
-  return match?.[1]?.toLowerCase() ?? null;
+/**
+ * The reply without the history under it (messaging-16): drops lines quoted with `>`, everything from an "On ... wrote:"
+ * line or an Outlook "-----Original Message-----" on, and a `-- ` signature. A Gmail "Forwarded message" block stays: in
+ * a manual forward it is the employer's mail, and the linker reads its From line.
+ */
+export function stripQuoted(body: string): string {
+  const text = body.replace(/\r\n?/g, "\n");
+  const cut = text.search(/^(?:On\b[^\n]{0,300}(?:\n[^\n]{0,300})?\bwrote:[ \t]*$|-{3,}[ \t]*Original Message[ \t]*-{3,}|--[ \t]*$)/im);
+  return (cut < 0 ? text : text.slice(0, cut))
+    .split("\n")
+    .filter((line) => !/^[ \t]*>/.test(line))
+    .join("\n")
+    .trim();
 }
