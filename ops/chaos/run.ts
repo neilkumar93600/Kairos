@@ -31,6 +31,7 @@ import { Redis } from "ioredis";
 import pg from "pg";
 import { readMigrations, runMigrations } from "../../server/src/db/migrator";
 import * as schema from "../../server/src/db/schema";
+import { envFor } from "../../server/src/lib/env";
 import { verdict } from "./verdict";
 
 const need = (name: string): string => {
@@ -128,10 +129,14 @@ const childEnv = {
   BETTER_AUTH_SECRET: "chaos-secret-chaos-secret-chaos-secret-1",
   BETTER_AUTH_URL: "http://localhost:3000",
   WEB_ORIGIN: "http://localhost:3000",
-  INBOUND_WEBHOOK_SECRET: "chaos",
+  INBOUND_WEBHOOK_SECRET: "chaos-inbound-secret",
   STRIPE_PRICES: JSON.stringify({ "pro:month": "price_chaos" }),
   USER_HASH_KEY: Buffer.alloc(32, 9).toString("base64"),
 };
+
+// A bad env would otherwise show as children crash-looping behind the kills.
+envFor("worker", childEnv);
+envFor("applier", childEnv);
 
 const children = new Map<string, ChildProcess>();
 let stopping = false;
