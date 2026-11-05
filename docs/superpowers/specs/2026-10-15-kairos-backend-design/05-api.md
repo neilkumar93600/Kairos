@@ -752,6 +752,7 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `applications.approve` | `POST /api/applications/approve` | session-nocache | `approveApplicationsSchema` | 200 `approveResponseSchema` | `forbidden`, `payment_required` | workflow-id | frozen+additive | P2 |
 | `applications.drafts` | `POST /api/applications/:id/drafts` | session . ai_burst | `draftRequestSchema` | 200 `draftResponseSchema` | `not_found`, `profile_only`, `forbidden`, `truth_lock`, `ai_unavailable` | none | frozen | P3 |
 | `applications.withdraw` | `POST /api/applications/:id/withdraw` | session | | 200 `{ ok: true }` | `not_found` | natural | frozen | P2 |
+| `applications.stage.clear` | `POST /api/applications/:id/stage/clear` | session | | 200 `{ stage, detached }` (`stage`: `applied` for a submitted application, else null) | `not_found`, `conflict` | natural | new | P2 |
 | `applications.prepare` | `POST /api/applications/:id/prepare` | session . prepare | | 202 `{ id, draftState }` | `not_found`, `conflict` | workflow-id | new | P3 |
 | `applications.pdf` | `GET /api/applications/:id/pdf` | session | | 200 `application/pdf` | `not_found`, `not_ready` | none | new | P3 |
 | `applications.events` | `GET /api/applications/:id/events` | session | `pageQuerySchema` | 200 `eventsResponseSchema` | `not_found` | none | new | P2 |
@@ -1209,7 +1210,7 @@ The skeleton answers `{ applicationId: null }` with status 200 for every refusal
 
 **`GET /api/applications`** keeps its query (`status`, validated against `APPLICATION_STATUSES`; an invalid value is 400 `invalid_param`), its order (`updatedAt desc`, `id` tiebreaker) and its default and frozen limit of 200. Rows are built by `serializeApplicationRow`: the frozen keys (`id`, `status`, `channel`, `approvedAt`, `submittedAt`, `failureReason`, `job { id, title, location, applyUrl }`, `company { name, ats }`) plus the optional `draftState`, `stage`, `approvedBy` and `updatedAt`. The list never carries lines, answers, letters or the job description, so a page of 200 stays under 100 KB.
 
-**`GET /api/applications/:id`** returns `{ application, job, companyName }` through three explicit serializers; nothing is spread from a row (A-4).
+**`GET /api/applications/:id`** returns `{ application, job, companyName }` through three explicit serializers; nothing is spread from a row (A-4). WP-24 adds `stage` beside them, additive and nullable: the reply-driven stage, which `applications.stage.clear` can undo.
 
 | Object | Exposed (frozen keys, byte-compatible) | Exposed (additive, optional) | Never exposed |
 |---|---|---|---|
