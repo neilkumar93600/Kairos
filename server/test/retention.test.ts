@@ -8,6 +8,7 @@ describe("retention rules (WP-25)", () => {
       inbound_body: 180,
       contact_messages: 365,
       matches_below_bar: 30,
+      board_requests: 180,
       jobs_closed: 180,
       scrub_applications: 7,
     });

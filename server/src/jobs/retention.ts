@@ -55,6 +55,11 @@ export const RETENTION_RULES = {
       batched(() => sql`delete from matches where id in (
         select id from matches where status = 'below_bar' and status_changed_at < ${before(d)} limit ${BATCH})`),
   },
+  /** WP-23, database-101: a pasted link nobody has sent again in six months. ponytail: scans a table the size of the owner's queue. */
+  board_requests: {
+    days: 180,
+    run: (d: number) => batched(() => sql`delete from board_requests where id in (select id from board_requests where last_seen_at < ${before(d)} limit ${BATCH})`),
+  },
   /** Closed postings: deleted when no application or tracker item points at them, else their description and raw purged. */
   jobs_closed: {
     days: 180,

@@ -48,7 +48,7 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
     const document = { name: "n", density: "comfortable" as const, contact: { name: "n", email: "", phone: "", location: "", links: [] }, sections: [] };
     await db.insert(schema.resumes).values({ userId, kind: "tailored", name: "For E", jobId: tailored, document });
 
-    expect(await retention.processRetention()).toEqual({ inbound_body: 1, contact_messages: 1, matches_below_bar: 0, jobs_closed: 4 });
+    expect(await retention.processRetention()).toEqual({ inbound_body: 1, contact_messages: 1, matches_below_bar: 0, board_requests: 0, jobs_closed: 4 });
     expect((await db.select().from(schema.inboundEmails)).map((r) => r.textBody).sort()).toEqual(["", "new"]);
     expect((await db.select().from(schema.contactMessages)).map((r) => r.message)).toEqual(["new"]);
     const jobs = await db.select().from(schema.jobs);
@@ -57,7 +57,7 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
     expect(jobs.find((j) => j.id === referenced)).toMatchObject({ descriptionText: "", raw: null });
     expect(jobs.find((j) => j.id === saved)).toMatchObject({ descriptionText: "", raw: null });
     // A second run changes nothing.
-    expect(await retention.processRetention()).toEqual({ inbound_body: 0, contact_messages: 0, matches_below_bar: 0, jobs_closed: 0 });
+    expect(await retention.processRetention()).toEqual({ inbound_body: 0, contact_messages: 0, matches_below_bar: 0, board_requests: 0, jobs_closed: 0 });
   });
 
   it("blanks sensitive values 7 days after submitted or withdrawn, once, and leaves the rest", async () => {
