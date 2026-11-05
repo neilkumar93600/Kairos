@@ -20,6 +20,8 @@ export interface TenantIds {
   resumeId: string;
   revisionId: string;
   importId: string;
+  /** WP-35: a saved search. */
+  savedSearchId: string;
 }
 
 /** Exempt from the two-user check, with the reason: no session user, or a credential of its own. */
@@ -54,6 +56,8 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "POST /api/webhooks/inbound-email": { public: "Postmark inbound: the token is the credential; mail is filed by forwarding address" },
   "POST /api/webhooks/postmark-events": { public: "Postmark delivery events: the token is the credential; it only adds or lifts address-hash suppressions" },
   "POST /api/contact": { public: "the public contact form: stores a message and reads nothing back" },
+  "GET /api/unsubscribe": { public: "the signed token is the credential; GET only reads, and shows what a POST would stop" },
+  "POST /api/unsubscribe": { public: "the signed token is the credential; it turns off one optional mail kind for the token's own user" },
   "GET /api/auth-providers": { public: "the configured sign-in methods; no user data" },
 
   "GET /api/me": own("/api/me"),
@@ -145,6 +149,17 @@ export const MATRIX: Record<string, MatrixEntry> = {
   // WP-44: every statement filters by the caller's user id; read-all touches only the caller's unread rows.
   "GET /api/notifications": own("/api/notifications"),
   "POST /api/notifications/read": own("/api/notifications/read", { all: true }),
+  // WP-35: email preferences act on the caller's own profile; a saved search is reached by id and by owner.
+  "GET /api/email-preferences": own("/api/email-preferences"),
+  "PATCH /api/email-preferences": own("/api/email-preferences", { digest: true }),
+  "GET /api/saved-searches": own("/api/saved-searches"),
+  "POST /api/saved-searches": own("/api/saved-searches", { name: "Remote only", filters: { remoteOnly: true }, frequency: "weekly" }),
+  "PATCH /api/saved-searches/:id": { request: (t) => ({ path: `/api/saved-searches/${t.savedSearchId}`, body: { frequency: "off" } }) },
+  "DELETE /api/saved-searches/:id": {
+    request: (t) => ({ path: `/api/saved-searches/${t.savedSearchId}` }),
+    foreign: 204,
+    why: "an idempotent delete: a missing or foreign id is 204 and deletes nothing (05-api 10.8)",
+  },
 };
 
 type Layer = { route?: { path: string | string[]; methods: Record<string, boolean> }; handle: { stack?: Layer[] }; mountPath?: string | string[] };

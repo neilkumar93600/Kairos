@@ -18,13 +18,18 @@ import { jobsRouter } from "./jobs";
 import { matchesRouter } from "./matches";
 import { meRouter } from "./me";
 import { notificationsRouter } from "./notifications";
+import { emailPreferencesRouter } from "./preferences";
 import { profileRouter } from "./profile";
 import { resumeRouter } from "./resume";
 import { resumesRouter } from "./resumes";
+import { savedSearchesRouter } from "./saved-searches";
+import { unsubscribeRouter } from "./unsubscribe";
 
 /** Every JSON route under /api. Auth routes (/api/auth/*) and webhooks are mounted separately in app.ts. */
 export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   const router = Router();
+  // Signed-link pages (routes/links.ts): the token is the credential, so they sit above the anonymous limiter and behind their own class.
+  router.use("/unsubscribe", routeDeadline, limits.link, unsubscribeRouter);
   router.use(routeDeadline, limits.anon);
 
   router.use("/contact", limits.contact, contactRouter);
@@ -64,6 +69,8 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   router.use("/resumes", authed, resumesRouter);
   router.use("/admin", requireAdmin(gateway), limits.user, noStore, adminRouter);
   router.use("/notifications", authed, notificationsRouter);
+  router.use("/email-preferences", authed, emailPreferencesRouter);
+  router.use("/saved-searches", authed, savedSearchesRouter);
   router.use(countFailedSignIn(limits));
   return router;
 }

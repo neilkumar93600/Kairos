@@ -73,6 +73,7 @@ const MISSING: TenantIds = {
   resumeId: randomUUID(),
   revisionId: randomUUID(),
   importId: randomUUID(),
+  savedSearchId: randomUUID(),
 };
 
 /** "Bearer <userId>" signs in as that seeded user; anything else is signed out. A bearer request skips originGuard. */
@@ -156,6 +157,7 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
     const source = `Led the ${tag} platform team for two years and shipped the billing service.`;
     await tdb.insert(schema.resumeImports).values({ id: importId, userId, resumeProfileId: resumeProfile!.id, sourceKind: "text", sourceTextEnc: encrypt(source, sourceAad(importId)), sourceHash: sourceHash(source), parseStatus: "parsed", parsedAt: new Date() });
     await tdb.update(schema.facts).set({ resumeProfileId: resumeProfile!.id, importId }).where(eq(schema.facts.id, fact!.id));
+    const [savedSearch] = await tdb.insert(schema.savedSearches).values({ userId, name: `${tag} jobs`, filters: { roles: [`${tag} Engineer`] } }).returning();
     await tdb.insert(schema.inboundEmails).values({
       userId,
       applicationId: application!.id,
@@ -168,7 +170,7 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
     await tdb.insert(schema.session).values({ id: randomUUID(), token: `${MARKER}-${letter}`, userId, expiresAt: new Date(Date.now() + 86_400_000) });
     const fileKey = `snapshots/${userId}/cv.pdf`;
     await r2.storage.put(fileKey, `%PDF-1.7 ${tag}`, "application/pdf");
-    return { userId, tag, customerId, applicationId: application!.id, factId: fact!.id, answerId: answer!.id, matchId: match!.id, jobId: job!.id, fileKey, resumeId: resume!.id, revisionId: revision!.id, importId };
+    return { userId, tag, customerId, applicationId: application!.id, factId: fact!.id, answerId: answer!.id, matchId: match!.id, jobId: job!.id, fileKey, resumeId: resume!.id, revisionId: revision!.id, importId, savedSearchId: savedSearch!.id };
   }
 
   /** Every row a user owns, each table's rows as sorted JSON, so two reads compare whatever order Postgres returns. */
@@ -189,6 +191,7 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
       applications: json(await tdb.select().from(s.applications).where(eq(s.applications.userId, userId))),
       creditLedger: json(await tdb.select().from(s.creditLedger).where(eq(s.creditLedger.userId, userId))),
       inboundEmails: json(await tdb.select().from(s.inboundEmails).where(eq(s.inboundEmails.userId, userId))),
+      savedSearches: json(await tdb.select().from(s.savedSearches).where(eq(s.savedSearches.userId, userId))),
       aiUsage: json(await tdb.select().from(aiUsage).where(eq(aiUsage.userId, userId))),
       account: json(await tdb.select().from(s.account).where(eq(s.account.userId, userId))),
       session: json(await tdb.select().from(s.session).where(eq(s.session.userId, userId))),
