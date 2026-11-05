@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, jsonb, pgTable, primaryKey, real, smallint, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, date, index, jsonb, pgTable, primaryKey, real, smallint, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { applications } from "./applications";
 import { user } from "./auth";
 import { emailKind } from "./enums";
@@ -104,9 +104,17 @@ export const contactMessages = pgTable(
     message: text("message").notNull(),
     /** WP-25: keyed hash of the normalized sender address, so erasure finds a +tag or dotted alias of the account's address. */
     emailHash: text("email_hash"),
+    /** WP-35: sha256(lower(email) 
+ topic 
+ message); with received_on it makes a retried or double-clicked form store one row. Null on older rows. */
+    messageHash: bytea("message_hash"),
+    /** The UTC day of receipt, the other half of the dedupe key. */
+    receivedOn: date("received_on", { mode: "string" }).notNull().default(sql`(now() AT TIME ZONE 'UTC')::date`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    uniqueIndex("contact_messages_dedupe_uq").on(t.messageHash, t.receivedOn),
+    check("contact_messages_hash_ck", sql`octet_length(${t.messageHash}) = 32`),
     check("contact_messages_topic_ck", sql`topic IN ('support','billing','partnership','press','other')`),
     check("contact_messages_email_hash_ck", sql`email_hash ~ '^[0-9a-f]{64}$'`),
     index("contact_messages_email_hash_idx").on(t.emailHash).where(sql`${t.emailHash} is not null`),
@@ -232,5 +240,25 @@ export const emailSuppressions = pgTable(
   (t) => [
     check("email_suppressions_hash_ck", sql`octet_length(${t.addressHash}) = 32`),
     check("email_suppressions_reason_ck", sql`${t.reason} IN ('hard_bounce','spam_complaint','manual')`),
+  ],
+);
+
+/**
+ * The optional mail a person turned off, kept by address after the account is erased, on purpose (WP-35, like
+ * email_suppressions): a person who unsubscribed and signs up again with the same address stays opted out until they turn
+ * the kind on themselves. Keyed by HMAC(USER_HASH_KEY, "suppress:" + address) (lib/mailer.ts addressHash), so no address is
+ * stored. The kinds are profiles.mail_opt_out's keys; turning a kind back on deletes its row.
+ */
+export const mailOptOuts = pgTable(
+  "mail_opt_outs",
+  {
+    addressHash: bytea("address_hash").notNull(),
+    kind: text("kind").notNull(),
+    createdAt: tstz("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.addressHash, t.kind] }),
+    check("mail_opt_outs_hash_ck", sql`octet_length(${t.addressHash}) = 32`),
+    check("mail_opt_outs_kind_ck", sql`${t.kind} IN ('digest','outcome_report','autopilot_summary','reminders')`),
   ],
 );

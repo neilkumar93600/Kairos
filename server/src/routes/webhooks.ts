@@ -14,6 +14,7 @@ import { bodyPermit } from "../middleware/deadline";
 import { couponIdsOf, fetchStripeState, processStripeEvent } from "../services/billing-events";
 import { grantPlanCredits } from "../services/credits";
 import { stripeCustomerHash } from "../services/erasure";
+import { optOutOfBroadcast } from "../services/mail-preferences";
 import { postmarkInboundSchema, storeInboundEmail } from "../services/inbound";
 import { INLINE_REQUEST, stripe, verifyStripeEvent } from "../services/stripe";
 
@@ -159,6 +160,7 @@ const postmarkEvent = z.discriminatedUnion("RecordType", [
     Recipient: z.string().min(3).max(320),
     SuppressSending: z.boolean(),
     SuppressionReason: z.string().nullish(),
+    MessageStream: z.string().nullish(),
   }),
 ]);
 
@@ -183,6 +185,15 @@ webhooksRouter.post("/postmark-events", requireEventsToken, express.json({ limit
     throw new HttpError(422, "invalid_body", "Unreadable delivery event");
   }
   const e = parsed.data;
+  // Postmark suppresses a recipient who unsubscribes on a broadcast stream with ManualSuppression. That is an objection
+  // to optional mail, not to account mail (sign-in codes, resend links, forwarding codes): it goes through the
+  // preferences, never into the address-wide suppression list. A missing stream counts as broadcast: only an event that
+  // names another stream is address-wide, so an unsubscribe can never lock a person out of sign-in codes.
+  if (e.RecordType === "SubscriptionChange" && e.SuppressSending && e.SuppressionReason === "ManualSuppression" && (e.MessageStream == null || e.MessageStream === env().POSTMARK_BROADCAST_STREAM)) {
+    await db().transaction((tx) => optOutOfBroadcast(tx, e.Recipient));
+    logger.info({ recordType: e.RecordType, stream: e.MessageStream ?? "(absent, read as broadcast)" }, "postmark broadcast unsubscribe");
+    return void res.json({ recorded: true });
+  }
   const hash = addressHash(e.RecordType === "SubscriptionChange" ? e.Recipient : e.Email);
   if (e.RecordType === "SpamComplaint" || (e.RecordType === "SubscriptionChange" && e.SuppressSending && e.SuppressionReason === "SpamComplaint")) {
     await db().insert(emailSuppressions).values({ addressHash: hash, reason: "spam_complaint" }).onConflictDoUpdate({ target: emailSuppressions.addressHash, set: { reason: "spam_complaint" } });
@@ -194,6 +205,6 @@ webhooksRouter.post("/postmark-events", requireEventsToken, express.json({ limit
   } else {
     return void res.json({ recorded: false });
   }
-  logger.info({ recordType: e.RecordType }, "postmark delivery event");
+  logger.info({ recordType: e.RecordType, ...(e.RecordType === "SubscriptionChange" ? { stream: e.MessageStream ?? null, reason: e.SuppressionReason ?? null } : {}) }, "postmark delivery event");
   res.json({ recorded: true });
 });

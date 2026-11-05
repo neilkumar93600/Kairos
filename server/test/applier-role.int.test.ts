@@ -193,6 +193,11 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       tracker_items: ["SIUD", "SI", ""],
       application_events: ["SI", "SI", "S"],
       submission_attempts: ["SIU", "SIU", "cols"],
+      // WP-35: the api owns saved searches; the worker claims them and inserts the default one (no delete); reminders are the worker's alone;
+      // the opt-outs outlive the account (the api writes and deletes them, the worker only reads).
+      saved_searches: ["SIUD", "SIU", ""],
+      reminders: ["", "SIUD", ""],
+      mail_opt_outs: ["SID", "S", ""],
       // WP-24: the api stores and acknowledges a Gmail code; the worker reads it for the email and deletes it.
       forwarding_verifications: ["SIU", "SD", ""],
     };

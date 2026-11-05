@@ -62,7 +62,13 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
     erase: "cascade",
     export: { omit: ["normalized_email_hash"], decrypt: { sensitive_answers_enc: "sensitive_answers_enc" } },
   },
+  // WP-35 also writes the mail_* purposes here when a person turns an optional mail kind on and withdraws them when it is turned off.
+  // The kinds themselves are profiles.mail_opt_out (exported with the profile); the opt-out goes with the account on purpose:
+  // an erased account gets no mail, and a new sign-up starts opted out until it consents (MAIL_CONSENT_DEFAULT).
   { table: "consent_records", column: "user_id", erase: "cascade", export: ALL },
+  // WP-35: the person's saved searches (name, filters, digest schedule) and the reminders about their applications.
+  { table: "saved_searches", column: "user_id", erase: "cascade", export: ALL },
+  { table: "reminders", column: "user_id", erase: "cascade", export: ALL },
   { table: "resume_profiles", column: "user_id", erase: "cascade", export: ALL },
   // WP-17: name, target_roles and document are the user's; revisions go with their resume.
   { table: "resumes", column: "user_id", erase: "cascade", export: ALL },
@@ -102,7 +108,7 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
   { table: "credit_ledger", column: "user_id", erase: "archive", export: ALL },
   { table: "user_daily_usage", column: "user_id", erase: "cascade", export: ALL },
   { table: "ai_usage", column: "user_id", erase: "cascade", export: ALL },
-  { table: "contact_messages", column: "email", by: "email", erase: "delete", export: { omit: ["email_hash"] } },
+  { table: "contact_messages", column: "email", by: "email", erase: "delete", export: { omit: ["email_hash", "message_hash"] } },
   // WP-44. Job payloads in Redis carry ids only and BullMQ keeps finished jobs at most 7 days: no entry, stated in the
   // privacy notice's processor tail (owner-actions/WP-25.md).
   // Rows of kind contact_message have no user_id; their entity_id is the contact_messages id, never an address.
@@ -119,6 +125,18 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
     erase: "keep",
     export: false,
     why: "the person's objection to mail (GDPR Art. 21, CAN-SPAM), kept after erasure on purpose; a hash, no address or user id",
+  },
+  // WP-35. Kept after erasure on purpose, like email_suppressions: the person's objection to optional mail (GDPR Art. 21,
+  // CAN-SPAM), honoured if the same address signs up again. A keyed hash of the exact address and a kind, no address and no
+  // user id; anyone holding the table can test an address for membership, so the privacy notice says an opt-out is kept
+  // as a hash after erasure (owner-actions/WP-35.md).
+  {
+    table: "mail_opt_outs",
+    column: "address_hash",
+    by: "hash",
+    erase: "keep",
+    export: false,
+    why: "the person's objection to optional mail, kept after erasure on purpose so a new sign-up with the address stays opted out; a hash, no address or user id",
   },
   // WP-27. The admin who acted, as a user id or 'system:<job>'. Rewritten to the pseudonym by the erasure worker; the
   // ops_audit trigger (migration 0015) accepts only that. metrics_minute holds no user data (counters by name and label).

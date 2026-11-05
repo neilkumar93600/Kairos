@@ -259,6 +259,22 @@ GRANT DELETE ON contact_messages TO kairos_api;
 -- The erasure worker pseudonymises an erased admin's id in feature_flags.updated_by too (WP-25); nothing else changes.
 GRANT UPDATE (updated_by) ON feature_flags TO kairos_worker;
 
+-- Unsubscribe, digests and reminders (WP-35, migration 0022). The api serves the saved-search routes and the signed
+-- unsubscribe link, so it reads and writes saved_searches (the person's own rows, by the route's WHERE) and keeps
+-- mail_opt_outs, the objection to optional mail by address hash, which outlives the account on purpose (the api writes
+-- and deletes it; the worker only reads it, in bootstrapUser). The worker claims searches for the digest tick (SELECT
+-- and UPDATE) and inserts the default "My matches" when its bootstrap-users reconciler creates a profile (INSERT); it
+-- never deletes one. Reminders are the worker's alone: it creates them, cancels or marks them as the digest decides,
+-- and deletes the finished ones after 90 days. The api has no grant on reminders (the cascades from "user" and
+-- applications need none); kairos_readonly sees none of the three tables.
+GRANT SELECT, INSERT, UPDATE, DELETE ON saved_searches TO kairos_api;
+GRANT SELECT, INSERT, UPDATE ON saved_searches TO kairos_worker;
+GRANT SELECT, INSERT, UPDATE, DELETE ON reminders TO kairos_worker;
+GRANT SELECT, INSERT, DELETE ON mail_opt_outs TO kairos_api;
+GRANT SELECT ON mail_opt_outs TO kairos_worker;
+-- A time-zone change (api, PUT /api/profile/contact) fires profiles_timezone_digest, which updates saved_searches as the
+-- caller; saved_searches_guard locks the owner's profiles row, which both roles may update.
+
 -- WP-26 (migration 0018, 02-database 4.2): the verified_claims memo holds hashes and verdicts, no text and no user id.
 -- Both processes run the verifier (the routes on the api, prepare's tailor job on the worker) and read and write it;
 -- only the worker's retention job deletes expired rows. kairos_readonly and kairos_metrics read nothing here.

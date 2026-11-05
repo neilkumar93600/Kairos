@@ -1,6 +1,8 @@
 import type { Job, RepeatOptions } from "bullmq";
 import { processAlerts, processMetricsPrune, processMetricsSample } from "./alerts";
 import { processBackupCheck } from "./backup-check";
+import { processContactReconcile } from "./contact-alert";
+import { processDigests } from "./digest";
 import { processBackfillSources, processStuckParses } from "./import-maintenance";
 import { processErasure, processOrphanUploads } from "./erasure";
 import { processRetention, processScrubApplications } from "./retention";
@@ -8,6 +10,7 @@ import { processInvariantsHourly, processInvariantsNightly } from "./invariants"
 import { processJournalReconcile, processMoneyJournal } from "./money-journal";
 import { processMailRetention, processNotifyReconcile } from "./notify";
 import { processPartitions } from "./partitions";
+import { processReminders } from "./reminders";
 import type { QueueName } from "./queues";
 import {
   processAuthSweep,
@@ -76,6 +79,12 @@ export const SCHEDULES: Schedule[] = [
   { queue: "maintenance", id: "notify-reconcile", repeat: { every: 5 * MINUTE }, run: processNotifyReconcile },
   // email_sends after 120 days, notifications after 90, signed links 7 days past expiry (WP-44).
   { queue: "maintenance", id: "mail-retention", repeat: { pattern: "35 3 * * *", tz: "UTC" }, run: processMailRetention },
+  // WP-35. Digests at :25 (searches due at 08:00 local; :05 is the invariants, :10 backfill, :20 backup-check, :40 journal),
+  // reminder rows at :50 (no daily task runs at :50, the 03:50 clash of orphan-uploads and mail-retention is gone), the
+  // contact form's lost alerts every 5 minutes, and finished reminders after 90 days at 04:25 (retention is 04:10, scrub 04:40).
+  { queue: "maintenance", id: "digests", repeat: { pattern: "25 * * * *", tz: "UTC" }, run: processDigests },
+  { queue: "maintenance", id: "reminders", repeat: { pattern: "50 * * * *", tz: "UTC" }, run: processReminders },
+  { queue: "maintenance", id: "contact-reconcile", repeat: { every: 5 * MINUTE }, run: processContactReconcile },
 ];
 
 /** The maintenance queue's processor: the scheduler id is the job name. */

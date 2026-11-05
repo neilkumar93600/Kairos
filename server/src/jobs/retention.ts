@@ -78,6 +78,13 @@ export const RETENTION_RULES = {
                               WHERE e.user_id = p.user_id AND e.hidden_reason IS NULL AND e.received_at > ${before(d)})`)
       ).rowCount ?? 0,
   },
+  /** Finished reminders (WP-35, _db/applications.md 3.5): 90 days after they were sent or cancelled. A few rows a day, no index needed yet: when reminders passes a few hundred thousand rows add partial indexes `(sent_at) WHERE sent_at IS NOT NULL` and `(cancelled_at) WHERE cancelled_at IS NOT NULL` and select with two ORed conditions instead of the coalesce. */
+  reminders: {
+    days: 90,
+    run: (d: number) =>
+      batched(() => sql`delete from reminders where id in (
+        select id from reminders where coalesce(sent_at, cancelled_at) < ${before(d)} limit ${BATCH})`),
+  },
   contact_messages: {
     days: 365,
     run: (d: number) => batched(() => sql`delete from contact_messages where id in (select id from contact_messages where created_at < ${before(d)} limit ${BATCH})`),
