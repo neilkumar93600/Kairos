@@ -31,6 +31,7 @@ export const ROUTE_DEADLINES: [method: string, path: RegExp, ms: number][] = [
   // WP-17: an upload reads in a thread killed at 20 s, then encrypts and stores; tailoring a copy is a model call.
   ["POST", /^\/profile\/imports$/, 25_000],
   ["POST", /^\/resumes\/tailor$/, DEADLINE.ai],
+  ["POST", /^\/resumes\/suggestions$/, DEADLINE.ai],
 ];
 
 /** One mount for the whole api router: picks the budget from ROUTE_DEADLINES. */

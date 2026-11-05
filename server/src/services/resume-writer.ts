@@ -4,27 +4,33 @@ import {
   FACT_KINDS,
   type FactKind,
   type ResumeInput,
+  type ResumeLevel,
   type ResumeSection,
   type ResumeSectionKind,
   type ResumeSuggestion,
+  type ResumeSuggestionRequest,
   type SuggestionRequest,
 } from "@auto-career/shared";
 import { UNTRUSTED_RULES, untrusted } from "../ai/untrusted";
 import { HttpError } from "../lib/errors";
 import { checkClaims } from "../llm/claims";
-import { runAgent } from "../llm/gateway";
-import { resumeWriter } from "../agents/resume-writer/spec";
+import { rolloutVersion, runAgent } from "../llm/gateway";
+import { fixSpellingViolation, refineViolation, yearsSuffix } from "../agents/resume-writer/checks";
+import type { ResumeWriterOutputV2 } from "../agents/resume-writer/schema";
+import { resumeWriter, resumeWriterV2 } from "../agents/resume-writer/spec";
 import { gatewayEnabled } from "../llm/wire";
 import type { AgentCallContext } from "../agents/types";
 import { chatJson } from "./llm";
-import type { ProfileFact } from "./resume-doc";
+import { yearsOfExperience, type EmploymentDates, type ProfileFact } from "./resume-doc";
 import { topFacts } from "./job-fit";
 import { requireVerifierOrShadow, verifyClaims } from "./verify";
 
 export interface WriterContext {
   resume: ResumeInput;
   /** All of the user's facts. Only confirmed ones are shown to the model and may be cited. */
-  facts: ProfileFact[];
+  facts: (ProfileFact & { employmentId?: string | null })[];
+  /** The resume profile's employments: the only input of a headline's years (rule 10). */
+  employments?: EmploymentDates[];
   job?: { title: string; company: string; descriptionText: string } | null;
 }
 
@@ -34,7 +40,14 @@ export interface WriterDeps {
   callCtx?: AgentCallContext;
   /** Saves the user's note as an UNCONFIRMED fact and returns it. */
   createFact: (input: { kind: FactKind; text: string }) => Promise<ProfileFact>;
+  /** The before_ai revision, once the request is known to reach the model. */
+  beforeModel?: () => Promise<void>;
+  /** The writer version a call gets with no pin or canary: 2 on /resumes/suggestions, 1 on the frozen /resume alias. */
+  defaultVersion?: 1 | 2;
 }
+
+/** A request of either route: the legacy alias has no headline scope and no level. */
+export type WriterRequest = Omit<SuggestionRequest, "scope"> & Pick<ResumeSuggestionRequest, "scope"> & { level?: ResumeLevel };
 
 type Refine = NonNullable<SuggestionRequest["refine"]>;
 
@@ -53,7 +66,8 @@ const modelSchema = z.object({
     }),
   ),
 });
-type ModelSuggestion = z.infer<typeof modelSchema>["suggestions"][number];
+/** What either version returned. v1 has no tag, priority or appendYears. */
+type ModelSuggestion = z.infer<typeof modelSchema>["suggestions"][number] & Partial<Pick<ResumeWriterOutputV2["suggestions"][number], "tag" | "priority" | "appendYears">>;
 
 // Static, so the API caches it; everything per request goes in the user message.
 const SYSTEM = `You are the Resume Writer for Kairos. You propose edits to the user's resume; nothing changes until the user accepts one.
@@ -107,9 +121,11 @@ const noteKind = (note: string, section: ResumeSectionKind | null): FactKind =>
 const factLine = (f: ProfileFact) => `[${f.id}] (${f.kind}) ${f.text}`;
 
 /** The part of the resume a scope shows and may change. Ids that are not in the resume are a 422. */
-function scopeView(doc: ResumeInput, req: SuggestionRequest): ResumeSection[] {
+function scopeView(doc: ResumeInput, req: WriterRequest): ResumeSection[] {
   const bad = (what: string) => new HttpError(422, "invalid_scope", `${what} is not in your resume`);
   const { scope } = req;
+  // A headline targets no line; the model sees the role headings for recency only.
+  if (scope === "headline") return doc.sections.filter((s) => !s.hidden && s.kind === "experience").map((s) => ({ ...s, entries: s.entries.filter((e) => !e.hidden).map((e) => ({ ...e, lines: [] })) }));
   if (scope === "resume") return doc.sections.filter((s) => !s.hidden).map((s) => ({ ...s, entries: s.entries.filter((e) => !e.hidden) }));
   if (scope === "summary" || scope === "skills") {
     const section = doc.sections.find((s) => s.kind === scope && (!req.sectionId || s.id === req.sectionId));
@@ -151,7 +167,7 @@ interface Targets {
   sections: Set<string>;
   /** entry id to its section id */
   entries: Map<string, string>;
-  lines: Map<string, { sectionId: string; entryId: string; text: string }>;
+  lines: Map<string, { sectionId: string; entryId: string; text: string; factIds: string[] }>;
 }
 
 function targetsOf(view: ResumeSection[]): Targets {
@@ -160,13 +176,21 @@ function targetsOf(view: ResumeSection[]): Targets {
     t.sections.add(s.id);
     for (const e of s.entries) {
       t.entries.set(e.id, s.id);
-      for (const l of e.lines) t.lines.set(l.id, { sectionId: s.id, entryId: e.id, text: l.text });
+      for (const l of e.lines) t.lines.set(l.id, { sectionId: s.id, entryId: e.id, text: l.text, factIds: l.factIds });
     }
   }
   return t;
 }
 
-/** Checks one model suggestion in code. Returns null to drop it. */
+const MAX_LINE = 300;
+const MAX_HEADLINE = 160;
+/** Per scope (05-resume-workspace 3.4 step 6). v1's input stops at 15, as it always did. */
+const maxFor = (scope: WriterRequest["scope"], version: number) =>
+  scope === "line" || scope === "headline" ? 3 : version === 1 ? 15 : scope === "resume" ? 20 : 8;
+
+const tagsOf = (m: ModelSuggestion) => (m.tag && m.priority ? { tag: m.tag, priority: m.priority } : {});
+
+/** Checks one model suggestion in code. Returns null to drop it: every check here fails closed. */
 function verify(m: ModelSuggestion, t: Targets, citable: Map<string, ProfileFact>, refine?: Refine): ResumeSuggestion | null {
   let where: Pick<ResumeSuggestion, "sectionId" | "entryId" | "lineId" | "before">;
   if (m.action === "add") {
@@ -178,7 +202,7 @@ function verify(m: ModelSuggestion, t: Targets, citable: Map<string, ProfileFact
     if (!line || m.lineId === null) return null;
     where = { sectionId: line.sectionId, entryId: line.entryId, lineId: m.lineId, before: line.text };
   }
-  const base = { id: randomUUID(), ...where, why: m.why.trim().slice(0, 300) };
+  const base = { id: randomUUID(), ...where, why: m.why.trim().slice(0, 300), ...tagsOf(m) };
   if (m.action === "remove") return { ...base, action: "remove", after: null, factIds: [], needsFact: null };
 
   const factIds = [...new Set(m.factIds)];
@@ -193,14 +217,96 @@ function verify(m: ModelSuggestion, t: Targets, citable: Map<string, ProfileFact
     };
 
   const after = m.after?.trim() ?? "";
-  if (!after || after.length > 400) return null;
+  if (!after || after.length > MAX_LINE) return null;
   // ponytail: text citing no fact, or any id that is not confirmed and owned, is dropped, not turned into a needsFact:
   // which detail is missing is unknown, so a question would be a guess. The model asks its own questions (rule 3).
   if (!factIds.length || factIds.some((id) => !citable.has(id))) return null;
+  const cited = factIds.map((id) => citable.get(id)!);
   // Truth rule 2 (numbers, titles, entities, tools, links), checked here rather than trusted to the prompt.
-  if (checkClaims(after, factIds.map((id) => citable.get(id)?.text ?? "")).length) return null;
-  if (refine === "shorter" && where.before !== null && after.length >= where.before.length) return null;
+  if (checkClaims(after, cited.map((f) => f.text)).length) return null;
+  if (refineViolation(refine, { before: where.before, after, citedMetricTexts: cited.filter((f) => f.kind === "metric").map((f) => f.text) })) return null;
+  if (m.tag === "fix_spelling" && (where.before === null || fixSpellingViolation(where.before, after, m.lineId ? t.lines.get(m.lineId)!.factIds : [], factIds))) return null;
   return { ...base, action: m.action, after, factIds, needsFact: null };
+}
+
+interface Derived {
+  value: number;
+  factIds: string[];
+}
+
+/**
+ * A headline option (agents/05 4). The action and `before` come from the document, never the model. The model text is
+ * checked as it was written, and the years are appended afterwards from the value code computed: nothing the model
+ * says can change that number, and shapeViolations has already refused any year count it wrote.
+ */
+function verifyHeadline(m: ModelSuggestion, current: string | null, citable: Map<string, ProfileFact>, years: Derived | null): ResumeSuggestion | null {
+  const base = {
+    id: randomUUID(),
+    sectionId: "headline",
+    entryId: null,
+    lineId: null,
+    action: current === null ? ("add" as const) : ("rewrite" as const),
+    before: current,
+    why: m.why.trim().slice(0, 300),
+    ...tagsOf(m),
+  };
+  const factIds = [...new Set(m.factIds)];
+  if (m.needsFact) return { ...base, after: null, factIds: factIds.filter((id) => citable.has(id)), needsFact: { kind: m.needsFact.kind, question: m.needsFact.question.trim().slice(0, 200) } };
+  const text = m.after?.trim() ?? "";
+  if (!text || !factIds.length || factIds.some((id) => !citable.has(id))) return null;
+  const cited = factIds.map((id) => citable.get(id)!);
+  // "each a role and up to 3 skills from facts": it must cite the role it names.
+  if (!cited.some((f) => f.kind === "role")) return null;
+  if (checkClaims(text, cited.map((f) => f.text)).length) return null;
+  if (!m.appendYears) return text.length > MAX_HEADLINE ? null : { ...base, after: text, factIds, needsFact: null };
+  if (!years) return null;
+  const after = text + yearsSuffix(years.value);
+  if (after.length > MAX_HEADLINE) return null;
+  return { ...base, after, factIds, needsFact: null, derived: [{ label: "Years of experience", value: years.value, factIds: years.factIds }] };
+}
+
+/** What layer 3 judges: the model's own words. The appended years come from role dates, not from the cited facts. */
+const claimText = (s: ResumeSuggestion): string => (s.derived?.length ? s.after!.slice(0, -yearsSuffix(Number(s.derived[0]!.value)).length) : s.after!);
+
+/** The deterministic answer when the model has nothing true to say: no spend, no model text (workers/05 3.4 step 7). */
+function askFirst(req: WriterRequest, view: ResumeSection[], citable: Map<string, ProfileFact>, doc: ResumeInput, version: number): ResumeSuggestion | null {
+  const tags = (tag: "show_scope" | "use_your_numbers", priority: "high" | "medium") => (version === 2 ? { tag, priority } : {});
+  const facts = [...citable.values()];
+  if (req.scope === "headline" && !facts.some((f) => f.kind === "role")) {
+    return {
+      id: randomUUID(),
+      sectionId: "headline",
+      entryId: null,
+      lineId: null,
+      action: doc.headline ? "rewrite" : "add",
+      before: doc.headline?.text ?? null,
+      after: null,
+      why: "A headline needs a role to name.",
+      factIds: [],
+      needsFact: { kind: "role", question: "What is your most recent job title?" },
+      ...tags("show_scope", "high"),
+    };
+  }
+  if (req.refine === "use_numbers" && !facts.some((f) => f.kind === "metric")) {
+    const section = view[0];
+    if (!section) return null;
+    const entry = req.scope === "line" || req.scope === "entry" ? section.entries[0] : undefined;
+    const line = req.scope === "line" ? entry?.lines[0] : undefined;
+    return {
+      id: randomUUID(),
+      sectionId: section.id,
+      entryId: entry?.id ?? null,
+      lineId: line?.id ?? null,
+      action: line ? "rewrite" : "add",
+      before: line?.text ?? null,
+      after: null,
+      why: "No fact gives a number for this yet.",
+      factIds: [],
+      needsFact: { kind: "metric", question: "What number shows the result of this work?" },
+      ...tags("use_your_numbers", "medium"),
+    };
+  }
+  return null;
 }
 
 /**
@@ -210,12 +316,16 @@ function verify(m: ModelSuggestion, t: Targets, citable: Map<string, ProfileFact
  * rejects any line citing it until then, so truth rule 1 holds where a line is used.
  */
 export async function suggestEdits(
-  req: SuggestionRequest,
+  req: WriterRequest,
   ctx: WriterContext,
   deps: WriterDeps,
 ): Promise<{ suggestions: ResumeSuggestion[]; factCreated: ProfileFact | null }> {
   const view = scopeView(ctx.resume, req); // before the note is saved: a bad request creates nothing
   const viaGateway = Boolean(deps.callCtx) || (!deps.chat && gatewayEnabled());
+  // Which object serves this call (agents/03 9). The legacy client only knows the v1 prompt and output.
+  const version = viaGateway ? rolloutVersion(resumeWriter.id, deps.defaultVersion ?? 1, deps.callCtx ?? {}) : 1;
+  // v1 has no headline scope, and years must never come from a prompt that does not forbid them: refuse before any write.
+  if (req.scope === "headline" && version !== 2) throw new HttpError(503, "ai_unavailable", "The writing assistant is busy. Try again in a minute.");
   // The legacy client has no layer 3: enforce refuses here, before the note and before any spend.
   if (!viaGateway) await requireVerifierOrShadow("suggestions");
   const factCreated = req.note
@@ -225,10 +335,26 @@ export async function suggestEdits(
   const confirmed = ctx.facts.filter((f) => f.confirmed);
   const shown = topFacts(confirmed, ctx.job ? `${ctx.job.title}\n${ctx.job.descriptionText}` : null, 60);
   const citable = new Map([...confirmed, ...(factCreated ? [factCreated] : [])].map((f) => [f.id, f]));
-  const max = req.scope === "line" ? 3 : 15;
+  const max = maxFor(req.scope, version);
+  const asked = askFirst(req, view, citable, ctx.resume, version);
+  if (asked) return { suggestions: [asked], factCreated };
+  await deps.beforeModel?.();
+  const level: ResumeLevel = req.level ?? ctx.resume.level ?? "mid";
+  const currentHeadline = ctx.resume.headline?.text ?? null;
+  // Rule 10: only code computes this, only for the headline, only from confirmed roles with confirmed facts under them.
+  const years = req.scope === "headline" ? yearsOfExperience(ctx.employments ?? [], ctx.facts) : null;
+  const shared = {
+    refine: req.refine ?? null,
+    // Clipped to the input schema (the gateway refuses anything longer); the render cuts the view deeper.
+    resumeView: (renderView(view) || "(no roles yet)").slice(0, 12_000),
+    facts: shown.map((f) => ({ id: f.id, kind: f.kind, text: f.text })),
+    noteFact: factCreated ? { id: factCreated.id, kind: factCreated.kind, text: factCreated.text.slice(0, 400) } : null,
+    job: ctx.job ? { title: ctx.job.title.slice(0, 200), company: ctx.job.company.slice(0, 200), descriptionText: ctx.job.descriptionText.slice(0, 20_000) } : null,
+    maxSuggestions: max,
+  };
 
   const parts = [
-    `Task: ${SCOPE[req.scope]} At most ${max} suggestions.`,
+    `Task: ${SCOPE[req.scope as SuggestionRequest["scope"]]} At most ${max} suggestions.`,
     req.refine ? `Style: ${REFINE[req.refine]}` : "",
     `Facts (confirmed, cite by id):\n${shown.map(factLine).join("\n") || "(none)"}`,
     factCreated
@@ -237,24 +363,17 @@ export async function suggestEdits(
     `Resume:\n${renderView(view)}`,
     ctx.job ? `Target job. Favour what it asks for, using only the facts:\n${untrusted("job", `${ctx.job.title} at ${ctx.job.company}\n\n${ctx.job.descriptionText}`, 6000)}` : "",
   ];
-  const out =
+  const out: { suggestions: ModelSuggestion[] } =
     // The gateway path (LLM_GATEWAY=anthropic): suggestions come back and the same verify()
     // pipeline below applies the truth rules in code.
     viaGateway
-      ? await runAgent(
-          resumeWriter,
-          {
-            scope: req.scope,
-            refine: req.refine ?? null,
-            // Clipped to the input schema (the gateway refuses anything longer); the render cuts the view deeper.
-            resumeView: renderView(view).slice(0, 12_000),
-            facts: shown.map((f) => ({ id: f.id, kind: f.kind, text: f.text })),
-            noteFact: factCreated ? { id: factCreated.id, kind: factCreated.kind, text: factCreated.text.slice(0, 400) } : null,
-            job: ctx.job ? { title: ctx.job.title.slice(0, 200), company: ctx.job.company.slice(0, 200), descriptionText: ctx.job.descriptionText.slice(0, 20_000) } : null,
-            maxSuggestions: max,
-          },
-          deps.callCtx ?? {},
-        ).then((r) => ({ suggestions: r.data.suggestions }))
+      ? version === 2
+        ? await runAgent(
+            resumeWriterV2,
+            { ...shared, scope: req.scope, level, headline: currentHeadline, derived: years ? [{ label: "years_of_experience" as const, value: years.value, factIds: years.factIds }] : [] },
+            deps.callCtx ?? {},
+          ).then((r) => r.data)
+        : await runAgent(resumeWriter, { ...shared, scope: req.scope as SuggestionRequest["scope"] }, deps.callCtx ?? {}).then((r) => r.data)
       : await (deps.chat ?? chatJson)({
           tier: "smart",
           agent: "resume-writer",
@@ -269,14 +388,14 @@ export async function suggestEdits(
 
   const targets = targetsOf(view);
   const suggestions = out.suggestions
-    .map((m) => verify(m, targets, citable, req.refine))
+    .map((m) => (req.scope === "headline" ? verifyHeadline(m, currentHeadline, citable, years) : verify(m, targets, citable, req.refine)))
     .filter((s): s is ResumeSuggestion => s !== null)
     .slice(0, max);
   if (!viaGateway) return { suggestions, factCreated };
   // Layer 3 on text the user could accept. Suggestions neither escalate nor repair: the user is waiting on a Sonnet
   // call already (agents/09 1), and a dropped suggestion costs only a shorter list.
   const { dropped } = await verifyClaims(
-    suggestions.flatMap((s) => (s.after === null || s.needsFact ? [] : [{ key: s.id, kind: "resume_line" as const, text: s.after, factIds: s.factIds }])),
+    suggestions.flatMap((s) => (s.after === null || s.needsFact ? [] : [{ key: s.id, kind: "resume_line" as const, text: claimText(s), factIds: s.factIds }])),
     new Map([...citable].map(([id, f]) => [id, f.text])),
     { path: "suggestions", target: null, ctx: deps.callCtx ?? {}, escalate: false },
   );

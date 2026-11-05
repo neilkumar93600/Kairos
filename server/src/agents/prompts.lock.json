@@ -20,7 +20,8 @@
   "resume-writer": {
     "active": 1,
     "versions": {
-      "1": "93689092284ef700de6e68175b3f6f6d9206733237a658b41a2664bae6c34066"
+      "1": "93689092284ef700de6e68175b3f6f6d9206733237a658b41a2664bae6c34066",
+      "2": "c3c04dda961bb6896a1159994fdf42895a6fb7c1a7fe8a3c73bb874b86343692"
     }
   },
   "answer-drafter": {

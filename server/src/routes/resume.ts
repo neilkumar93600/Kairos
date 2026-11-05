@@ -6,6 +6,7 @@ import {
   suggestionRequestSchema,
   type Resume,
   type ResumeInput,
+  type FactKind,
   type SuggestionRequest,
 } from "@auto-career/shared";
 import { db } from "../db/client";
@@ -17,7 +18,7 @@ import { aiLimiter } from "../middleware/rate-limit";
 import { currentUser } from "../middleware/require-auth";
 import { validateBody } from "../middleware/validate";
 import type { ProfileFact } from "../services/resume-doc";
-import { defaultBase, saveDocument, toDetail } from "../services/resume-library";
+import { defaultBase, saveDocument, snapshotBeforeAi, toDetail } from "../services/resume-library";
 import { suggestEdits } from "../services/resume-writer";
 import { metered } from "../services/allowance";
 import { planFor } from "../services/submissions";
@@ -68,6 +69,16 @@ resumeRouter.put("/", validateBody(resumeInputSchema), async (req, res) => {
   res.json({ resume: await toDetail(await saveDocument(me.id, base.id, req.body as ResumeInput)) });
 });
 
+/** The user's own note, unconfirmed: their words (asserted_by 'user'), so it is written as the user. */
+export const noteFact = (userId: string) => async ({ kind, text }: { kind: FactKind; text: string }): Promise<ProfileFact> => {
+  const [fact] = await db().transaction(async (tx) => {
+    await asActor(tx, "user");
+    return tx.insert(facts).values({ userId, kind, text, confirmed: false, assertedBy: "user" }).returning(FACT_COLUMNS);
+  });
+  if (!fact) throw new Error("Fact insert returned no row");
+  return fact;
+};
+
 /** Resume Writer proposals for one scope. Nothing is saved except a `note`, which becomes an unconfirmed fact. */
 resumeRouter.post("/suggestions", writerLimiter, validateBody(suggestionRequestSchema), async (req, res) => {
   const me = currentUser(req);
@@ -81,15 +92,8 @@ resumeRouter.post("/suggestions", writerLimiter, validateBody(suggestionRequestS
       body,
       { resume, facts: factRows, job },
       {
-        createFact: async ({ kind, text }) => {
-          // The user's own note, unconfirmed: their words (asserted_by 'user'), so it is written as the user.
-          const [fact] = await db().transaction(async (tx) => {
-            await asActor(tx, "user");
-            return tx.insert(facts).values({ userId: me.id, kind, text, confirmed: false, assertedBy: "user" }).returning(FACT_COLUMNS);
-          });
-          if (!fact) throw new Error("Fact insert returned no row");
-          return fact;
-        },
+        createFact: noteFact(me.id),
+        beforeModel: () => snapshotBeforeAi(me.id, resume.id),
         callCtx: gatewayCtx({ userId: me.id, plan, ...(body.jobId ? { jobId: body.jobId } : {}), feature: "resumeSuggestions", signal: res.locals.deadline }),
       },
     ),

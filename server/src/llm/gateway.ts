@@ -74,6 +74,20 @@ export function activePromptVersion(spec: Pick<AgentSpec<unknown, unknown>, "id"
   return deps.flags().promptPin[spec.id] ?? spec.promptVersion;
 }
 
+/**
+ * For an agent whose versions are separate spec objects (agents/03-fit-scorer.md 9), which object a call should use: the
+ * pin, else its canary share, else the caller's default. runAgent then resolves the same version from the same flags
+ * inside that object, and records a canary as a canary. A pin to a version with no object fails there, closed.
+ */
+export function rolloutVersion(agentId: string, fallback: number, ctx: Pick<AgentCallContext, "userId" | "jobId">): number {
+  const flags = deps.flags();
+  const pinned = flags.promptPin[agentId];
+  if (pinned !== undefined) return pinned;
+  const canary = flags.promptCanary?.[agentId];
+  const bucket = canary ? rolloutBucket(agentId, ctx) : null;
+  return canary && bucket !== null && bucket < canary.percent ? canary.version : fallback;
+}
+
 /** Set once at process start (api.ts / worker.ts); the default serves the legacy flag and tests. */
 export let deps: GatewayDeps = {
   client: (workspace) => createAnthropicClient(workspace), // throws in tests unless ALLOW_LLM_NETWORK=1 (15.1)
