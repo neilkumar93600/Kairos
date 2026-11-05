@@ -372,14 +372,59 @@ describe.skipIf(!hasTestDb)("scoring controls against Postgres", () => {
       expect(enqueue.mock.calls[0]![0]).toBe("score-user");
     });
 
-    it("a follow-up that comes due during a pause waits in its user's lane", async () => {
+    it.each([["llm_paused"], ["pause_scoring"]])("a follow-up that comes due during %s waits in its user's lane", async (key) => {
+      const id = await candidate();
+      const jobId = await job(0);
+      const { setFlag, resetFlagCache } = await import("../src/lib/flags");
+      await setFlag(key, true, "system:test");
+      resetFlagCache();
+      await scoring.processScoreMatches({ data: { jobId, userIds: [id], attempt: 1 } } as Parameters<typeof scoring.processScoreMatches>[0]);
+      expect(lane.pending.get(id)).toEqual([`${jobId}:1`]);
+    });
+
+    // A pause should pause work, not delete it: a posting that arrives during one is scored when it lifts.
+    it.each([["llm_paused"], ["agent_disabled:fit-scorer"]])("during %s a posting still fans out, costs no call, and is scored when it lifts", async (key) => {
+      const { setFlag, resetFlagCache } = await import("../src/lib/flags");
+      const id = await candidate();
+      await setFlag(key, true, "system:test");
+      resetFlagCache();
+      const jobId = await job(0);
+      expect(await scoring.processScoreMatches({ data: { jobId } } as Parameters<typeof scoring.processScoreMatches>[0])).toEqual({ queued: 1 });
+      await drain();
+      expect(scoreFit).not.toHaveBeenCalled();
+      expect(lane.pending.get(id)).toEqual([jobId]);
+      expect(await matchOf(id, jobId)).toBeUndefined();
+      expect(enqueue.mock.calls.filter((c) => c[0] === "score-user")).toHaveLength(1);
+
+      await setFlag(key, false, "system:test");
+      resetFlagCache();
+      await scoring.processScoreUser({ data: { userId: id } } as Parameters<typeof scoring.processScoreUser>[0]);
+      await drain();
+      expect(scoreFit).toHaveBeenCalledTimes(1);
+      expect(lane.pending.get(id)).toEqual([]);
+      expect(await matchOf(id, jobId)).toMatchObject({ status: "new", score: 90 });
+    });
+
+    it("during llm_paused a backfill still fills the lane, and costs no call", async () => {
       const id = await candidate();
       const jobId = await job(0);
       const { setFlag, resetFlagCache } = await import("../src/lib/flags");
       await setFlag("llm_paused", true, "system:test");
       resetFlagCache();
-      await scoring.processScoreMatches({ data: { jobId, userIds: [id], attempt: 1 } } as Parameters<typeof scoring.processScoreMatches>[0]);
-      expect(lane.pending.get(id)).toEqual([`${jobId}:1`]);
+      expect(await backfill(id)).toEqual({ queued: 1 });
+      expect(scoreFit).not.toHaveBeenCalled();
+      expect(lane.pending.get(id)).toEqual([`${jobId}:0:b`]);
+    });
+
+    it("pause_scoring still stops a fan-out and a backfill", async () => {
+      const id = await candidate();
+      const jobId = await job(0);
+      const { setFlag, resetFlagCache } = await import("../src/lib/flags");
+      await setFlag("pause_scoring", true, "system:test");
+      resetFlagCache();
+      expect(await scoring.processScoreMatches({ data: { jobId } } as Parameters<typeof scoring.processScoreMatches>[0])).toEqual({ queued: 0, paused: true });
+      expect(await scoring.processScoreMatches({ data: { backfillUserId: id } } as Parameters<typeof scoring.processScoreMatches>[0])).toEqual({ queued: 0, paused: true });
+      expect(lane.pending.get(id)).toBeUndefined();
     });
   });
 

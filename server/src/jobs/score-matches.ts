@@ -6,7 +6,7 @@ import type { AgentCallContext } from "../agents/types";
 import { db } from "../db/client";
 import { applications, companies, creditLedger, facts, jobs, matches, profiles, session, subscriptions } from "../db/schema";
 import { userDailyUsage } from "../db/schema/platform";
-import { getFlags } from "../lib/flags";
+import { getFlags, type Flags } from "../lib/flags";
 import { nextUtcMidnight } from "../lib/errors";
 import { logger, logUserHash } from "../lib/logger";
 import { AgentError } from "../llm/errors";
@@ -84,6 +84,14 @@ async function scoringPaused(): Promise<boolean> {
   return f.pauseScoring || f.llmPaused || f.agentDisabled.has(fitScorer.id) || !f.loaded;
 }
 
+/**
+ * What stops a fan-out or a backfill: pause_scoring, or flags nobody could read. Not llm_paused or agent_disabled: filling a
+ * lane costs no model call, and a pause should hold work back, not lose it. Lanes fill, and each woken user job sees the
+ * pause and looks again later. ponytail: a stop of days grows every lane in a noeviction Redis; pause_scoring is the switch
+ * for a long stop.
+ */
+export const fanOutStopped = (f: Pick<Flags, "pauseScoring" | "loaded">): boolean => f.pauseScoring || !f.loaded;
+
 /** How long a lane held by a pause waits before it looks again. */
 export const PAUSE_RETRY_MS = 15 * 60_000;
 
@@ -129,12 +137,12 @@ export const f1Floor = (confirmedFactCount: number): number => (confirmedFactCou
  * hard filters on what survives, so the model is only called for jobs a user could plausibly want. Each passing user gets
  * the posting in their scoring lane, and the model calls run per user, a chunk at a time (processScoreUser), so one user's
  * backlog never holds up another's (scale-06). A posting of a company that is not active fans out to nobody: an imported
- * board costs no model call until the owner activates it (CISO mustFix 3). The pause_scoring flag stops it; each call
- * reserves one of the plan's scoring slots; a retryable model failure comes back as a delayed follow-up for that user.
+ * board costs no model call until the owner activates it (CISO mustFix 3). fanOutStopped stops it; each call reserves
+ * one of the plan's scoring slots; a retryable model failure comes back as a delayed follow-up for that user.
  */
 export async function processScoreMatches(job: Job<JobData["score-matches"]>) {
-  if (await scoringPaused()) {
-    // ponytail: postings that arrive while paused are not scored later; the nightly re-score of WP-34 picks them up.
+  if (fanOutStopped(await getFlags())) {
+    // ponytail: postings that arrive during pause_scoring are not scored later; the nightly re-score of WP-34 picks them up.
     logger.info("scoring paused");
     // A follow-up already belongs to its users: it waits in their lanes. Each wakes, sees the pause and looks again later.
     if ("jobId" in job.data && job.data.userIds) {

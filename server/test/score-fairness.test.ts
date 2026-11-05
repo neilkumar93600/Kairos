@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { CHUNK, PAUSE_RETRY_MS, retryDelayMs, runChunk } from "../src/jobs/score-matches";
+import { CHUNK, fanOutStopped, PAUSE_RETRY_MS, retryDelayMs, runChunk } from "../src/jobs/score-matches";
 import { AgentError } from "../src/llm/errors";
 import { configureGateway } from "../src/llm/gateway";
 import { refundable } from "../src/services/allowance";
@@ -68,6 +68,15 @@ describe("a lane held by a refusal (F6)", () => {
     expect(lane.pending.get("u")).toEqual(["b", "c"]);
     // Nothing is waiting: the drain ended after one run, so a refusal cannot spin.
     expect(await lane.drain(async () => "ran again")).toEqual([]);
+  });
+});
+
+describe("what stops a fan-out (F6)", () => {
+  it("pause_scoring and unreadable flags do; llm_paused and agent_disabled, which it does not read, do not", () => {
+    const f = (over: object) => ({ pauseScoring: false, llmPaused: true, agentDisabled: new Set(["fit-scorer"]), loaded: true, ...over });
+    expect(fanOutStopped(f({}))).toBe(false);
+    expect(fanOutStopped(f({ pauseScoring: true }))).toBe(true);
+    expect(fanOutStopped(f({ loaded: false }))).toBe(true);
   });
 });
 
