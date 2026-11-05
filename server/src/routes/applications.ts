@@ -1,15 +1,17 @@
 import { Router } from "express";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { APPLICATION_STATUSES, approveApplicationsSchema, draftRequestSchema, getPlan, updateApplicationSchema } from "@auto-career/shared";
 import { db } from "../db/client";
-import { applications, companies, facts, jobs, savedAnswers } from "../db/schema";
+import { applications, companies, facts, inboundEmails, jobs, savedAnswers, type ApplicationStage } from "../db/schema";
+import { asActor } from "../lib/actor";
 import { HttpError, notFound } from "../lib/errors";
 import { keysetBefore, pageParams, slicePage, tsKey } from "../lib/pagination";
 import { APPLICATION_COLUMNS, JOB_COLUMNS } from "../lib/serializers";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
 import { enqueue } from "../jobs/queues";
+import { recordEvent } from "../services/events";
 import { draftAnswer, draftCoverLetter } from "../services/draft-writer";
 import { classifySensitive, isProfileQuestion } from "../services/sensitive";
 import { approveApplications, planFor } from "../services/submissions";
@@ -62,7 +64,8 @@ applicationsRouter.get("/", async (req, res) => {
 applicationsRouter.get("/:id", async (req, res) => {
   const id = parseParam(z.uuid(), req.params.id);
   const [row] = await db()
-    .select({ application: APPLICATION_COLUMNS, job: JOB_COLUMNS, companyName: companies.name })
+    // stage is additive and beside the frozen `application` keys: reply-driven (WP-24), and the user can clear it below.
+    .select({ application: APPLICATION_COLUMNS, stage: applications.stage, job: JOB_COLUMNS, companyName: companies.name })
     .from(applications)
     .innerJoin(jobs, eq(jobs.id, applications.jobId))
     .innerJoin(companies, eq(companies.id, jobs.companyId))
@@ -192,6 +195,51 @@ applicationsRouter.post("/:id/drafts", writerLimiter, validateBody(draftRequestS
     .limit(3);
   const answerFacts = topFacts(confirmed, `${label}\n${posting}`, 25);
   res.json(await metered(res, allowance, () => draftAnswer({ label, job, facts: answerFacts, savedAnswers: saved }, deps)));
+});
+
+/** The reply kind that sets each stage (jobs/classify-email.ts): the replies an undo takes back. */
+const KIND_OF_STAGE = { in_review: "confirmation", assessment: "assessment", interviewing: "interview", offer: "offer", rejected: "rejection" } as const;
+
+/**
+ * The user's undo of a stage set by mail (WP-24): anyone who learns the forwarding address, or a replayed signed rejection,
+ * can reach a final stage, and this is the way back. The stage returns to the bottom of the ladder: `applied` for a
+ * submitted application, where every submitted row starts (applications_stage_shape_ck, WP-46), and NULL otherwise. The
+ * replies of the kind that set it are detached, so they stop counting for this application; they stay in the inbox. The
+ * trigger allows this only under asActor("user"), so no job can do it. Classified rows are never classified again, so
+ * nothing re-applies; a later genuine reply can move the stage again. No stage, or `applied`, has nothing to undo: a no-op.
+ * Reply rows first, then the application, the classify job's order, so the two cannot deadlock.
+ * Not session-fresh: it moves no money and no access, and only touches the caller's own tracking.
+ */
+applicationsRouter.post("/:id/stage/clear", async (req, res) => {
+  const id = parseParam(z.uuid(), req.params.id);
+  const userId = currentUser(req).id;
+  const owned = and(eq(applications.id, id), eq(applications.userId, userId));
+  const result = await db().transaction(async (tx) => {
+    await asActor(tx, "user");
+    const [app] = await tx.select({ stage: applications.stage }).from(applications).where(owned);
+    if (!app) throw notFound("Application");
+    if (!app.stage || app.stage === "applied") return { stage: app.stage, detached: 0 };
+
+    const rows = await tx
+      .update(inboundEmails)
+      .set({ applicationId: null, linkedBy: "none" })
+      .where(and(eq(inboundEmails.applicationId, id), eq(inboundEmails.userId, userId), eq(inboundEmails.kind, KIND_OF_STAGE[app.stage])))
+      .returning({ id: inboundEmails.id });
+    const [moved] = await tx
+      .update(applications)
+      .set({ stage: sql<ApplicationStage | null>`CASE WHEN ${applications.status} = 'submitted' THEN 'applied' END` })
+      .where(and(owned, eq(applications.stage, app.stage)))
+      .returning({ stage: applications.stage });
+    if (!moved) {
+      // Changed since the read. A double click has nothing left to do; a reply moving it is rolled back for the user to look again.
+      const [now] = await tx.select({ stage: applications.stage }).from(applications).where(owned);
+      if (!rows.length && (!now?.stage || now.stage === "applied")) return { stage: now?.stage ?? null, detached: 0 };
+      throw new HttpError(409, "conflict", "This application's stage just changed. Look at it again and retry.");
+    }
+    await recordEvent(tx, { userId, applicationId: id, kind: "stage_changed", actor: "user", payload: { from: app.stage, to: moved.stage, undone: true, detached: rows.length } });
+    return { stage: moved.stage, detached: rows.length };
+  });
+  res.json(result);
 });
 
 applicationsRouter.post("/:id/withdraw", async (req, res) => {

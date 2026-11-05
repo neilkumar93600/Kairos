@@ -1,0 +1,73 @@
+/* Landing v3 dark CTA card (docs/DESIGN.md "Landing v3" > "Dark CTA card"). Prefixed edc-, scoped under .lp.
+   .lp-dark-card (landing.css) owns the surface, mesh, grain, padding and colours; this file lays out the copy and the
+   timeline: one centred column below 1024, copy left and timeline right from 1024. Two blurred layers at most here
+   (the word, the chip and the timeline are siblings, never nested). */
+@layer theme, base, components, utilities;
+
+@layer components {
+  .lp .edc { display: grid; justify-items: center; gap: 40px; }
+  .lp .edc-copy { display: flex; flex-direction: column; align-items: center; }
+  .lp .edc-word { min-height: 30px; padding-inline: 14px; font: 400 16px / 1 var(--font-ui); letter-spacing: 0.02em; }
+  .lp .edc-h2 { max-width: 11em; margin: 20px 0 0; }
+  .lp .edc-sub { margin: 16px 0 0; }
+  .lp .edc-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; margin-top: 32px; }
+
+  /* The timeline card: dark glass, 16 px radius, Linen text only. */
+  .lp .edc-moment {
+    inline-size: min(100%, 400px); padding: 18px 20px 20px; border-radius: var(--r-card);
+    text-align: start; cursor: default;
+  }
+  .lp .edc-moment__head {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin: 0 0 14px; padding-block-end: 12px; border-block-end: 1px solid var(--glass-dark-edge);
+    font: 500 15px / 1.3 var(--font-ui); color: var(--on-dark);
+  }
+  .lp .edc-moment__head > span:first-child { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  /* SAMPLE chip on dark glass: Linen micro text on a hairline ring instead of the Bone pill. */
+  .lp .edc-moment .lp-chip--sample { background: transparent; color: var(--on-dark); box-shadow: inset 0 0 0 1px var(--glass-dark-edge); }
+
+  .lp .edc-line { list-style: none; margin: 0; padding: 0; display: grid; }
+  .lp .edc-line > li {
+    position: relative; display: grid; grid-template-columns: 16px 52px minmax(0, 1fr); align-items: center; column-gap: 12px;
+    min-block-size: 48px; color: var(--on-dark);
+  }
+  /* The rail between nodes: from this node's centre to the next one's. */
+  .lp .edc-line > li:not(:last-child)::before {
+    content: ""; position: absolute; inset-inline-start: 7.5px; inset-block: 50% -50%; inline-size: 1px;
+    background: var(--glass-dark-edge);
+  }
+  .lp .edc-node { position: relative; justify-self: center; inline-size: 8px; block-size: 8px; border-radius: 50%; background: var(--lime); }
+  .lp .edc-node--open { border-radius: 0; background: transparent; box-shadow: inset 0 0 0 1px var(--on-dark); }
+  .lp .edc-time { font: 400 13px / 1.3 var(--font-ui); font-variant-numeric: tabular-nums; }
+  .lp .edc-text { font: 400 15px / 1.35 var(--font-ui); }
+  .lp .edc-line > li[data-now] .edc-text { font-weight: 500; font-size: 17px; }
+  .lp .edc-line > li[data-now] .edc-time { font-weight: 500; }
+
+  @media (min-width: 1024px) {
+    .lp .edc {
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); justify-items: stretch; align-items: center;
+      column-gap: 56px; text-align: start;
+    }
+    .lp .edc-copy { align-items: flex-start; }
+    .lp .edc-h2 { margin-top: 24px; }
+    .lp .edc-actions { justify-content: flex-start; margin-top: 40px; }
+    .lp .edc-moment { justify-self: end; }
+  }
+  @media (min-width: 1280px) {
+    .lp .edc { column-gap: 80px; }
+    .lp .edc-moment { padding: 22px 24px 24px; }
+  }
+
+  /* The rows arrive one after another as the card scrolls in (scroll-driven, transform and opacity only). */
+  @supports (animation-timeline: view()) {
+    html[data-motion="full"] .lp .edc-line > li {
+      animation: lp-reveal linear both; animation-timeline: view();
+      animation-range: entry calc(10% + var(--i, 0) * 12%) entry calc(70% + var(--i, 0) * 12%);
+    }
+  }
+
+  @media (forced-colors: active) {
+    .lp .edc-node { background: CanvasText; }
+    .lp .edc-node--open { background: Canvas; border: 1px solid CanvasText; }
+  }
+}

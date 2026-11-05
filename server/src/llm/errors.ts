@@ -25,6 +25,8 @@ export type LlmErrorCode =
   | "budget_stopped"
   | "circuit_open"
   | "agent_disabled"
+  /** services/verify.ts ran out its own time budget: not a provider timeout, and no send was refused for it. */
+  | "verifier_budget"
   | "llm_paused"
   | "precheck_failed"
   | "limiter_timeout";
@@ -33,6 +35,9 @@ export type LlmErrorCode =
 export const BREAKER_FAILURES: ReadonlySet<LlmErrorCode> = new Set(["overloaded", "server_error", "timeout", "connection"]);
 
 /** Classes the gateway retries on the same model, with their backoff shape (5.2). */
+/** An operator's kill switch stopped the call before any spend (03-agent-runtime 4.5): nothing is wrong with the work. */
+export const isKillSwitch = (err: unknown): boolean => err instanceof AgentError && (err.code === "llm_paused" || err.code === "agent_disabled");
+
 export function retryPolicy(code: LlmErrorCode, workspace: "batch" | "interactive"): { retries: number; backoffMs: (attempt: number) => number } {
   switch (code) {
     case "rate_limited":

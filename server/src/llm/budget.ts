@@ -1,4 +1,4 @@
-import type { AgentCallContext, ClaudeModel } from "../agents/types";
+import type { AgentCallContext, CallKind, ClaudeModel } from "../agents/types";
 import type { AgentSpec } from "../agents/types";
 import { PLANS, type PlanId } from "@auto-career/shared";
 import type { BudgetRefusal } from "./errors";
@@ -120,7 +120,7 @@ export class Budget {
    * spec's own cap. The call's budget class and workspace overrides (3.3: the drafts and tailor routes run as
    * interactive work) pick the scope, as they pick the counter the ledger bumps.
    */
-  async checkBudget(spec: AnyAgentSpec, est: { usd: number; model: ClaudeModel }, ctx: AgentCallContext, perCallCapUsd: number = spec.maxCostPerCallUsd): Promise<BudgetDecision> {
+  async checkBudget(spec: AnyAgentSpec, est: { usd: number; model: ClaudeModel }, ctx: AgentCallContext, perCallCapUsd: number = spec.maxCostPerCallUsd, callKind?: CallKind): Promise<BudgetDecision> {
     const budgetClass = ctx.budgetClass ?? spec.budgetClass;
     const workspace = ctx.workspace ?? spec.workspace;
 
@@ -152,9 +152,10 @@ export class Budget {
     }
 
     // Scope 4: per agent, per day. A spent envelope stops batch work until 00:00 UTC; interactive work carries on to
-    // the global ceiling, because a user is waiting (9.4). ponytail: the page at 100% lands with WP-27's alerts.
+    // the global ceiling, because a user is waiting (9.4). A prompt shadow stops too whatever its workspace: nobody waits
+    // on it, and with no user and the ops class no other cap holds it. ponytail: the page at 100% lands with WP-27's alerts.
     const agentSpend = (snap.agentUsd[spec.id] ?? 0) + (this.processAgentDelta[spec.id] ?? 0);
-    if (agentSpend >= spec.dailyEnvelopeUsd && workspace === "batch") {
+    if (agentSpend >= spec.dailyEnvelopeUsd && (workspace === "batch" || callKind === "shadow")) {
       return { ok: false, scope: "agent", retryAfter: "next_utc_day" };
     }
 

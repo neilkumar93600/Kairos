@@ -92,7 +92,15 @@ export async function processRedriveInbox(): Promise<{ checked: number; added: n
   const rows = await db()
     .select({ id: inboundEmails.id })
     .from(inboundEmails)
-    .where(and(isNull(inboundEmails.kind), sql`${inboundEmails.receivedAt} between now() - interval '7 days' and now() - interval '5 minutes'`))
+    // Unclassified and visible (inbound_emails_unclassified_idx); kind IS NULL skips rows the previous release tagged.
+    .where(
+      and(
+        isNull(inboundEmails.classifiedAt),
+        isNull(inboundEmails.kind),
+        isNull(inboundEmails.hiddenReason),
+        sql`${inboundEmails.receivedAt} between now() - interval '7 days' and now() - interval '5 minutes'`,
+      ),
+    )
     .limit(500);
   const added = await each("redrive-inbox", rows.map((r) => r.id), (id) => redrive("classify-email", { inboundEmailId: id }, `classify-${id}`, true));
   if (added) logger.warn({ added }, "lost classify jobs re-added");

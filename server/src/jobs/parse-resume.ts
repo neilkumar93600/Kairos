@@ -8,6 +8,7 @@ import { finalizeFacts, normalizeForHash } from "../services/import/finalize";
 import { sourceAad } from "../services/import/imports";
 import { parseResumeToFacts, parserInput } from "../services/resume-parser";
 import { planFor } from "../services/submissions";
+import { isKillSwitch } from "../llm/errors";
 import { gatewayCtx } from "../llm/wire";
 import type { JobData } from "./queues";
 
@@ -83,6 +84,16 @@ export async function processParseResume(job: Job<JobData["parse-resume"]>) {
     logger.info({ metric: "resume_parse", outcome: "parsed", importId, sourceKind: claimed.sourceKind, ms: Date.now() - started, ...added, ...counts }, "resume parsed");
     return added;
   } catch (err) {
+    // A pause outlasts BullMQ's retries, and must not cost the user their import: the attempt is given back and the row
+    // waits as pending. The stuck-parse reconciler tries it again every 10 minutes until the switch is lifted.
+    if (isKillSwitch(err)) {
+      await db()
+        .update(resumeImports)
+        .set({ parseStatus: "pending", parseAttempts: claimed.parseAttempts - 1, updatedAt: new Date() })
+        .where(and(eq(resumeImports.id, importId), ne(resumeImports.parseStatus, "parsed")));
+      logger.info({ metric: "resume_parse", outcome: "deferred", importId }, "resume parse held by a kill switch");
+      return { deferred: true };
+    }
     const last = claimed.parseAttempts >= MAX_PARSE_ATTEMPTS;
     await db()
       .update(resumeImports)

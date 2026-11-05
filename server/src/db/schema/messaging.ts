@@ -1,12 +1,22 @@
 import { sql } from "drizzle-orm";
-import { check, date, index, jsonb, pgTable, primaryKey, smallint, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, date, index, jsonb, pgTable, primaryKey, real, smallint, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { applications } from "./applications";
 import { user } from "./auth";
 import { emailKind } from "./enums";
 // The column type only; platform.ts's tables stay out of schema/index.ts.
 import { bytea } from "./platform";
 
-/** Replies forwarded to the user's address, tagged to an application when we can match them. */
+/** Attachment metadata kept from Postmark's payload; the content is dropped before storage. */
+export type InboundAttachment = { name: string; type: string; size: number };
+
+/**
+ * Replies forwarded to the user's address, tagged to an application when we can match them (_db/messaging.md 4).
+ * WP-24 expand: the body and a 280-character preview are encrypted (lib/crypto.ts, AAD inbound_emails:<id>:text_body
+ * and :preview). text_body is the legacy plaintext, nullable now: written only while INBOUND_PLAINTEXT_DUAL_WRITE is on
+ * (for the previous release, which reads it), nulled by `backfill-inbound --null-plaintext`, dropped by WP-46.
+ * classified_at is the classify job's idempotency marker. The checks old rows or the legacy classify job would break
+ * (sender_len, subject_len, link_reason, classified, offer_needs_rule) come with WP-46, after the backfill and the drain.
+ */
 export const inboundEmails = pgTable(
   "inbound_emails",
   {
@@ -18,13 +28,69 @@ export const inboundEmails = pgTable(
     providerMessageId: text("provider_message_id").notNull().unique(),
     sender: text("sender").notNull(),
     subject: text("subject").notNull(),
-    textBody: text("text_body").notNull(),
+    textBody: text("text_body"),
+    textBodyEnc: bytea("text_body_enc"),
+    previewEnc: bytea("preview_enc"),
+    attachments: jsonb("attachments").$type<InboundAttachment[]>().notNull().default([]),
+    /** Postmark's X-Spam-Score: 5 restricts automation, 8 hides the row (services/inbound.ts). */
+    spamScore: real("spam_score"),
+    hiddenReason: text("hidden_reason").$type<"forwarding_confirmation" | "spam">(),
+    /**
+     * Domains with a valid DKIM signature over this mail, checked at receipt on Postmark's raw message, which is not
+     * kept (services/forwarding.ts). Only the classify job's terminal stage moves read it. Empty: unauthenticated.
+     */
+    verifiedDomains: text("verified_domains").array().$type<string[]>().notNull().default(sql`'{}'::text[]`),
     kind: emailKind("kind"),
+    ruleKind: emailKind("rule_kind"),
+    modelKind: emailKind("model_kind"),
+    linkedBy: text("linked_by").$type<"domain" | "company_name" | "none">(),
+    classifiedAt: timestamp("classified_at", { withTimezone: true }),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("inbound_emails_user_idx").on(t.userId, t.receivedAt),
     index("inbound_emails_application_idx").on(t.applicationId, t.receivedAt).where(sql`${t.applicationId} is not null`),
+    index("inbound_emails_unclassified_idx").on(t.receivedAt).where(sql`${t.classifiedAt} IS NULL`),
+    index("inbound_emails_body_purge_idx").on(t.receivedAt).where(sql`${t.textBodyEnc} IS NOT NULL`),
+    index("inbound_emails_hidden_idx").on(t.receivedAt).where(sql`${t.hiddenReason} IS NOT NULL`),
+    check("inbound_emails_hidden_reason_ck", sql`hidden_reason IS NULL OR hidden_reason IN ('forwarding_confirmation','spam')`),
+    check("inbound_emails_linked_by_ck", sql`linked_by IS NULL OR linked_by IN ('domain','company_name','none')`),
+    check("inbound_emails_one_classifier_ck", sql`rule_kind IS NULL OR model_kind IS NULL`),
+    check("inbound_emails_attachments_ck", sql`jsonb_typeof(attachments) = 'array' AND jsonb_array_length(attachments) <= 50`),
+    check("inbound_emails_body_preview_pair_ck", sql`(text_body_enc IS NULL) = (preview_enc IS NULL)`),
+    check("inbound_emails_body_size_ck", sql`octet_length(text_body_enc) <= 16448`),
+    check("inbound_emails_preview_size_ck", sql`octet_length(preview_enc) <= 1200`),
+    check("inbound_emails_hidden_no_body_ck", sql`hidden_reason IS NULL OR (text_body IS NULL AND text_body_enc IS NULL AND preview_enc IS NULL)`),
+    check("inbound_emails_verified_domains_ck", sql`cardinality(verified_domains) <= 2`),
+  ],
+);
+
+/**
+ * Gmail forwarding confirmations (_db/messaging.md 5.1): the code and link Gmail sent to the user's Kairos address,
+ * shown in the app and emailed to the account address, then forgotten. One live row per user and provider; a newer
+ * confirmation replaces it. Kept in clear: a short-lived code for a rule only the user's own Gmail can create.
+ */
+export const forwardingVerifications = pgTable(
+  "forwarding_verifications",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    provider: text("provider").$type<"gmail">().notNull(),
+    code: text("code"),
+    /** Never fetched by the server; its host is allowlisted by the parser (services/forwarding.ts). */
+    confirmUrl: text("confirm_url"),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.provider] }),
+    check("forwarding_verifications_provider_ck", sql`provider IN ('gmail')`),
+    check("forwarding_verifications_payload_ck", sql`code IS NOT NULL OR confirm_url IS NOT NULL`),
+    check("forwarding_verifications_code_ck", sql`code IS NULL OR code ~ '^[0-9]{6,12}$'`),
+    check("forwarding_verifications_url_ck", sql`confirm_url IS NULL OR (confirm_url ~ '^https://' AND char_length(confirm_url) <= 2048)`),
+    check("forwarding_verifications_expiry_ck", sql`expires_at > received_at`),
   ],
 );
 

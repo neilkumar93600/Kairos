@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { configureVerify } from "../src/services/verify";
 import { resumeSuggestionSchema, type FactKind, type ResumeInput, type SuggestionRequest } from "@auto-career/shared";
 import type { chatJson } from "../src/services/llm";
 import { UNTRUSTED_RULES } from "../src/ai/untrusted";
@@ -78,6 +79,9 @@ function fakes(out: ModelSuggestion[]) {
 const ctx: WriterContext = { resume, facts };
 const req = (over: Partial<SuggestionRequest> = {}): SuggestionRequest => ({ scope: "resume", ...over });
 const prompt = (calls: { messages: { role: string; content: string }[] }[]) => calls[0]!.messages.map((m) => m.content).join("\n");
+
+// No database here: the verifier runs in its default mode, shadow (test/verify.test.ts covers enforce).
+beforeEach(() => configureVerify({ mode: async () => "shadow", cacheGet: async () => new Map(), cachePut: async () => {} }));
 
 describe("suggestEdits verification", () => {
   it("never returns acceptable text citing invented, unconfirmed or no facts", async () => {

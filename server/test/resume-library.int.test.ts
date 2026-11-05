@@ -19,7 +19,8 @@ import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from ".
 if (hasTestDb) process.env.DATABASE_URL = testDbUrl("library");
 process.env.DATA_KEKS = `v1:${Buffer.from([...Array(32).keys()]).toString("base64")}`;
 const chatJson = vi.hoisted(() => vi.fn());
-vi.mock("../src/services/llm", () => ({ chatJson }));
+// Spread the real module: the error handler reads LlmError from it, and a missing mock export throws inside the handler.
+vi.mock("../src/services/llm", async (orig) => ({ ...(await orig<typeof import("../src/services/llm")>()), chatJson }));
 const queued = vi.hoisted(() => [] as { importId: string }[]);
 vi.mock("../src/jobs/queues", async (orig) => ({
   ...(await orig<typeof import("../src/jobs/queues")>()),
@@ -109,7 +110,7 @@ describe.skipIf(!hasTestDb)("resume library and imports (R1)", () => {
     const first = (await request(app).get("/api/resumes")).body.resumes[0];
     const before = await tdb.select().from(schema.resumes).where(eq(schema.resumes.userId, me.id));
     const [company] = await tdb.insert(schema.companies).values({ name: "Sample Co", ats: "greenhouse", boardToken: "sample-co" }).returning();
-    const [job] = await tdb.insert(schema.jobs).values({ companyId: company!.id, externalId: "1", title: "Data Analyst", descriptionText: "SQL.", applyUrl: "https://example.com/a" }).returning();
+    const [job] = await tdb.insert(schema.jobs).values({ companyId: company!.id, externalId: "1", title: "Data Analyst", descriptionText: "SQL.", applyUrl: "https://job-boards.greenhouse.io/sample-co/jobs/1" }).returning();
     await tdb.insert(schema.applications).values({ userId: me.id, jobId: job!.id });
     for (const res of [
       await request(app).post("/api/resumes").send({ from: "duplicate", sourceId: first.id, name: "Second" }),

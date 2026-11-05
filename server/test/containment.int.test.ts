@@ -302,9 +302,9 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
         .send({ MessageID: "wide", From: "hr@acme.com", To: `u-${userId}@replies.test`, Subject: "Hello", TextBody: "\u00e9\u{1F600}".repeat(20_000) });
       expect(res.body).toEqual({ stored: true });
       const [row] = await tdb.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, "wide"));
-      expect(Buffer.byteLength(row!.textBody)).toBeLessThanOrEqual(16_384);
+      expect(Buffer.byteLength(row!.textBody!)).toBeLessThanOrEqual(16_384);
       expect(row!.textBody).not.toContain("\uFFFD");
-      expect(row!.textBody.length).toBeGreaterThan(1000);
+      expect(row!.textBody!.length).toBeGreaterThan(1000);
     });
 
     it("the inbox query selects a 280-character slice in SQL, never the full body", () => {

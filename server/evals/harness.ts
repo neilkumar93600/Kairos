@@ -17,7 +17,7 @@ import { fakeAnthropic, type ScriptedResponse } from "../src/llm/testing";
 import { draftAnswer } from "../src/services/draft-writer";
 import { parseResumeToFacts, type ResumeContact } from "../src/services/resume-parser";
 import { classifySensitive, isProfileQuestion } from "../src/services/sensitive";
-import { grade, type CaseTag, type EvalCase, type Failure, type GraderId } from "./graders";
+import { grade, verdictTally, type CaseTag, type EvalCase, type Failure, type GraderId, type VerdictTally } from "./graders";
 
 /**
  * The eval runner (03-agent-runtime 13.4, 15.2). Every case goes through the production entry of its agent (runAgent,
@@ -32,7 +32,13 @@ import { grade, type CaseTag, type EvalCase, type Failure, type GraderId } from 
 
 export const EVALS_DIR = dirname(fileURLToPath(import.meta.url));
 const TAGS = ["golden", "adversarial", "injection", "self_preference", "sensitive", "regression", "refine", "hard", "fresh_public"] as const satisfies readonly CaseTag[];
-const GRADERS = ["fixture", "budget", "schema", "fact_ids", "containment", "sensitive", "injection_echo"] as const satisfies readonly GraderId[];
+const GRADERS = ["fixture", "budget", "schema", "fact_ids", "containment", "sensitive", "injection_echo", "verdict"] as const satisfies readonly GraderId[];
+/** The labelled-set pass bars as fractions (B.9.10; agents/08 9 and 09 6). The escalation's false-reject figure is advisory. */
+export const VERDICT_BARS: Partial<Record<RegisteredAgent, { falseAccept: number; falseReject: number }>> = {
+  "claim-verifier": { falseAccept: 0.01, falseReject: 0.08 },
+  "claim-verifier-escalation": { falseAccept: 0.005, falseReject: 1 },
+};
+const VERDICT = z.enum(["supported", "unsupported", "contradicted", "uncertain"]);
 /** Re-run `repeat` times in live mode: no sampling setting makes a reply deterministic (13.4). */
 const ZERO_TOLERANCE: CaseTag[] = ["adversarial", "injection", "sensitive", "self_preference"];
 
@@ -48,6 +54,8 @@ const caseSchema = z
         mustNotAppear: z.array(z.string().min(1)).optional(),
         abstain: z.literal("sensitive").optional(),
         label: z.number().min(0).max(100).optional(),
+        verdicts: z.record(z.string(), VERDICT).optional(),
+        acceptable: z.record(z.string(), z.array(VERDICT).min(1)).optional(),
       })
       .strict(),
     cleanTwinOf: z.string().optional(),
@@ -114,11 +122,23 @@ export interface CaseResult {
   negative: boolean;
   failures: Failure[];
   costUsd: number;
+  /** The verifier labels' counts for this case; zero-tolerance reruns add up. */
+  tally?: VerdictTally;
+}
+
+export interface VerdictBar {
+  agentId: RegisteredAgent;
+  claims: number;
+  falseAcceptRate: number;
+  falseRejectRate: number;
+  ok: boolean;
 }
 
 export interface Report {
   mode: RunOptions["mode"];
   results: CaseResult[];
+  /** The false-accept and false-reject rates of each labelled agent. Fixture replies only prove the plumbing. */
+  verdictBars: VerdictBar[];
   spentUsd: number;
   passed: boolean;
 }
@@ -223,6 +243,14 @@ async function entry(agentId: RegisteredAgent, input: Record<string, unknown>, c
   return (await runAgent(AGENTS[agentId] as AgentSpec<unknown, unknown>, input, ctx)).data;
 }
 
+function addTally(result: CaseResult, c: EvalCase, outcome: { output?: unknown; error?: unknown }): void {
+  // A call that errored judged nothing: every label counts against it, through an empty output.
+  const t = verdictTally(c, outcome.error === undefined ? outcome.output : undefined);
+  if (!t) return;
+  const a = result.tally ?? { goldNegative: 0, falseAccept: 0, goldPositive: 0, falseReject: 0 };
+  result.tally = { goldNegative: a.goldNegative + t.goldNegative, falseAccept: a.falseAccept + t.falseAccept, goldPositive: a.goldPositive + t.goldPositive, falseReject: a.falseReject + t.falseReject };
+}
+
 async function runCase(c: EvalCase, client: AnthropicLike & { requests: Record<string, unknown>[] }, live: boolean) {
   resetBreakers();
   resetLimiter();
@@ -274,6 +302,7 @@ export async function runEval(opts: RunOptions): Promise<Report> {
         const { outcome, costUsd } = await runCase(c, fakeAnthropic(fx?.responses.map(scripted) ?? []), false);
         result.costUsd = costUsd;
         result.failures.push(...grade(c, outcome));
+        addTally(result, c, outcome);
         continue;
       }
 
@@ -288,6 +317,7 @@ export async function runEval(opts: RunOptions): Promise<Report> {
         spentUsd += costUsd;
         result.costUsd += costUsd;
         result.failures.push(...grade(c, outcome).map((f) => (runs > 1 ? { ...f, detail: `run ${k + 1}: ${f.detail}` } : f)));
+        addTally(result, c, outcome);
         if (opts.mode === "record" && k === 0 && client.replies.length) {
           const fixture: Fixture = {
             caseId: c.id,
@@ -320,7 +350,16 @@ export async function runEval(opts: RunOptions): Promise<Report> {
       });
     }
   }
-  return { mode: opts.mode, results, spentUsd, passed: results.length > 0 && results.every((r) => r.failures.length === 0) };
+  const verdictBars = (Object.keys(VERDICT_BARS) as RegisteredAgent[]).flatMap((agentId): VerdictBar[] => {
+    const tallies = results.filter((r) => r.agentId === agentId && !r.negative && r.tally).map((r) => r.tally!);
+    if (!tallies.length) return [];
+    const sum = (k: keyof VerdictTally) => tallies.reduce((n, t) => n + t[k], 0);
+    const falseAcceptRate = sum("falseAccept") / Math.max(1, sum("goldNegative"));
+    const falseRejectRate = sum("falseReject") / Math.max(1, sum("goldPositive"));
+    const bar = VERDICT_BARS[agentId]!;
+    return [{ agentId, claims: sum("goldNegative") + sum("goldPositive"), falseAcceptRate, falseRejectRate, ok: falseAcceptRate <= bar.falseAccept && falseRejectRate <= bar.falseReject }];
+  });
+  return { mode: opts.mode, results, verdictBars, spentUsd, passed: results.length > 0 && results.every((r) => r.failures.length === 0) && verdictBars.every((b) => b.ok) };
 }
 
 /** A markdown table per agent, then every failure; CI appends it to the job summary. */
@@ -342,6 +381,11 @@ export function formatReport(report: Report): string {
   }
   const negatives = report.results.filter((r) => r.negative);
   lines.push("", `Grader self-tests: ${negatives.filter((r) => !r.failures.length).length} of ${negatives.length} bad outputs caught.`);
+  for (const b of report.verdictBars) {
+    const bar = VERDICT_BARS[b.agentId]!;
+    const pct = (x: number) => `${(100 * x).toFixed(1)}%`;
+    lines.push(`Labelled claims, ${b.agentId}: ${b.claims}; false accept ${pct(b.falseAcceptRate)} (bar ${pct(bar.falseAccept)}), false reject ${pct(b.falseRejectRate)} (bar ${pct(bar.falseReject)}): ${b.ok ? "ok" : "OVER THE BAR"}${report.mode === "fixtures" ? ", from fixtures, which prove the plumbing only; real rates need --live" : ""}.`);
+  }
   const failed = report.results.filter((r) => r.failures.length);
   if (failed.length) lines.push("");
   for (const r of failed) for (const f of r.failures) lines.push(`- FAIL ${r.caseId}${r.negative ? " (negative)" : ""} [${f.grader}] ${f.detail}`);

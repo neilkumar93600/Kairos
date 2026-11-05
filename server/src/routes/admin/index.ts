@@ -6,6 +6,7 @@ import { companies, metricsMinute, opsAudit, opsFlags } from "../../db/schema";
 import { env } from "../../lib/env";
 import { HttpError, notFound } from "../../lib/errors";
 import { getFlags, schemaFor, setFlag } from "../../lib/flags";
+import { AGENTS } from "../../agents/registry";
 import { SLOS, sloWindow } from "../../lib/slo";
 import { keysetBefore, pageParams, slicePage } from "../../lib/pagination";
 import { parseParam, validateBody } from "../../middleware/validate";
@@ -22,7 +23,17 @@ export const adminRouter = Router();
 adminRouter.get("/flags", async (_req, res) => {
   const [flags, rows] = await Promise.all([getFlags(), db().select().from(opsFlags)]);
   res.json({
-    flags: { ...flags, extensionOnly: [...flags.extensionOnly], features: Object.fromEntries(flags.features) },
+    flags: {
+      ...flags,
+      extensionOnly: [...flags.extensionOnly],
+      features: Object.fromEntries(flags.features),
+      agentDisabled: [...flags.agentDisabled],
+      promptPin: Object.fromEntries(flags.promptPin),
+      modelPin: Object.fromEntries(flags.modelPin),
+      promptCanary: Object.fromEntries(flags.promptCanary),
+      promptShadow: Object.fromEntries(flags.promptShadow),
+      verifierMode: Object.fromEntries(flags.verifierMode),
+    },
     rows: rows.map((r) => ({ key: r.key, value: r.value, updatedBy: r.updatedBy, updatedAt: r.updatedAt })),
     env: { PAUSE_SCORING: env().PAUSE_SCORING, LLM_SHED_LEVEL: env().LLM_SHED_LEVEL, CLOUD_APPLIER_OPEN: env().CLOUD_APPLIER_OPEN },
   });
@@ -30,12 +41,26 @@ adminRouter.get("/flags", async (_req, res) => {
 
 const flagBody = z.object({ value: z.unknown() });
 
+/**
+ * A prompt_pin, prompt_canary or prompt_shadow naming a version the agent has not loaded. The gateway refuses a call pinned
+ * to one rather than substitute another version, so one typo here would stop the agent; the registry is checked here
+ * because lib/flags.ts does not import it.
+ */
+export function namesUnloadedVersion(key: string, value: unknown): boolean {
+  const [family, agentId] = key.split(":");
+  if (family !== "prompt_pin" && family !== "prompt_canary" && family !== "prompt_shadow") return false;
+  const version = typeof value === "number" ? value : (value as { version: number }).version;
+  const prompts: Record<number, unknown> | undefined = (AGENTS as Record<string, { prompts: Record<number, unknown> }>)[agentId ?? ""]?.prompts;
+  return !prompts?.[version];
+}
+
 adminRouter.put("/flags/:key", validateBody(flagBody), async (req, res) => {
   const key = parseParam(z.string().min(1).max(60), req.params.key);
   const schema = schemaFor(key);
   if (!schema) throw new HttpError(422, "unknown_flag", "No such flag");
   const value = schema.safeParse((req.body as z.infer<typeof flagBody>).value);
   if (!value.success) throw new HttpError(422, "invalid_body", "That value is not valid for this flag", value.error.issues);
+  if (namesUnloadedVersion(key, value.data)) throw new HttpError(422, "invalid_body", "That agent has no such prompt version");
   res.json(await setFlag(key, value.data, currentUser(req).id));
 });
 

@@ -54,6 +54,9 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "ALL /api/auth/*splat": { public: "Better Auth: sign-in and the caller's own session; it checks its own origins and limits" },
   "POST /api/webhooks/stripe": { public: "Stripe: the signature is the credential, and the event names its own customer" },
   "POST /api/webhooks/inbound-email": { public: "Postmark inbound: the token is the credential; mail is filed by forwarding address" },
+  "POST /api/webhooks/postmark/inbound/:pathSecret": {
+    public: "Postmark inbound (WP-24): the path secret and Basic pair are the credential; mail is filed by forwarding address",
+  },
   "POST /api/webhooks/postmark-events": { public: "Postmark delivery events: the token is the credential; it only adds or lifts address-hash suppressions" },
   "POST /api/contact": { public: "the public contact form: stores a message and reads nothing back" },
   "GET /api/unsubscribe": { public: "the signed token is the credential; GET only reads, and shows what a POST would stop" },
@@ -105,10 +108,13 @@ export const MATRIX: Record<string, MatrixEntry> = {
     why: "approves the caller's own drafts among the ids sent; another user's id is left out ({ approved: [] })",
   },
   "POST /api/applications/:id/drafts": { request: (t) => ({ path: `/api/applications/${t.applicationId}/drafts`, body: { kind: "cover_letter" } }) },
+  "POST /api/applications/:id/stage/clear": { request: (t) => ({ path: `/api/applications/${t.applicationId}/stage/clear` }) },
   "POST /api/applications/:id/withdraw": { request: (t) => ({ path: `/api/applications/${t.applicationId}/withdraw` }) },
 
   "GET /api/credits": own("/api/credits"),
   "GET /api/inbox": own("/api/inbox"),
+  "GET /api/forwarding/status": own("/api/forwarding/status"),
+  "POST /api/forwarding/confirm": own("/api/forwarding/confirm", { provider: "other" }),
   "POST /api/billing/checkout": { ...own("/api/billing/checkout", { plan: "starter", interval: "month" }), fresh: true },
   "POST /api/billing/portal": { ...own("/api/billing/portal"), fresh: true },
 

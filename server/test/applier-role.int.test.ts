@@ -177,6 +177,10 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       llm_cost_daily: ["S", "SIU", "S"],
       user_daily_usage: ["SIU", "SIUD", "S"],
       ai_usage: ["SIU", "SD", ""],
+      action_tokens: ["SI", "SIUD", ""],
+      notifications: ["SI", "SIUD", ""],
+      email_suppressions: ["SIUD", "SI", ""],
+      email_sends: ["", "SIUD", ""],
       // WP-25: the archive and the erased-address list are never rewritten; readonly sees none of the four.
       deletion_tasks: ["SIU", "SIU", ""],
       consent_records: ["SIU", "SIU", ""],
@@ -194,6 +198,8 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       saved_searches: ["SIUD", "SIU", ""],
       reminders: ["", "SIUD", ""],
       mail_opt_outs: ["SID", "S", ""],
+      // WP-24: the api stores and acknowledges a Gmail code; the worker reads it for the email and deletes it.
+      forwarding_verifications: ["SIU", "SD", ""],
     };
     const ROLES = ["kairos_api", "kairos_worker", "kairos_readonly"] as const;
     const PRIVS = { S: "SELECT", I: "INSERT", U: "UPDATE", D: "DELETE" } as const;
@@ -245,6 +251,10 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       ["kairos_api", "update ops_audit set target = target where false", false],
       ["kairos_worker", "update ops_audit set target = target where false", false],
       ["kairos_metrics", "select name, value from metrics_minute limit 1", true],
+      // WP-24: the undo of a mail-set stage detaches a reply; the api can touch nothing else of it.
+      ["kairos_api", "update inbound_emails set application_id = null, linked_by = 'none' where false", true],
+      ["kairos_api", "update inbound_emails set kind = null where false", false],
+      ["kairos_api", "update inbound_emails set verified_domains = '{}' where false", false],
       ["kairos_api", "update credit_ledger set delta = 100", false],
       ["kairos_api", "delete from credit_ledger", false],
       ["kairos_worker", "update credit_ledger set note = 'x'", false],

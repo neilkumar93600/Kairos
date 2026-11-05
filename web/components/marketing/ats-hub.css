@@ -1,0 +1,73 @@
+/*
+ * ATS hub (docs/DESIGN.md "Reference layer", Marketing). Unlayered and scoped under .lp, so it wins over landing.css
+ * and over Tailwind utilities (LogoMark's default colour class included). Below 768 the chips stack in one column on a
+ * straight dashed rail; from 768 they sit in a row of three 176 px columns, wired to the disc by the curves in
+ * ats-hub.tsx, whose coordinates assume exactly this geometry (chips 32 tall, 64 gap, 56 disc).
+ */
+.lp .ats-hub {
+  display: flex; flex-direction: column; align-items: center; gap: 16px;
+  margin-block: 0; margin-inline: auto; text-align: center;
+}
+.lp .ats-hub__stage { position: relative; display: flex; flex-direction: column; align-items: center; }
+.lp .ats-hub__boards {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 16px;
+  margin: 0; padding: 0; list-style: none;
+}
+.lp .ats-hub__boards > li { display: flex; }
+.lp .ats-hub__chip { min-height: 32px; gap: 8px; padding: 0 14px; }
+.lp .ats-hub__chip > svg { flex: none; color: var(--icon); }
+.lp .ats-hub__disc {
+  position: relative; display: grid; place-items: center; inline-size: 56px; block-size: 56px; margin-block-start: 24px;
+  border-radius: var(--r-pill); background: var(--surface); box-shadow: var(--edge);
+}
+.lp .ats-hub__mark { color: var(--ink); }
+.lp .ats-hub__note { margin: 4px 0 0; }
+
+/* Wires: 1 px Stone, dash 4 4. Chips and disc paint over the ends. */
+.lp .ats-hub__wire { fill: none; stroke: var(--rule); stroke-width: 1; stroke-dasharray: 4 4; }
+.lp .ats-hub__wires { display: none; }
+/* First chip centre (16) to disc centre (28 above the bottom). Explicit height: an absolutely positioned svg does not
+   stretch between top and bottom. */
+.lp .ats-hub__rail {
+  position: absolute; inset-block-start: 16px; inset-inline-start: calc(50% - 0.5px);
+  inline-size: 1px; block-size: calc(100% - 44px); overflow: visible;
+}
+
+@media (min-width: 768px) {
+  .lp .ats-hub__wires { display: block; position: absolute; inset-block-start: 0; inset-inline-start: 0; }
+  .lp .ats-hub__rail { display: none; }
+  .lp .ats-hub__boards { display: grid; grid-template-columns: repeat(3, 176px); justify-items: center; gap: 0; }
+  .lp .ats-hub__disc { margin-block-start: 64px; }
+}
+
+/* Idle drift toward the disc: 8 px (one dash and gap) every 2 s. One animation for every wire, so they share one
+   clock; it runs only while the figure is on screen (data-live, written by the observer) and motion is full, so the
+   reduced setting, the OS backstop and scripts off all keep the dashes still. */
+html[data-motion="full"] .lp .ats-hub[data-live] .ats-hub__wire { animation: ats-hub-drift 2s linear infinite; }
+@keyframes ats-hub-drift { from { stroke-dashoffset: 8; } to { stroke-dashoffset: 0; } }
+
+/* Landing variant (docs/DESIGN.md "Landing v3 mid-page chapter" > "1. Where it applies"). The LinkedIn line is the
+   figcaption, 16 px under the disc (the figure gap), so it drops the note's extra 4 px. */
+.lp .ats-hub figcaption.ats-hub__note { margin: 0; }
+
+/* Pulse: Magic UI Animated Beam rebuilt with no gradient and no colour. One solid Charcoal 24 px dash per wire, and a
+   gap as long as the wire (--len, unitless px, set inline), so only one dash per path exists. Each path runs chip to
+   disc: offset -len parks the dash just past the disc end (under the opaque disc), +24 just before the chip start
+   (under the opaque chip), so the dash leaves the disc and lands in the chip over 1.6 s, then rests 0.8 s. Delays 0,
+   0.8 and 1.6 s on the 2.4 s cycle keep exactly one dash moving. stroke-dashoffset on these three paths is the one
+   sanctioned non-transform property. Hidden unless motion is full and the figure is on screen (data-live), so the
+   reduced setting, the OS backstop and scripts off show still dashed wires and no dash. From 768 only: the wires svg
+   is display: none below, and the straight rail keeps the drift. */
+.lp .ats-hub__pulse {
+  fill: none; stroke: var(--icon); stroke-width: 1.25; stroke-linecap: round;
+  stroke-dasharray: 24px calc(var(--len) * 1px); stroke-dashoffset: 24px; opacity: 0;
+}
+html[data-motion="full"] .lp .ats-hub--pulse[data-live] .ats-hub__pulse {
+  opacity: 1; animation: ats-hub-pulse 2.4s var(--ease-out) var(--delay, 0s) infinite both;
+}
+/* A wire never runs both: the drift is off on pulse wires (same gate as the drift rule, one class more specific). */
+html[data-motion="full"] .lp .ats-hub--pulse[data-live] .ats-hub__wires .ats-hub__wire { animation: none; }
+@keyframes ats-hub-pulse {
+  0% { stroke-dashoffset: calc(var(--len) * -1px); }
+  66.667%, 100% { stroke-dashoffset: 24px; }
+}

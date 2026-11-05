@@ -12,6 +12,7 @@ import { contactRouter } from "./contact";
 import { creditsRouter } from "./credits";
 import { extensionRouter } from "./extension";
 import { filesRouter } from "./files";
+import { forwardingRouter } from "./forwarding";
 import { importsRouter } from "./imports";
 import { inboxRouter } from "./inbox";
 import { jobsRouter } from "./jobs";
@@ -65,6 +66,7 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   router.use("/applications", approveAuthed, applicationsRouter);
   router.use("/credits", authed, creditsRouter);
   router.use("/inbox", authed, inboxRouter);
+  router.use("/forwarding", authed, forwardingRouter);
   router.use("/billing", freshAuthed, limits.billing, billingRouter);
   router.use("/extension", authed, extensionRouter);
   router.use("/files", authed, filesRouter);

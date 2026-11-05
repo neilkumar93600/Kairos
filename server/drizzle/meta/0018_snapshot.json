@@ -1,5 +1,5 @@
 {
-  "id": "e2e8cca8-8bde-421f-8e49-2af84a9d2f63",
+  "id": "29e778f6-aac1-4527-a23d-f35295bc191c",
   "prevId": "9e6eaabb-d71a-48d9-b486-cd53eea6d1e5",
   "version": "7",
   "dialect": "postgresql",
@@ -1099,7 +1099,7 @@
           "type": "text[]",
           "primaryKey": false,
           "notNull": true,
-          "default": "ARRAY['digest','outcome_report','autopilot_summary','reminders']::text[]"
+          "default": "'{}'::text[]"
         },
         "created_at": {
           "name": "created_at",
@@ -4158,19 +4158,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "message_hash": {
-          "name": "message_hash",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "received_on": {
-          "name": "received_on",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "(now() AT TIME ZONE 'UTC')::date"
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -4180,27 +4167,6 @@
         }
       },
       "indexes": {
-        "contact_messages_dedupe_uq": {
-          "name": "contact_messages_dedupe_uq",
-          "columns": [
-            {
-              "expression": "message_hash",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "received_on",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "contact_messages_email_hash_idx": {
           "name": "contact_messages_email_hash_idx",
           "columns": [
@@ -4223,10 +4189,6 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "contact_messages_hash_ck": {
-          "name": "contact_messages_hash_ck",
-          "value": "octet_length(\"contact_messages\".\"message_hash\") = 32"
-        },
         "contact_messages_topic_ck": {
           "name": "contact_messages_topic_ck",
           "value": "topic IN ('support','billing','partnership','press','other')"
@@ -4609,55 +4571,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.mail_opt_outs": {
-      "name": "mail_opt_outs",
-      "schema": "",
-      "columns": {
-        "address_hash": {
-          "name": "address_hash",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "mail_opt_outs_address_hash_kind_pk": {
-          "name": "mail_opt_outs_address_hash_kind_pk",
-          "columns": [
-            "address_hash",
-            "kind"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "mail_opt_outs_hash_ck": {
-          "name": "mail_opt_outs_hash_ck",
-          "value": "octet_length(\"mail_opt_outs\".\"address_hash\") = 32"
-        },
-        "mail_opt_outs_kind_ck": {
-          "name": "mail_opt_outs_kind_ck",
-          "value": "\"mail_opt_outs\".\"kind\" IN ('digest','outcome_report','autopilot_summary','reminders')"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.notifications": {
       "name": "notifications",
       "schema": "",
@@ -4829,317 +4742,6 @@
         "notifications_read_after_create_ck": {
           "name": "notifications_read_after_create_ck",
           "value": "\"notifications\".\"read_at\" IS NULL OR \"notifications\".\"read_at\" >= \"notifications\".\"created_at\""
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.reminders": {
-      "name": "reminders",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "application_id": {
-          "name": "application_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "due_at": {
-          "name": "due_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "sent_at": {
-          "name": "sent_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "cancelled_at": {
-          "name": "cancelled_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "cancel_reason": {
-          "name": "cancel_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "reminders_app_kind_uq": {
-          "name": "reminders_app_kind_uq",
-          "columns": [
-            {
-              "expression": "application_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "kind",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "reminders_due_idx": {
-          "name": "reminders_due_idx",
-          "columns": [
-            {
-              "expression": "due_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"reminders\".\"sent_at\" IS NULL AND \"reminders\".\"cancelled_at\" IS NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "reminders_user_idx": {
-          "name": "reminders_user_idx",
-          "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": false,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "reminders_user_id_user_id_fk": {
-          "name": "reminders_user_id_user_id_fk",
-          "tableFrom": "reminders",
-          "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "reminders_application_id_applications_id_fk": {
-          "name": "reminders_application_id_applications_id_fk",
-          "tableFrom": "reminders",
-          "tableTo": "applications",
-          "columnsFrom": [
-            "application_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "reminders_kind_ck": {
-          "name": "reminders_kind_ck",
-          "value": "\"reminders\".\"kind\" IN ('no_reply','saved_job_ageing')"
-        },
-        "reminders_resolution_ck": {
-          "name": "reminders_resolution_ck",
-          "value": "NOT (\"reminders\".\"sent_at\" IS NOT NULL AND \"reminders\".\"cancelled_at\" IS NOT NULL)\n        AND ((\"reminders\".\"cancelled_at\" IS NULL) = (\"reminders\".\"cancel_reason\" IS NULL))\n        AND (\"reminders\".\"cancel_reason\" IS NULL OR \"reminders\".\"cancel_reason\" IN ('reply_received','draft_resolved','user_opted_out','expired'))"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.saved_searches": {
-      "name": "saved_searches",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "filters": {
-          "name": "filters",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::jsonb"
-        },
-        "frequency": {
-          "name": "frequency",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'daily'"
-        },
-        "last_digest_at": {
-          "name": "last_digest_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "next_digest_at": {
-          "name": "next_digest_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "window_start": {
-          "name": "window_start",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "saved_searches_user_name_uq": {
-          "name": "saved_searches_user_name_uq",
-          "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "lower(\"name\")",
-              "asc": true,
-              "isExpression": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "saved_searches_due_idx": {
-          "name": "saved_searches_due_idx",
-          "columns": [
-            {
-              "expression": "next_digest_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"saved_searches\".\"frequency\" <> 'off'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "saved_searches_user_id_user_id_fk": {
-          "name": "saved_searches_user_id_user_id_fk",
-          "tableFrom": "saved_searches",
-          "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "saved_searches_name_ck": {
-          "name": "saved_searches_name_ck",
-          "value": "char_length(btrim(\"saved_searches\".\"name\")) BETWEEN 1 AND 60"
-        },
-        "saved_searches_filters_ck": {
-          "name": "saved_searches_filters_ck",
-          "value": "saved_search_filters_valid(\"saved_searches\".\"filters\")"
-        },
-        "saved_searches_frequency_ck": {
-          "name": "saved_searches_frequency_ck",
-          "value": "\"saved_searches\".\"frequency\" IN ('off','daily','weekly')"
-        },
-        "saved_searches_next_ck": {
-          "name": "saved_searches_next_ck",
-          "value": "(\"saved_searches\".\"frequency\" = 'off') = (\"saved_searches\".\"next_digest_at\" IS NULL)"
         }
       },
       "isRLSEnabled": false
@@ -5816,7 +5418,84 @@
       "checkConstraints": {
         "ops_flags_key_ck": {
           "name": "ops_flags_key_ck",
-          "value": "key ~ '^(pause_cloud_apply|pause_scoring|llm_paused|approvals_frozen|cloud_applier_open|llm_shed_level|extension_only:(greenhouse|lever|ashby))$'"
+          "value": "key ~ '^(pause_cloud_apply|pause_scoring|llm_paused|approvals_frozen|cloud_applier_open|llm_shed_level|extension_only:(greenhouse|lever|ashby)|verifier_mode:(suggestions|tailor|drafts|prepare|patch)|(agent_disabled|prompt_pin|model_pin|prompt_canary|prompt_shadow):(resume-parser|jd-analyst|fit-scorer|resume-tailor|resume-writer|answer-drafter|cover-letter-writer|claim-verifier|claim-verifier-escalation|reply-classifier|outcome-analyst|interview-coach))$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.verified_claims": {
+      "name": "verified_claims",
+      "schema": "",
+      "columns": {
+        "claim_hash": {
+          "name": "claim_hash",
+          "type": "bytea",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "verdict": {
+          "name": "verdict",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "check_source": {
+          "name": "check_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "verified_claims_expires_idx": {
+          "name": "verified_claims_expires_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "verified_claims_hash_ck": {
+          "name": "verified_claims_hash_ck",
+          "value": "octet_length(\"verified_claims\".\"claim_hash\") = 32"
+        },
+        "verified_claims_verdict_ck": {
+          "name": "verified_claims_verdict_ck",
+          "value": "\"verified_claims\".\"verdict\" in ('supported', 'unsupported', 'contradicted')"
+        },
+        "verified_claims_source_ck": {
+          "name": "verified_claims_source_ck",
+          "value": "\"verified_claims\".\"check_source\" in ('verifier', 'escalation')"
+        },
+        "verified_claims_expiry_ck": {
+          "name": "verified_claims_expiry_ck",
+          "value": "\"verified_claims\".\"expires_at\" > \"verified_claims\".\"created_at\" and \"verified_claims\".\"expires_at\" <= \"verified_claims\".\"created_at\" + interval '24 hours'"
         }
       },
       "isRLSEnabled": false

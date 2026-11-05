@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 
 // Duna (09 3, 6): Espresso is the only filled-button colour. Secondary is a ghost pill with a Stone border.
 const variants = {
-  primary: "bg-action text-on-action hover:bg-action-hover active:bg-action",
+  primary: "bg-action text-on-action hover:bg-action-hover active:bg-action active:brightness-90",
   // Solid Paper White: glass only goes over art (DESIGN.md Ghost Button), and app surfaces are flat Linen.
   secondary: "border border-rule bg-surface text-ink hover:bg-sunk active:bg-sunk/70",
   ghost: "text-ink hover:bg-sunk active:bg-sunk/70",
@@ -12,13 +12,14 @@ const variants = {
 } as const;
 
 // sm is the 36px dense app-row pill; md is the 44px nav and inline pill; lg is the 56px hero and closing pill.
-// Pressed states change colour only (primary returns from its hover fill to Espresso); nothing moves.
+// Press and lift come from the shared kn-press rule (app/globals.css): 2px lift on hover, 97 percent on press, colour
+// only under reduced motion. Primary also returns from its hover fill to Espresso and dips in brightness.
 const sizes = { sm: "h-9 px-4 text-sm", md: "h-11 px-5 text-[15px]", lg: "h-14 px-7 text-base" } as const;
 
 type Common = { variant?: keyof typeof variants; size?: keyof typeof sizes };
 
 const base =
-  "inline-flex cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-pill font-medium transition-colors duration-300 ease-out focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-ink disabled:pointer-events-none disabled:opacity-50";
+  "inline-flex cursor-pointer items-center justify-center gap-2 whitespace-nowrap kn-press rounded-pill font-medium focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-ink disabled:pointer-events-none disabled:opacity-50";
 
 export function Button({ variant = "primary", size = "md", className, ...props }: Common & ComponentProps<"button">) {
   return <button className={cn(base, variants[variant], sizes[size], className)} {...props} />;

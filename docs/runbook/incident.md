@@ -33,6 +33,8 @@ The owner is the incident commander and decides everything below: kill switches,
 | Inbound mail | Rotate `INBOUND_WEBHOOK_SECRET`. Postmark retries the deliveries it could not make |
 | A bad deploy | [R-DEPLOY-1](R-DEPLOY-1.md) |
 
+What a pause does to queued work (`llm_paused`, `agent_disabled:<agent>`): resume imports wait as pending without losing an attempt and resume within about 15 minutes of lifting it. Drafts with no lines are retried for a day. Scoring follows its own retries, so lift a pause within minutes or expect pairs to wait for the next re-score. A budget stop is different: it still counts against an import's three attempts, and three of them mark it failed.
+
 4. For SEV1 availability, post "Investigating" on the status page. Mention no cause and no data.
 
 ## Secret rotation order
@@ -46,7 +48,7 @@ Rotate in this order when a credential may have leaked: the ones that open the m
 | 3 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Stripe Dashboard > Developers. Roll the key; roll the webhook secret with the old one in `STRIPE_WEBHOOK_SECRET_PREVIOUS` | Nothing, if the order is followed |
 | 4 | `ANTHROPIC_KEY_*`, `ANTHROPIC_API_KEY` | Anthropic Console: revoke and create, then check the spend for the window | AI routes until the redeploy |
 | 5 | `POSTMARK_SERVER_TOKEN` | Postmark > Server > API Tokens | Outgoing mail until the redeploy |
-| 6 | `INBOUND_WEBHOOK_SECRET` | Railway, then the inbound webhook URL's `?token=` in Postmark | Inbound mail is retried by Postmark |
+| 6 | `POSTMARK_INBOUND_PATH_SECRET`, `POSTMARK_INBOUND_BASIC_PASSWORD` (and `INBOUND_WEBHOOK_SECRET` while the legacy route lives) | Railway, with the old values in the `_PREVIOUS` variables, then the webhook URL in Postmark; in an incident leave `_PREVIOUS` empty | Inbound mail is retried by Postmark |
 | 7 | Then: `GOOGLE_CLIENT_SECRET`, `KAIROS_EDGE_SECRET` (Vercel and Railway together), the Redis password, the Railway, Vercel and GitHub tokens | Each provider's console | Sign-in with Google, the edge header, the queues |
 
 Do not rotate `USER_HASH_KEY` unless it leaked: a new key re-keys every `user_hash` from then on. Rotate a Sentry DSN only if its project is being spammed (delete the key in the Sentry project settings).
@@ -125,7 +127,7 @@ Railway cannot alert on log lines, so the processes count these and send Sentry 
 | Signal | Bar per minute | Means | Do |
 |---|---|---|---|
 | `auth_rate_limited` | 20 | Better Auth refused sign-in or OTP attempts | In the api logs, find the 429s on `/api/auth` and their clients. One address: let the limiter hold. Many: R-SEC-4, or the Cloudflare proxy (R-NET-1) |
-| `inbound_token_rejected` | 5 | Wrong tokens on the inbound mail webhook | Someone is guessing. Rotate `INBOUND_WEBHOOK_SECRET` if the token could have leaked (a log, a screenshot) |
+| `inbound_token_rejected` | 5 | Wrong path secret, Basic pair or token on the inbound mail webhook. The new route answers 404, so the count is the only sign | Someone is guessing, or a rotation left Postmark on old values. Rotate (table above) if a secret could have leaked (a log, a screenshot) |
 | `applier_internal_blocked` | 1 | An employer page tried to reach an internal address (metadata IP, private range) | Treat it as a possible attack on the applier (R-SEC-3). Find the line `applier request blocked` with `topLevel` and the application id, look at that posting, and stop cloud sends if the page is hostile |
 | `applier_nav_blocked` | 1 | A page navigated off the five ATS hosts | Usually a redirect after submit. If one ATS does it every time, tell the WP-04 owner; if it is a strange host, as above |
 | `admin_adjustment_row` | 1 | A `credit_ledger` row with reason `admin_adjustment` was written, which no code does | If you did not write it, treat it as a database compromise: export the evidence, then rotate the database credentials first |

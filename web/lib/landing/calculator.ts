@@ -1,4 +1,5 @@
-import { creditsPerInvoice, getPlan, type BillingInterval } from "@auto-career/shared";
+// The plans subpath, not the barrel: the barrel re-exports the zod schemas, which the landing never needs.
+import { creditsPerInvoice, getPlan, type BillingInterval } from "@auto-career/shared/plans";
 
 export { creditsPerInvoice };
 

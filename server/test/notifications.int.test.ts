@@ -36,7 +36,7 @@ describe.skipIf(!hasTestDb)("notifications routes against Postgres", () => {
   });
 
   async function application(userId: string, title: string) {
-    const [company] = await tdb.insert(schema.companies).values({ name: `Acme ${title}`, ats: "greenhouse", boardToken: `b-${title}` }).returning();
+    const [company] = await tdb.insert(schema.companies).values({ name: `Acme ${title}`, ats: "greenhouse", boardToken: `b-${title.replace(/\s+/g, "-")}` }).returning();
     const [job] = await tdb.insert(schema.jobs).values({ companyId: company!.id, externalId: title, title, descriptionText: "d", applyUrl: "https://job-boards.greenhouse.io/x/jobs/1" }).returning();
     const [app] = await tdb.insert(schema.applications).values({ userId, jobId: job!.id }).returning();
     return app!.id;

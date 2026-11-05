@@ -9,6 +9,7 @@ import { env } from "../lib/env";
 import { logger } from "../lib/logger";
 import { addressHash, findSent, mailErrorCode, metadataKey, sendEmail, type Email, type Stream } from "../lib/mailer";
 import { signal } from "../lib/sentry";
+import { renderForwardingCode } from "../services/forwarding";
 import { enqueue, redrive, type JobData } from "./queues";
 
 /**
@@ -36,7 +37,9 @@ export type Rendered = (Omit<Email, "stream" | "metadata" | "tag"> & { onSent?: 
 export type Renderer = (entityId: string, userId: string | null) => Promise<Rendered>;
 
 /** One renderer per kind; a kind without one is never sent (its job fails, so Sentry hears of it). */
-export const RENDERERS: Partial<Record<EmailKind, Renderer>> = {};
+export const RENDERERS: Partial<Record<EmailKind, Renderer>> = {
+  forwarding_code: renderForwardingCode,
+};
 
 /**
  * Non-transactional mail (05-api 12.1): the broadcast stream and the back of the queue. Everything else is transactional.
