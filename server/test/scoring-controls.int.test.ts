@@ -31,7 +31,7 @@ const PREFS: Preferences = {
   excludedCompanies: [],
   excludedKeywords: [],
   fitThreshold: 75,
-  maxApplicationsPerCompanyPer30Days: 50,
+  maxApplicationsPerCompanyPer30Days: 5,
 };
 
 describe.skipIf(!hasTestDb)("scoring controls against Postgres", () => {
