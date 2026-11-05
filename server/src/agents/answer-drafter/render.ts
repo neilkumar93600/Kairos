@@ -1,6 +1,7 @@
 import type { AnswerDrafterInput } from "./schema";
 import type { RenderedPrompt } from "../types";
 import { fenceUserBlock } from "../../llm/fence";
+import { renderDoNotClaim } from "../truth-repair";
 
 /** Pure render: facts are the cached per-user block; question, saved answers and posting are fenced. */
 export function renderAnswerDrafter(input: AnswerDrafterInput, ctx: { userId?: string }): RenderedPrompt {
@@ -23,8 +24,10 @@ export function renderAnswerDrafter(input: AnswerDrafterInput, ctx: { userId?: s
     });
   }
 
+  const repair = renderDoNotClaim(input.doNotClaim);
   return {
     userBlock: fenceUserBlock("facts", factsBlock, "answer-drafter", ctx),
-    untrusted: blocks,
+    ...(repair.task ? { task: repair.task } : {}),
+    untrusted: [...blocks, ...repair.untrusted],
   };
 }

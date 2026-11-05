@@ -39,8 +39,39 @@ export interface GatewayDeps {
   writeRow: typeof writeCallRow;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
-  /** Resolves ops flags; kill switches read through this (4.5). */
-  flags: () => { llmPaused: boolean; batchPaused: boolean; disabled: Record<string, boolean>; promptPin: Record<string, number> };
+  /** Resolves ops flags; kill switches read through this (4.5). api.ts and worker.ts wire lib/flags gatewayFlags. */
+  flags: () => GatewayFlags;
+}
+
+export interface GatewayFlags {
+  llmPaused: boolean;
+  batchPaused: boolean;
+  disabled: Record<string, boolean>;
+  promptPin: Record<string, number>;
+  /** model_pin:<agentId> (14.2): the rollback lever for a model change. */
+  modelPin?: Record<string, ClaudeModel>;
+  /** prompt_canary:<agentId> (4.5): a share of calls on another version. Never for the verifiers. */
+  promptCanary?: Record<string, { version: number; percent: number }>;
+  /** prompt_shadow:<agentId> (4.5): another version runs too, on the same input; only its metrics are kept. */
+  promptShadow?: Record<string, { version: number; percent: number }>;
+}
+
+/** The truth-lock gate: a candidate verifier version never decides a verdict, so it runs only in shadow (4.5). */
+const NO_CANARY: ReadonlySet<string> = new Set(["claim-verifier", "claim-verifier-escalation"]);
+
+/**
+ * The canary and shadow bucket (4.5): int(sha256(userHash + agentId)[0..8], 16) mod 100, by job when there is no user,
+ * and never for a call with neither (a share of nothing is not a share).
+ */
+export function rolloutBucket(agentId: string, ctx: Pick<AgentCallContext, "userId" | "jobId">): number | null {
+  const seed = ctx.userId ? userHash(ctx.userId) : ctx.jobId;
+  if (!seed) return null;
+  return parseInt(sha256(`${seed}${agentId}`).toString("hex").slice(0, 8), 16) % 100;
+}
+
+/** The prompt version a call of this agent runs now, without a canary: the pin, else the active version. */
+export function activePromptVersion(spec: Pick<AgentSpec<unknown, unknown>, "id" | "promptVersion">): number {
+  return deps.flags().promptPin[spec.id] ?? spec.promptVersion;
 }
 
 /** Set once at process start (api.ts / worker.ts); the default serves the legacy flag and tests. */
@@ -59,6 +90,10 @@ export function configureGateway(next: Partial<GatewayDeps>): void {
 
 export interface RunOptions {
   callKind?: CallKind;
+  /** Internal: the version a shadow run uses. */
+  promptVersion?: number;
+  /** Called with the shadow version's output and the production output when a prompt shadow ran (4.5). */
+  onShadow?: (shadow: unknown, production: unknown) => void;
 }
 
 /** Collapses identical concurrent calls inside one process (7.2); stores nothing after settling. */
@@ -70,16 +105,37 @@ export async function runAgent<I, O>(spec: AgentSpec<I, O>, input: I, ctx: Agent
   if (pending) return pending as Promise<AgentResult<O>>;
   const run = runUncached(spec, input, ctx, opts);
   inFlight.set(key, run);
+  let result: AgentResult<O>;
   try {
-    return await run;
+    result = await run;
   } finally {
     inFlight.delete(key);
   }
+  startShadow(spec, input, ctx, opts, result);
+  return result;
+}
+
+/**
+ * The prompt shadow (4.5): after a production success, a share of calls runs the shadow version on the same input, in
+ * the background, as call_kind 'shadow' and budget class 'ops'. It runs with no user id, so it never counts against the
+ * user's caps or the per-user counters; the global and per-agent spend still see it. Its output only reaches
+ * opts.onShadow; a failure is logged. The production result is already returned.
+ */
+function startShadow<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCallContext, opts: RunOptions, production: AgentResult<O>): void {
+  if (opts.callKind === "shadow" || opts.callKind === "truth_repair") return;
+  const shadow = deps.flags().promptShadow?.[spec.id];
+  if (!shadow || shadow.version === production.promptVersion || !spec.prompts[shadow.version]) return;
+  const bucket = rolloutBucket(spec.id, ctx);
+  if (bucket === null || bucket >= Math.min(shadow.percent, 5)) return;
+  const { signal: _signal, deadlineAt: _deadline, userId: _userId, ...rest } = ctx;
+  runUncached(spec, input, { ...rest, budgetClass: "ops" }, { callKind: "shadow", promptVersion: shadow.version }).then(
+    (r) => opts.onShadow?.(r.data, production.data),
+    (err: unknown) => logger.warn({ agent: spec.id, version: shadow.version, code: (err as { code?: string }).code }, "prompt shadow failed"),
+  );
 }
 
 async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCallContext, opts: RunOptions): Promise<AgentResult<O>> {
   const d = deps;
-  const callKind = opts.callKind ?? "primary";
   const nonces: string[] = [];
 
   // The input contract (2.1, llm-agents-v01): bounds such as facts .max(60) hold here, not only on paper. Paths only,
@@ -92,9 +148,11 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
 
   // Kill switches (4.5): before any spend.
   const flags = d.flags();
-  if (flags.llmPaused) throw new AgentError("llm_paused", "all model calls are paused", false);
-  if (flags.disabled[spec.id]) throw new AgentError("agent_disabled", `agent ${spec.id} is disabled`, false);
-  if (spec.workspace === "batch" && flags.batchPaused) throw new AgentError("llm_paused", "batch model work is paused", false);
+  // A pause holds work back, it does not end it: a defer agent's caller may try again later (4.5). Routes answer 503 either way.
+  const defers = spec.onFailure === "defer" || spec.onFailure === "tier_up_then_defer";
+  if (flags.llmPaused) throw new AgentError("llm_paused", "all model calls are paused", defers);
+  if (flags.disabled[spec.id]) throw new AgentError("agent_disabled", `agent ${spec.id} is disabled`, defers);
+  if (spec.workspace === "batch" && flags.batchPaused) throw new AgentError("llm_paused", "batch model work is paused", defers);
 
   // Deterministic checks before any spend (3.1).
   if (spec.preCheck) {
@@ -102,8 +160,13 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
     if (violations.length) throw new AgentError("precheck_failed", `precheck failed for ${spec.id}: ${fmt(violations)}`, false, violations);
   }
 
-  // Resolve version (pin overrides the active version, 4.5).
-  const promptVersion = flags.promptPin[spec.id] ?? spec.promptVersion;
+  // Resolve version (4.5): a shadow run's own version, else the pin, else a canary bucket, else the active version.
+  const pinned = flags.promptPin[spec.id];
+  const canary = pinned === undefined && opts.promptVersion === undefined && !NO_CANARY.has(spec.id) ? flags.promptCanary?.[spec.id] : undefined;
+  const bucket = canary && spec.prompts[canary.version] ? rolloutBucket(spec.id, ctx) : null;
+  const onCanary = canary !== undefined && bucket !== null && bucket < canary.percent;
+  const promptVersion = opts.promptVersion ?? pinned ?? (onCanary ? canary.version : spec.promptVersion);
+  const callKind: CallKind = opts.callKind ?? (onCanary ? "canary" : "primary");
   const prompt = spec.prompts[promptVersion];
   if (!prompt) throw new AgentError("invalid_request", `prompt version ${promptVersion} of ${spec.id} is not loaded`, false);
   const systemText = prompt.system;
@@ -127,7 +190,8 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
   const workspace = ctx.workspace ?? spec.workspace;
   const budgetClass = ctx.budgetClass ?? spec.budgetClass;
 
-  let model: ClaudeModel = spec.model;
+  // model_pin (14.2) replaces the primary model; the tier-up model stays Sonnet.
+  let model: ClaudeModel = flags.modelPin?.[spec.id] ?? spec.model;
   let tieredUp = false;
   let totalCostUsd = 0;
   let attempts = 0;
@@ -136,7 +200,10 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
   // The fallback ladder (2.6): the primary model, then the tier-up model if the spec allows and
   // the share cap permits. Defer throws retryable; fail-closed throws non-retryable.
   for (let chain = 0; chain < 2; chain++) {
-    const perCallCap = chain === 0 ? spec.maxCostPerCallUsd : (spec.tierUp?.maxCostPerCallUsd ?? spec.maxCostPerCallUsd);
+    // A model_pin is an operator's rollback: its cap is that model's worst case at this agent's own token ceilings, or a
+    // pin to a pricier model would refuse every call. The other budget scopes still apply.
+    const primaryCap = model === spec.model ? spec.maxCostPerCallUsd : estimateCallUsd(spec.maxInputTokens, maxTokens, model);
+    const perCallCap = chain === 0 ? primaryCap : (spec.tierUp?.maxCostPerCallUsd ?? spec.maxCostPerCallUsd);
     const result = await runOnModel(model, perCallCap, chain === 0 ? callKind : "tier_up");
     if (result.ok) {
       return {
@@ -165,7 +232,7 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
     // Budget check before every send (9.3); a refusal writes a budget_stopped row. The tier-up
     // model is judged against the tier-up cap, not the primary cap (2.6).
     const estUsd = estimateCallUsd(inputTokensEstimate, maxTokens, modelNow);
-    const decision = await d.budget.checkBudget(spec, { usd: estUsd, model: modelNow }, ctx, maxCostPerCallUsd);
+    const decision = await d.budget.checkBudget(spec, { usd: estUsd, model: modelNow }, ctx, maxCostPerCallUsd, callKind);
     if (!decision.ok) {
       await record({
         model: modelNow,

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { doNotClaim } from "../truth-repair";
 
 export const AnswerDrafterInput = z.object({
   /** The question label from the employer's form. Sensitive labels never reach this agent (B.9.9). */
@@ -7,6 +8,8 @@ export const AnswerDrafterInput = z.object({
   /** Answers the user approved before, shown only to match their voice. */
   savedAnswers: z.array(z.object({ label: z.string().min(1).max(500), answer: z.string().min(1).max(5_000) })).max(20).nullable(),
   job: z.object({ title: z.string().min(1).max(200), company: z.string().min(1).max(200), descriptionText: z.string().min(1).max(20_000) }),
+  /** Truth repair only (WP-26): the answer verification dropped. */
+  doNotClaim: doNotClaim(1_500, 4),
 });
 export type AnswerDrafterInput = z.infer<typeof AnswerDrafterInput>;
 

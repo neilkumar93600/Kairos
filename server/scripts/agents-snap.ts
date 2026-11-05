@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { toStrictJsonSchema } from "../src/llm/schema";
 import { AnswerDrafterOutput } from "../src/agents/answer-drafter/schema";
+import { ClaimVerifierOutput } from "../src/agents/claim-verifier/schema";
 import { CoverLetterOutput } from "../src/agents/cover-letter-writer/schema";
 import { FitScorerOutput } from "../src/agents/fit-scorer/schema";
 import { ResumeParserOutput } from "../src/agents/resume-parser/schema";
@@ -28,6 +29,8 @@ const outputs: Record<string, z.ZodType> = {
   "resume-writer": ResumeWriterOutput,
   "answer-drafter": AnswerDrafterOutput,
   "cover-letter-writer": CoverLetterOutput,
+  "claim-verifier": ClaimVerifierOutput,
+  "claim-verifier-escalation": ClaimVerifierOutput,
 };
 
 for (const [id, schema] of Object.entries(outputs)) {

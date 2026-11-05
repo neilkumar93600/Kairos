@@ -120,6 +120,8 @@ describe.skipIf(!hasTestDb)("ops flags, admin routes and invariants against Post
       expect((await request(app).get("/api/admin/companies?active=maybe").set(as(owner))).status).toBe(400);
       expect((await request(app).put("/api/admin/flags/nope").set(as(owner)).send({ value: true })).status).toBe(422);
       expect((await request(app).put("/api/admin/flags/llm_shed_level").set(as(owner)).send({ value: 9 })).status).toBe(422);
+      // A pin to a version the agent has not loaded would stop the agent (WP-26).
+      expect((await request(app).put("/api/admin/flags/prompt_pin:fit-scorer").set(as(owner)).send({ value: 7 })).status).toBe(422);
       expect(await audit()).toHaveLength(1);
     });
 
