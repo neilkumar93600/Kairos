@@ -107,7 +107,7 @@ function requirePostmarkInbound(req: Request, _res: Response, next: NextFunction
 /** One body over 5 MB at a time per replica (05-api 2.4, 14.3); a second answers 503 and Postmark retries it. */
 const LARGE_BODY = 5 * 1024 * 1024;
 const largeBodyPermit = bodyPermit(1, 0);
-const largeBodyGate = (req: Request, res: Response, next: NextFunction) => {
+export const largeBodyGate = (req: Request, res: Response, next: NextFunction) => {
   const length = req.headers["content-length"];
   if (length !== undefined && Number(length) <= LARGE_BODY) return next();
   largeBodyPermit(req, res, next);

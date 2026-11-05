@@ -40,6 +40,6 @@
     { "why": "no sent applications", "sender": "a@globex.com", "subject": "Hi", "body": "", "apply": [], "app": null, "by": "none" },
     { "why": "manual Gmail forward: the block's From decides", "sender": "Me <me@gmail.com>", "account": "me@gmail.com", "subject": "Fwd: news", "body": "---------- Forwarded message ---------\nFrom: Recruiting <jobs@globex.com>\nDate: Mon\n\nHello", "apply": ["globex", "box"], "app": "globex", "by": "domain" },
     { "why": "manual Outlook forward", "sender": "me@work.example", "account": "me@work.example", "subject": "FW: news", "body": "From: Recruiting <jobs@globex.com>\nSent: Monday\nTo: Me\n\nHello", "apply": ["globex"], "app": "globex", "by": "domain" },
-    { "why": "a stranger's mail holding a fake forward block is judged by its own From", "sender": "evil@unknown.example", "subject": "Hi", "body": "---------- Forwarded message ---------\nFrom: x <jobs@globex.com>", "apply": ["globex"], "app": null, "by": "none" }
+    { "why": "a stranger's fake forward block earns no domain link: only the weaker name link, which can start no offer pause", "sender": "evil@unknown.example", "subject": "Hi", "body": "---------- Forwarded message ---------\nFrom: x <jobs@globex.com>", "apply": ["globex"], "app": "globex", "by": "company_name" }
   ]
 }
