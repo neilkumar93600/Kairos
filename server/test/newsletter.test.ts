@@ -11,11 +11,16 @@ vi.mock("../src/jobs/queues", async (orig) => ({ ...(await orig<typeof import(".
 // The sign-up's upsert, by what the database would hold for the address; the route never sees which case it was.
 const signUp = vi.fn(async (_email: string, _source: string) => "00000000-0000-4000-8000-000000000001:1");
 vi.mock("../src/services/newsletter", async (orig) => ({ ...(await orig<typeof import("../src/services/newsletter")>()), signUp }));
+// The per-address count lives in Postgres; the class limiters stay real, in memory.
+const hit = vi.fn(async (_key: string, _windowMs: number) => ({ count: 1, resetAt: new Date() }));
+vi.mock("../src/middleware/rate-limit", async (orig) => ({ ...(await orig<typeof import("../src/middleware/rate-limit")>()), hit }));
+const sendEmail = vi.fn(async (_email: { to: string }) => ({ messageId: "mid-1" }));
+vi.mock("../src/lib/mailer", async (orig) => ({ ...(await orig<typeof import("../src/lib/mailer")>()), sendEmail }));
 
 const { createApp } = await import("../src/app");
 const { db } = await import("../src/db/client");
 const nl = await import("../src/services/newsletter");
-const { RENDERERS } = await import("../src/jobs/notify");
+const { BROADCAST_KINDS, COMPLAINT_RESPECTING_KINDS, RENDERERS, processNotify } = await import("../src/jobs/notify");
 
 const signedOut = { handler: async () => new Response(null), getSession: async () => null };
 const app = () => createApp({ auth: signedOut, corsOrigins: [], healthChecks: {} });
@@ -26,6 +31,8 @@ const HOSTILE = ["", "short", "x".repeat(44), `${"a".repeat(42)}=`, "../../evil"
 beforeEach(() => {
   enqueue.mockClear();
   signUp.mockClear();
+  hit.mockClear();
+  sendEmail.mockClear();
   vi.restoreAllMocks();
 });
 
@@ -64,11 +71,48 @@ describe("POST /api/newsletter", () => {
     expect(signUp).not.toHaveBeenCalled();
   });
 
-  it("allows 5 sign-ups an hour per client IP, then 429 rate_limited (bucket newsletter)", async () => {
+  it("allows 20 sign-ups an hour per client IP, then 429 rate_limited (bucket newsletter)", async () => {
     const a = app();
     const statuses: number[] = [];
-    for (let i = 0; i < 6; i++) statuses.push((await request(a).post("/api/newsletter").send({ email: `u${i}@example.com`, source: "popup" })).status);
-    expect(statuses).toEqual([202, 202, 202, 202, 202, 429]);
+    for (let i = 0; i < 21; i++) statuses.push((await request(a).post("/api/newsletter").send({ email: `u${i}@example.com`, source: "popup" })).status);
+    expect(statuses.slice(0, 20).every((s) => s === 202)).toBe(true);
+    expect(statuses[20]).toBe(429);
+  });
+
+  it("a refused body does not use up a try", async () => {
+    const a = app();
+    for (let i = 0; i < 25; i++) expect((await request(a).post("/api/newsletter").send({ email: "typo", source: "popup" })).status).toBe(422);
+    expect((await request(a).post("/api/newsletter").send({ email: "a@example.com", source: "popup" })).status).toBe(202);
+  });
+
+  it("past 5 a day for one address it answers the same 202 and does nothing: no upsert, no email", async () => {
+    const a = app();
+    const send = () => request(a).post("/api/newsletter").send({ email: "ada@example.com", source: "popup" });
+    hit.mockResolvedValueOnce({ count: 5, resetAt: new Date() });
+    const last = await send();
+    expect(signUp).toHaveBeenCalledTimes(1);
+    hit.mockResolvedValueOnce({ count: 6, resetAt: new Date() });
+    const capped = await send();
+    expect(signUp).toHaveBeenCalledTimes(1);
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect([capped.status, capped.body, capped.headers["content-length"]]).toEqual([last.status, last.body, last.headers["content-length"]]);
+  });
+
+  it("counts by the normalized address under a keyed hash, for a day, so aliases share one count and no address is stored", async () => {
+    const a = app();
+    for (const email of ["ada.lee@gmail.com", "adalee+news@gmail.com", "AdaLee@googlemail.com"]) await request(a).post("/api/newsletter").send({ email, source: "popup" });
+    const keys = hit.mock.calls.map(([key]) => key);
+    expect(keys).toHaveLength(3);
+    expect(new Set(keys).size).toBe(1);
+    expect(keys[0]).toMatch(/^newsletter_addr:[0-9a-f]{64}$/);
+    expect(hit.mock.calls[0]![1]).toBe(86_400_000);
+  });
+
+  it("the honeypot and a refused body are not counted against the address", async () => {
+    const a = app();
+    await request(a).post("/api/newsletter").send({ email: "ada@example.com", source: "popup", website: "x" });
+    await request(a).post("/api/newsletter").send({ email: "ada@example.com", source: "footer" });
+    expect(hit).not.toHaveBeenCalled();
   });
 });
 
@@ -120,7 +164,6 @@ describe("the token routes", () => {
 
   it.each([
     ["POST", "confirm", 404],
-    ["POST", "unsubscribe", 404],
     ["GET", "unsubscribe", 303],
   ] as const)("the link class allows 20 of %s /%s a minute per client IP", async (method, path, expected) => {
     const a = app();
@@ -129,6 +172,62 @@ describe("the token routes", () => {
     for (let i = 0; i < 21; i++) statuses.push((await send()).status);
     expect(statuses.slice(0, 20).every((s) => s === expected)).toBe(true);
     expect(statuses[20]).toBe(429);
+  });
+
+  it("one-click POSTs have their own class: 300 a minute per client IP, and they do not use up `link`", async () => {
+    const a = app();
+    const statuses: number[] = [];
+    for (let i = 0; i < 301; i++) statuses.push((await request(a).post("/api/newsletter/unsubscribe?token=bad")).status);
+    expect(statuses.slice(0, 300).every((s) => s === 404)).toBe(true);
+    const refused = await request(a).post("/api/newsletter/unsubscribe?token=bad");
+    expect(refused.status).toBe(429);
+    expect(refused.body.error.details.bucket).toBe("newsletter_one_click");
+    expect((await request(a).post("/api/newsletter/confirm?token=bad")).status).toBe(404);
+  });
+});
+
+describe("a spam complaint and the confirm email (jobs/notify.ts)", () => {
+  /** A stand-in for one drizzle statement: chains, and resolves to `rows` however it is awaited. */
+  const statement = (rows: unknown[]) => {
+    const q: Record<string, unknown> = {};
+    for (const m of ["values", "onConflictDoUpdate", "returning", "from", "where", "set"]) q[m] = () => q;
+    q.catch = () => Promise.resolve(rows);
+    q.then = (ok: (v: unknown[]) => unknown, no: (e: unknown) => unknown) => Promise.resolve(rows).then(ok, no);
+    return q;
+  };
+  const run = (kind: "newsletter_confirm" | "resend_available", reason: string | null) => {
+    vi.spyOn(db(), "insert").mockReturnValue(statement([{ attempts: 1 }]) as never);
+    vi.spyOn(db(), "select").mockReturnValue(statement(reason ? [{ reason }] : []) as never);
+    vi.spyOn(db(), "update").mockReturnValue(statement([{ email: "ada@example.com" }]) as never);
+    const entityId = kind === "newsletter_confirm" ? "3f2a9c1e-8b7d-4c6a-9e5f-1a2b3c4d5e6f:1" : "app-1:1";
+    return processNotify({ data: { kind, entityId, userId: kind === "newsletter_confirm" ? null : "u1" } });
+  };
+
+  it("a complaint stops the confirm email, because anyone can type the address", async () => {
+    expect(await run("newsletter_confirm", "spam_complaint")).toEqual({ result: "suppressed", code: "spam_complaint" });
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("a hard bounce stops it too, and a clean address gets it", async () => {
+    expect(await run("newsletter_confirm", "hard_bounce")).toEqual({ result: "suppressed", code: "hard_bounce" });
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(await run("newsletter_confirm", null)).toEqual({ result: "sent" });
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("mail about the person's own account still goes after a complaint", async () => {
+    RENDERERS.resend_available = async () => ({ to: "ada@example.com", subject: "Resend?", text: "t" });
+    try {
+      expect(await run("resend_available", "spam_complaint")).toEqual({ result: "sent" });
+      expect(sendEmail).toHaveBeenCalledTimes(1);
+    } finally {
+      delete RENDERERS.resend_available;
+    }
+  });
+
+  it("the confirm email is not a broadcast kind, so it never queues behind a digest burst", () => {
+    expect(COMPLAINT_RESPECTING_KINDS.has("newsletter_confirm")).toBe(true);
+    expect(BROADCAST_KINDS.has("newsletter_confirm")).toBe(false);
   });
 });
 

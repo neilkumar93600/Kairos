@@ -35,6 +35,16 @@ const EMAIL_LIMITS: Record<string, EmailLimit[]> = {
 };
 
 /**
+ * The rate_limits key of an address: a keyed hash of the normalized address (WP-25), so the table never holds an address
+ * nor a hash anyone can reverse with a list of addresses; case, a +tag and Gmail dots do not open a new bucket. Unkeyed
+ * only in development.
+ */
+export function emailLimitId(email: string): string {
+  const normal = normalizeEmail(email);
+  return emailHashIfKeyed(normal) ?? createHash("sha256").update(normal).digest("hex");
+}
+
+/**
  * Per-email limits that Better Auth's ip+path limiter cannot express (05-api 6.4, CISO mustFix 4): password guessing
  * against one account from many addresses, and mail bombing one inbox with codes. Counts live in rate_limits.
  * Fails closed: if the count cannot be taken, the request fails.
@@ -43,10 +53,7 @@ export async function limitByEmail(path: string, body: unknown): Promise<void> {
   const limits = EMAIL_LIMITS[path];
   const email = (body as { email?: unknown } | undefined)?.email;
   if (!limits || typeof email !== "string") return;
-  // A keyed hash of the normalized address (WP-25), so the table never holds an address nor a hash anyone can reverse
-  // with a list of addresses; case, a +tag and Gmail dots do not open a new bucket. Unkeyed only in development.
-  const normal = normalizeEmail(email);
-  const id = emailHashIfKeyed(normal) ?? createHash("sha256").update(normal).digest("hex");
+  const id = emailLimitId(email);
   for (const [bucket, max, windowMs] of limits) {
     if ((await hit(`${bucket}:${id}`, windowMs)).count > max) {
       throw new APIError("TOO_MANY_REQUESTS", { message: "Too many attempts for this email. Try again later." });

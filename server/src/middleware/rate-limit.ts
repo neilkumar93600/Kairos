@@ -93,8 +93,9 @@ const byUser = (req: Request) => currentUser(req).id;
  * limiters (aiLimiter below) follow the same switch; auth routes are limited by Better Auth (lib/auth.ts).
  */
 export function createLimiters(shared: boolean) {
-  const limiter = (bucket: string, limit: number, windowMs: number, byUserId: boolean, skip?: (req: Request, res: Response) => boolean) =>
+  const limiter = (bucket: string, limit: number, windowMs: number, byUserId: boolean, skip?: (req: Request, res: Response) => boolean, extra?: Partial<Options>) =>
     rateLimit({
+      ...extra,
       limit,
       windowMs,
       skip,
@@ -122,8 +123,16 @@ export function createLimiters(shared: boolean) {
     /** Checkout and portal each create Stripe objects. */
     billing: limiter("billing", 10, 600_000, true, (req) => req.method !== "POST"),
     contact: limiter("contact", 5, 3_600_000, false),
-    /** POST /api/newsletter (WP-50): the contact form's numbers, in a bucket of its own. */
-    newsletter: limiter("newsletter", 5, 3_600_000, false),
+    /**
+     * POST /api/newsletter (WP-50), by client IP. One address has its own cap (routes/newsletter.ts), so this only blunts
+     * floods; a refused body (a typo) does not use up a try.
+     */
+    newsletter: limiter("newsletter", 20, 3_600_000, false, undefined, { skipFailedRequests: true }),
+    /**
+     * RFC 8058 one-click POSTs (WP-50): they come from a few mail-provider addresses, and refusing one can lose an
+     * unsubscribe, so this is far wider than `link`. The token is the credential, and it cannot be guessed at this rate.
+     */
+    newsletterOneClick: limiter("newsletter_one_click", 300, 60_000, false),
     /** Resume imports (05-api 6.2 `upload`, scale-52): 10 an hour per user. Runs before the body is read. */
     upload: limiter("upload", 10, 3_600_000, true, (req) => req.method !== "POST"),
     /** Stripe and Postmark send from shared ranges: this only blunts floods. Runs before any body is read. */

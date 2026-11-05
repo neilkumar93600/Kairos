@@ -42,7 +42,7 @@ describe.skipIf(!hasTestDb)("newsletter against Postgres (WP-50)", () => {
     notify = await import("../src/jobs/notify");
   });
   beforeEach(async () => {
-    // A fresh app per test: its in-memory limiters (5 sign-ups an hour per address) start empty.
+    // A fresh app per test: its in-memory limiters start empty (resetDb empties the per-address count in rate_limits).
     const { createApp } = await import("../src/app");
     app = createApp({ auth: { handler: async () => new Response(null), getSession: async () => null }, corsOrigins: [], healthChecks: {} });
     queued.length = 0;
@@ -116,6 +116,34 @@ describe.skipIf(!hasTestDb)("newsletter against Postgres (WP-50)", () => {
     expect(await drain()).toEqual([{ result: "sent" }]);
     expect((await confirm(first)).status).toBe(404);
     expect((await confirm(confirmToken(sent[1]!))).status).toBe(200);
+  });
+
+  it("past 5 sign-ups a day for one address, aliases included, it answers 202 and leaves the row alone", async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 5; i++) statuses.push((await signUp(i % 2 ? "ada+news@example.com" : "ada@example.com")).status);
+    expect(enqueue).toHaveBeenCalledTimes(5);
+    await db.update(schema.newsletterSubscribers).set({ confirmRequestedAt: sql`now() - interval '11 minutes'` });
+    const before = await rowOf("ada@example.com");
+
+    const capped = await signUp("ada@example.com");
+    expect([...statuses, capped.status]).toEqual(Array(6).fill(202));
+    expect(capped.body).toEqual({ ok: true });
+    expect(enqueue).toHaveBeenCalledTimes(5);
+    // Not refreshed and not bumped: the pending row still ages out under the 30-day rule.
+    const after = await rowOf("ada@example.com");
+    expect(after!.confirmRequestedAt).toEqual(before!.confirmRequestedAt);
+    expect(after!.confirmSeq).toBe(before!.confirmSeq);
+    // Another address is not affected.
+    await signUp("bob@example.com");
+    expect(enqueue).toHaveBeenCalledTimes(6);
+  });
+
+  it("a spam complaint stops the confirm email", async () => {
+    const { addressHash } = await import("../src/lib/mailer");
+    await db.insert(schema.emailSuppressions).values({ addressHash: addressHash("ada@example.com"), reason: "spam_complaint" });
+    expect((await signUp("ada@example.com")).status).toBe(202);
+    expect(await drain()).toEqual([{ result: "suppressed", code: "spam_complaint" }]);
+    expect(sent).toHaveLength(0);
   });
 
   it("an older confirm job that runs after a newer sign-up is skipped", async () => {

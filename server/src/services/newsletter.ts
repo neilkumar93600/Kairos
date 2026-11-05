@@ -11,9 +11,9 @@ import { emailHashIfKeyed } from "./erasure";
 /**
  * Newsletter sign-ups with double opt-in (WP-50; marketing-surfaces spec, Backend contract). The sign-up stores the
  * address as pending and queues a newsletter_confirm email on the notify ledger (jobs/notify.ts); the worker renders it
- * here, minting the confirm token then, so a token never sits in Redis or a log. Every valid sign-up does the same work
- * (one upsert, one enqueue) whatever the address's state, and answers the same 202: nothing tells a caller whether an
- * address is on the list.
+ * here, minting the confirm token then, so a token never sits in Redis or a log. Every valid sign-up under the address's
+ * daily cap (routes/newsletter.ts) does the same work (one upsert, one enqueue) whatever the address's state, and every
+ * one answers the same 202: nothing tells a caller whether an address is on the list.
  *
  * No GET changes anything, because mail scanners open every link: emailed links go to a web page whose button POSTs the
  * token, and the token sits in that URL's fragment, so it never reaches a server or a log.
@@ -26,7 +26,7 @@ import { emailHashIfKeyed } from "./erasure";
 
 /** How long a confirm link works. */
 export const CONFIRM_LIFETIME = sql`interval '7 days'`;
-/** Sign-ups for one address queue at most one confirm email per this window (no mail-bombing an address through us). */
+/** Sign-ups for one address queue at most one confirm email per this window, within the daily cap (routes/newsletter.ts). */
 export const CONFIRM_RESEND_INTERVAL = sql`interval '10 minutes'`;
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
