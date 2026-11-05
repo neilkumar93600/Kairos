@@ -15,6 +15,12 @@ import { closeTestDbs, hasTestDb, testDb, testDbUrl } from "./helpers/test-db";
 // ops_flags. The model is a stand-in, passed in through configureGateway; nothing here mocks a module.
 process.env.DATABASE_URL = testDbUrl("verify");
 
+/** The violated constraint, on the pg error itself or as drizzle's cause. */
+const pgConstraint = (err: unknown) => {
+  const e = err as { constraint?: string; cause?: { constraint?: string } } | null;
+  return e?.constraint ?? e?.cause?.constraint;
+};
+
 describe.skipIf(!hasTestDb)("the claim verifier against Postgres (WP-26)", () => {
   let db: Db;
   let verify: typeof import("../src/services/verify");
@@ -103,7 +109,7 @@ describe.skipIf(!hasTestDb)("the claim verifier against Postgres (WP-26)", () =>
       const row = { claimHash: Buffer.alloc(32, 9), verdict: "supported", checkSource: "verifier", expiresAt: new Date(Date.now() + 3_600_000) };
       const refused = async (values: typeof row, constraint: string) => {
         const err: unknown = await db.insert(schema.verifiedClaims).values(values).then(() => null, (e: unknown) => e);
-        expect(String((err as { cause?: { constraint?: string } } | null)?.cause?.constraint)).toBe(constraint);
+        expect(pgConstraint(err)).toBe(constraint);
       };
       await refused({ ...row, verdict: "uncertain" }, "verified_claims_verdict_ck");
       await refused({ ...row, claimHash: Buffer.alloc(16, 9) }, "verified_claims_hash_ck");
@@ -156,7 +162,7 @@ describe.skipIf(!hasTestDb)("the claim verifier against Postgres (WP-26)", () =>
       const keys = (await db.select({ key: schema.opsFlags.key }).from(schema.opsFlags)).map((r) => r.key);
       expect(keys).toEqual(expect.arrayContaining(["prompt_pin:claim-verifier", "model_pin:claim-verifier", "prompt_shadow:claim-verifier", "prompt_canary:resume-tailor", "agent_disabled:claim-verifier-escalation"]));
       const err: unknown = await db.insert(schema.opsFlags).values({ key: "prompt_pin:nobody", value: 1, updatedBy: "system:test" }).then(() => null, (e: unknown) => e);
-      expect((err as { cause?: { constraint?: string } } | null)?.cause?.constraint).toBe("ops_flags_key_ck");
+      expect(pgConstraint(err)).toBe("ops_flags_key_ck");
     });
   });
 });
