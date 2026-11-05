@@ -5,6 +5,7 @@ import { db, type Db } from "../db/client";
 import { inboundEmails } from "../db/schema";
 import { decrypt } from "../lib/crypto";
 import { HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
 import { keysetBefore, pageParams, slicePage, tsKey } from "../lib/pagination";
 import type { After } from "../lib/pagination";
 import { currentUser } from "../middleware/require-auth";
@@ -43,6 +44,17 @@ export function recentInbox(database: Db, userId: string, page: { limit: number;
     .limit(page.limit + 1);
 }
 
+/** One row's preview. A row that cannot be decrypted shows an empty preview, so it never takes the whole inbox down. */
+export function readPreview(id: string, previewEnc: Buffer | null, legacyPreview: string | null): string {
+  if (!previewEnc) return legacyPreview ?? "";
+  try {
+    return decrypt(previewEnc, previewAad(id)).toString("utf8");
+  } catch {
+    logger.error({ inboundEmailId: id }, "inbox preview did not decrypt");
+    return "";
+  }
+}
+
 const inboxQuery = z.object({ applicationId: z.uuid().optional() });
 
 inboxRouter.get("/", async (req, res) => {
@@ -54,7 +66,7 @@ inboxRouter.get("/", async (req, res) => {
   res.json({
     emails: page.rows.map(({ cursorTs: _, previewEnc, legacyPreview, ...row }) => ({
       ...row,
-      preview: previewEnc ? decrypt(previewEnc, previewAad(row.id)).toString("utf8") : (legacyPreview ?? ""),
+      preview: readPreview(row.id, previewEnc, legacyPreview),
     })),
     nextCursor: page.nextCursor,
   });

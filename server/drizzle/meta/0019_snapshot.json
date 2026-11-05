@@ -1,6 +1,6 @@
 {
-  "id": "b570eb0d-7674-451c-9a69-c55cf045d382",
-  "prevId": "abe6ad22-ccbc-41f0-8ee9-bcbca1aacfef",
+  "id": "387525ce-120b-4d6f-8464-4e9cd516d081",
+  "prevId": "75e1c255-3763-4247-b0ae-65520b5b26af",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4599,6 +4599,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "verified_domains": {
+          "name": "verified_domains",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
         "kind": {
           "name": "kind",
           "type": "email_kind",
@@ -4805,13 +4812,9 @@
           "name": "inbound_emails_hidden_no_body_ck",
           "value": "hidden_reason IS NULL OR (text_body IS NULL AND text_body_enc IS NULL AND preview_enc IS NULL)"
         },
-        "inbound_emails_sender_len_ck": {
-          "name": "inbound_emails_sender_len_ck",
-          "value": "char_length(sender) <= 320"
-        },
-        "inbound_emails_subject_len_ck": {
-          "name": "inbound_emails_subject_len_ck",
-          "value": "char_length(subject) <= 500"
+        "inbound_emails_verified_domains_ck": {
+          "name": "inbound_emails_verified_domains_ck",
+          "value": "cardinality(verified_domains) <= 2"
         }
       },
       "isRLSEnabled": false

@@ -14,8 +14,8 @@ export type InboundAttachment = { name: string; type: string; size: number };
  * WP-24 expand: the body and a 280-character preview are encrypted (lib/crypto.ts, AAD inbound_emails:<id>:text_body
  * and :preview). text_body is the legacy plaintext, nullable now: written only while INBOUND_PLAINTEXT_DUAL_WRITE is on
  * (for the previous release, which reads it), nulled by `backfill-inbound --null-plaintext`, dropped by WP-46.
- * classified_at is the classify job's idempotency marker. The checks the legacy classify job would break
- * (link_reason, classified, offer_needs_rule) come with WP-46's contract migration, after its queue drained.
+ * classified_at is the classify job's idempotency marker. The checks old rows or the legacy classify job would break
+ * (sender_len, subject_len, link_reason, classified, offer_needs_rule) come with WP-46, after the backfill and the drain.
  */
 export const inboundEmails = pgTable(
   "inbound_emails",
@@ -35,6 +35,11 @@ export const inboundEmails = pgTable(
     /** Postmark's X-Spam-Score: 5 restricts automation, 8 hides the row (services/inbound.ts). */
     spamScore: real("spam_score"),
     hiddenReason: text("hidden_reason").$type<"forwarding_confirmation" | "spam">(),
+    /**
+     * Domains with a valid DKIM signature over this mail, checked at receipt on Postmark's raw message, which is not
+     * kept (services/forwarding.ts). Only the classify job's terminal stage moves read it. Empty: unauthenticated.
+     */
+    verifiedDomains: text("verified_domains").array().$type<string[]>().notNull().default(sql`'{}'::text[]`),
     kind: emailKind("kind"),
     ruleKind: emailKind("rule_kind"),
     modelKind: emailKind("model_kind"),
@@ -56,8 +61,7 @@ export const inboundEmails = pgTable(
     check("inbound_emails_body_size_ck", sql`octet_length(text_body_enc) <= 16448`),
     check("inbound_emails_preview_size_ck", sql`octet_length(preview_enc) <= 1200`),
     check("inbound_emails_hidden_no_body_ck", sql`hidden_reason IS NULL OR (text_body IS NULL AND text_body_enc IS NULL AND preview_enc IS NULL)`),
-    check("inbound_emails_sender_len_ck", sql`char_length(sender) <= 320`),
-    check("inbound_emails_subject_len_ck", sql`char_length(subject) <= 500`),
+    check("inbound_emails_verified_domains_ck", sql`cardinality(verified_domains) <= 2`),
   ],
 );
 

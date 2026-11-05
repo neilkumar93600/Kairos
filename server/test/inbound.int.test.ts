@@ -23,14 +23,11 @@ const enqueue = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock("../src/jobs/queues", async (orig) => ({ ...(await orig<typeof import("../src/jobs/queues")>()), enqueue }));
 
 const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-vi.mock("../src/services/forwarding", async (orig) => {
-  const actual = await orig<typeof import("../src/services/forwarding")>();
-  return {
-    ...actual,
-    parseGmailForwardingConfirmation: (mail: Parameters<typeof actual.parseGmailForwardingConfirmation>[0]) =>
-      actual.parseGmailForwardingConfirmation(mail, async (name) => (name === "s1._domainkey.google.com" ? publicKey : null)),
-  };
-});
+// The store's default lookup: every selector "s1" has this test's key; any other name has none.
+vi.mock("../src/services/forwarding", async (orig) => ({
+  ...(await orig<typeof import("../src/services/forwarding")>()),
+  dnsKeyLookup: async (name: string) => (name.startsWith("s1._domainkey.") ? publicKey : null),
+}));
 
 const { createApp } = await import("../src/app");
 const { closeDb } = await import("../src/db/client");
@@ -38,6 +35,7 @@ const schema = await import("../src/db/schema");
 const { processClassifyEmail } = await import("../src/jobs/classify-email");
 const { processRetention } = await import("../src/jobs/retention");
 const { renderForwardingCode } = await import("../src/services/forwarding");
+const { HIDDEN_CAP } = await import("../src/services/inbound");
 const { backfill } = await import("../scripts/backfill-inbound");
 const { env } = await import("../src/lib/env");
 
@@ -45,15 +43,15 @@ const CODE = "123456789";
 const LINK = "https://mail-settings.google.com/mail/vf-abc";
 const SENDER = "forwarding-noreply@google.com";
 
-/** A message signed for google.com, relaxed/relaxed, as Postmark's RawEmail would hold it. */
-function signedConfirmation(to: string, body = `Confirmation code: ${CODE}\r\n${LINK}\r\n`) {
-  const from = `Gmail Team <${SENDER}>`;
+/** A message signed for `domain`, relaxed/relaxed, as Postmark's RawEmail would hold it. */
+function signed(domain: string, from: string, to: string, body = "A note.\r\n") {
   const bh = createHash("sha256").update(body).digest("base64");
-  const open = `v=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=s1; h=from:to; bh=${bh}; b=`;
+  const open = `v=1; a=rsa-sha256; c=relaxed/relaxed; d=${domain}; s=s1; h=from:to; bh=${bh}; b=`;
   const data = `from:${from}\r\nto:${to}\r\ndkim-signature:${open}`;
   const b = sign("sha256", Buffer.from(data), privateKey).toString("base64");
   return `DKIM-Signature: ${open}${b}\r\nFrom: ${from}\r\nTo: ${to}\r\n\r\n${body}`;
 }
+const signedConfirmation = (to: string, body = `Confirmation code: ${CODE}\r\n${LINK}\r\n`) => signed("google.com", `Gmail Team <${SENDER}>`, to, body);
 
 describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
   let db: Db;
@@ -192,6 +190,40 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
       expect(await rows()).toHaveLength(450);
     });
 
+    it("hidden rows do not count toward the cap, so junk cannot silence real replies, and have their own ceiling", async () => {
+      const junk = (n: number) => Array.from({ length: n }, () => ({ userId, providerMessageId: randomUUID(), sender: "a@b.co", subject: "s", textBody: null, hiddenReason: "spam" as const, classifiedAt: new Date() }));
+      await db.insert(schema.inboundEmails).values(junk(HIDDEN_CAP));
+      const real = await post(mail());
+      expect(real.status).toBe(200);
+      expect(real.body).toEqual({ stored: true });
+      const spam = await post(mail({ Headers: [{ Name: "X-Spam-Score", Value: "9" }] }));
+      expect(spam.status).toBe(200);
+      expect(spam.body).toEqual({ stored: false });
+      expect(await rows()).toHaveLength(HIDDEN_CAP + 1);
+    });
+
+    it("stores mail with a 5 KB header and a 400-character From, on both routes, keeping the address", async () => {
+      const long = (MessageID: string) => mail({ MessageID, From: `${"n".repeat(400)} <jobs@acme.com>`, Subject: "s".repeat(3_000), Headers: [{ Name: "References", Value: "x".repeat(5_000) }] });
+      const res = await post(long("l1"));
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ stored: true });
+      const legacy = await request(app).post("/api/webhooks/inbound-email?token=test-inbound-secret").send(long("l2"));
+      expect(legacy.status).toBe(200);
+      expect(legacy.body).toEqual({ stored: true });
+      for (const row of await rows()) {
+        expect(row.sender).toHaveLength(320);
+        expect(row.sender.endsWith("<jobs@acme.com>")).toBe(true);
+        expect(row.subject).toHaveLength(500);
+      }
+    });
+
+    it("drops Kairos's own mail: a forwarded digest is not a reply", async () => {
+      const res = await post(mail({ From: "Kairos <hello@kairos.app>", Subject: "Interview" }));
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ stored: false });
+      expect(await rows()).toEqual([]);
+    });
+
     it("a redelivery at the cap still counts as a duplicate, not a drop", async () => {
       const body = mail({ MessageID: "at-cap" });
       await post(body);
@@ -258,8 +290,8 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
 
     it("the stage moves forward only, and rejected is final", async () => {
       const id = await sentApplication();
-      const reply = async (MessageID: string, Subject: string, TextBody: string) => {
-        await post(mail({ MessageID, Subject, TextBody }));
+      const reply = async (MessageID: string, Subject: string, TextBody: string, RawEmail?: string) => {
+        await post(mail({ MessageID, Subject, TextBody, RawEmail }));
         const [row] = await db.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, MessageID));
         await processClassifyEmail({ data: { inboundEmailId: row!.id } });
       };
@@ -267,12 +299,112 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
       expect(await stageOf(id)).toBe("interviewing");
       await reply("r2", "Thanks", "Thank you for applying.");
       expect(await stageOf(id)).toBe("interviewing");
-      await reply("r3", "Update", "Unfortunately we chose someone else.");
+      await reply("r3", "Update", "Unfortunately we chose someone else.", signed("acme.com", "Acme Talent <jobs@acme.com>", address));
       expect(await stageOf(id)).toBe("rejected");
-      await reply("r4", "Offer", "Attached is your offer letter.");
+      await reply("r4", "Offer", "Attached is your offer letter.", signed("acme.com", "Acme Talent <jobs@acme.com>", address));
       expect(await stageOf(id)).toBe("rejected");
       const kinds = (await eventsOf(id)).map((e) => e.kind).sort();
       expect(kinds).toEqual(["reply_confirmation", "reply_interview", "reply_offer", "reply_rejection"]);
+    });
+
+    describe("a terminal stage needs an authenticated sender", () => {
+      const REJECTION = { Subject: "Update", TextBody: "Unfortunately we chose someone else." };
+      const OFFER = { Subject: "Your offer", TextBody: "Attached is your offer letter." };
+      const from = "Acme Talent <jobs@acme.com>";
+      const classifyOne = async () => {
+        const [row] = await rows();
+        await processClassifyEmail({ data: { inboundEmailId: row!.id } });
+        return (await rows())[0]!;
+      };
+
+      it("an unsigned rejection on a domain link is stored, tagged and recorded, and the stage holds", async () => {
+        const id = await sentApplication();
+        await post(mail({ ...REJECTION }));
+        const row = await classifyOne();
+        expect(row).toMatchObject({ kind: "rejection", applicationId: id, linkedBy: "domain", verifiedDomains: [] });
+        expect(await stageOf(id)).toBeNull();
+        const [event] = await eventsOf(id);
+        expect(event).toMatchObject({ kind: "reply_rejection", payload: { authenticated: false, stageHeld: true, stageChanged: false } });
+        expect((await inbox()).map((e) => e.subject)).toEqual(["Update"]);
+      });
+
+      it("an unsigned offer does not freeze the stage either, and a later real rejection still lands", async () => {
+        const id = await sentApplication();
+        await post(mail({ MessageID: "o1", ...OFFER }));
+        await classifyOne();
+        expect(await stageOf(id)).toBeNull();
+        await post(mail({ MessageID: "o2", ...REJECTION, RawEmail: signed("acme.com", from, address) }));
+        const [row] = await db.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, "o2"));
+        await processClassifyEmail({ data: { inboundEmailId: row!.id } });
+        expect(await stageOf(id)).toBe("rejected");
+      });
+
+      it("a rejection signed by the company moves the stage and records the verdict", async () => {
+        const id = await sentApplication();
+        await post(mail({ ...REJECTION, RawEmail: signed("acme.com", from, address) }));
+        expect((await rows())[0]!.verifiedDomains).toEqual(["acme.com"]);
+        await classifyOne();
+        expect(await stageOf(id)).toBe("rejected");
+        expect((await eventsOf(id))[0]).toMatchObject({ payload: { authenticated: true, stageHeld: false, stageChanged: true } });
+      });
+
+      it("a rejection signed by the application's ATS moves the stage; another ATS's signature does not", async () => {
+        const id = await sentApplication("Acme Robotics", []);
+        const relay = "Acme Robotics <no-reply@greenhouse-mail.io>";
+        await post(mail({ MessageID: "a1", From: relay, ...REJECTION, RawEmail: signed("greenhouse-mail.io", relay, address) }));
+        await classifyOne();
+        expect(await stageOf(id)).toBe("rejected");
+
+        const other = await sentApplication("Globex Corp", []);
+        const lever = "Globex Corp <no-reply@hire.lever.co>";
+        await post(mail({ MessageID: "a2", From: lever, Subject: "Update from Globex", TextBody: REJECTION.TextBody, RawEmail: signed("hire.lever.co", lever, address) }));
+        const [row] = await db.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, "a2"));
+        await processClassifyEmail({ data: { inboundEmailId: row!.id } });
+        expect(await stageOf(other)).toBeNull();
+      });
+
+      it("a company-name link never sets a terminal stage, whatever signs the mail", async () => {
+        const id = await sentApplication("Globex Corp", []);
+        const stranger = "x@unknown.example";
+        await post(mail({ From: stranger, Subject: "Globex update", TextBody: REJECTION.TextBody, RawEmail: signed("unknown.example", stranger, address) }));
+        const row = await classifyOne();
+        expect(row).toMatchObject({ kind: "rejection", applicationId: id, linkedBy: "company_name", verifiedDomains: [] });
+        expect(await stageOf(id)).toBeNull();
+      });
+
+      it("a fake forward block from free mail earns a domain link but no authority", async () => {
+        const id = await sentApplication();
+        const free = "someone@gmail.com";
+        await post(mail({ From: free, Subject: "Fwd: update", TextBody: `---------- Forwarded message ---------\nFrom: x <jobs@acme.com>\n\n${REJECTION.TextBody}`, RawEmail: signed("gmail.com", free, address) }));
+        const row = await classifyOne();
+        expect(row).toMatchObject({ kind: "rejection", applicationId: id, linkedBy: "domain", verifiedDomains: [] });
+        expect(await stageOf(id)).toBeNull();
+      });
+
+      it("a signed mail scored as likely spam holds the stage, and a tampered signature counts for nothing", async () => {
+        const id = await sentApplication();
+        await post(mail({ MessageID: "h1", ...REJECTION, RawEmail: signed("acme.com", from, address), Headers: [{ Name: "X-Spam-Score", Value: "5.5" }] }));
+        await classifyOne();
+        expect(await stageOf(id)).toBeNull();
+        await post(mail({ MessageID: "h2", ...REJECTION, RawEmail: signed("acme.com", from, address).replace("A note.", "A n0te.") }));
+        const [row] = await db.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, "h2"));
+        expect(row!.verifiedDomains).toEqual([]);
+      });
+
+      it("non-terminal stages still move on an unsigned link, but only for a sent application", async () => {
+        const sent = await sentApplication();
+        await post(mail({ MessageID: "n1", Subject: "Interview" }));
+        await classifyOne();
+        expect(await stageOf(sent)).toBe("interviewing");
+      });
+
+      it("an application still being sent gets the event and no stage", async () => {
+        const id = await sentApplication("Acme Robotics", ["acme.com"], "submitting");
+        await post(mail({ Subject: "Interview" }));
+        await classifyOne();
+        expect(await stageOf(id)).toBeNull();
+        expect((await eventsOf(id)).map((e) => e.kind)).toEqual(["reply_interview"]);
+      });
     });
 
     it("an offer changes no status, a linked interview notifies, and other mail writes no event", async () => {
@@ -314,6 +446,15 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
       await processClassifyEmail({ data: { inboundEmailId: row!.id } });
       expect((await inbox(`?applicationId=${id}`)).map((e) => e.subject)).toEqual(["Interview"]);
       expect((await request(app).get("/api/inbox?applicationId=nope")).status).toBe(400);
+    });
+
+    it("one undecryptable row shows an empty preview, and the rest of the inbox still loads", async () => {
+      await post(mail({ MessageID: "ok", Subject: "Fine", TextBody: "readable" }));
+      await post(mail({ MessageID: "bad", Subject: "Broken", TextBody: "unreadable" }));
+      await db.execute(sql`update inbound_emails set preview_enc = (select preview_enc from inbound_emails where provider_message_id = 'ok') where provider_message_id = 'bad'`);
+      const emails = await inbox();
+      expect(emails.find((e) => e.subject === "Fine")!.preview).toBe("readable");
+      expect(emails.find((e) => e.subject === "Broken")!.preview).toBe("");
     });
 
     it("a body past retention shows an empty preview", async () => {
@@ -371,6 +512,33 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
       expect(status.verification.code).toBe("987654321");
     });
 
+    it("while a code is live a stranger's confirmation replaces the code but takes back nothing", async () => {
+      await post(confirmation({ RawEmail: signedConfirmation(address) }));
+      const confirmed = await request(app).post("/api/forwarding/confirm").send({ provider: "gmail" });
+      expect(confirmed.status).toBe(200);
+      await post(confirmation({ MessageID: "g2", TextBody: "Confirmation code: 987654321\n", RawEmail: signedConfirmation(address) }));
+      const status = await panel();
+      expect(status.state).toBe("verified_pending_first_mail");
+      expect(status.verification.code).toBe("987654321");
+      const [v] = await db.select().from(schema.forwardingVerifications);
+      expect(v!.acknowledgedAt).not.toBeNull();
+    });
+
+    it("at most 3 confirmations a day are stored and mailed", async () => {
+      for (const n of [1, 2, 3, 4]) {
+        const res = await post(confirmation({ MessageID: `c${n}`, TextBody: `Confirmation code: 11111111${n}\n`, RawEmail: signedConfirmation(address) }));
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ stored: n <= 3 });
+      }
+      expect((await panel()).verification.code).toBe("111111113");
+    });
+
+    it("a genuine confirmation sent to a look-alike address is forged", async () => {
+      await post(confirmation({ RawEmail: signedConfirmation(`${address}.attacker.example`) }));
+      expect((await rows())[0]).toMatchObject({ hiddenReason: "spam" });
+      expect(await db.select().from(schema.forwardingVerifications)).toEqual([]);
+    });
+
     it("POST /api/forwarding/confirm records the acknowledgement once and never moves an active state back", async () => {
       await post(confirmation({ RawEmail: signedConfirmation(address) }));
       const confirmed = await request(app).post("/api/forwarding/confirm").send({ provider: "gmail" });
@@ -415,15 +583,12 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
 
   describe("the backfill", () => {
     it("encrypts in place first; text_body is empty only after --null-plaintext, which needs the dual write off", async () => {
+      // b2's long sender and subject are what the previous release could store; no check stops them until WP-46.
       await db.insert(schema.inboundEmails).values([
         { userId, providerMessageId: "b1", sender: "a@b.co", subject: "s", textBody: "plain words", kind: "offer" as const },
-        { userId, providerMessageId: "b2", sender: "a@b.co", subject: "s", textBody: "more words" },
+        { userId, providerMessageId: "b2", sender: "x".repeat(400), subject: "y".repeat(600), textBody: "more words" },
         { userId, providerMessageId: "b3", sender: "a@b.co", subject: "s", textBody: "" },
       ]);
-      // A row from before the length check: only a bypass of the check can write one now.
-      await db.execute(sql`alter table inbound_emails drop constraint inbound_emails_sender_len_ck`);
-      await db.execute(sql`update inbound_emails set sender = repeat('x', 400) where provider_message_id = 'b2'`);
-      await db.execute(sql`alter table inbound_emails add constraint inbound_emails_sender_len_ck check (char_length(sender) <= 320) not valid`);
 
       const first = await backfill(db, { nullPlaintext: false, dualWrite: true });
       expect(first).toMatchObject({ markers: 1, bounded: 1, encrypted: 2, nulled: 0, plaintextLeft: 3, unencryptedLeft: 0 });
@@ -432,7 +597,7 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
       expect(b1).toMatchObject({ textBody: "plain words", ruleKind: "offer", linkedBy: "none" });
       expect(b1.classifiedAt).not.toBeNull();
       expect(b1.textBodyEnc).not.toBeNull();
-      expect(after.find((r) => r.providerMessageId === "b2")!.sender).toHaveLength(320);
+      expect(after.find((r) => r.providerMessageId === "b2")).toMatchObject({ sender: "x".repeat(320), subject: "y".repeat(500) });
       // The readers already prefer ciphertext: a second run changes nothing.
       expect(await backfill(db, { nullPlaintext: false, dualWrite: true })).toMatchObject({ markers: 0, bounded: 0, encrypted: 0 });
 

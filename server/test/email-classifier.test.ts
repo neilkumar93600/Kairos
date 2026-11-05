@@ -35,6 +35,13 @@ describe("stripQuoted", () => {
     expect(stripQuoted(body)).toBe(body);
   });
 
+  it("reads the first 4,000 characters only, so a crafted body cannot make the search run long", () => {
+    const started = Date.now();
+    const out = stripQuoted(`${"On ".repeat(5_000)}\n`.repeat(5));
+    expect(out.length).toBeLessThanOrEqual(4_000);
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+
   it("normalizes CRLF and leaves ordinary text alone", () => {
     expect(stripQuoted("a\r\nb\r\n")).toBe("a\nb");
     expect(stripQuoted("On Monday we wrote back.\nSee you then.")).toBe("On Monday we wrote back.\nSee you then.");

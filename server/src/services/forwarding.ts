@@ -14,6 +14,9 @@ import { parseAddress } from "./linker";
  * another user's address. Mail claiming Google's forwarding sender without that signature is proven forged and is stored
  * hidden with no body, so its link shows nowhere (stricter than 3.4's "treat as ordinary": the inbox preview would show
  * the link). Template details (subject, code length, link hosts) are pinned by the S-G1 sample (owner-actions/WP-24.md).
+ *
+ * verifiedDomains also gives every other mail its sender-authentication verdict at receipt (services/inbound.ts), because
+ * the raw message is not kept: the classify job lets only an authenticated sender set a terminal stage.
  */
 
 export const GMAIL_FORWARDING_SENDER = "forwarding-noreply@google.com";
@@ -47,7 +50,10 @@ export async function parseGmailForwardingConfirmation(
   lookup: KeyLookup = dnsKeyLookup,
 ): Promise<ForwardingConfirmation | "forged" | null> {
   if (parseAddress(mail.from)?.address !== GMAIL_FORWARDING_SENDER) return null;
-  if (!mail.rawEmail || !(await verifyDkim(mail.rawEmail, GMAIL_DKIM_DOMAIN, GMAIL_FORWARDING_SENDER, mail.recipient, lookup))) return "forged";
+  const domains = mail.rawEmail
+    ? await verifiedDomains(mail.rawEmail, { fromAddress: GMAIL_FORWARDING_SENDER, toAddress: mail.recipient, accept: (d) => d === GMAIL_DKIM_DOMAIN }, lookup)
+    : [];
+  if (!domains.length) return "forged";
   if (!CONFIRMATION_SUBJECT.test(mail.subject)) return null;
   const code = (mail.textBody.match(/Confirmation code:\s*(\d{6,12})\b/i) ?? mail.subject.match(/\(#(\d{6,12})\)/))?.[1] ?? null;
   const confirmUrl = [...mail.textBody.matchAll(/https:\/\/[^\s<>"')\]]+/g)].map((m) => m[0]).find(allowedLink) ?? null;
@@ -63,13 +69,13 @@ function allowedLink(href: string): boolean {
   }
 }
 
-// ---------- DKIM (RFC 6376), the subset Gmail uses: rsa-sha256, simple or relaxed canonicalization ----------
+// ---------- DKIM (RFC 6376), the subset real senders use: rsa-sha256, simple or relaxed canonicalization ----------
 
 type Field = { name: string; raw: string };
 
 /** Header fields in order, each with its folded raw text (no trailing CRLF), and the body. */
 function splitMessage(raw: string): { fields: Field[]; body: string } {
-  const msg = raw.includes("\r\n") ? raw : raw.replace(/\n/g, "\r\n");
+  const msg = raw.replace(/\r\n|\r|\n/g, "\r\n");
   const end = msg.indexOf("\r\n\r\n");
   const head = end < 0 ? msg : msg.slice(0, end);
   const body = end < 0 ? "" : msg.slice(end + 4);
@@ -107,36 +113,73 @@ function tags(value: string): Record<string, string> {
   return out;
 }
 
-/** Signatures tried per message: a mail cannot make one request run dozens of DNS lookups. */
-const MAX_SIGNATURES = 5;
 const headerValue = (f: Field) => f.raw.slice(f.raw.indexOf(":") + 1);
 
+/** Signatures checked per message, of those whose domain could be accepted. inbound_emails_verified_domains_ck holds the same bound. */
+const MAX_SIGNATURES = 2;
+/** DNS lookups per message: one mail cannot make a request wait on several name servers. A cached key costs none. */
+const MAX_LOOKUPS = 1;
+const KEY_CACHE_MS = 3_600_000;
+const KEY_CACHE_MAX = 1_000;
+/** A signature older than this, or from further ahead than clock skew explains, counts for nothing. */
+const MAX_SIGNATURE_AGE_MS = 30 * 86_400_000;
+const MAX_CLOCK_SKEW_MS = 86_400_000;
+
+/** Keys that have verified a real signature, by DNS name. Only those: a name a stranger made up is never kept. */
+const keyCache = new Map<string, { key: KeyObject; until: number }>();
+export const clearDkimKeyCache = () => keyCache.clear();
+
 /**
- * True when one DKIM-Signature of `domain` (exactly, not a subdomain) verifies, signs the From and To headers and the
- * whole body (no l= tag), has not expired, and the message has exactly one From, whose address is `fromAddress`, and
- * one To, which names `toAddress`.
+ * The domains with a valid DKIM signature on this message, at most MAX_SIGNATURES. A signature counts when `accept` takes
+ * its d= (any other d= is never looked up), it signs the From header and the whole body (no l= tag), and its times are
+ * sane. The message must have exactly one From, whose address is `fromAddress`, so a second From cannot slip past a
+ * signature over the first. With `toAddress`, it must also have exactly one To with that address, and sign it.
  */
-export async function verifyDkim(raw: string, domain: string, fromAddress: string, toAddress: string, lookup: KeyLookup): Promise<boolean> {
+export async function verifiedDomains(
+  raw: string,
+  expected: { fromAddress: string; toAddress?: string; accept: (domain: string) => boolean },
+  lookup: KeyLookup,
+): Promise<string[]> {
   const { fields, body } = splitMessage(raw);
   const froms = fields.filter((f) => f.name === "from");
-  const tos = fields.filter((f) => f.name === "to");
-  if (froms.length !== 1 || parseAddress(headerValue(froms[0]!))?.address !== fromAddress) return false;
-  if (tos.length !== 1 || !headerValue(tos[0]!).toLowerCase().includes(toAddress.toLowerCase())) return false;
+  if (froms.length !== 1 || parseAddress(headerValue(froms[0]!))?.address !== expected.fromAddress) return [];
+  if (expected.toAddress !== undefined) {
+    const tos = fields.filter((f) => f.name === "to");
+    if (tos.length !== 1 || parseAddress(headerValue(tos[0]!))?.address !== expected.toAddress.toLowerCase()) return [];
+  }
 
-  for (const sig of fields.filter((f) => f.name === "dkim-signature").slice(0, MAX_SIGNATURES)) {
-    const t = tags(headerValue(sig));
-    const signed = (t.h ?? "").toLowerCase().split(":").filter(Boolean);
-    if (t.v !== "1" || t.a !== "rsa-sha256" || t.d?.toLowerCase() !== domain || t.l !== undefined || !t.b || !t.bh) continue;
-    if (!signed.includes("from") || !signed.includes("to") || !/^[A-Za-z0-9._-]{1,63}$/.test(t.s ?? "")) continue;
-    if (t.x && Number(t.x) * 1000 < Date.now()) continue;
+  const now = Date.now();
+  const candidates = fields
+    .filter((f) => f.name === "dkim-signature")
+    .map((field) => ({ field, t: tags(headerValue(field)) }))
+    .filter(({ t }) => {
+      const signed = (t.h ?? "").toLowerCase().split(":");
+      if (t.v !== "1" || t.a !== "rsa-sha256" || !t.d || t.l !== undefined || !t.b || !t.bh || !/^[A-Za-z0-9._-]{1,63}$/.test(t.s ?? "")) return false;
+      if (!signed.includes("from") || (expected.toAddress !== undefined && !signed.includes("to"))) return false;
+      // NaN fails each comparison, so an unreadable time is an invalid signature, not one with no limit.
+      if (t.x !== undefined && !(Number(t.x) * 1000 >= now)) return false;
+      if (t.t !== undefined && !(Number(t.t) * 1000 <= now + MAX_CLOCK_SKEW_MS && Number(t.t) * 1000 >= now - MAX_SIGNATURE_AGE_MS)) return false;
+      return expected.accept(t.d.toLowerCase());
+    })
+    .slice(0, MAX_SIGNATURES);
+
+  const bodyHashes = new Map<string, string>();
+  const hashOfBody = (mode: string) => {
+    if (!bodyHashes.has(mode)) bodyHashes.set(mode, createHash("sha256").update(canonBody(body, mode === "relaxed")).digest("base64"));
+    return bodyHashes.get(mode)!;
+  };
+
+  let lookups = 0;
+  const found = new Set<string>();
+  for (const { field: sig, t } of candidates) {
     const [hc, bc = "simple"] = (t.c ?? "simple/simple").toLowerCase().split("/");
     if (!["simple", "relaxed"].includes(hc!) || !["simple", "relaxed"].includes(bc)) continue;
-    if (createHash("sha256").update(canonBody(body, bc === "relaxed")).digest("base64") !== t.bh) continue;
+    if (hashOfBody(bc) !== t.bh) continue;
 
     // Each name in h= takes the last instance not yet used, bottom up; a name with none left signs nothing.
     const used = new Set<Field>();
     const lines: string[] = [];
-    for (const name of signed) {
+    for (const name of t.h!.toLowerCase().split(":").filter(Boolean)) {
       const field = fields.findLast((f) => f.name === name && !used.has(f));
       if (!field) continue;
       used.add(field);
@@ -144,14 +187,29 @@ export async function verifyDkim(raw: string, domain: string, fromAddress: strin
     }
     // The signature's own field with b= emptied, last and without its CRLF.
     lines.push(canonHeader(sig.raw.replace(/([;:][ \t\r\n]*b[ \t\r\n]*=)[^;]*/, "$1"), hc === "relaxed"));
+    const data = Buffer.from(lines.join(""));
+    const signature = Buffer.from(t.b!, "base64");
+    const domain = t.d!.toLowerCase();
 
-    const key = await lookup(`${t.s}._domainkey.${domain}`);
-    if (key && verify("sha256", Buffer.from(lines.join("")), key, Buffer.from(t.b, "base64"))) return true;
+    const name = `${t.s}._domainkey.${domain}`;
+    const cached = keyCache.get(name);
+    if (cached && cached.until > now && verify("sha256", data, cached.key, signature)) {
+      found.add(domain);
+      continue;
+    }
+    if (lookups >= MAX_LOOKUPS) continue;
+    lookups += 1;
+    const key = await lookup(name);
+    if (key && verify("sha256", data, key, signature)) {
+      if (keyCache.size >= KEY_CACHE_MAX) keyCache.clear();
+      keyCache.set(name, { key, until: now + KEY_CACHE_MS });
+      found.add(domain);
+    }
   }
-  return false;
+  return [...found];
 }
 
-/** The key record's RSA key (2048 bits at Google), or null when there is none, it is revoked or it is too short. */
+/** The key record's RSA key, or null when there is none, it is revoked or it is under 2048 bits. */
 export function keyFromRecord(record: string): KeyObject | null {
   const t = tags(record);
   if ((t.k ?? "rsa") !== "rsa" || !t.p) return null;
@@ -159,7 +217,7 @@ export function keyFromRecord(record: string): KeyObject | null {
   for (const type of ["spki", "pkcs1"] as const) {
     try {
       const key = createPublicKey({ key: der, format: "der", type });
-      return (key.asymmetricKeyDetails?.modulusLength ?? 0) >= 1024 ? key : null;
+      return (key.asymmetricKeyDetails?.modulusLength ?? 0) >= 2048 ? key : null;
     } catch {
       // try the other encoding
     }
@@ -170,8 +228,9 @@ export function keyFromRecord(record: string): KeyObject | null {
 const resolver = new Resolver({ timeout: 2_000, tries: 2 });
 
 /**
- * DNS TXT lookup. No such name is no key (the mail counts as unverified); any other DNS failure throws, so the
- * webhook answers 500 and Postmark retries rather than filing a real confirmation as ordinary mail.
+ * DNS TXT lookup. No such name is no key (the mail counts as unverified). Any other DNS failure throws: for Google's
+ * sender the webhook answers 500 and Postmark retries, rather than hiding a real confirmation; for other mail the store
+ * files it as unauthenticated, since an employer's broken DNS must not cost the mail (services/inbound.ts).
  */
 export async function dnsKeyLookup(name: string): Promise<KeyObject | null> {
   try {

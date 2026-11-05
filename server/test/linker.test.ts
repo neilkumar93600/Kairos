@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { containsName, hostSuffixes, normalizeName, originalSender, parseAddress, pickLink, type LinkCandidate } from "../src/services/linker";
+import { alignedDomains, atsOfDomain, containsName, hostSuffixes, normalizeName, originalSender, parseAddress, pickLink, signedForApplication, type LinkCandidate } from "../src/services/linker";
 
 type GoldenCase = { why: string; sender: string; account?: string; subject: string; body: string; apply: string[]; restricted?: boolean; app: string | null; by: string };
 type Golden = { companies: Record<string, Pick<LinkCandidate, "companyName" | "ats" | "domains" | "jobTitle">>; cases: GoldenCase[] };
@@ -69,10 +69,44 @@ describe("helpers", () => {
     expect(parseAddress("no address")).toBeNull();
   });
 
+  it("parseAddress stays fast on a multi-megabyte value with no address", () => {
+    const started = Date.now();
+    expect(parseAddress("x".repeat(5_000_000))).toBeNull();
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
   it("originalSender ignores a forward block unless the mail is from the user or free mail", () => {
     const block = "---------- Forwarded message ---------\nFrom: R <r@globex.com>";
     expect(originalSender("me@gmail.com", block, null)?.address).toBe("r@globex.com");
     expect(originalSender("x@corp.example", block, "me@gmail.com")?.address).toBe("x@corp.example");
     expect(originalSender("me@gmail.com", "no block", "me@gmail.com")?.address).toBe("me@gmail.com");
+  });
+});
+
+describe("whether a verified domain speaks for an application", () => {
+  const app = { domains: ["acme.com"], ats: "greenhouse" };
+
+  it.each([
+    ["the company's domain", ["acme.com"], true],
+    ["a subdomain of it", ["mail.acme.com"], true],
+    ["the application's ATS", ["greenhouse-mail.io"], true],
+    ["a subdomain of its ATS", ["us.greenhouse-mail.io"], true],
+    ["another ATS", ["hire.lever.co"], false],
+    ["a look-alike", ["notacme.com"], false],
+    ["a domain holding the company's as a prefix", ["acme.com.evil.example"], false],
+    ["nothing verified", [], false],
+  ])("%s", (_why, verified, expected) => {
+    expect(signedForApplication(verified, app)).toBe(expected);
+  });
+
+  it("a parent domain of the company's aligns, but a bare TLD never does", () => {
+    expect(signedForApplication(["acme.com"], { domains: ["careers.acme.com"], ats: "lever" })).toBe(true);
+    expect(alignedDomains("com", "acme.com")).toBe(false);
+  });
+
+  it("atsOfDomain reads the relay's suffixes", () => {
+    expect(atsOfDomain("hire.lever.co")).toBe("lever");
+    expect(atsOfDomain("x.ashbyhq.com")).toBe("ashby");
+    expect(atsOfDomain("acme.com")).toBeUndefined();
   });
 });

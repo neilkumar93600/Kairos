@@ -75,14 +75,17 @@ export function normalizeName(name: string): string {
 /** True when `name` (normalized) appears in `text` as whole words. */
 export const containsName = (text: string, name: string) => name !== "" && ` ${words(text)} `.includes(` ${name} `);
 
+const MAX_FROM = 320;
 const ADDRESS = /<?([^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+?)>?\s*$/;
 
 /** `{ address, name }` of a From value such as `"Acme Talent" <jobs@acme.com>` or `jobs@acme.com`. */
 export function parseAddress(from: string): { address: string; name: string } | null {
-  const m = from.trim().match(ADDRESS);
+  // The address is at the end. Only the tail is searched, because ADDRESS backtracks on a long value without one.
+  const value = from.trim().slice(-MAX_FROM);
+  const m = value.match(ADDRESS);
   if (!m) return null;
-  const name = from
-    .slice(0, from.lastIndexOf(m[0]))
+  const name = value
+    .slice(0, value.lastIndexOf(m[0]))
     .trim()
     .replace(/^"|"$/g, "")
     .trim();
@@ -110,6 +113,20 @@ export function hostSuffixes(host: string): string[] {
   const labels = host.toLowerCase().split(".");
   return labels.slice(0, -1).map((_, i) => labels.slice(i).join("."));
 }
+
+/** Relaxed alignment: the same domain, or one a subdomain of the other. A bare TLD never aligns. */
+export const alignedDomains = (a: string, b: string) => a.includes(".") && b.includes(".") && (a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`));
+
+/** The ATS relaying mail for `domain` (itself or a parent of it is in ATS_MAIL_DOMAINS), or undefined. */
+export const atsOfDomain = (domain: string) => hostSuffixes(domain).map((s) => ATS_MAIL_DOMAINS[s]).find(Boolean);
+
+/**
+ * Whether a verified DKIM domain speaks for this application: the company's own mail domain, or the sending domain of the
+ * ATS its job uses (real rejections mostly come from the ATS). A limit: anyone who is a customer of that ATS signs with
+ * its domain too, and a genuine signed mail replayed from another applicant still verifies (reviews/WP-24.md).
+ */
+export const signedForApplication = (verified: readonly string[], app: Pick<LinkCandidate, "domains" | "ats">) =>
+  verified.some((d) => app.domains.some((c) => alignedDomains(d, c)) || atsOfDomain(d) === app.ats);
 
 const STATUS_ORDER: Record<string, number> = { submitted: 0, submitting: 1, failed: 2 };
 const sentAt = (c: LinkCandidate) => (c.submittedAt ?? c.approvedAt)?.getTime() ?? 0;

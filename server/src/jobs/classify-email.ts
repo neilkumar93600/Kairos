@@ -8,7 +8,7 @@ import { count, slo } from "../lib/metrics";
 import { classifyByRules, RULES_VERSION, stripQuoted } from "../services/email-classifier";
 import { recordEvent } from "../services/events";
 import { readBody, SPAM_RESTRICT } from "../services/inbound";
-import { linkCandidates, pickLink, type LinkResult } from "../services/linker";
+import { linkCandidates, pickLink, signedForApplication, type LinkResult } from "../services/linker";
 import { addNotification } from "./notify";
 import type { JobData } from "./queues";
 
@@ -19,6 +19,11 @@ import type { JobData } from "./queues";
  * reply_important notification and the forwarding activation. A second run, a redelivery or a racing worker finds the
  * row classified and writes nothing, so a reply yields one event (dedupe key reply:<id> backs that up).
  * An offer tag changes no billing state (CISO mustFix 5); the offer-pause candidate flow is not built here.
+ *
+ * Mail is unauthenticated: anyone who learns the forwarding address can write anything. So a reply can only set a stage
+ * that ends the forward path (rejected is final, offer blocks all but rejected) when its sender is proven: a domain-tier
+ * link with a DKIM signature verified at receipt by the company's domain or its ATS's. Otherwise the mail is still
+ * stored, shown, tagged and recorded as an event, and the stage holds.
  */
 
 /**
@@ -40,6 +45,7 @@ const STAGE_FOR: Partial<Record<EmailKind, ApplicationStage>> = {
 };
 const STAGE_RANKS = sql`ARRAY['applied','in_review','assessment','interviewing','offer']::text[]`;
 const IMPORTANT = new Set<EmailKind>(["interview", "assessment", "offer"]);
+const TERMINAL = new Set<EmailKind>(["rejection", "offer"]);
 
 export async function processClassifyEmail(job: Pick<Job<JobData["classify-email"]>, "data">) {
   const id = job.data.inboundEmailId;
@@ -52,6 +58,7 @@ export async function processClassifyEmail(job: Pick<Job<JobData["classify-email
       textBody: inboundEmails.textBody,
       textBodyEnc: inboundEmails.textBodyEnc,
       spamScore: inboundEmails.spamScore,
+      verifiedDomains: inboundEmails.verifiedDomains,
       receivedAt: inboundEmails.receivedAt,
       accountEmail: user.email,
     })
@@ -67,10 +74,11 @@ export async function processClassifyEmail(job: Pick<Job<JobData["classify-email
   const ruleKind = classifyByRules(email.subject, body);
   const modelKind = !ruleKind && !restricted && MODEL_FALLBACK_ENABLED ? await classifyByModel({ subject: email.subject, body }) : null;
   const kind: EmailKind = ruleKind ?? (modelKind && modelKind !== "offer" ? modelKind : "other");
-  const link: LinkResult = pickLink(
-    { sender: email.sender, subject: email.subject, body, accountEmail: email.accountEmail, restricted },
-    await linkCandidates(db(), email.userId),
-  );
+  const candidates = await linkCandidates(db(), email.userId);
+  const link: LinkResult = pickLink({ sender: email.sender, subject: email.subject, body, accountEmail: email.accountEmail, restricted }, candidates);
+  const application = candidates.find((c) => c.applicationId === link.applicationId);
+  const authenticated = Boolean(application) && link.linkedBy === "domain" && signedForApplication(email.verifiedDomains, application!);
+  const stageAllowed = !TERMINAL.has(kind) || (authenticated && !restricted);
 
   // Step B: one transaction, exactly once.
   const result = await db().transaction(async (tx) => {
@@ -94,19 +102,22 @@ export async function processClassifyEmail(job: Pick<Job<JobData["classify-email
     const appId = link.applicationId;
     if (!appId || kind === "other") return { applied: true as const, stageChanged: false, event: false };
     const stage = STAGE_FOR[kind]!;
-    // The predicate keeps the move forward-only (rejected final), so applications_guard_stage never has to refuse it.
-    const moved = await tx.execute(sql`
-      UPDATE applications SET stage = ${stage}
-       WHERE id = ${appId} AND user_id = ${email.userId}
-         AND stage IS DISTINCT FROM 'rejected'
-         AND (stage IS NULL OR ${stage}::text = 'rejected' OR array_position(${STAGE_RANKS}, stage) < array_position(${STAGE_RANKS}, ${stage}::text))`);
-    const stageChanged = (moved.rowCount ?? 0) > 0;
+    // The predicate keeps the move forward-only (rejected final), so applications_guard_stage never has to refuse it. A
+    // stage needs a sent application; one still being sent gets its event, and its later replies move it.
+    const moved = stageAllowed
+      ? await tx.execute(sql`
+          UPDATE applications SET stage = ${stage}
+           WHERE id = ${appId} AND user_id = ${email.userId} AND status IN ('submitted', 'failed')
+             AND stage IS DISTINCT FROM 'rejected'
+             AND (stage IS NULL OR ${stage}::text = 'rejected' OR array_position(${STAGE_RANKS}, stage) < array_position(${STAGE_RANKS}, ${stage}::text))`)
+      : null;
+    const stageChanged = (moved?.rowCount ?? 0) > 0;
     const event = await recordEvent(tx, {
       userId: email.userId,
       applicationId: appId,
       kind: `reply_${kind}` as DbEventKind,
       actor: "employer",
-      payload: { inboundEmailId: id, linkedBy: link.linkedBy, source: "rule", rulesVersion: RULES_VERSION, stageChanged },
+      payload: { inboundEmailId: id, linkedBy: link.linkedBy, source: "rule", rulesVersion: RULES_VERSION, stageChanged, authenticated, stageHeld: !stageAllowed },
       dedupeKey: `reply:${id}`,
     });
     if (IMPORTANT.has(kind) && !restricted) {
@@ -117,7 +128,8 @@ export async function processClassifyEmail(job: Pick<Job<JobData["classify-email
 
   if (result.applied) {
     count("inbound.classified", 1, kind);
-    logger.info({ inboundEmailId: id, kind, linkedBy: link.linkedBy, restricted, rulesVersion: RULES_VERSION, ...result }, "reply classified");
+    if (!stageAllowed && link.applicationId) count("inbound.stage_held", 1, kind);
+    logger.info({ inboundEmailId: id, kind, linkedBy: link.linkedBy, restricted, authenticated, rulesVersion: RULES_VERSION, ...result }, "reply classified");
     // S8: 99% of replies classified within 10 minutes of arriving.
     slo("s8", Date.now() - email.receivedAt.getTime() <= 10 * 60_000);
   }

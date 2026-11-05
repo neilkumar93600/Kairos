@@ -39,10 +39,11 @@ export function classifyByRules(subject: string, body: string): EmailKind | null
 /**
  * The reply without the history under it (messaging-16): drops lines quoted with `>`, everything from an "On ... wrote:"
  * line or an Outlook "-----Original Message-----" on, and a `-- ` signature. A Gmail "Forwarded message" block stays: in
- * a manual forward it is the employer's mail, and the linker reads its From line.
+ * a manual forward it is the employer's mail, and the linker reads its From line. Works on the first 4,000 characters,
+ * the most the classifier and the linker read, so a crafted body cannot make the reply-header search run long.
  */
 export function stripQuoted(body: string): string {
-  const text = body.replace(/\r\n?/g, "\n");
+  const text = body.slice(0, 4000).replace(/\r\n?/g, "\n");
   const cut = text.search(/^(?:On\b[^\n]{0,300}(?:\n[^\n]{0,300})?\bwrote:[ \t]*$|-{3,}[ \t]*Original Message[ \t]*-{3,}|--[ \t]*$)/im);
   return (cut < 0 ? text : text.slice(0, cut))
     .split("\n")

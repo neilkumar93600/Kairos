@@ -1,6 +1,6 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { describe, expect, it } from "vitest";
-import { keyFromRecord, parseGmailForwardingConfirmation, renderForwardingCode, type KeyLookup } from "../src/services/forwarding";
+import { beforeEach, describe, expect, it } from "vitest";
+import { clearDkimKeyCache, keyFromRecord, parseGmailForwardingConfirmation, renderForwardingCode, verifiedDomains, type KeyLookup } from "../src/services/forwarding";
 
 /**
  * The DKIM check on a Gmail forwarding confirmation (S-G1). There is no real Google sample until the owner supplies one
@@ -11,7 +11,10 @@ const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 20
 const stranger = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const SENDER = "forwarding-noreply@google.com";
 const TO = "u-abc12345-deadbeef@replies.kairos.app";
+const lookupAny: KeyLookup = async () => publicKey;
 const lookup: KeyLookup = async (name) => (name === "s1._domainkey.google.com" ? publicKey : null);
+
+beforeEach(clearDkimKeyCache);
 
 const relaxedHeader = (name: string, value: string) => `${name.toLowerCase()}:${value.replace(/\r\n(?=[ \t])/g, "").replace(/[ \t]+/g, " ").trim()}`;
 const relaxedBody = (body: string) => {
@@ -76,6 +79,12 @@ describe("a genuine confirmation", () => {
     expect(await confirmation(signedMail().replace(/\r\n/g, "\n"))).toMatchObject({ code: "123456789" });
   });
 
+  it("accepts a message whose line endings Postmark mixed", async () => {
+    const raw = signedMail();
+    const split = raw.indexOf("\r\nTo:");
+    expect(await confirmation(`${raw.slice(0, split)}\n${raw.slice(split + 2)}`)).toMatchObject({ code: "123456789" });
+  });
+
   it("drops a link on another host and keeps the code", async () => {
     const out = await confirmation(signedMail(), { textBody: "Confirmation code: 123456789\nhttps://mail-settings.google.com.evil.example/vf\nhttps://evil.example/x" });
     expect(out).toEqual({ code: "123456789", confirmUrl: null });
@@ -112,6 +121,11 @@ describe("a spoofed confirmation shows no link", () => {
     ["an expired signature", () => signedMail({ extraTags: " x=1000;" })],
     ["rsa-sha1", () => signedMail({ a: "rsa-sha1" })],
     ["a second From added above the signed one", () => signedMail({ tamper: (m) => `From: evil@evil.example\r\n${m}` })],
+    ["a To holding the address as a prefix of another domain", () => signedMail({ headers: [["From", `Gmail Team <${SENDER}>`], ["To", `${TO}.attacker.example`], ["Subject", "x"]] })],
+    ["an unreadable expiry", () => signedMail({ extraTags: " x=soon;" })],
+    ["an unreadable signing time", () => signedMail({ extraTags: " t=soon;" })],
+    ["a signing time from long ago", () => signedMail({ extraTags: " t=1000;" })],
+    ["a signing time far ahead", () => signedMail({ extraTags: ` t=${Math.floor(Date.now() / 1000) + 30 * 86_400};` })],
     ["a genuine confirmation replayed to another address", () => signedMail({ headers: [["From", `Gmail Team <${SENDER}>`], ["To", "someone-else@replies.kairos.app"], ["Subject", "x"]] })],
     ["a From in the raw message from another sender", () => signedMail({ headers: [["From", "evil@evil.example"], ["To", TO], ["Subject", "x"]] })],
     ["garbage", () => "not a message"],
@@ -142,7 +156,68 @@ describe("a spoofed confirmation shows no link", () => {
       async () => (lookups++, publicKey),
     );
     expect(out).toBe("forged");
-    expect(lookups).toBe(5);
+    expect(lookups).toBe(1);
+  });
+});
+
+describe("verifiedDomains, the verdict on any mail", () => {
+  const FROM = "jobs@acme.example";
+  const signedBy = (d: string) => signedMail({ d, h: ["from", "subject"], headers: [["From", `Acme <${FROM}>`], ["To", "me@x.example"], ["Subject", "x"]] });
+  const counting = () => {
+    const names: string[] = [];
+    const count: KeyLookup = async (name) => (names.push(name), publicKey);
+    return { names, count };
+  };
+
+  it("names the domain of a valid signature, without needing To signed", async () => {
+    expect(await verifiedDomains(signedBy("acme.example"), { fromAddress: FROM, accept: () => true }, lookupAny)).toEqual(["acme.example"]);
+  });
+
+  it("never looks up a domain that could not be accepted", async () => {
+    const { names, count } = counting();
+    expect(await verifiedDomains(signedBy("evil.example"), { fromAddress: FROM, accept: (d) => d === "acme.example" }, count)).toEqual([]);
+    expect(names).toEqual([]);
+  });
+
+  it("refuses when the raw From is not the address Postmark reported, or there are two", async () => {
+    const { names, count } = counting();
+    expect(await verifiedDomains(signedBy("acme.example"), { fromAddress: "other@acme.example", accept: () => true }, count)).toEqual([]);
+    expect(await verifiedDomains(`From: evil@evil.example\r\n${signedBy("acme.example")}`, { fromAddress: FROM, accept: () => true }, count)).toEqual([]);
+    expect(names).toEqual([]);
+  });
+
+  it("does not look up when the body hash is already wrong", async () => {
+    const { names, count } = counting();
+    const raw = signedBy("acme.example").replace("vf-abc", "vf-evil");
+    expect(await verifiedDomains(raw, { fromAddress: FROM, accept: () => true }, count)).toEqual([]);
+    expect(names).toEqual([]);
+  });
+
+  it("keeps a key that verified for an hour, so a later mail costs no lookup; a key that did not verify is not kept", async () => {
+    const { names, count } = counting();
+    const good = { fromAddress: FROM, accept: () => true };
+    expect(await verifiedDomains(signedMail({ d: "acme.example", key: stranger.privateKey, h: ["from"], headers: [["From", FROM]] }), good, count)).toEqual([]);
+    expect(names).toHaveLength(1);
+    expect(await verifiedDomains(signedBy("acme.example"), good, count)).toEqual(["acme.example"]);
+    expect(names).toHaveLength(2);
+    expect(await verifiedDomains(signedBy("acme.example"), good, count)).toEqual(["acme.example"]);
+    expect(names).toHaveLength(2);
+  });
+
+  it("looks up one key a message, even with two acceptable signatures", async () => {
+    const { names, count } = counting();
+    const a = signedBy("acme.example").split("\r\n")[0]!;
+    const raw = `${a}\r\n${signedBy("mail.acme.example")}`;
+    await verifiedDomains(raw, { fromAddress: FROM, accept: () => true }, count);
+    expect(names).toHaveLength(1);
+  });
+
+  it("is fast on a raw message of the largest size read", async () => {
+    const started = Date.now();
+    const raw = signedMail({ d: "acme.example", h: ["from"], headers: [["From", FROM]], body: `${"line of text\r\n".repeat(70_000)}` });
+    expect(raw.length).toBeGreaterThan(900_000);
+    expect(await verifiedDomains(raw, { fromAddress: FROM, accept: () => true }, lookupAny)).toEqual(["acme.example"]);
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 });
 
@@ -157,7 +232,7 @@ describe("keyFromRecord", () => {
   it("refuses a revoked, short or non-RSA key", () => {
     expect(keyFromRecord("v=DKIM1; p=")).toBeNull();
     expect(keyFromRecord("v=DKIM1; k=ed25519; p=abcd")).toBeNull();
-    const short = generateKeyPairSync("rsa", { modulusLength: 768 }).publicKey;
+    const short = generateKeyPairSync("rsa", { modulusLength: 1024 }).publicKey;
     expect(keyFromRecord(`v=DKIM1; p=${der(short, "spki")}`)).toBeNull();
     const ed = generateKeyPairSync("ed25519").publicKey;
     expect(keyFromRecord(`v=DKIM1; p=${ed.export({ type: "spki", format: "der" }).toString("base64")}`)).toBeNull();

@@ -9,7 +9,8 @@ import { logger } from "../lib/logger";
 import { count } from "../lib/metrics";
 import { enqueue } from "../jobs/queues";
 import { addNotification, enqueueNotify } from "../jobs/notify";
-import { FORWARDING_CODE_TTL_MS, parseGmailForwardingConfirmation, type KeyLookup } from "./forwarding";
+import { dnsKeyLookup, FORWARDING_CODE_TTL_MS, parseGmailForwardingConfirmation, verifiedDomains, type KeyLookup } from "./forwarding";
+import { alignedDomains, atsOfDomain, linkCandidates, parseAddress } from "./linker";
 
 /**
  * Storing a forwarded reply (05-api 14.3, _db/messaging.md 4.7, 4.10), shared by the Postmark route and the legacy
@@ -17,23 +18,45 @@ import { FORWARDING_CODE_TTL_MS, parseGmailForwardingConfirmation, type KeyLooku
  * which may insert inbound mail but never update or delete it.
  */
 
-/** Only these fields are read; Attachments' content, HtmlBody and every other header are dropped at once. */
+const FROM_MAX = 320;
+const SUBJECT_MAX = 500;
+const HEADER_VALUE_MAX = 100;
+/** Over this the raw message is not read at all, so the mail is simply unauthenticated: a confirmation is a few KB. */
+export const RAW_EMAIL_MAX = 1024 * 1024;
+const cut = (max: number) => z.string().transform((v) => v.slice(0, max));
+
+/**
+ * Only these fields are read; Attachments' content, HtmlBody and every other header are dropped at once. Nothing is
+ * refused for its length, because a parse failure loses the mail: real headers run to several KB, so long values are cut
+ * and only the header that is read is kept. From keeps its end, where the address is. The structure is still checked.
+ */
 export const postmarkInboundSchema = z.looseObject({
   MessageID: z.string().min(1).max(100),
-  From: z.string().min(3).max(320),
-  OriginalRecipient: z.string().max(320).optional(),
-  To: z.string().max(2000),
-  Subject: z.string().max(2000).default(""),
+  From: z.string().min(3).transform((v) => (v.length > FROM_MAX ? v.slice(-FROM_MAX) : v)),
+  OriginalRecipient: cut(320).optional(),
+  To: cut(2000),
+  Subject: cut(SUBJECT_MAX).default(""),
   TextBody: z.string().default(""),
-  Headers: z.array(z.object({ Name: z.string().max(200), Value: z.string().max(2000) })).max(500).optional(),
-  Attachments: z.array(z.looseObject({ Name: z.string().max(500).default(""), ContentType: z.string().max(200).default(""), ContentLength: z.number().int().min(0).default(0) })).optional(),
-  /** Postmark's "Include raw email content" (owner-actions/WP-24.md); read only to verify a Gmail confirmation's DKIM. */
-  RawEmail: z.string().optional(),
+  Headers: z.preprocess(
+    (headers) =>
+      Array.isArray(headers) ? headers.filter((h: { Name?: unknown } | null) => typeof h?.Name === "string" && h.Name.toLowerCase() === "x-spam-score") : headers,
+    z.array(z.object({ Name: z.string(), Value: cut(HEADER_VALUE_MAX) })).optional(),
+  ),
+  Attachments: z.array(z.looseObject({ Name: cut(200).default(""), ContentType: cut(200).default(""), ContentLength: z.number().int().min(0).default(0) })).optional(),
+  /** Postmark's "Include raw email content" (owner-actions/WP-24.md); read only to verify DKIM. */
+  RawEmail: z
+    .string()
+    .optional()
+    .transform((v) => (v !== undefined && v.length > RAW_EMAIL_MAX ? undefined : v)),
 });
 export type PostmarkInbound = z.infer<typeof postmarkInboundSchema>;
 
-/** Rows one user may store in 24 hours (messaging-09): about 3 times the busiest real day. */
+/** Visible rows one user may store in 24 hours (messaging-09): about 3 times the busiest real day. Hidden rows do not count, so junk cannot silence real replies. */
 export const FLOOD_CAP = 400;
+/** Hidden rows (forged or likely spam) one user may store in 24 hours; they only serve support, for 30 days. */
+export const HIDDEN_CAP = 2_000;
+/** Gmail confirmations one user may store in 24 hours: each mails them a code, and anyone can point a Gmail at the address. */
+export const CONFIRMATION_CAP = 3;
 /** X-Spam-Score at or above this restricts automation: no name-only link, no important-reply notification. */
 export const SPAM_RESTRICT = 5;
 /** At or above this the row is stored hidden and without a body, and deleted after 30 days. */
@@ -71,35 +94,60 @@ export function spamScore(headers: PostmarkInbound["Headers"]): number | null {
 
 export type StoreResult = { stored: boolean; duplicate?: true };
 
+function dropped(reason: string): StoreResult {
+  count("inbound.dropped", 1, reason);
+  logger.warn({ reason }, "inbound mail dropped");
+  return { stored: false };
+}
+
 /**
- * Files one Postmark message. No profile for the recipient, or the user's flood cap reached: nothing stored, 200 (so
- * Postmark does not retry junk). A redelivery stores nothing and queues the stored row's classification again while
- * it is unclassified (a crash between the insert and the enqueue). Throws on a database or queue failure, which the
- * route answers 500 and Postmark retries.
+ * The domains signing this mail that could speak for one of the user's applications (linker.signedForApplication), and
+ * that align with its From. Nothing else is ever looked up. Never fails the mail: unverified only means unauthenticated.
  */
-export async function storeInboundEmail(mail: PostmarkInbound, keyLookup?: KeyLookup): Promise<StoreResult> {
+async function senderVerdict(userId: string, mail: PostmarkInbound, lookup: KeyLookup): Promise<string[]> {
+  const fromAddress = parseAddress(mail.From)?.address;
+  const host = fromAddress?.split("@")[1];
+  if (!mail.RawEmail || !fromAddress || !host) return [];
+  try {
+    const companyDomains = (await linkCandidates(db(), userId)).flatMap((c) => c.domains);
+    const accept = (d: string) => alignedDomains(d, host) && (Boolean(atsOfDomain(d)) || companyDomains.some((c) => alignedDomains(d, c)));
+    return await verifiedDomains(mail.RawEmail, { fromAddress, accept }, lookup);
+  } catch (err) {
+    logger.warn({ err }, "sender verification failed; the mail is stored as unauthenticated");
+    return [];
+  }
+}
+
+/**
+ * Files one Postmark message. Kairos's own mail, no profile for the recipient, or the user's flood cap reached: nothing
+ * stored, 200 (so Postmark does not retry junk). A redelivery stores nothing and queues the stored row's classification
+ * again while it is unclassified (a crash between the insert and the enqueue). Throws on a database or queue failure, which
+ * the route answers 500 and Postmark retries.
+ */
+export async function storeInboundEmail(mail: PostmarkInbound, keyLookup: KeyLookup = dnsKeyLookup): Promise<StoreResult> {
+  const fromAddress = parseAddress(mail.From)?.address;
+  // A user who forwards all their mail forwards Kairos's digests here too; those are not replies.
+  if (fromAddress && fromAddress === parseAddress(env().EMAIL_FROM)?.address) return dropped("own_mail");
+
   const recipient = (mail.OriginalRecipient || mail.To).toLowerCase().match(/[a-z0-9._+-]+@[a-z0-9.-]+/)?.[0];
   const [profile] = recipient ? await db().select({ userId: profiles.userId }).from(profiles).where(eq(profiles.forwardingAddress, recipient)) : [];
-  if (!profile) {
-    count("inbound.dropped", 1, "no_profile");
-    return { stored: false };
-  }
+  if (!profile) return dropped("no_profile");
   const userId = profile.userId;
 
   const existing = await queuePending(mail.MessageID);
   if (existing) return { stored: false, duplicate: true };
 
-  // ponytail: count then insert, so concurrent deliveries can pass the cap by a few rows; a per-user advisory lock
-  // makes it exact if that ever matters.
+  // ponytail: count then insert, so concurrent deliveries can pass a cap by a few rows; pg_advisory_xact_lock(hashtext(user))
+  // with the count in the insert transaction makes it exact if that ever matters.
   const [recent] = await db()
-    .select({ n: sql<number>`count(*)::int` })
+    .select({
+      visible: sql<number>`count(*) FILTER (WHERE ${inboundEmails.hiddenReason} IS NULL)::int`,
+      hidden: sql<number>`count(*) FILTER (WHERE ${inboundEmails.hiddenReason} IS NOT NULL)::int`,
+      confirmations: sql<number>`count(*) FILTER (WHERE ${inboundEmails.hiddenReason} = 'forwarding_confirmation')::int`,
+    })
     .from(inboundEmails)
     .where(and(eq(inboundEmails.userId, userId), sql`${inboundEmails.receivedAt} > now() - interval '24 hours'`));
-  if ((recent?.n ?? 0) >= FLOOD_CAP) {
-    count("inbound.dropped", 1, "flood_cap");
-    logger.warn({ cap: FLOOD_CAP }, "inbound mail over the per-user flood cap dropped");
-    return { stored: false };
-  }
+  const { visible = 0, hidden: hiddenRows = 0, confirmations = 0 } = recent ?? {};
 
   const spam = spamScore(mail.Headers);
   const parsed = await parseGmailForwardingConfirmation(
@@ -108,16 +156,19 @@ export async function storeInboundEmail(mail: PostmarkInbound, keyLookup?: KeyLo
   );
   const forged = parsed === "forged";
   const confirmation = forged ? null : parsed;
-  if (forged) {
-    count("inbound.dropped", 1, mail.RawEmail ? "forged_confirmation" : "unverifiable_confirmation");
-    logger.warn({ rawEmail: Boolean(mail.RawEmail) }, "mail claiming Google's forwarding sender has no valid DKIM signature; hidden");
-  }
+  if (forged) logger.warn({ rawEmail: Boolean(mail.RawEmail) }, "mail claiming Google's forwarding sender has no valid DKIM signature; hidden");
   const hidden = confirmation ? "forwarding_confirmation" : forged || (spam !== null && spam >= SPAM_HIDE) ? "spam" : null;
+  if (confirmation && confirmations >= CONFIRMATION_CAP) return dropped("confirmation_cap");
+  if (hidden && hiddenRows >= HIDDEN_CAP) return dropped("hidden_cap");
+  if (!hidden && visible >= FLOOD_CAP) return dropped("flood_cap");
+  if (forged) count("inbound.dropped", 1, mail.RawEmail ? "forged_confirmation" : "unverifiable_confirmation");
+
+  const verified = confirmation ? ["google.com"] : hidden ? [] : await senderVerdict(userId, mail, keyLookup);
   const id = randomUUID();
   const now = new Date();
   const body = capBody(mail.TextBody);
   const plaintext = env().INBOUND_PLAINTEXT_DUAL_WRITE || !env().DATA_KEKS;
-  const attachments: InboundAttachment[] = (mail.Attachments ?? []).slice(0, 50).map((a) => ({ name: a.Name.slice(0, 200), type: a.ContentType, size: a.ContentLength }));
+  const attachments: InboundAttachment[] = (mail.Attachments ?? []).slice(0, 50).map((a) => ({ name: a.Name, type: a.ContentType, size: a.ContentLength }));
 
   const inserted = await db().transaction(async (tx) => {
     const [row] = await tx
@@ -126,13 +177,14 @@ export async function storeInboundEmail(mail: PostmarkInbound, keyLookup?: KeyLo
         id,
         userId,
         providerMessageId: mail.MessageID,
-        sender: mail.From.slice(0, 320),
+        sender: mail.From,
         // A confirmation's subject carries the code, which must not outlive forwarding_verifications' 3 days.
-        subject: confirmation ? "Gmail Forwarding Confirmation" : mail.Subject.slice(0, 500),
+        subject: confirmation ? "Gmail Forwarding Confirmation" : mail.Subject,
         ...(hidden ? { textBody: null, textBodyEnc: null, previewEnc: null } : { textBody: plaintext ? body : null, ...encryptBody(id, body) }),
         attachments,
         spamScore: spam,
         hiddenReason: hidden,
+        verifiedDomains: verified,
         classifiedAt: hidden ? now : null,
         receivedAt: now,
       })
@@ -140,7 +192,13 @@ export async function storeInboundEmail(mail: PostmarkInbound, keyLookup?: KeyLo
       .returning({ id: inboundEmails.id });
     if (!row || !confirmation) return Boolean(row);
 
-    // A newer confirmation replaces the older code; a Postmark retry writes the same values.
+    // The newest code wins, so a stranger's confirmation cannot hide the user's own, but while a code is live a new
+    // mail neither takes back "I have set it up" nor moves the state: anyone can point their Gmail at this address.
+    const [live] = await tx
+      .select({ userId: forwardingVerifications.userId })
+      .from(forwardingVerifications)
+      .where(and(eq(forwardingVerifications.userId, userId), eq(forwardingVerifications.provider, "gmail"), sql`${forwardingVerifications.expiresAt} > now()`))
+      .for("update");
     await tx
       .insert(forwardingVerifications)
       .values({ userId, provider: "gmail", ...confirmation, receivedAt: now, expiresAt: new Date(now.getTime() + FORWARDING_CODE_TTL_MS) })
@@ -151,14 +209,16 @@ export async function storeInboundEmail(mail: PostmarkInbound, keyLookup?: KeyLo
           confirmUrl: confirmation.confirmUrl,
           receivedAt: now,
           expiresAt: new Date(now.getTime() + FORWARDING_CODE_TTL_MS),
-          acknowledgedAt: null,
+          ...(live ? {} : { acknowledgedAt: null }),
         },
       });
     // An active connection stays active: the code is still stored and mailed (_db/messaging.md 6.1).
-    await tx
-      .update(profiles)
-      .set({ forwardingState: "awaiting_verification" })
-      .where(and(eq(profiles.userId, userId), sql`${profiles.forwardingState} <> 'active'`));
+    if (!live) {
+      await tx
+        .update(profiles)
+        .set({ forwardingState: "awaiting_verification" })
+        .where(and(eq(profiles.userId, userId), sql`${profiles.forwardingState} <> 'active'`));
+    }
     await addNotification(tx, { userId, kind: "forwarding_code", entityId: String(Math.floor(now.getTime() / 1000)) });
     return true;
   });
