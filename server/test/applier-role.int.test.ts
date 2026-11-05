@@ -189,6 +189,11 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       tracker_items: ["SIUD", "SI", ""],
       application_events: ["SI", "SI", "S"],
       submission_attempts: ["SIU", "SIU", "cols"],
+      // WP-35: the api owns saved searches; the worker claims them (no insert, no delete); reminders are the worker's alone;
+      // the opt-outs outlive the account (the api writes and deletes them, the worker only reads).
+      saved_searches: ["SIUD", "SIU", ""],
+      reminders: ["", "SIUD", ""],
+      mail_opt_outs: ["SID", "S", ""],
     };
     const ROLES = ["kairos_api", "kairos_worker", "kairos_readonly"] as const;
     const PRIVS = { S: "SELECT", I: "INSERT", U: "UPDATE", D: "DELETE" } as const;

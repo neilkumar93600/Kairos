@@ -69,7 +69,7 @@ export async function unsubscribeUrl(db: Db, userId: string, key: MailOptOut, no
  * Makes an email compliant for the broadcast stream: the RFC 8058 headers (a mail client's "Unsubscribe" button posts
  * to the link) and the footer CAN-SPAM and GDPR expect, a visible unsubscribe link and the sender's postal address.
  */
-export function withBroadcastCompliance<E extends Pick<Email, "text" | "html" | "headers">>(email: E, key: MailOptOut, url: string, address: string): E {
+export function withBroadcastCompliance<E extends Pick<Email, "text" | "html" | "headers">>(email: E, key: MailOptOut, url: string, address: string): E & Pick<Email, "html" | "headers"> {
   const text = `${email.text}\n\n--\nYou are getting this because ${OPT_OUT_LABEL[key]} is turned on. Unsubscribe: ${url}\n${address}`;
   const html = email.html
     ? `${email.html}<hr><p style="font-size:12px;color:#666">You are getting this because ${escapeHtml(OPT_OUT_LABEL[key])} is turned on. ` +

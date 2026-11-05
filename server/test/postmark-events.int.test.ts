@@ -6,6 +6,9 @@ import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from ".
 // WP-44 acceptance "a complained address receives no further mail": Postmark's complaint event, then a notify job.
 if (hasTestDb) process.env.DATABASE_URL = testDbUrl("postmark_events");
 process.env.POSTMARK_EVENTS_SECRET = "events-secret-0123456789";
+// Broadcast kinds need the link key and origin (WP-35), and a profile that has not opted out.
+process.env.LINK_SIGNING_KEY = `v1:${Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 23 + 9) % 256)).toString("base64")}`;
+process.env.API_PUBLIC_ORIGIN = "https://api.test.local";
 const sendEmail = vi.fn(async () => ({ messageId: "m" }));
 vi.mock("../src/lib/mailer", async (orig) => ({ ...(await orig<typeof import("../src/lib/mailer")>()), sendEmail }));
 
@@ -28,6 +31,7 @@ describe.skipIf(!hasTestDb)("Postmark delivery events against Postgres", () => {
     sendEmail.mockClear();
     await resetDb(tdb);
     userId = await seedUser(tdb);
+    await tdb.insert(schema.profiles).values({ userId, forwardingAddress: `u-${userId}@replies.test`, mailOptOut: [] });
   });
   afterAll(async () => {
     await closeDb();
