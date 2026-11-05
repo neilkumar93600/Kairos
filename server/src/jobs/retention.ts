@@ -105,7 +105,10 @@ export const RETENTION_RULES = {
 } as const;
 export type RetentionRule = keyof typeof RETENTION_RULES;
 
-/** Each rule's period: RETENTION_DAYS where set, else the default. Throws on a name no rule has. */
+/**
+ * Each rule's period: RETENTION_DAYS where set, else the default. Throws on a name no rule has. An override of
+ * forwarding_codes has no effect: that rule keys on expires_at, set at ingest.
+ */
 export function retentionDays(overrides: Record<string, number> = env().RETENTION_DAYS): Record<RetentionRule, number> {
   for (const name of Object.keys(overrides)) if (!(name in RETENTION_RULES)) throw new Error(`unknown retention rule ${name} in RETENTION_DAYS`);
   return Object.fromEntries(Object.entries(RETENTION_RULES).map(([k, r]) => [k, overrides[k] ?? r.days])) as Record<RetentionRule, number>;

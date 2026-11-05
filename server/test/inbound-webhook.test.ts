@@ -23,6 +23,9 @@ const secrets = vi.hoisted(() => {
 const store = vi.hoisted(() => vi.fn(async () => ({ stored: true })));
 vi.mock("../src/services/inbound", async (actual) => ({ ...(await actual<typeof import("../src/services/inbound")>()), storeInboundEmail: store }));
 
+const signal = vi.hoisted(() => vi.fn());
+vi.mock("../src/lib/sentry", async (actual) => ({ ...(await actual<typeof import("../src/lib/sentry")>()), signal }));
+
 const { createApp } = await import("../src/app");
 const { redactUrl } = await import("../src/lib/logger");
 const { env } = await import("../src/lib/env");
@@ -72,6 +75,22 @@ describe("POST /api/webhooks/postmark/inbound/:pathSecret", () => {
     const res = await send().send(mail);
     expect(shape(res)).toEqual(await missing());
     expect(store).not.toHaveBeenCalled();
+  });
+
+  it("raises the alert only when the path secret was right: a scanner guessing paths cannot", async () => {
+    signal.mockClear();
+    await post("z".repeat(40)).send(mail);
+    expect(signal).not.toHaveBeenCalled();
+    await post(secrets.path, basic(secrets.user, "bad")).send(mail);
+    expect(signal).toHaveBeenCalledExactlyOnceWith("inbound_token_rejected");
+  });
+
+  it("takes a 5 KB header and a 400-character From: real mail is never refused for its length", async () => {
+    const res = await post().send({ ...mail, From: `${"n".repeat(400)} <hr@acme.com>`, Headers: [{ Name: "References", Value: "x".repeat(5_000) }] });
+    expect(res.status).toBe(200);
+    const [parsed] = store.mock.calls[0] as unknown as [{ From: string; Headers: unknown[] }];
+    expect(parsed.From.endsWith("<hr@acme.com>")).toBe(true);
+    expect(parsed.Headers).toEqual([]);
   });
 
   it("refuses before reading the body: a bad secret with a gzip bomb or broken JSON is still the missing-route answer", async () => {

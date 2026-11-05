@@ -26,6 +26,7 @@ const REDACT_PATHS = [
   // `{ job: { text } }` but not a bare top-level `text`: never log such a value by name.
   "*.text",
   "*.textBody",
+  "*.preview",
   "*.sourceText",
   "*.answers",
   "*.resumeLines",

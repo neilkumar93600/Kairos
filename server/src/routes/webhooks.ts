@@ -98,7 +98,9 @@ function requirePostmarkInbound(req: Request, _res: Response, next: NextFunction
   const userOk = oneOf(user, [e.POSTMARK_INBOUND_BASIC_USER]);
   const passwordOk = oneOf(password, [e.POSTMARK_INBOUND_BASIC_PASSWORD, e.POSTMARK_INBOUND_BASIC_PASSWORD_PREVIOUS]);
   if (!(configured && pathOk && userOk && passwordOk && req.protocol === "https")) {
-    signal("inbound_token_rejected");
+    // Only with the path secret right: a scanner guessing paths cannot raise the alert, and a real mismatch (a rotation
+    // that left the password behind, a leaked path) can.
+    if (pathOk) signal("inbound_token_rejected");
     throw new HttpError(404, "route_not_found", "No such route");
   }
   next();
