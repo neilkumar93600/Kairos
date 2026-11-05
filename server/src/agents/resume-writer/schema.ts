@@ -51,7 +51,10 @@ export const ResumeWriterInputV2 = z
     /** Headline scope: values computed in code (rule 10). Never rendered; the model learns only that one exists. */
     derived: z.array(z.object({ label: z.literal("years_of_experience"), value: z.number().int().min(1).max(60), factIds: z.array(z.string()).min(1) }).strict()).max(1),
     maxSuggestions: z.number().int().min(1).max(20),
-    /** Statements that failed the truth check (truth-repair.ts). The rule itself is rule 9 of the static prompt. */
+    /**
+     * Statements that failed the truth check (truth-repair.ts); the rule itself is rule 9 of the static prompt. The
+     * suggestion routes deliberately send none: WP-26 owns truth repair, and here a failing suggestion is dropped.
+     */
     doNotClaim: doNotClaim(400, 20),
   })
   .strict();

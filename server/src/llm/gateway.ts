@@ -83,7 +83,7 @@ export function rolloutVersion(agentId: string, fallback: number, ctx: Pick<Agen
   const flags = deps.flags();
   const pinned = flags.promptPin[agentId];
   if (pinned !== undefined) return pinned;
-  const canary = flags.promptCanary?.[agentId];
+  const canary = NO_CANARY.has(agentId) ? undefined : flags.promptCanary?.[agentId];
   const bucket = canary ? rolloutBucket(agentId, ctx) : null;
   return canary && bucket !== null && bucket < canary.percent ? canary.version : fallback;
 }

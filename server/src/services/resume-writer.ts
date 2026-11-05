@@ -46,6 +46,11 @@ export interface WriterDeps {
   defaultVersion?: 1 | 2;
 }
 
+export interface SuggestResult {
+  suggestions: ResumeSuggestion[];
+  factCreated: ProfileFact | null;
+}
+
 /** A request of either route: the legacy alias has no headline scope and no level. */
 export type WriterRequest = Omit<SuggestionRequest, "scope"> & Pick<ResumeSuggestionRequest, "scope"> & { level?: ResumeLevel };
 
@@ -269,10 +274,9 @@ function verifyHeadline(m: ModelSuggestion, current: string | null, citable: Map
 const claimText = (s: ResumeSuggestion): string => (s.derived?.length ? s.after!.slice(0, -yearsSuffix(Number(s.derived[0]!.value)).length) : s.after!);
 
 /** The deterministic answer when the model has nothing true to say: no spend, no model text (workers/05 3.4 step 7). */
-function askFirst(req: WriterRequest, view: ResumeSection[], citable: Map<string, ProfileFact>, doc: ResumeInput, version: number): ResumeSuggestion | null {
+function askFirst(req: WriterRequest, view: ResumeSection[], kinds: readonly FactKind[], doc: ResumeInput, version: number): ResumeSuggestion | null {
   const tags = (tag: "show_scope" | "use_your_numbers", priority: "high" | "medium") => (version === 2 ? { tag, priority } : {});
-  const facts = [...citable.values()];
-  if (req.scope === "headline" && !facts.some((f) => f.kind === "role")) {
+  if (req.scope === "headline" && !kinds.includes("role")) {
     return {
       id: randomUUID(),
       sectionId: "headline",
@@ -287,7 +291,7 @@ function askFirst(req: WriterRequest, view: ResumeSection[], citable: Map<string
       ...tags("show_scope", "high"),
     };
   }
-  if (req.refine === "use_numbers" && !facts.some((f) => f.kind === "metric")) {
+  if (req.refine === "use_numbers" && !kinds.includes("metric")) {
     const section = view[0];
     if (!section) return null;
     const entry = req.scope === "line" || req.scope === "entry" ? section.entries[0] : undefined;
@@ -309,35 +313,49 @@ function askFirst(req: WriterRequest, view: ResumeSection[], citable: Map<string
   return null;
 }
 
-/**
- * The Resume Writer (Sonnet tier): proposals for one scope of the resume, from confirmed facts only, verified in code.
- * A `note` is saved first as an unconfirmed fact and returned as `factCreated`. It is the one unconfirmed fact a
- * suggestion may cite: the web holds Accept until the user confirms it with one click (spec 2.5), and PUT /resume
- * rejects any line citing it until then, so truth rule 1 holds where a line is used.
- */
-export async function suggestEdits(
-  req: WriterRequest,
-  ctx: WriterContext,
-  deps: WriterDeps,
-): Promise<{ suggestions: ResumeSuggestion[]; factCreated: ProfileFact | null }> {
+/** What every suggestion call decides first: the scope (422), the version, and v2's hold on the headline (503). */
+function plan(req: WriterRequest, ctx: WriterContext, deps: WriterDeps) {
   const view = scopeView(ctx.resume, req); // before the note is saved: a bad request creates nothing
   const viaGateway = Boolean(deps.callCtx) || (!deps.chat && gatewayEnabled());
   // Which object serves this call (agents/03 9). The legacy client only knows the v1 prompt and output.
   const version = viaGateway ? rolloutVersion(resumeWriter.id, deps.defaultVersion ?? 1, deps.callCtx ?? {}) : 1;
   // v1 has no headline scope, and years must never come from a prompt that does not forbid them: refuse before any write.
   if (req.scope === "headline" && version !== 2) throw new HttpError(503, "ai_unavailable", "The writing assistant is busy. Try again in a minute.");
+  const noteAs = req.note ? noteKind(req.note, req.scope === "resume" ? null : (view[0]?.kind ?? null)) : null;
+  return { view, viaGateway, version, noteAs };
+}
+
+/**
+ * The answer that needs no model: one deterministic question, or null. A route calls this BEFORE taking the allowance, so
+ * the question costs no unit and still reaches a user at the daily limit. Its note, if any, is saved as it would be
+ * anyway (POST /profile/facts is unmetered too; the route's ai_burst limit bounds this path).
+ */
+export async function freeQuestion(req: WriterRequest, ctx: WriterContext, deps: WriterDeps): Promise<SuggestResult | null> {
+  const { view, version, noteAs } = plan(req, ctx, deps);
+  const kinds = [...ctx.facts.filter((f) => f.confirmed).map((f) => f.kind), ...(noteAs ? [noteAs] : [])];
+  const asked = askFirst(req, view, kinds, ctx.resume, version);
+  if (!asked) return null;
+  return { suggestions: [asked], factCreated: noteAs ? await deps.createFact({ kind: noteAs, text: req.note! }) : null };
+}
+
+/**
+ * The Resume Writer (Sonnet tier): proposals for one scope of the resume, from confirmed facts only, verified in code.
+ * A `note` is saved first as an unconfirmed fact and returned as `factCreated`. It is the one unconfirmed fact a
+ * suggestion may cite: the web holds Accept until the user confirms it with one click (spec 2.5), and PUT /resume
+ * rejects any line citing it until then, so truth rule 1 holds where a line is used.
+ */
+export async function suggestEdits(req: WriterRequest, ctx: WriterContext, deps: WriterDeps): Promise<SuggestResult> {
+  const free = await freeQuestion(req, ctx, deps);
+  if (free) return free;
+  const { view, viaGateway, version, noteAs } = plan(req, ctx, deps);
   // The legacy client has no layer 3: enforce refuses here, before the note and before any spend.
   if (!viaGateway) await requireVerifierOrShadow("suggestions");
-  const factCreated = req.note
-    ? await deps.createFact({ kind: noteKind(req.note, req.scope === "resume" ? null : (view[0]?.kind ?? null)), text: req.note })
-    : null;
+  const factCreated = noteAs ? await deps.createFact({ kind: noteAs, text: req.note! }) : null;
   // The model sees at most 60 confirmed facts, the ones the target job needs most (resume-22); any confirmed fact stays citable.
   const confirmed = ctx.facts.filter((f) => f.confirmed);
   const shown = topFacts(confirmed, ctx.job ? `${ctx.job.title}\n${ctx.job.descriptionText}` : null, 60);
   const citable = new Map([...confirmed, ...(factCreated ? [factCreated] : [])].map((f) => [f.id, f]));
   const max = maxFor(req.scope, version);
-  const asked = askFirst(req, view, citable, ctx.resume, version);
-  if (asked) return { suggestions: [asked], factCreated };
   await deps.beforeModel?.();
   const level: ResumeLevel = req.level ?? ctx.resume.level ?? "mid";
   const currentHeadline = ctx.resume.headline?.text ?? null;

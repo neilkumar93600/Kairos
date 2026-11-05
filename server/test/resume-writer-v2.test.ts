@@ -161,6 +161,12 @@ describe("Fix spelling: wording only, same facts", () => {
     expect(fixSpellingViolation("Moved 12 servises", "Led a platform team", ["f2"], ["f2"])).toBe("fix_spelling_too_far");
     expect(fixSpellingViolation("Moved 12 services in all", "Moved 13 services in all", ["f2"], ["f2"])).toBe("fix_spelling_number");
   });
+  it("refuses a change of negation, the meaning flip that fits inside 15%", () => {
+    const long = "Shipped the billing service without a single outage across the whole of the migration";
+    expect(fixSpellingViolation(long, long.replace("without", "with"), ["f2"], ["f2"])).toBe("fix_spelling_negation");
+    expect(fixSpellingViolation("Did not miss a single release in the whole year", "Did miss a single release in the whole year", ["f2"], ["f2"])).toBe("fix_spelling_negation");
+    expect(fixSpellingViolation("Reports were never late to the whole of the team", "Reports were never late to the whole of the taem", ["f2"], ["f2"])).toBeNull();
+  });
 });
 
 describe("v2 postValidate", () => {
@@ -174,7 +180,7 @@ describe("v2 postValidate", () => {
   });
 
   it("refuses a stated year count in digits or words in a headline, however it is written", () => {
-    for (const after of ["Engineer · 6 years", "Engineer, 5+ yrs", "Ten-year engineer", "Engineer · six years", "Engineer with over a decade"]) {
+    for (const after of ["Engineer · 6 years", "Engineer, 5+ yrs", "Ten-year engineer", "Engineer · six years", "Engineer with over a decade", "Engineer with twenty-five years", "Engineer, ten-plus years", "Engineer since 2015", "Engineer, 2015-present"]) {
       expect(codes([h({ after })], headlineInput), after).toContain("model_stated_years");
     }
   });
@@ -183,6 +189,8 @@ describe("v2 postValidate", () => {
     const withFact = { ...input, facts: [...input.facts, { id: "f9", kind: "project", text: "Ran a 3 years contract" }] };
     expect(codes([s({ after: "Ran a 3 years contract", factIds: ["f9"] })], withFact)).toEqual([]);
     expect(codes([s({ after: "Moved services over 3 years" })], withFact)).toEqual(["model_stated_years"]);
+    // Every length it states must be supported, not just the first.
+    expect(codes([s({ after: "Ran a 3 years contract, then 9 years more", factIds: ["f9"] })], withFact)).toEqual(["model_stated_years"]);
   });
 
   it("refuses appendYears without a value, placeholders, and a misplaced tag or shape", () => {
@@ -411,6 +419,15 @@ describe("version selection (agents/03 9)", () => {
     expect(rolloutVersion("resume-writer", 1, {})).toBe(1);
     gateway([], { pin: 1, canary: { version: 2, percent: 100 } });
     expect(rolloutVersion("resume-writer", 2, { userId: "u" })).toBe(1);
+  });
+
+  it("a canary never picks a verifier's version; a deliberate pin still does", () => {
+    resetBreakers();
+    configureGateway({ flags: () => ({ llmPaused: false, batchPaused: false, disabled: {}, promptPin: {}, promptCanary: { "claim-verifier": { version: 9, percent: 100 }, "claim-verifier-escalation": { version: 9, percent: 100 } } }) });
+    expect(rolloutVersion("claim-verifier", 1, { userId: "u" })).toBe(1);
+    expect(rolloutVersion("claim-verifier-escalation", 1, { userId: "u" })).toBe(1);
+    configureGateway({ flags: () => ({ llmPaused: false, batchPaused: false, disabled: {}, promptPin: { "claim-verifier": 9 } }) });
+    expect(rolloutVersion("claim-verifier", 1, { userId: "u" })).toBe(9);
   });
 
   it("the legacy client is always v1", async () => {

@@ -19,7 +19,7 @@ import { currentUser } from "../middleware/require-auth";
 import { validateBody } from "../middleware/validate";
 import * as library from "../services/resume-library";
 import { metered } from "../services/allowance";
-import { suggestEdits } from "../services/resume-writer";
+import { freeQuestion, suggestEdits } from "../services/resume-writer";
 import { planFor } from "../services/submissions";
 import { tailorForJob } from "./jobs";
 import { noteFact, visibleJob, writerLimiter } from "./resume";
@@ -75,19 +75,22 @@ resumesRouter.post("/suggestions", writerLimiter, validateBody(resumeSuggestionR
     body.level ?? library.reviewLevel(me.id, row),
     library.toDetail(row),
   ]);
+  const request = { ...body, level };
+  const ctx = { resume: detail, ...sources, job };
+  const deps = {
+    createFact: noteFact(me.id),
+    beforeModel: () => library.snapshotBeforeAi(me.id, row.id),
+    defaultVersion: 2 as const,
+    callCtx: gatewayCtx({ userId: me.id, plan, ...(body.jobId ? { jobId: body.jobId } : {}), feature: "resumeSuggestions", signal: res.locals.deadline }),
+  };
+  // A question that needs no model costs no unit, and still reaches a user at the daily limit.
+  const free = await freeQuestion(request, ctx, deps);
+  if (free) {
+    res.json(free);
+    return;
+  }
   const allowance = { userId: me.id, plan, feature: "resumeSuggestions" as const, units: body.scope === "resume" ? 4 : 1 };
-  const result = await metered(res, allowance, () =>
-    suggestEdits(
-      { ...body, level },
-      { resume: detail, ...sources, job },
-      {
-        createFact: noteFact(me.id),
-        beforeModel: () => library.snapshotBeforeAi(me.id, row.id),
-        defaultVersion: 2,
-        callCtx: gatewayCtx({ userId: me.id, plan, ...(body.jobId ? { jobId: body.jobId } : {}), feature: "resumeSuggestions", signal: res.locals.deadline }),
-      },
-    ),
-  );
+  const result = await metered(res, allowance, () => suggestEdits(request, ctx, deps));
   res.json(result);
 });
 

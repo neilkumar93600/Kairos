@@ -9,6 +9,14 @@ import type { ResumeWriterInputV2, ResumeWriterOutputV2 } from "./schema";
 const YEAR_WORDS = "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty";
 /** A stated length of experience, in digits or words: "6 years", "5+ yrs", "ten-year", "over a decade". */
 export const STATED_YEARS = new RegExp(`\\b(?:\\d+|${YEAR_WORDS})\\s*\\+?[\\s-]*(?:years?|yrs?)\\b|\\bdecades?\\b`, "i");
+/**
+ * A headline's only legitimate number is the suffix the server appends, so a model's headline holds no digit and no number
+ * word at all: "since 2015", "2015-present" and "ten-plus years" would otherwise sit beside the computed years as a false
+ * claim. ponytail: this also refuses "K8s" or "Web3" (one repair, then the call fails); the prompt tells the model to leave
+ * such a name out. Relax it to digits next to a date or year word if real headlines are lost.
+ */
+export const HEADLINE_NUMBER = new RegExp(`\\d|\\b(?:${YEAR_WORDS})\\b|\\bdecades?\\b`, "i");
+
 /** "[X]%", "[number]", "<number>", "XX%", "{n}", "TBD". */
 export const PLACEHOLDER = /\[[^\]]*\]|<[^>]*>|\{[^}]*\}|\b[xX]{1,3}\s?%|\bTBD\b/;
 
@@ -72,14 +80,18 @@ function editDistance(a: string, b: string): number {
   return row[b.length]!;
 }
 
+const negationsIn = (t: string) => [...new Set((t.match(/\b(?:not|no|never|without|failed|unable)\b/gi) ?? []).map((w) => w.toLowerCase()))].sort().join();
+
 /**
- * A "Fix spelling" keeps the line's own citations and its meaning: at most 15% of characters change, and its numbers
- * are the line's numbers. Stricter than checkClaims on purpose: wording only, same facts (PRD 8.2).
+ * A "Fix spelling" keeps the line's own citations and its meaning: at most 15% of characters change, its numbers are the
+ * line's numbers, and its negations are the line's negations, since dropping "not" fits in 15% and inverts the line.
+ * Stricter than checkClaims on purpose: wording only, same facts (PRD 8.2).
  */
 export function fixSpellingViolation(before: string, after: string, lineFactIds: readonly string[], factIds: readonly string[]): string | null {
   if ([...new Set(lineFactIds)].sort().join() !== [...new Set(factIds)].sort().join()) return "fix_spelling_citations";
   if (editDistance(before, after) > 0.15 * Math.max(before.length, after.length)) return "fix_spelling_too_far";
-  return numbersIn(before).sort().join() === numbersIn(after).sort().join() ? null : "fix_spelling_number";
+  if (numbersIn(before).sort().join() !== numbersIn(after).sort().join()) return "fix_spelling_number";
+  return negationsIn(before) === negationsIn(after) ? null : "fix_spelling_negation";
 }
 
 /** RW2 to RW7. RW1 is the citation check every version shares; RW8, the echo canary, is the gateway's own. */
@@ -100,11 +112,13 @@ export function shapeViolations(out: ResumeWriterOutputV2, input: ResumeWriterIn
     if (s.appendYears && !input.derived.length) at("append_without_value");
     if (s.tag === "fix_spelling" && s.action !== "rewrite") at("bad_tag");
     if (s.after && PLACEHOLDER.test(s.after)) at("placeholder");
-    if (s.after) {
-      // A line may repeat a length its own cited fact states ("a 3 years contract"); a headline never may (rule 10).
-      const phrase = s.after.match(STATED_YEARS)?.[0].toLowerCase();
-      const cited = [...input.facts, ...(input.noteFact ? [input.noteFact] : [])].filter((f) => s.factIds.includes(f.id));
-      if (phrase && (headlineScope || !cited.some((f) => f.text.toLowerCase().includes(phrase)))) at("model_stated_years");
+    if (s.after && headlineScope) {
+      if (HEADLINE_NUMBER.test(s.after)) at("model_stated_years");
+    } else if (s.after) {
+      // A line may repeat a length its own cited fact states ("a 3 years contract"), but every length it states must be one.
+      const cited = [...input.facts, ...(input.noteFact ? [input.noteFact] : [])].filter((f) => s.factIds.includes(f.id)).map((f) => f.text.toLowerCase());
+      const phrases = [...s.after.matchAll(new RegExp(STATED_YEARS.source, "gi"))].map((m) => m[0].toLowerCase());
+      if (phrases.some((phrase) => !cited.some((t) => t.includes(phrase)))) at("model_stated_years");
     }
   });
   return violations;
