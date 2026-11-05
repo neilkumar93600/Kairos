@@ -460,6 +460,8 @@ Typst pinned by SHA-256 in the worker image. A render queue on the worker with c
 - Spec refs: resume-91..98,v10; database-117..123; messaging-60; applications-91; tests-70; llm-agents-73; scale-54
 - Needs owner: no
 
+Also owns `GET /api/applications/:id/events` (05-api lines 756 and 1275; messaging-26, handed over from WP-24; `application_events_app_idx` exists for it): events are keyed by tracker item, and WP-24 writes the reply events it shows. `lib/pagination.ts` needs a bigint id variant for it, since `application_events.id` is not a uuid; no local cursor codec. Also from WP-24: a genuinely signed false rejection has no recourse today, because `rejected` is final (`applications_guard_stage`); the tracker needs the user's way to reopen it. The `reply_*` event payload's `stageHeld` and `authenticated` say when a reply did not move the stage.
+
 tracker_items (stage, fractional position, notes, salary_text, archive). Contacts and contact_jobs (hard delete). Interviews with .ics (escaped text, explicit time zone). Insights gated by outcomeReport, with counts under 5 hidden. Forward-only automatic stage moves come from a tracker projector job that reads application_events, without editing the producers. A lint rule and a test keep notes, salary and contacts out of every prompt builder. The erasure and export inventory is updated. Files: routes/tracker.ts, routes/contacts.ts, routes/interviews.ts, jobs/tracker-projector.ts, db/schema/tracker.ts migrations.
 
 **Acceptance:** PRD R4 acceptance passes. A prompt-builder test proves tracker notes never reach runAgent. A drag into Applied is refused while approved or submitting.

@@ -330,6 +330,7 @@ Every error from `/api/*` except Better Auth's own routes (4.6) leaves as
 | `bad_signature` | 400 | Stripe webhook | none | |
 | `price_unavailable` | 400 | `POST /api/billing/checkout` | none | |
 | `invalid_body` | 422 | body fails its schema | zod issues array (kept [code]) | |
+| `invalid_body` | 400 | `POST /api/webhooks/postmark/inbound/:pathSecret` only: the Postmark payload fails its schema (14.3) | the failing field paths, never a value | Length alone never fails it (WP-24) |
 | `truth_lock` | 422 | `PUT /api/resume`, `PATCH /api/applications/:id`, `POST /api/applications/:id/drafts`, revision restore | 4.5 | |
 | `profile_only` | 422 | `POST /api/applications/:id/drafts` | none | |
 | `invalid_scope` | 422 | `POST /api/resume/suggestions` (an id that is not in the resume) | none | |
@@ -784,7 +785,7 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `extension.release` | `POST /api/extension/release` | session | `extensionClaimSchema` | 200 `{ released }` | `not_found` | natural | new | P2 |
 | `extension.resumePdf` | `GET /api/extension/applications/:id/resume.pdf?t=` | signed-token . pdf_link | query `t` | 200 `application/pdf` | `link_expired` | none | new | P3 |
 | `webhooks.stripe` | `POST /api/webhooks/stripe` | stripe-signature . webhook_ip | raw JSON | 200 `{ received, duplicate? }` | `bad_signature` | workflow-id | frozen | P2 |
-| `webhooks.postmark.inbound` | `POST /api/webhooks/postmark/inbound/:pathSecret` | postmark-basic-path . webhook_ip | Postmark JSON | 200 `{ stored, duplicate? }` | 400 `invalid_body`, 403 `forbidden` | workflow-id | new | P1 |
+| `webhooks.postmark.inbound` | `POST /api/webhooks/postmark/inbound/:pathSecret` | postmark-basic-path . webhook_ip | Postmark JSON | 200 `{ stored, duplicate? }` | 400 `invalid_body`, 404 `route_not_found` (a failed check, WP-24) | workflow-id | new | P1 |
 | `webhooks.inbound.legacy` | `POST /api/webhooks/inbound-email?token=` | public (query token) . webhook_ip | Postmark JSON | 200 `{ stored }` | `unauthorized`, `invalid_body` | workflow-id | frozen (sunset) | P1 to P2 + 7 days |
 
 **Admin** (all `admin` auth, `admin_write` on writes, never CORS; section 16)
@@ -1668,7 +1669,7 @@ The user forwards employer replies to a private address `u-<id8>-<hex8>@replies.
 | HTTP Basic | The webhook URL configured in Postmark embeds credentials (`https://user:pass@api.../...`). The route compares the decoded user and password with `POSTMARK_INBOUND_BASIC_USER` and `POSTMARK_INBOUND_BASIC_PASSWORD`. Every comparison hashes both sides with SHA-256 and uses `crypto.timingSafeEqual`, so length does not leak. |
 | TLS only | The route answers only when `req.protocol === "https"` (trust proxy hop). Postmark's published webhook IP range is optional defense in depth, not relied on (the origin address can change per attempt). |
 
-**Failures.** Any failed check answers **403 `forbidden`** with no detail, which makes Postmark stop retrying that message (kept from arch B.6.12); the operator can re-drive it from Postmark. A payload that fails the schema answers **400 `invalid_body`** (P-05); Postmark retries a non-200 answer up to 10 times and then marks the message "Inbound Error", which is acceptable for a payload that can never become valid.
+**Failures.** Any failed check answers **404 `route_not_found`**, exactly as a route that does not exist (WP-24, replacing the earlier 403, so the route cannot be told from a missing one; Postmark keeps retrying until a corrected URL takes the message). A payload that fails the schema answers **400 `invalid_body`** (P-05); Postmark retries a non-200 answer up to 10 times and then marks the message "Inbound Error", which is acceptable for a payload that can never become valid.
 
 **Parser.** `express.json({ limit: "50mb" })` on this route only (default 1 MB elsewhere). Postmark's own limit is believed to be 35 MB including base64 attachments [unverified, integrations section 6]; 50 MB leaves room. A request whose `Content-Length` exceeds 5 MB takes the large-body gate, one permit per replica (2.4); a second one waits for nothing and answers 503 `service_unavailable` with `Retry-After: 5`, which Postmark retries. The parsed object is reduced at once: only the fields below are copied; `Attachments` (and its `Content`), `HtmlBody`, `StrippedTextReply` and the raw `Headers` array are dropped, except the spam score read from `Headers`.
 
