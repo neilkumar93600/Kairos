@@ -56,8 +56,10 @@ export const HOURLY: Check[] = [
     id: "M-3",
     freezes: false,
     what: "over 100 pasted postings wait on a close-only board poll more than an hour overdue (02-database 8.5)",
-    query: count(sql`select 1 from jobs j join companies c on c.id = j.company_id
-       where j.closed_at is null and j.source = 'manual_url' and c.inactive_reason = 'import_pending' and c.next_poll_at < now() - interval '1 hour'
+    // From the few pending companies into jobs_company_open_idx: never a scan of jobs.
+    query: count(sql`select 1 from companies c join jobs j on j.company_id = c.id
+       where c.inactive_reason = 'import_pending' and c.next_poll_at < now() - interval '1 hour'
+         and j.closed_at is null and j.source = 'manual_url'
       having count(*) > 100`),
   },
   { id: "BL-2", freezes: false, what: "a negative credit balance", query: count(sql`select user_id from credit_ledger group by user_id having sum(delta) < 0`) },
