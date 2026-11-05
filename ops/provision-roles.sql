@@ -143,22 +143,18 @@ GRANT SELECT, INSERT ON credit_ledger, llm_calls TO kairos_worker;
 GRANT UPDATE (user_hash) ON llm_calls TO kairos_worker;
 GRANT USAGE ON SEQUENCE llm_calls_id_seq TO kairos_worker;
 
--- kairos_applier: the cloud applier's interim role (CISO mustFix 1(4), WP-04). The definer functions of
--- 02-database.md 8.3 replace these table grants in P5. What jobs/cloud-apply.ts and services/submissions.ts run:
---   read the application with its job's apply_url and closed_at, and the owner's effective plan (plan, status and
---   the past_due grace anchor of WP-10: planFor reads all three) for the claim prechecks;
---   claim it (approved -> submitting) and record the result (status, submitted_at, receipt, failure_reason);
---   for a submit only, insert the one ledger debit and read back its id.
--- Nothing else: no user, session, account, profiles, facts, resumes, inbound_emails or llm_* table, no other
--- column of jobs, subscriptions or credit_ledger, no UPDATE of answers or channel, no DELETE anywhere.
--- ponytail: it can still SELECT every user's applications (answers included) until the P5 definer functions
--- scope reads to the attempt it claimed.
-GRANT SELECT ON applications TO kairos_applier;
-GRANT UPDATE (status, submitted_at, receipt, failure_reason, updated_at) ON applications TO kairos_applier;
-GRANT SELECT (id, apply_url, closed_at) ON jobs TO kairos_applier;
+-- kairos_applier: the cloud applier (CISO mustFix 1(4), WP-04; WP-29 replaced the interim table grants). It reaches
+-- applications, jobs and submission_attempts only through the definer functions of migration 0027 (_db/applications.md
+-- 5.7): read a pending send's URL and owner, claim it, read the content of the attempt it holds, move the phase and record
+-- the result. It never writes a status after the claim and never writes the ledger: settlement does, in the worker.
+-- It keeps the owner's effective plan (planFor reads these three columns, and the flags below) for the claim precheck.
+-- Nothing else: no user, session, account, profiles, facts, resumes, inbound_emails or llm_* table, no credit_ledger,
+-- no DELETE anywhere.
 GRANT SELECT (user_id, plan, status, past_due_since) ON subscriptions TO kairos_applier;
-GRANT INSERT ON credit_ledger TO kairos_applier;
-GRANT SELECT (id) ON credit_ledger TO kairos_applier;
+REVOKE EXECUTE ON FUNCTION applier_job(uuid), claim_cloud_attempt(uuid, int, text), get_applier_payload(uuid), mark_browser_launched(uuid),
+  mark_attempt_phase(uuid, text), record_attempt_result(uuid, text, text, jsonb) FROM PUBLIC, kairos_api, kairos_worker;
+GRANT EXECUTE ON FUNCTION applier_job(uuid), claim_cloud_attempt(uuid, int, text), get_applier_payload(uuid), mark_browser_launched(uuid),
+  mark_attempt_phase(uuid, text), record_attempt_result(uuid, text, text, jsonb) TO kairos_applier;
 
 -- kairos_readonly (analytics and support, 06 H3): no message bodies, answers, tokens or free text; column lists are
 -- filtered by what exists, so the script runs before and after the columns later migrations add.
@@ -216,7 +212,7 @@ GRANT SELECT, DELETE ON board_requests TO kairos_worker;
 -- application_events (its trigger stops the owner too) or deletes submission_attempts. The worker holds INSERT and
 -- UPDATE of the link and stage columns on tracker_items, not 7.7's SELECT: recordEvent creates or links an
 -- application's item when a worker records its first event, and WP-21's projector moves stages. Never the user's notes,
--- salary text or saved posting. The applier gets nothing here; WP-29's attempt functions give it its rows.
+-- salary text or saved posting. The applier gets nothing here; the attempt functions of 0027 give it its rows.
 GRANT SELECT, INSERT, UPDATE, DELETE ON tracker_items TO kairos_api;
 GRANT SELECT, INSERT ON tracker_items TO kairos_worker;
 GRANT UPDATE (application_id, stage, stage_set_by, closed_reason, updated_at) ON tracker_items TO kairos_worker;
@@ -293,7 +289,7 @@ GRANT SELECT, UPDATE, DELETE ON newsletter_subscribers TO kairos_worker;
 
 -- The durable seam (WP-22, migration 0026). The api writes a row in the approval's transaction and resumes dead rows from
 -- /api/admin/outbox, so it reads and updates too. The worker drains and sweeps (S, U) and runs the retention delete; it
--- inserts nothing yet (WP-29's settle joins here when it emits from the worker). The applier has no grant at all: the
+-- inserts nothing: settlement needs no outbox row, because an attempt with settled_at NULL is its own durable record (the sweep reads it every 30 s). The applier has no grant at all: the
 -- sweep reads completion from BullMQ, so the process that opens hostile pages cannot touch a row. Nobody else reads it.
 GRANT SELECT, INSERT, UPDATE ON outbox TO kairos_api;
 GRANT SELECT, UPDATE, DELETE ON outbox TO kairos_worker;
