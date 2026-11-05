@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { closeDb, db, type Db } from "../src/db/client";
-import { companies } from "../src/db/schema";
+import { companies, opsAudit } from "../src/db/schema";
 
 /**
  * Seeds the polled companies from a file the owner supplies (database-v10, matching-30; owner-actions/WP-23.md):
@@ -12,8 +12,8 @@ import { companies } from "../src/db/schema";
  *
  * The file is a JSON array of { ats, boardToken, name, region?, careersUrl?, domains?, priority? }. Domains let a pasted
  * gh_jid link on that employer's site resolve to this board. Safe to rerun: an existing row keeps its state, except
- * that a board waiting as import_pending becomes active, because being on the owner's list is the activation. A company
- * the owner stopped or that 404'd stays inactive. First polls spread over 30 minutes, so the seed does not burst.
+ * that a board waiting as import_pending becomes active, because being on the owner's list is the activation, and is
+ * audited like one. A company the owner stopped or that 404'd stays inactive. First polls spread over 30 minutes, so the seed does not burst.
  */
 
 const domain = z.string().regex(/^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/, "a lower-case host name");
@@ -52,43 +52,68 @@ export function parseSeedFile(text: string): SeedRow[] {
 const CHUNK = 500;
 const SPREAD_SECONDS = 30 * 60;
 
+/**
+ * All or nothing, in one transaction. Activating a pasted board starts model spend on it, so each one gets the ops_audit
+ * row the admin route writes (CISO mustFix 3, Security round 1), under actor system:seed.
+ */
 export async function seedCompanies(database: Db, rows: SeedRow[], rand: () => number = Math.random): Promise<number> {
-  let written = 0;
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const result = await database
-      .insert(companies)
-      .values(
-        rows.slice(i, i + CHUNK).map((r) => ({
-          ats: r.ats,
-          boardToken: r.boardToken,
-          name: r.name,
-          apiRegion: r.region,
-          careersUrl: r.careersUrl,
-          domains: r.domains,
-          priority: r.priority,
-          discoveredBy: "seed" as const,
-          nextPollAt: new Date(Date.now() + rand() * SPREAD_SECONDS * 1000),
+  return database.transaction(async (tx) => {
+    const listed = new Set(rows.map((r) => `${r.ats}/${r.boardToken}`));
+    const pending = await tx
+      .select({ id: companies.id, ats: companies.ats, boardToken: companies.boardToken })
+      .from(companies)
+      .where(eq(companies.inactiveReason, "import_pending"))
+      .for("update");
+    let written = 0;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const result = await tx
+        .insert(companies)
+        .values(
+          rows.slice(i, i + CHUNK).map((r) => ({
+            ats: r.ats,
+            boardToken: r.boardToken,
+            name: r.name,
+            apiRegion: r.region,
+            careersUrl: r.careersUrl,
+            domains: r.domains,
+            priority: r.priority,
+            discoveredBy: "seed" as const,
+            nextPollAt: new Date(Date.now() + rand() * SPREAD_SECONDS * 1000),
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [companies.ats, companies.boardToken],
+          set: {
+            name: sql`excluded.name`,
+            careersUrl: sql`excluded.careers_url`,
+            domains: sql`excluded.domains`,
+            priority: sql`excluded.priority`,
+            apiRegion: sql`excluded.api_region`,
+            // The owner's list activates a pasted board, with the ETag its close-only polls stored forgotten.
+            active: sql`case when ${companies.inactiveReason} = 'import_pending' then true else ${companies.active} end`,
+            etag: sql`case when ${companies.inactiveReason} = 'import_pending' then null else ${companies.etag} end`,
+            nextPollAt: sql`case when ${companies.inactiveReason} = 'import_pending' then excluded.next_poll_at else ${companies.nextPollAt} end`,
+            discoveredBy: sql`case when ${companies.inactiveReason} = 'import_pending' then 'seed' else ${companies.discoveredBy} end`,
+            inactiveReason: sql`case when ${companies.inactiveReason} = 'import_pending' then null else ${companies.inactiveReason} end`,
+          },
+        })
+        .returning({ id: companies.id });
+      written += result.length;
+    }
+    const activated = pending.filter((c) => listed.has(`${c.ats}/${c.boardToken}`));
+    if (activated.length) {
+      await tx.insert(opsAudit).values(
+        activated.map((c) => ({
+          actor: "system:seed",
+          action: "company_activate",
+          target: `company:${c.id}`,
+          before: { active: false, inactiveReason: "import_pending" },
+          after: { active: true, inactiveReason: null },
         })),
-      )
-      .onConflictDoUpdate({
-        target: [companies.ats, companies.boardToken],
-        set: {
-          name: sql`excluded.name`,
-          careersUrl: sql`excluded.careers_url`,
-          domains: sql`excluded.domains`,
-          priority: sql`excluded.priority`,
-          apiRegion: sql`excluded.api_region`,
-          // The owner's list activates a pasted board, with the ETag its close-only polls stored forgotten.
-          active: sql`case when ${companies.inactiveReason} = 'import_pending' then true else ${companies.active} end`,
-          etag: sql`case when ${companies.inactiveReason} = 'import_pending' then null else ${companies.etag} end`,
-          discoveredBy: sql`case when ${companies.inactiveReason} = 'import_pending' then 'seed' else ${companies.discoveredBy} end`,
-          inactiveReason: sql`case when ${companies.inactiveReason} = 'import_pending' then null else ${companies.inactiveReason} end`,
-        },
-      })
-      .returning({ id: companies.id });
-    written += result.length;
-  }
-  return written;
+      );
+    }
+    return written;
+  });
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
