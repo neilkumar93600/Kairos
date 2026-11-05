@@ -32,7 +32,7 @@ export default function PrivacyPage() {
                 caption: "The data Kairos collects and where it comes from",
                 head: ["Data", "What it includes"],
                 rows: [
-                  ["Account", "Your name and email address. A hashed password, or your Google account id if you sign in with Google. We never store Google's id token."],
+                  ["Account", "Your name and email address. A hashed password or, if you sign in with Google, Apple, GitHub or LinkedIn, your account id there, the profile photo it shares, and its sign-in tokens, encrypted. We never store a provider's id token."],
                   ["Profile", "Phone, city, country, and LinkedIn, GitHub and portfolio links. Your search preferences, including work authorization and salary floor."],
                   ["Resume and facts", "Resume files you upload or text you paste, including a LinkedIn export, the facts you confirm, your resumes and their revisions."],
                   ["Sensitive answers", "Answers to application questions about work authorization, visa, salary, disability, veteran status, race, gender or similar details, if you give them. They are blanked after the application goes out (see [How long we keep it](#how-long-we-keep-it))."],
@@ -95,6 +95,9 @@ export default function PrivacyPage() {
                   ["[Stripe](https://stripe.com/privacy)", "Payments", "Your email, billing details and invoices"],
                   ["[Sentry](https://sentry.io/privacy/)", "Error reports", "Error details under a hashed user id, with bodies, cookies and query strings removed"],
                   ["[Google](https://policies.google.com/privacy)", "Optional sign-in", "Sign-in details, only if you choose Google"],
+                  ["[Apple](https://www.apple.com/legal/privacy/)", "Optional sign-in", "Sign-in details, only if you choose Apple"],
+                  ["[GitHub](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement)", "Optional sign-in", "Sign-in details, only if you choose GitHub"],
+                  ["[LinkedIn](https://www.linkedin.com/legal/privacy-policy)", "Optional sign-in", "Sign-in details, only if you choose LinkedIn"],
                 ],
               },
             },

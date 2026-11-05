@@ -18,7 +18,7 @@ export default function CookiesPage() {
       path="/cookies"
       title="Cookie policy"
       updated="2026-11-05"
-      intro={`${name} sets one cookie to keep you signed in, and one more for a few minutes if you sign in with Google. It uses no analytics and no advertising cookies.`}
+      intro={`${name} sets one cookie to keep you signed in, and one more for a few minutes if you sign in with Google, Apple, GitHub or LinkedIn. It uses no analytics and no advertising cookies.`}
       sections={[
         {
           heading: "What cookies and browser storage are",
@@ -35,7 +35,7 @@ export default function CookiesPage() {
                 head: ["Cookie", "What it does", "How long it lasts"],
                 rows: [
                   ["better-auth.session_token", "Keeps you signed in. It is essential, set only when you sign in, and not readable by page scripts.", "30 days, renewed as you use the app. Signing out removes it."],
-                  ["better-auth.state", "Protects the sign-in round trip with Google. Set only if you sign in with Google.", "5 minutes"],
+                  ["better-auth.state", "Protects the sign-in round trip with Google, Apple, GitHub or LinkedIn. Set only if you sign in with one of them.", "5 minutes"],
                 ],
               },
             },
@@ -74,7 +74,7 @@ export default function CookiesPage() {
         {
           heading: "Other sites you visit from Kairos",
           body: [
-            "Paying and managing your plan happen on Stripe's pages, and Google sign-in on Google's. Each of those sites sets its own cookies under its own policy. Employers' application pages do the same when the extension opens them in your browser.",
+            "Paying and managing your plan happen on Stripe's pages, and signing in with Google, Apple, GitHub or LinkedIn on that company's own pages. Each of those sites sets its own cookies under its own policy. Employers' application pages do the same when the extension opens them in your browser.",
           ],
         },
         {

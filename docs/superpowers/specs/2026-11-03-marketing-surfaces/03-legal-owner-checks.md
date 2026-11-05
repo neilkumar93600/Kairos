@@ -53,6 +53,7 @@ FE-legal, 2026-11-05. The pages at `/terms`, `/privacy` and `/cookies` say only 
 
 ## E. Things that must change the pages when they ship
 
+- **Apple, GitHub and LinkedIn sign-in.** Privacy, Terms and Cookies now name them ("where we offer them", "only if you choose"), and Privacy now states the account id, profile photo and encrypted tokens for every provider. Each works only once its client id and secret are set on the API. Counsel: confirm the three new provider rows and that this sentence is enough.
 - **Autopilot.** `shared/src/plans.ts`, the schema and consent comments carry it, but nothing writes `approved_by = 'autopilot'`, so "nothing is sent without your approval" is true today. It needs new text in Terms and Privacy before it ships.
 - **Offer pause flow** (B2), **rollover expiry** (B4), **any analytics**, **any new provider**, **newsletter issues** (none is sent yet, WP-50 section 3).
 - **Newsletter section** assumes WP-50 merges with the D9 contract (a button on the confirm page). The `wp/50` branch as last read still confirms on `GET /confirm`. If that stays, fix the sentence.

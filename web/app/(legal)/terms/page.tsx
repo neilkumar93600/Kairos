@@ -36,7 +36,7 @@ export default function TermsPage() {
         {
           heading: "Your account",
           body: [
-            "You can sign up with an email address and password, confirmed by a code we send you, or with Google where we offer it. Keep your sign-in details to yourself, and write to us if you think someone else has used your account.",
+            "You can sign up with an email address and password, confirmed by a code we send you, or with Google, Apple, GitHub or LinkedIn where we offer them. Keep your sign-in details to yourself, and write to us if you think someone else has used your account.",
             "An account is for one person looking for their own job. You must be old enough to make this agreement and to apply for work where you live.",
           ],
         },
