@@ -4,6 +4,7 @@ import { ashby, normalizeAshby } from "../src/services/ats/ashby";
 import { greenhouse, normalizeGreenhouse } from "../src/services/ats/greenhouse";
 import { lever, normalizeLever } from "../src/services/ats/lever";
 import { BoardNotFoundError, type Fetcher } from "../src/services/ats/types";
+import { normalizePosting } from "../src/services/normalize-posting";
 import { MiB, type SafeFetchOptions } from "../src/services/safe-fetch";
 
 const LEVER_ID = "0f6c1a3e-2b4d-4c5e-8f9a-1b2c3d4e5f60";
@@ -46,6 +47,19 @@ describe("ATS normalizers", () => {
     const board = fixture("ashby");
     board.jobs[0] = { ...board.jobs[0], applyUrl: evil, jobUrl: "https://evil.example/x" };
     expect(normalizeAshby(board, "acme")[0]?.applyUrl).toBe(`https://jobs.ashbyhq.com/acme/${ASHBY_ID}/application`);
+  });
+
+  // Golden fixture, Security round 1: a posting Postgres would refuse, end to end through the normalizer and normalizePosting.
+  it("a board carrying NUL and control characters normalizes to rows Postgres accepts", () => {
+    const [job] = normalizeGreenhouse(fixture("greenhouse-control-chars"), "acme");
+    const row = normalizePosting(job!);
+    expect(row).toMatchObject({ externalId: "4012399", title: "Software Engineer", titleLc: "software engineer", location: "Remote", locationLc: "remote", department: "Engineering" });
+    expect(row.descriptionText).toBe("Build things.\nShip them.");
+    for (const text of [row.title, row.location, row.department, row.descriptionText, JSON.stringify(row.raw)]) {
+      expect(text).not.toContain("\u0000");
+      expect(text).not.toContain("\\u0000");
+    }
+    expect(row.raw).toMatchObject({ id: 4012399, location: { name: "Remote" } });
   });
 
   it("drops a posting whose token or id would not survive job-url validation", () => {
