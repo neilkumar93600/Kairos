@@ -443,7 +443,7 @@ export const RESUME_SUITE_ROUTES: readonly SuiteRoute[] = [
   { id: "restoreRevision", method: "POST", path: "/resumes/:id/revisions/:revId/restore", response: resumeResponseSchema, status: 200, errors: [NOT_FOUND, E(409, "read_only")] },
   { id: "exportResume", method: "GET", path: "/resumes/:id/export", query: exportQuerySchema, response: "file", status: 200, errors: [NOT_FOUND, E(503, "service_unavailable")] },
   { id: "tailorResume", method: "POST", path: "/resumes/tailor", request: tailorRequestSchema, response: tailorResponseSchema, status: 200, errors: [NOT_FOUND, E(409, "exists"), ALLOWANCE] },
-  { id: "suggestResume", method: "POST", path: "/resumes/suggestions", request: resumeSuggestionRequestSchema, response: suggestResumesResponseSchema, status: 200, errors: [NOT_FOUND, ALLOWANCE, E(422, "invalid_scope")] },
+  { id: "suggestResume", method: "POST", path: "/resumes/suggestions", request: resumeSuggestionRequestSchema, response: suggestResumesResponseSchema, status: 200, errors: [NOT_FOUND, ALLOWANCE, E(422, "invalid_scope"), E(409, "read_only"), E(503, "ai_unavailable")] },
   { id: "listTemplates", method: "GET", path: "/templates", response: listTemplatesResponseSchema, status: 200, errors: [] },
   { id: "createImport", method: "POST", path: "/profile/imports", request: createImportRequestSchema, response: createImportResponseSchema, status: 202, errors: [E(413, "payload_too_large"), E(415, "unsupported_type"), E(422, "no_text_layer"), E(429, "rate_limited")] },
   { id: "getImport", method: "GET", path: "/profile/imports/:id", response: importDetailSchema, status: 200, errors: [NOT_FOUND] },

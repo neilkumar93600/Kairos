@@ -1,14 +1,15 @@
 import { and, asc, desc, eq, isNull, or, sql, type AnyColumn } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { keysetBefore, slicePage, tsKey, type After } from "../lib/pagination";
-import type { PlanId, ResumeDetail, ResumeInput, ResumeSummary } from "@auto-career/shared";
+import type { PlanId, ResumeDetail, ResumeInput, ResumeLevel, ResumeSummary } from "@auto-career/shared";
 import { MAX_BASE_RESUMES_PER_PROFILE } from "@auto-career/shared";
 import { db, type Db } from "../db/client";
 import { applications, companies, employments, facts, jobs, matches, profiles, resumeImports, resumeProfiles, resumeRevisions, resumes, user } from "../db/schema";
 import type { SessionUser } from "../lib/auth";
 import { HttpError, notFound } from "../lib/errors";
+import { YEARS_SUFFIX } from "../agents/resume-writer/checks";
 import { profileFor } from "./import/imports";
-import { claimViolations, defaultResume, profileContactFrom, truthLockViolations } from "./resume-doc";
+import { claimViolations, defaultResume, HEADLINE_ID, headlineViolation, profileContactFrom, truthLockViolations, yearsOfExperience } from "./resume-doc";
 
 /**
  * The resume library (PRD 6, 11; 05-api 9.2a): base resumes and tailored copies, the default base per resume profile
@@ -35,6 +36,11 @@ export async function ownResume(userId: string, id: string, tx: Db | Tx = db()):
   const [row] = await tx.select().from(resumes).where(and(eq(resumes.id, id), eq(resumes.userId, userId), isNull(resumes.archivedAt)));
   if (!row) throw notFound("Resume");
   return row;
+}
+
+/** The refusal for a frozen copy outside a write transaction: an AI review of what was sent changes nothing (409 read_only). */
+export async function assertNotSent(row: Row): Promise<void> {
+  if (await isReadOnly(row)) throw readOnlyError();
 }
 
 /** With `tx`, the application row is read FOR SHARE, so an approval cannot land between this check and the write. */
@@ -135,7 +141,8 @@ export async function listSummaries(
     // ponytail: tracker stages arrive with tracker_items (WP-21); until then null.
     stage: null,
     matchScore: x.matchScore === null ? null : Math.round(Number(x.matchScore)),
-    // ponytail: the Resume check runs in the browser (PRD 6.6); a stored server score waits on WP-31's level-aware checks.
+    // ponytail: the Resume check, level-aware included, runs in the browser (PRD 6.6, 8.1) and needs its print measure;
+    // the server stores no score (WP-31 decision), and a second scorer here would disagree with the workspace's.
     checkScore: null,
     templateId: r.document.templateId ?? DEFAULTS.templateId,
     readOnly: r.kind === "tailored" && x.appStatus !== null && (SENT as readonly string[]).includes(x.appStatus),
@@ -167,6 +174,59 @@ async function citable(tx: Db | Tx, userId: string, profileId: string | null) {
     .from(facts)
     .where(and(eq(facts.userId, userId), eq(facts.confirmed, true), profileId ? or(eq(facts.resumeProfileId, profileId), isNull(facts.resumeProfileId)) : undefined))
     .orderBy(asc(facts.createdAt), asc(facts.id));
+}
+
+/** A resume profile's employments with their dates, for a headline's years. */
+const rolesOf = (tx: Db | Tx, userId: string, profileId: string | null) =>
+  tx
+    .select({ id: employments.id, confirmed: employments.confirmed, startMonth: employments.startMonth, endMonth: employments.endMonth, isCurrent: employments.isCurrent })
+    .from(employments)
+    .where(and(eq(employments.userId, userId), profileId ? eq(employments.resumeProfileId, profileId) : undefined));
+
+/** What the writer needs of one resume: the facts it may cite and the role dates a headline's years come from. */
+export async function writerSources(userId: string, row: Pick<Row, "resumeProfileId">) {
+  const [factRows, roles] = await Promise.all([citable(db(), userId, row.resumeProfileId), rolesOf(db(), userId, row.resumeProfileId)]);
+  return { facts: factRows, employments: roles };
+}
+
+/** seniority words of preferences (SENIORITY_LEVELS) and of jobs.seniority_hint. An unknown hint says nothing. */
+const LEVEL_OF: Partial<Record<string, ResumeLevel>> = {
+  intern: "early_career",
+  entry: "early_career",
+  mid: "mid",
+  senior: "senior",
+  lead: "lead",
+  staff_plus: "lead",
+  manager: "lead",
+};
+
+/**
+ * The level a review runs at when the request names none (PRD 8.1): what the resume stores, else the seniority a tailored
+ * copy's posting states, else the highest level in the user's preferences, else mid.
+ */
+export async function reviewLevel(userId: string, row: Pick<Row, "document" | "jobId">): Promise<ResumeLevel> {
+  if (row.document.level) return row.document.level;
+  if (row.jobId) {
+    const [job] = await db().select({ hint: jobs.seniorityHint }).from(jobs).where(eq(jobs.id, row.jobId));
+    const level = job?.hint ? LEVEL_OF[job.hint] : undefined;
+    if (level) return level;
+  }
+  const [profile] = await db().select({ preferences: profiles.preferences }).from(profiles).where(eq(profiles.userId, userId));
+  const wanted = (profile?.preferences?.seniority ?? []).flatMap((s) => LEVEL_OF[s] ?? []);
+  return (["lead", "senior", "mid", "early_career"] as const).find((l) => wanted.includes(l)) ?? "mid";
+}
+
+/**
+ * The before_ai revision (B.8.5 step 3) under the 10-minute rule. The rule is here because snapshot_resume coalesces only
+ * 'edit': unnamed revisions past the newest 50 are pruned, so a revision per AI call would push the user's edits out.
+ */
+export async function snapshotBeforeAi(userId: string, id: string): Promise<void> {
+  const [recent] = await db()
+    .select({ id: resumeRevisions.id })
+    .from(resumeRevisions)
+    .where(and(eq(resumeRevisions.resumeId, id), sql`${resumeRevisions.createdAt} > now() - interval '10 minutes'`))
+    .limit(1);
+  if (!recent) await db().execute(sql`select snapshot_resume(${id}::uuid, ${userId}, 'before_ai', null, 'user')`);
 }
 
 /** A new document from confirmed facts, employment-aware; `importId` keeps that import's facts in file order. */
@@ -243,7 +303,10 @@ async function assertRoom(tx: Tx, profileId: string) {
 async function assertTruthLock(tx: Db | Tx, userId: string, profileId: string | null, doc: ResumeInput, stored: ResumeInput | null) {
   const confirmed = await citable(tx, userId, profileId);
   const texts = new Map(confirmed.map((f) => [f.id, f.text]));
-  const reasons = claimViolations(doc, texts, stored);
+  const reasons: Record<string, string> = claimViolations(doc, texts, stored);
+  const years = doc.headline && YEARS_SUFFIX.test(doc.headline.text) ? (yearsOfExperience(await rolesOf(tx, userId, profileId), confirmed)?.value ?? null) : null;
+  const headline = headlineViolation(doc, texts, stored, years);
+  if (headline) reasons[HEADLINE_ID] = headline;
   const lineIds = [...new Set([...truthLockViolations(doc, new Set(texts.keys())), ...Object.keys(reasons)])];
   if (lineIds.length) {
     throw new HttpError(422, "truth_lock", "Some lines cite facts that are not confirmed in your profile, or add details those facts do not contain", {

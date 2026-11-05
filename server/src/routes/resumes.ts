@@ -4,20 +4,25 @@ import {
   createRevisionRequestSchema,
   listResumesQuerySchema,
   patchResumeRequestSchema,
+  resumeSuggestionRequestSchema,
   tailorRequestSchema,
   updateResumeRequestSchema,
   type CreateResumeRequest,
   type ResumeInput,
+  type ResumeSuggestionRequest,
 } from "@auto-career/shared";
 import { db } from "../db/client";
 import { HttpError } from "../lib/errors";
+import { gatewayCtx } from "../llm/wire";
 import { pageParams } from "../lib/pagination";
 import { currentUser } from "../middleware/require-auth";
 import { validateBody } from "../middleware/validate";
 import * as library from "../services/resume-library";
+import { metered } from "../services/allowance";
+import { freeQuestion, suggestEdits } from "../services/resume-writer";
 import { planFor } from "../services/submissions";
 import { tailorForJob } from "./jobs";
-import { writerLimiter } from "./resume";
+import { noteFact, visibleJob, writerLimiter } from "./resume";
 
 /**
  * The resume library (PRD 6, 11; 05-api 9.2a): base resumes, tailored copies and their revisions. Mounted at
@@ -51,6 +56,42 @@ resumesRouter.post("/", validateBody(createResumeRequestSchema), async (req, res
         })
       : await library.duplicate(me.id, body.sourceId, body.name, body.targetRoles);
   res.status(201).json({ resume: await library.toDetail(row) });
+});
+
+/**
+ * Resume Writer proposals for one resume of the library (agents/05 2): resume-writer@v2 unless a pin or canary says
+ * otherwise, at the request's level, else the resume's. Registered before /:id. Nothing is saved except a `note` (an
+ * unconfirmed fact) and the before_ai revision. A copy that was sent answers 409 read_only before any allowance.
+ */
+resumesRouter.post("/suggestions", writerLimiter, validateBody(resumeSuggestionRequestSchema), async (req, res) => {
+  const me = currentUser(req);
+  const body = req.body as ResumeSuggestionRequest;
+  const row = await library.ownResume(me.id, body.resumeId);
+  await library.assertNotSent(row);
+  const [sources, job, plan, level, detail] = await Promise.all([
+    library.writerSources(me.id, row),
+    body.jobId ? visibleJob(me.id, body.jobId) : null,
+    planFor(db(), me.id),
+    body.level ?? library.reviewLevel(me.id, row),
+    library.toDetail(row),
+  ]);
+  const request = { ...body, level };
+  const ctx = { resume: detail, ...sources, job };
+  const deps = {
+    createFact: noteFact(me.id),
+    beforeModel: () => library.snapshotBeforeAi(me.id, row.id),
+    defaultVersion: 2 as const,
+    callCtx: gatewayCtx({ userId: me.id, plan, ...(body.jobId ? { jobId: body.jobId } : {}), feature: "resumeSuggestions", signal: res.locals.deadline }),
+  };
+  // A question that needs no model costs no unit, and still reaches a user at the daily limit.
+  const free = await freeQuestion(request, ctx, deps);
+  if (free) {
+    res.json(free);
+    return;
+  }
+  const allowance = { userId: me.id, plan, feature: "resumeSuggestions" as const, units: body.scope === "resume" ? 4 : 1 };
+  const result = await metered(res, allowance, () => suggestEdits(request, ctx, deps));
+  res.json(result);
 });
 
 /** D2: the saved tailored copy of a job and the proposals for it; 409 exists names the copy already there. */

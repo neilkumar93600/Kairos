@@ -1,0 +1,45 @@
+{
+  "caseId": "resume-writer-0169",
+  "promptVersion": 2,
+  "promptSha256": "606e076c399bb43ebf29377c97f98508070772ea210ba8e73e00287d15d07db0",
+  "inputHash": "a66aaf4df3467d6925d67024c6caa47b1c36a72485a49df96c717f9726149090",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": "l1",
+            "action": "rewrite",
+            "after": "Increased signup conversion by 12%",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f2"
+            ],
+            "needsFact": null,
+            "tag": "show_scope",
+            "priority": "high",
+            "appendYears": false
+          },
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": null,
+            "action": "add",
+            "after": "Increased signup conversion by 12%",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f2"
+            ],
+            "needsFact": null,
+            "tag": "show_scope",
+            "priority": "medium",
+            "appendYears": false
+          }
+        ]
+      }
+    }
+  ]
+}
