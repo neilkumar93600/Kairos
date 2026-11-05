@@ -65,7 +65,7 @@ async function claimDue(): Promise<Claimed[]> {
 async function worthSending(ids: string[]): Promise<{ id: string; user_id: string; local_date: string }[]> {
   if (!ids.length) return [];
   const { rows } = await db().execute<{ id: string; user_id: string; local_date: string }>(sql`
-    SELECT s.id, s.user_id, to_char(s.last_digest_at AT TIME ZONE p.timezone, 'YYYY-MM-DD') AS local_date
+    SELECT s.id, s.user_id, user_local_day(s.last_digest_at, p.timezone) AS local_date
       FROM saved_searches s JOIN profiles p ON p.user_id = s.user_id
      WHERE s.id IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})
        AND NOT ('digest' = ANY(p.mail_opt_out))
@@ -134,7 +134,8 @@ type Reminder = {
 export async function dueReminders(userId: string, optedOut: boolean): Promise<Reminder[]> {
   const { rows } = await db().execute<Reminder>(sql`
     SELECT r.id, r.kind, r.application_id, r.due_at, a.status, a.stage, a.draft_state, j.title, c.name AS company,
-           EXISTS (SELECT 1 FROM application_events e WHERE e.application_id = a.id AND e.kind LIKE 'reply\\_%') AS has_reply
+           (EXISTS (SELECT 1 FROM application_events e WHERE e.application_id = a.id AND e.kind LIKE 'reply\\_%')
+            OR EXISTS (SELECT 1 FROM inbound_emails ie WHERE ie.application_id = a.id)) AS has_reply
       FROM reminders r
       JOIN applications a ON a.id = r.application_id
       JOIN jobs j ON j.id = a.job_id
@@ -189,7 +190,7 @@ export async function renderDigest(entityId: string, userId: string | null): Pro
   const [, searchId, day] = parsed as unknown as [string, string, string];
   const { rows: found } = await db().execute<DigestRow>(sql`
     SELECT s.name, u.email, p.mail_opt_out AS opt_out,
-           to_char(s.last_digest_at AT TIME ZONE p.timezone, 'YYYY-MM-DD') AS local_date, (${FIRST_ACTIVE}) AS first_active
+           user_local_day(s.last_digest_at, p.timezone) AS local_date, (${FIRST_ACTIVE}) AS first_active
       FROM saved_searches s JOIN profiles p ON p.user_id = s.user_id JOIN "user" u ON u.id = s.user_id
      WHERE s.id = ${searchId}::uuid AND s.user_id = ${userId}`);
   const me = found[0];
