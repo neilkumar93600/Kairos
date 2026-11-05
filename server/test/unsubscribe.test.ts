@@ -4,13 +4,21 @@ import { describe, expect, it, vi } from "vitest";
 
 process.env.LINK_SIGNING_KEY = `v1:${Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 29 + 5) % 256)).toString("base64")}`;
 process.env.API_PUBLIC_ORIGIN = "https://api.test.local";
+// Counting is the limiter store's job (a database); here it is a counter in memory, so only the route's use of it is tested.
+const counts = new Map<string, number>();
+const hit = vi.fn(async (key: string, _windowMs: number) => {
+  const count = (counts.get(key) ?? 0) + 1;
+  counts.set(key, count);
+  return { count, resetAt: new Date(Date.now() + 1_800_000) };
+});
+vi.mock("../src/middleware/rate-limit", async (orig) => ({ ...(await orig<typeof import("../src/middleware/rate-limit")>()), hit }));
 const { BROADCAST_OPT_OUT, CONSENT_PURPOSE, OPT_OUT_LABEL, broadcastMissing, isBroadcastKind, postalAddress, unsubscribeUrl, withBroadcastCompliance } = await import("../src/lib/broadcast");
 const { BROADCAST_KINDS } = await import("../src/jobs/notify");
 const { MAIL_OPT_OUTS } = await import("../src/db/schema");
 const { env } = await import("../src/lib/env");
 const { db } = await import("../src/db/client");
 const { unsubscribeRouter } = await import("../src/routes/unsubscribe");
-const { verifyLink } = await import("../src/lib/action-tokens");
+const { signLink, verifyLink } = await import("../src/lib/action-tokens");
 const { optOutHash } = await import("../src/services/mail-preferences");
 const { addressHash } = await import("../src/lib/mailer");
 const { createApp } = await import("../src/app");
@@ -119,5 +127,38 @@ describe("opt-out key and limits", () => {
     };
     expect(await statuses(() => request(app).post("/api/unsubscribe?t=forged.token").type("form").send("List-Unsubscribe=One-Click"))).not.toContain(429);
     expect(await statuses(() => request(app).get("/api/unsubscribe?t=forged.token"))).toContain(429);
+  });
+});
+
+describe("one-click POSTs of a reusable link are counted per token", () => {
+  const app = express().use("/api/unsubscribe", unsubscribeRouter);
+  const signed = (userId: string) => signLink({ purpose: "unsubscribe", entityId: "digest", userId, expiresAt: new Date(Date.now() + 86_400_000) });
+
+  it("allows 10 an hour per token, then 429 with Retry-After, without opening a transaction; another token is unaffected", async () => {
+    counts.clear();
+    hit.mockClear();
+    const transaction = vi.spyOn(db(), "transaction").mockImplementation((async () => null) as never);
+    const post = (t: string) => request(app).post(`/api/unsubscribe?t=${encodeURIComponent(t)}`).type("form").send("List-Unsubscribe=One-Click");
+    const mine = signed("u1");
+    const statuses: number[] = [];
+    for (let i = 0; i < 12; i++) statuses.push((await post(mine)).status);
+    expect(statuses.slice(0, 10).every((s) => s === 410)).toBe(true); // the stubbed transaction finds no row: not a 429
+    expect(statuses.slice(10)).toEqual([429, 429]);
+    expect(transaction).toHaveBeenCalledTimes(10);
+    const limited = await post(mine);
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers["retry-after"])).toBeGreaterThan(0);
+    expect(limited.text).toContain("Too many tries");
+    expect((await post(signed("u2"))).status).toBe(410);
+    expect(hit.mock.calls[0]![0]).toMatch(/^link:[0-9a-f]{64}$/);
+    expect(hit.mock.calls[0]![1]).toBe(3_600_000);
+    transaction.mockRestore();
+  });
+
+  it("a forged token never reaches the limiter store", async () => {
+    hit.mockClear();
+    await request(app).post("/api/unsubscribe?t=forged.token").type("form").send("List-Unsubscribe=One-Click");
+    await request(app).post("/api/unsubscribe").type("form").send({ t: `${signed("u1")}x` });
+    expect(hit).not.toHaveBeenCalled();
   });
 });

@@ -3,7 +3,8 @@ import { db } from "../db/client";
 import { env } from "../lib/env";
 import { escapeHtml } from "../lib/html";
 import { logger } from "../lib/logger";
-import { consumeActionToken, peekActionToken, verifyLink, type LinkTarget, type StoredPurpose } from "../lib/action-tokens";
+import { hit } from "../middleware/rate-limit";
+import { consumeActionToken, peekActionToken, tokenHash, verifyLink, type LinkTarget, type StoredPurpose } from "../lib/action-tokens";
 
 type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
 
@@ -77,6 +78,16 @@ const keyMissing = () => {
 const REFUSED = new Error("signed link refused");
 
 /**
+ * A reusable link is not used up, so a valid token's POST would otherwise cost a transaction, about five statements and a
+ * profile row lock on every call, unmetered, for the token's 90 days. They are counted per token instead of per address,
+ * so Gmail's and Yahoo's shared servers are never punished: 10 an hour per token, where a legitimate person makes about
+ * three (the client's one-click POST, the footer link, a refresh). Counted only after the signature verified, so forged
+ * tokens never touch the limiter table; single-use links need no limit, their first use ends them.
+ */
+const REUSABLE_POSTS_PER_HOUR = 10;
+const HOUR_MS = 3_600_000;
+
+/**
  * The GET page and the POST action of one signed link. A malformed, forged, used, expired or unknown token gets the
  * same 410 page (link_expired), and so does a target the action refuses (`show`/`act` returning null).
  *
@@ -107,6 +118,13 @@ export function signedLinkRouter(action: LinkAction): Router {
     if (keyMissing()) return render(res, 410, gonePage());
     // A forged token never opens a transaction or touches the database.
     if (!verifyLink(token, action.purpose)) return render(res, 410, gonePage());
+    if (action.reusable) {
+      const { count, resetAt } = await hit(`link:${tokenHash(token).toString("hex")}`, HOUR_MS);
+      if (count > REUSABLE_POSTS_PER_HOUR) {
+        res.set("retry-after", String(Math.max(1, Math.ceil((resetAt.getTime() - Date.now()) / 1000))));
+        return render(res, 429, { title: "Too many tries", body: "This link was used many times in a short while. Try again in an hour, or turn the emails off in Kairos under Settings." });
+      }
+    }
     const page = await db()
       .transaction(async (tx) => {
         const target = action.reusable ? await peekActionToken(tx, token, action.purpose, undefined, true) : await consumeActionToken(tx, token, action.purpose);

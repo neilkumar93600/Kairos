@@ -75,6 +75,13 @@ describe.skipIf(!hasTestDb)("Postmark delivery events against Postgres", () => {
     expect(sendEmail).toHaveBeenCalledTimes(1);
   });
 
+  it("an event that omits the stream is read as broadcast, never as an address-wide suppression", async () => {
+    await post({ RecordType: "SubscriptionChange", Recipient: `${userId}@test.local`, SuppressSending: true, SuppressionReason: "ManualSuppression" });
+    expect(await tdb.select().from(schema.emailSuppressions)).toEqual([]);
+    const [profile] = await tdb.select().from(schema.profiles).where(eq(schema.profiles.userId, userId));
+    expect(profile!.mailOptOut).toHaveLength(4);
+  });
+
   it("the same event on the transactional stream is an address-wide suppression", async () => {
     await post({ RecordType: "SubscriptionChange", Recipient: `${userId}@test.local`, SuppressSending: true, SuppressionReason: "ManualSuppression", MessageStream: "outbound" });
     expect(await tdb.select().from(schema.emailSuppressions)).toMatchObject([{ reason: "manual" }]);
