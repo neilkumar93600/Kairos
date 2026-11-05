@@ -338,7 +338,9 @@ describe.skipIf(!hasTestDb)("safe polling against Postgres", () => {
     const rows = await seedJobs(c.id, [1, 2, 3, 4]);
     const statuses = ["new", "below_bar", "queued", "skipped"] as const;
     await db.insert(schema.matches).values(rows.map((j, i) => ({ userId, jobId: j.id, passedFilters: true, score: 80, status: statuses[i]! })));
-    expect(await poll.closeJobs(db, rows.map((j) => j.id), "poll")).toBe(4);
+    // The app's pool, with no actor set: the test pool writes as ops, which matches_status_guard waves through.
+    const { db: appDb } = await import("../src/db/client");
+    expect(await poll.closeJobs(appDb(), rows.map((j) => j.id), "poll")).toBe(4);
     const after = await db.select({ jobId: schema.matches.jobId, status: schema.matches.status }).from(schema.matches);
     const byJob = new Map(after.map((m) => [m.jobId, m.status]));
     expect(rows.map((j) => byJob.get(j.id))).toEqual(["expired", "expired", "queued", "skipped"]);

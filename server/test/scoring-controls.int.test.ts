@@ -63,12 +63,22 @@ describe.skipIf(!hasTestDb)("scoring controls against Postgres", () => {
     await closeTestDbs();
   });
 
+  const drain = async () => {
+    const runs = await lane.drain((userId) => scoring.processScoreUser({ data: { userId } } as Parameters<typeof scoring.processScoreUser>[0]));
+    return { stored: runs.reduce((n, r) => n + r.stored, 0), retrying: runs.reduce((n, r) => n + r.retrying, 0) };
+  };
   /** The posting job, then every user job it queued, in queue order; the counts of the user jobs summed. */
   async function run(jobId: string, extra: { userIds?: string[]; attempt?: number } = {}) {
     await scoring.processScoreMatches({ data: { jobId, ...extra } } as Parameters<typeof scoring.processScoreMatches>[0]);
-    const runs = await lane.drain((userId) => scoring.processScoreUser({ data: { userId } } as Parameters<typeof scoring.processScoreUser>[0]));
-    return { stored: runs.reduce((n, r) => n + r.stored, 0), retrying: runs.reduce((n, r) => n + r.retrying, 0) };
+    return drain();
   }
+  const backfill = async (userId: string) => {
+    const out = await scoring.processScoreMatches({ data: { backfillUserId: userId } } as Parameters<typeof scoring.processScoreMatches>[0]);
+    await drain();
+    return out;
+  };
+  const matchOf = async (userId: string, jobId: string) =>
+    (await db.select().from(schema.matches).where(and(eq(schema.matches.userId, userId), eq(schema.matches.jobId, jobId))))[0];
   // On the legacy path (the test default) scoreFit gets no context, so each user's fact carries the user id.
   const scoredUsers = () => scoreFit.mock.calls.map((c) => String(c[1]).match(/user ([0-9a-f-]{36})/)?.[1] ?? null);
 
@@ -177,5 +187,136 @@ describe.skipIf(!hasTestDb)("scoring controls against Postgres", () => {
     const delayMs = enqueue.mock.calls[0]![3] as number;
     const midnight = Date.parse(new Date(Date.now() + 86_400_000).toISOString().slice(0, 10) + "T00:00:00Z");
     expect(Math.abs(Date.now() + delayMs - midnight)).toBeLessThan(5 * 60_000);
+  });
+
+  describe("WP-23: the F1 floor, below_bar and imported boards", () => {
+    // Asks for nothing a thin fact covers: only title and seniority score, 30 of 100.
+    const FAR = "Requirements:\n- Kubernetes operators in production\n- Terraform at scale";
+    async function farJob() {
+      const [c] = await db.insert(schema.companies).values({ name: "Acme", ats: "greenhouse", boardToken: randomUUID() }).returning();
+      const [j] = await db
+        .insert(schema.jobs)
+        .values({ companyId: c!.id, externalId: randomUUID(), title: "Software Engineer, New Grad", location: "New York, NY", descriptionText: FAR, applyUrl: "https://job-boards.greenhouse.io/x/jobs/1" })
+        .returning();
+      return j!.id;
+    }
+
+    it("a score under the bar is kept as below_bar, and the pair is not paid for again", async () => {
+      const id = await candidate();
+      scoreFit.mockImplementation(async () => ({ score: 60, reasons: ["Thin"] }));
+      const jobId = await job(0);
+      expect(await run(jobId)).toMatchObject({ stored: 0 });
+      expect(await matchOf(id, jobId)).toMatchObject({ status: "below_bar", score: 60, passedFilters: true, source: "pipeline", selection: "ranked", scorerVersion: "fit-scorer@v1" });
+      expect((await matchOf(id, jobId))!.prerankScore).toBeGreaterThanOrEqual(scoring.F1_FLOOR_COLD_START);
+      expect((await matchOf(id, jobId))!.scoredAt).toBeInstanceOf(Date);
+      expect(scoreFit).toHaveBeenCalledTimes(1);
+      await run(jobId);
+      expect(scoreFit).toHaveBeenCalledTimes(1);
+    });
+
+    it("at or over the bar is new", async () => {
+      const id = await candidate();
+      const jobId = await job(0);
+      expect(await run(jobId)).toMatchObject({ stored: 1 });
+      expect(await matchOf(id, jobId)).toMatchObject({ status: "new", score: 90 });
+    });
+
+    it("the floor is 35 with a full profile and 20 with a thin one: the far job costs the first no call", async () => {
+      const prefs = { roles: PREFS.roles, seniority: PREFS.seniority };
+      const f1 = scoring.prerankScore({ id: "x", title: "Software Engineer, New Grad", companyName: "Acme", descriptionText: FAR }, [{ id: "f", kind: "skill", text: "Cooking", confirmed: true }], { ...PREFS, ...prefs });
+      expect(f1).toBeGreaterThanOrEqual(20);
+      expect(f1).toBeLessThan(35);
+
+      const thin = await candidate();
+      const full = await candidate();
+      await db.insert(schema.facts).values(Array.from({ length: 8 }, (_, n) => ({ userId: full, kind: "skill" as const, text: `Cooking recipe ${n}`, confirmed: true })));
+      const jobId = await farJob();
+      await run(jobId);
+      expect(await matchOf(thin, jobId)).toMatchObject({ status: "new" });
+      expect(await matchOf(full, jobId)).toBeUndefined(); // dropped, not stored
+      expect(scoreFit).toHaveBeenCalledTimes(1);
+      const [usage] = await db.select().from(platform.userDailyUsage).where(eq(platform.userDailyUsage.userId, full));
+      expect(usage).toBeUndefined(); // no slot taken
+    });
+
+    it("a posting of a company that is not active fans out to nobody", async () => {
+      await candidate();
+      const jobId = await job(0);
+      await db.update(schema.companies).set({ active: false, inactiveReason: "import_pending", discoveredBy: "import" }).where(eq(schema.companies.id, companyId));
+      expect(await scoring.processScoreMatches({ data: { jobId } } as Parameters<typeof scoring.processScoreMatches>[0])).toEqual({ queued: 0 });
+      await drain();
+      expect(scoreFit).not.toHaveBeenCalled();
+    });
+
+    // Acceptance: "a 10k-user fixture scores at most the cap per user per day". Every Free user has one slot or none left.
+    it("10,000 users: only those with a slot are scored, and nobody passes the cap", { timeout: 180_000 }, async () => {
+      const N = 10_000;
+      const day = new Date().toISOString().slice(0, 10);
+      const ids = Array.from({ length: N }, () => randomUUID());
+      const expiresAt = new Date(Date.now() + 86_400_000);
+      for (let i = 0; i < N; i += 1000) {
+        const page = ids.slice(i, i + 1000);
+        await db.insert(schema.user).values(page.map((id) => ({ id, name: "U", email: `${id}@test.local`, emailVerified: true })));
+        await db.insert(schema.subscriptions).values(page.map((userId) => ({ userId, plan: "free" as const })));
+        await db.insert(schema.creditLedger).values(page.map((userId) => ({ userId, delta: 5, reason: "free_grant" as const })));
+        await db.insert(schema.profiles).values(page.map((userId) => ({ userId, forwardingAddress: `${userId}@inbound.test`, preferences: PREFS })));
+        await db.insert(schema.facts).values(page.map((userId) => ({ userId, kind: "skill" as const, text: "TypeScript APIs", confirmed: true })));
+        await db.insert(schema.session).values(page.map((userId) => ({ id: randomUUID(), token: randomUUID(), userId, expiresAt })));
+        await db.insert(platform.userDailyUsage).values(page.map((userId, n) => ({ userId, day, scored: i === 0 && n < 10 ? 19 : 20 })));
+      }
+      await run(await job(0));
+      expect(scoreFit).toHaveBeenCalledTimes(10);
+      await run(await job(1));
+      expect(scoreFit).toHaveBeenCalledTimes(10);
+      const usage = await db.select({ scored: platform.userDailyUsage.scored }).from(platform.userDailyUsage);
+      expect(usage).toHaveLength(N);
+      expect(Math.max(...usage.map((u) => u.scored))).toBe(20);
+    });
+  });
+
+  describe("WP-23: the capped backfill", () => {
+    it("scores recent open postings of active companies, marked backfill, up to what today's cap has left", async () => {
+      const id = await candidate();
+      await db.insert(platform.userDailyUsage).values({ userId: id, day: new Date().toISOString().slice(0, 10), scored: 18 });
+      const jobs = [];
+      for (let n = 0; n < 3; n++) jobs.push(await job(n));
+      expect(await backfill(id)).toEqual({ queued: 2 });
+      expect(scoreFit).toHaveBeenCalledTimes(2);
+      const rows = await db.select().from(schema.matches).where(eq(schema.matches.userId, id));
+      expect(rows).toHaveLength(2);
+      expect(rows.every((r) => r.selection === "backfill" && r.source === "pipeline")).toBe(true);
+      const [usage] = await db.select().from(platform.userDailyUsage).where(eq(platform.userDailyUsage.userId, id));
+      expect(usage!.scored).toBe(20);
+    });
+
+    it("does nothing at the cap, with no confirmed fact, and for a user with no preferences", async () => {
+      const capped = await candidate();
+      await db.insert(platform.userDailyUsage).values({ userId: capped, day: new Date().toISOString().slice(0, 10), scored: 20 });
+      const noFacts = await candidate();
+      await db.delete(schema.facts).where(eq(schema.facts.userId, noFacts));
+      const noPrefs = await candidate();
+      await db.update(schema.profiles).set({ preferences: null }).where(eq(schema.profiles.userId, noPrefs));
+      await job(0);
+      for (const id of [capped, noFacts, noPrefs]) expect(await backfill(id)).toEqual({ queued: 0 });
+      expect(scoreFit).not.toHaveBeenCalled();
+    });
+
+    it("skips an imported board's postings and pairs the user already has", async () => {
+      const id = await candidate();
+      const had = await job(0);
+      await db.insert(schema.matches).values({ userId: id, jobId: had, passedFilters: true, score: 40, status: "below_bar" });
+      const pasted = await job(0);
+      await db.update(schema.companies).set({ active: false, inactiveReason: "import_pending", discoveredBy: "import" }).where(eq(schema.companies.id, companyId));
+      expect(await backfill(id)).toEqual({ queued: 0 });
+      expect(await matchOf(id, pasted)).toBeUndefined();
+    });
+
+    it("a posting in the lane from both a fan-out and a backfill is paid for once", async () => {
+      const id = await candidate();
+      const jobId = await job(0);
+      await scoring.processScoreMatches({ data: { jobId } } as Parameters<typeof scoring.processScoreMatches>[0]);
+      await backfill(id);
+      expect(scoreFit).toHaveBeenCalledTimes(1);
+    });
   });
 });

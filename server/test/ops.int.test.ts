@@ -123,14 +123,32 @@ describe.skipIf(!hasTestDb)("ops flags, admin routes and invariants against Post
       expect(await audit()).toHaveLength(1);
     });
 
+    it("lists the open board requests, host and path only, and pages them", async () => {
+      const userId = await seedUser(db);
+      await db.insert(schema.boardRequests).values([
+        { userId, host: "a.example", path: "/1", lastSeenAt: new Date(Date.now() - 1000) },
+        { userId, host: "b.example", path: "/2" },
+        { userId, host: "c.example", path: "/3", status: "rejected", resolvedAt: new Date() },
+      ]);
+      const first = await request(app).get("/api/admin/board-requests?limit=1").set(as(owner));
+      expect(first.status).toBe(200);
+      expect(first.body.boardRequests).toMatchObject([{ host: "b.example", path: "/2", timesSeen: 1 }]);
+      expect(first.body.boardRequests[0]).not.toHaveProperty("userId");
+      const second = await request(app).get(`/api/admin/board-requests?limit=1&cursor=${encodeURIComponent(first.body.nextCursor)}`).set(as(owner));
+      expect(second.status).toBe(200);
+      expect(second.body.boardRequests).toMatchObject([{ host: "a.example" }]);
+      expect(second.body.nextCursor).toBeNull();
+    });
+
     it("activates an imported company, writes the audit row, and is a no-op the second time", async () => {
-      const [company] = await db.insert(schema.companies).values({ name: "Imported Co", ats: "lever", boardToken: "imported", active: false, inactiveReason: "import_pending", discoveredBy: "import" }).returning();
+      // WP-23: a close-only poll stored this ETag. Activation forgets it, or the first real poll would get a 304 and read nothing.
+      const [company] = await db.insert(schema.companies).values({ name: "Imported Co", ats: "lever", boardToken: "imported", active: false, inactiveReason: "import_pending", discoveredBy: "import", etag: 'W/"close-only"' }).returning();
       const listed = await request(app).get("/api/admin/companies?active=false").set(as(owner));
       expect(listed.body.companies.map((c: { id: string }) => c.id)).toEqual([company!.id]);
 
       const first = await request(app).post(`/api/admin/companies/${company!.id}/activate`).set(as(owner));
       expect(first.body).toMatchObject({ active: true, changed: true });
-      expect((await db.select().from(schema.companies).where(eq(schema.companies.id, company!.id)))[0]?.active).toBe(true);
+      expect((await db.select().from(schema.companies).where(eq(schema.companies.id, company!.id)))[0]).toMatchObject({ active: true, etag: null });
       expect(await audit()).toMatchObject([{ actor: owner, action: "company_activate", target: `company:${company!.id}`, before: { active: false, inactiveReason: "import_pending" }, after: { active: true, inactiveReason: null } }]);
 
       expect((await request(app).post(`/api/admin/companies/${company!.id}/activate`).set(as(owner))).body.changed).toBe(false);

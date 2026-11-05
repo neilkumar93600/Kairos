@@ -13,6 +13,7 @@ import { signal } from "../lib/sentry";
  * a cited fact, a late confirmation). Only the owner lifts a freeze, through /api/admin/flags.
  * Not checkable yet, because their tables arrive with WP-42/WP-29/WP-26: I-1 dual submission and I-2 possible
  * duplicates (submission_attempts), I-5 (application_events), I-7 (verification_results).
+ * M-1 (user_match_state) and M-2 (ghost verdicts) wait for those tables, WP-34.
  * ponytail: I-8 compares f.id::text, which skips the primary-key index (a nightly scan, fine at beta size). Full scans elsewhere too; chunk by user_id range when applications passes ~1M rows.
  * ponytail: freezes without a report-only mode; ops-40's soak period would add an INVARIANTS_REPORT_ONLY env.
  */
@@ -51,6 +52,14 @@ export const HOURLY: Check[] = [
     what: "an application in submitting for over 30 minutes (the 10-minute sweep did not settle it)",
     query: count(sql`select id from applications where status = 'submitting' and updated_at < now() - interval '30 minutes'`),
   },
+  {
+    id: "M-3",
+    freezes: false,
+    what: "over 100 pasted postings wait on a close-only board poll more than an hour overdue (02-database 8.5)",
+    query: count(sql`select 1 from jobs j join companies c on c.id = j.company_id
+       where j.closed_at is null and j.source = 'manual_url' and c.inactive_reason = 'import_pending' and c.next_poll_at < now() - interval '1 hour'
+      having count(*) > 100`),
+  },
   { id: "BL-2", freezes: false, what: "a negative credit balance", query: count(sql`select user_id from credit_ledger group by user_id having sum(delta) < 0`) },
   {
     id: "LEDGER-1",
@@ -61,6 +70,12 @@ export const HOURLY: Check[] = [
 ];
 
 export const NIGHTLY: Check[] = [
+  {
+    id: "M-4",
+    freezes: false,
+    what: "a pipeline match with no score, or one that failed the gate: the pipeline scores only what passed it (02-database 8.5)",
+    query: count(sql`select id from matches where source = 'pipeline' and (score is null or not passed_filters)`),
+  },
   {
     id: "I-8",
     freezes: false,
