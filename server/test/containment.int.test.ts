@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_PREFERENCES } from "@auto-career/shared";
 import { eq, sql } from "drizzle-orm";
 import { chromium } from "playwright-core";
 import request from "supertest";
@@ -354,6 +355,41 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       expect(await tdb.select().from(schema.jobs).where(eq(schema.jobs.companyId, company!.id))).toHaveLength(1);
       expect(enqueue).not.toHaveBeenCalled();
       fetchBoard.mockRestore();
+    });
+
+    // Contract round 1: whichever route confirms the first fact asks for a backfill; a second save in a minute is not dropped.
+    const backfills = () => enqueue.mock.calls.filter((c) => (c as unknown[])[0] === "score-matches").map((c) => (c as unknown[])[2] as string);
+
+    it("asks for a backfill on the first confirmed fact from POST /facts, and only the first", async () => {
+      const userId = await signIn();
+      enqueue.mockClear();
+      const unconfirmed = await request(app).post("/api/profile/facts").send({ kind: "skill", text: "Rust services", confirmed: false });
+      expect(unconfirmed.status).toBe(201);
+      expect(backfills()).toEqual([]);
+      const first = await request(app).post("/api/profile/facts").send({ kind: "skill", text: "TypeScript APIs" });
+      expect(first.status).toBe(201);
+      expect(backfills()).toHaveLength(1);
+      expect(backfills()[0]).toContain(`backfill-${userId}-facts-`);
+      expect((await request(app).post("/api/profile/facts").send({ kind: "skill", text: "Go services" })).status).toBe(201);
+      expect(backfills()).toHaveLength(1);
+    });
+
+    it("asks for a backfill when PATCH confirms the first fact", async () => {
+      await signIn();
+      const made = await request(app).post("/api/profile/facts").send({ kind: "skill", text: "Rust services", confirmed: false });
+      expect(made.status).toBe(201);
+      enqueue.mockClear();
+      expect((await request(app).patch(`/api/profile/facts/${made.body.fact.id}`).send({ confirmed: true })).status).toBe(200);
+      expect(backfills()).toHaveLength(1);
+    });
+
+    it("gives two different preference saves in one minute two job ids", async () => {
+      await signIn();
+      enqueue.mockClear();
+      const prefs = { ...DEFAULT_PREFERENCES, workAuthorization: "citizen_or_pr" };
+      expect((await request(app).put("/api/profile/preferences").send({ ...prefs, roles: ["Engineer"] })).status).toBe(200);
+      expect((await request(app).put("/api/profile/preferences").send({ ...prefs, roles: ["Designer"] })).status).toBe(200);
+      expect(new Set(backfills()).size).toBe(2);
     });
 
     it("importing a posting from an already-curated (active) company leaves it active", async () => {
