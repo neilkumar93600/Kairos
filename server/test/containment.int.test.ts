@@ -337,7 +337,8 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       raw: {},
     };
 
-    it("creates the company inactive; polling it fetches nothing and enqueues no score-matches", async () => {
+    // WP-23 turned "never polled" into close-only: the board is read to close the stored job, and still inserts nothing.
+    it("creates the company inactive; polling it stores no posting and enqueues no score-matches", async () => {
       await signIn();
       fetchPostingFromBoard.mockResolvedValue(posting);
       const res = await request(app).post("/api/jobs/import").send({ url: "https://boards.greenhouse.io/newco/jobs/4012345" });
@@ -346,11 +347,13 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       expect(company!.active).toBe(false);
 
       enqueue.mockClear();
-      const fetchBoard = vi.spyOn(atsAdapters.greenhouse, "fetchBoard");
-      expect(await processPollBoards({ data: { companyId: company!.id } } as never)).toEqual({ added: 0, closed: 0 });
-      expect(await processPollBoards({ data: { schedule: true } } as never)).toEqual({ scheduled: 0 });
-      expect(fetchBoard).not.toHaveBeenCalled();
+      const other = { ...posting, externalId: "999", applyUrl: "https://job-boards.greenhouse.io/embed/job_app?for=newco&token=999" };
+      const fetchBoard = vi.spyOn(atsAdapters.greenhouse, "fetchBoard").mockResolvedValue({ kind: "listing", postings: [posting, other], etag: null });
+      expect(await processPollBoards({ data: { companyId: company!.id } } as never)).toEqual({ outcome: "listing", added: 0, closed: 0 });
+      expect(fetchBoard).toHaveBeenCalledTimes(1);
+      expect(await tdb.select().from(schema.jobs).where(eq(schema.jobs.companyId, company!.id))).toHaveLength(1);
       expect(enqueue).not.toHaveBeenCalled();
+      fetchBoard.mockRestore();
     });
 
     it("importing a posting from an already-curated (active) company leaves it active", async () => {

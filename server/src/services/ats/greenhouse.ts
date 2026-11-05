@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { BoardNotFoundError, getJson, htmlToText, looksRemote, type AtsAdapter, type NormalizedJob } from "./types";
+import { MiB } from "../safe-fetch";
+import { BoardNotFoundError, getJson, htmlToText, looksRemote, POSTING_MAX_BYTES, type AtsAdapter, type NormalizedJob } from "./types";
+
+const HOST = "boards-api.greenhouse.io";
 
 const greenhouseJob = z.object({
   id: z.number(),
@@ -42,20 +45,21 @@ export function normalizeGreenhouse(body: unknown, boardToken: string): Normaliz
   });
 }
 
-/** Public Job Board API: GET boards-api.greenhouse.io/v1/boards/{token}/jobs, no key needed. */
+/** Public Job Board API: GET boards-api.greenhouse.io/v1/boards/{token}/jobs, no key needed. content=true boards run large: 24 MiB, 20 s. */
 export const greenhouse: AtsAdapter = {
   provider: "greenhouse",
-  async fetchBoard(boardToken, fetchImpl = fetch) {
-    const url = `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(boardToken)}/jobs?content=true`;
-    const { status, body } = await getJson(url, fetchImpl);
-    if (status === 404) throw new BoardNotFoundError("greenhouse", boardToken);
-    return normalizeGreenhouse(body, boardToken);
+  async fetchBoard(boardToken, req = {}) {
+    const url = `https://${HOST}/v1/boards/${encodeURIComponent(boardToken)}/jobs?content=true`;
+    const res = await getJson(url, { host: HOST, maxBytes: 24 * MiB, timeoutMs: 20_000, etag: req.etag, fetcher: req.fetcher });
+    if (res.status === 404) throw new BoardNotFoundError("greenhouse", boardToken);
+    if (res.status === 304) return { kind: "not_modified" };
+    return { kind: "listing", postings: normalizeGreenhouse(res.body, boardToken), etag: res.etag };
   },
   /** Single-posting endpoint: GET boards-api.greenhouse.io/v1/boards/{token}/jobs/{id}?content=true. */
-  async fetchPosting(boardToken, postingId, fetchImpl = fetch) {
-    const url = `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(boardToken)}/jobs/${encodeURIComponent(postingId)}?content=true`;
-    const { status, body } = await getJson(url, fetchImpl);
-    if (status === 404) return null;
-    return normalizeGreenhouse({ jobs: [body] }, boardToken)[0] ?? null;
+  async fetchPosting(boardToken, postingId, req = {}) {
+    const url = `https://${HOST}/v1/boards/${encodeURIComponent(boardToken)}/jobs/${encodeURIComponent(postingId)}?content=true`;
+    const res = await getJson(url, { host: HOST, maxBytes: POSTING_MAX_BYTES, fetcher: req.fetcher });
+    if (res.status !== 200) return null;
+    return normalizeGreenhouse({ jobs: [res.body] }, boardToken)[0] ?? null;
   },
 };

@@ -116,6 +116,10 @@ const SIGNALS = {
   resume_parse_failed: 5,
   /** ops_flags could not be read: the kill switches are running on their last answer or the env alone (WP-27). */
   flags_unreadable: 1,
+  /** safeFetchJson refused a board request: the hosts are fixed in code and the database, so this is a bug or an attack. */
+  board_fetch_refused: 1,
+  /** A job board answered 429 (or 403 on two boards): that host rests for 15 to 120 minutes. */
+  board_host_backoff: 1,
   /** A money or approval invariant failed (jobs/invariants.ts): approvals_frozen was set (WP-27). Pages. */
   invariant_breach: 1,
   /** A fast SLO burn: 14.4x over 1 hour (WP-27). */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseJobUrl } from "../src/services/job-url";
+import { employerLink, parseJobUrl } from "../src/services/job-url";
 
 const U = "0b6f3c1e-5a2d-4e8f-9c7a-1d2e3f4a5b6c";
 
@@ -57,5 +57,47 @@ describe("parseJobUrl", () => {
     expect(parseJobUrl("https://job-boards.greenhouse.io/embed/job_app?for=../x&token=1")).toBeNull();
     expect(parseJobUrl("https://jobs.lever.co/acme/not-a-uuid")).toBeNull();
     expect(parseJobUrl("https://jobs.ashbyhq.com/acme")).toBeNull();
+  });
+});
+
+describe("Lever EU and token charset (matching-28, 82)", () => {
+  it("reads jobs.eu.lever.co as the EU region", () => {
+    expect(parseJobUrl(`https://jobs.eu.lever.co/acme/${U}/apply`)).toEqual({ ats: "lever", boardToken: "acme", postingId: U, region: "eu" });
+    expect(parseJobUrl(`https://jobs.eu.lever.co.evil.com/acme/${U}`)).toBeNull();
+  });
+
+  it("accepts a dot inside a token, never a token that starts with one", () => {
+    expect(parseJobUrl("https://boards.greenhouse.io/acme.inc/jobs/1")).toMatchObject({ boardToken: "acme.inc" });
+    expect(parseJobUrl("https://boards.greenhouse.io/.acme/jobs/1")).toBeNull();
+    expect(parseJobUrl("https://job-boards.greenhouse.io/embed/job_app?for=..&token=1")).toBeNull();
+  });
+});
+
+describe("employerLink (matching-87): read, never fetched", () => {
+  it("finds the Greenhouse posting id on an employer's page and drops the query string", () => {
+    expect(employerLink("https://www.Stripe.com/jobs/search?gh_jid=4012345&token=secret")).toEqual({
+      host: "stripe.com",
+      path: "/jobs/search",
+      detectedAts: "greenhouse",
+      postingId: "4012345",
+    });
+  });
+
+  it("reports an unknown page with no posting id, and a junk gh_jid as none", () => {
+    expect(employerLink("https://acme.example/careers/1")).toEqual({ host: "acme.example", path: "/careers/1", detectedAts: null, postingId: null });
+    expect(employerLink("https://acme.example/c?gh_jid=1;drop")).toMatchObject({ detectedAts: null, postingId: null });
+  });
+
+  it("refuses http, ports, credentials, IP hosts and junk", () => {
+    for (const bad of ["http://acme.example/x", "https://acme.example:8443/x", "https://u:p@acme.example/x", "https://10.0.0.1/x", "https://[::1]/x", "https://2130706433/x", "nope"]) {
+      expect(employerLink(bad)).toBeNull();
+    }
+  });
+
+  it("fits board_requests_path_ck whatever the path holds", () => {
+    const ck = new RegExp("^/[A-Za-z0-9._~%/+=@:,-]{0,199}$");
+    for (const url of ["https://a.example/", "https://a.example/a b(c)!'*;$&", "https://a.example/é/日本語", `https://a.example/${"x".repeat(400)}`, `https://a.example/${"é".repeat(150)}`]) {
+      expect(employerLink(url)!.path).toMatch(ck);
+    }
   });
 });

@@ -4,7 +4,7 @@ import { HttpError } from "../src/lib/errors";
 import { greenhouse } from "../src/services/ats/greenhouse";
 import { lever } from "../src/services/ats/lever";
 import { ashby } from "../src/services/ats/ashby";
-import type { NormalizedJob } from "../src/services/ats";
+import type { Fetcher, NormalizedJob } from "../src/services/ats";
 import { companyNameFromToken, importJob, jobUpsertValues, NO_PREFERENCES_REASON, type ImportIo } from "../src/services/job-import";
 
 const posting: NormalizedJob = {
@@ -114,37 +114,37 @@ describe("adapter fetchPosting", () => {
   const L = "0f6c1a3e-2b4d-4c5e-8f9a-1b2c3d4e5f60";
   const A = "aaaaaaaa-0000-4000-8000-000000000001";
   const B = "bbbbbbbb-0000-4000-8000-000000000002";
-  const json = (b: unknown) => async () => new Response(JSON.stringify(b), { status: 200 });
-  const gone = async () => new Response("", { status: 404 });
+  const json = (b: unknown): Fetcher => async () => ({ status: 200, body: b, etag: null });
+  const gone: Fetcher = async () => ({ status: 404 });
 
   it("Greenhouse hits the single-job endpoint and keeps the poller's externalId and applyUrl", async () => {
     let seen = "";
-    const f = async (u: string) => {
+    const fetcher: Fetcher = async (u) => {
       seen = u;
-      return new Response(JSON.stringify({ id: 4012345, title: "SWE", absolute_url: "https://x.com", content: "hi" }), { status: 200 });
+      return { status: 200, body: { id: 4012345, title: "SWE", absolute_url: "https://x.com", content: "hi" }, etag: null };
     };
-    const j = await greenhouse.fetchPosting("acme", "4012345", f);
+    const j = await greenhouse.fetchPosting("acme", "4012345", { fetcher });
     expect(seen).toBe("https://boards-api.greenhouse.io/v1/boards/acme/jobs/4012345?content=true");
     expect(j).toMatchObject({ externalId: "4012345", applyUrl: "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=4012345" });
-    expect(await greenhouse.fetchPosting("acme", "1", gone)).toBeNull();
+    expect(await greenhouse.fetchPosting("acme", "1", { fetcher: gone })).toBeNull();
   });
 
   it("Lever hits the single-posting endpoint", async () => {
     let seen = "";
-    const f = async (u: string) => {
+    const fetcher: Fetcher = async (u) => {
       seen = u;
-      return new Response(JSON.stringify({ id: L, text: "Eng", hostedUrl: `https://jobs.lever.co/acme/${L}` }), { status: 200 });
+      return { status: 200, body: { id: L, text: "Eng", hostedUrl: `https://jobs.lever.co/acme/${L}` }, etag: null };
     };
-    const j = await lever.fetchPosting("acme", L, f);
+    const j = await lever.fetchPosting("acme", L, { fetcher });
     expect(seen).toBe(`https://api.lever.co/v0/postings/acme/${L}`);
     expect(j).toMatchObject({ externalId: L, applyUrl: `https://jobs.lever.co/acme/${L}/apply` });
-    expect(await lever.fetchPosting("acme", L, gone)).toBeNull();
+    expect(await lever.fetchPosting("acme", L, { fetcher: gone })).toBeNull();
   });
 
   it("Ashby selects the posting from the board, null when absent or board missing", async () => {
     const board = { jobs: [{ id: A, title: "A", jobUrl: `https://jobs.ashbyhq.com/o/${A}` }, { id: B, title: "B", jobUrl: `https://jobs.ashbyhq.com/o/${B}` }] };
-    expect(await ashby.fetchPosting("o", B, json(board))).toMatchObject({ externalId: B, applyUrl: `https://jobs.ashbyhq.com/o/${B}/application` });
-    expect(await ashby.fetchPosting("o", "zzz", json(board))).toBeNull();
-    expect(await ashby.fetchPosting("o", A, gone)).toBeNull();
+    expect(await ashby.fetchPosting("o", B, { fetcher: json(board) })).toMatchObject({ externalId: B, applyUrl: `https://jobs.ashbyhq.com/o/${B}/application` });
+    expect(await ashby.fetchPosting("o", "zzz", { fetcher: json(board) })).toBeNull();
+    expect(await ashby.fetchPosting("o", A, { fetcher: gone })).toBeNull();
   });
 });
