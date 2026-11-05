@@ -5,6 +5,7 @@ import { redactConfirmation, scrubContent } from "../src/services/sensitive";
 describe("retention rules (WP-25)", () => {
   it("defaults to the spec's periods, pending counsel", () => {
     expect(Object.fromEntries(Object.entries(RETENTION_RULES).map(([k, r]) => [k, r.days]))).toEqual({
+      attempt_evidence: 90,
       inbound_body: 180,
       reminders: 90,
       inbound_hidden: 30,

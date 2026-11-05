@@ -97,7 +97,7 @@ describe("the chaos verdict", () => {
     clicks: ["a", "b"],
     charges: ["a"],
     outbox: { done: 2, live: 0, dead: 0 },
-    reported: [],
+    reported: ["a"],
     crashesByPhase: { filling: 50 },
     minCrashes: 50,
     kills: 40,

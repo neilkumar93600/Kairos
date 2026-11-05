@@ -3,6 +3,7 @@ import { db } from "../db/client";
 import type { ApplicationFailureCode } from "../db/schema";
 import type { Rendered } from "../jobs/notify";
 import { issueActionToken, linkUrl } from "../lib/action-tokens";
+import { env } from "../lib/env";
 import { AMBIGUOUS, FAILURE_MESSAGES } from "./submissions";
 
 /**
@@ -42,16 +43,15 @@ export async function renderResendAvailable(entityId: string, userId: string | n
   // A notice for an attempt the application has moved past would invite a second send: never mailed.
   if (app.status !== "failed" || app.attempt_no !== e.attemptNo || !app.failure_code || !app.terminal_at) return { skip: "moved_on" };
   const expiresAt = new Date(new Date(app.terminal_at).getTime() + 7 * 86_400_000);
-  const token = await issueActionToken(db(), { purpose: "resend", entityId: e.id, userId: userId!, expiresAt });
-  if (!token) return { skip: "expired" };
+  // No key in this environment (owner-actions/WP-29.md): the notice still goes, without a link nobody could use.
+  const token = env().LINK_SIGNING_KEY ? await issueActionToken(db(), { purpose: "resend", entityId: e.id, userId: userId!, expiresAt }) : null;
+  if (env().LINK_SIGNING_KEY && !token) return { skip: "expired" };
   const lines = [
     `Your application to ${app.company} (${app.title}) did not finish.`,
     "",
     FAILURE_MESSAGES[app.failure_code],
     ...(AMBIGUOUS.has(app.failure_code) ? ["", "If the employer already confirmed it, you do not need to do anything else."] : []),
-    "",
-    "To send it again, use this link. It works once, for 7 days:",
-    linkUrl(`/api/applications/${e.id}/resend-link`, token),
+    ...(token ? ["", "To send it again, use this link. It works once, for 7 days:", linkUrl(`/api/applications/${e.id}/resend-link`, token)] : []),
   ];
   return { to: app.email, subject: `Your application to ${app.company} did not finish`, text: lines.join("\n") };
 }

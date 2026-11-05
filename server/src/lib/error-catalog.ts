@@ -13,9 +13,9 @@
 // approvals_frozen, cloud_paused, extension_only and unknown_flag are WP-27's (ops flags); listed here because this file is the catalog.
 // resume_refused { reason: not_dead | past_browser_step | not_approved | no_application | no_refusal_check } is WP-22's (POST /api/admin/outbox/:id/resume).
 export const ERROR_CATALOG: Record<string, readonly number[]> = {
+  acknowledgement_required: [409],
   ai_refused: [422],
   ai_unavailable: [503],
-  acknowledgement_required: [409],
   already_claimed: [409],
   already_subscribed: [409],
   approvals_frozen: [503],

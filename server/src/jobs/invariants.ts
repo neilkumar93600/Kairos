@@ -11,8 +11,8 @@ import { signal } from "../lib/sentry";
  * `freezes` (I-4 and LEDGER-1, the money checks of workers/15-ops-monitors 3.6) set approvals_frozen (an ops_audit row,
  * actor system:invariants); the rest page and leave approvals open, because a user's own action can trip them (unconfirming
  * a cited fact, a late confirmation). Only the owner lifts a freeze, through /api/admin/flags.
- * Not checkable yet, because their tables arrive with WP-42/WP-29/WP-26: I-1 dual submission and I-2 possible
- * duplicates (submission_attempts), I-5 (application_events), I-7 (verification_results).
+ * Not checkable yet, because their tables arrive with WP-42/WP-26: I-2 possible duplicates, I-5 (application_events),
+ * I-7 (verification_results).
  * M-1 (user_match_state) and M-2 (ghost verdicts) wait for those tables, WP-34.
  * ponytail: I-8 compares f.id::text, which skips the primary-key index (a nightly scan, fine at beta size). Full scans elsewhere too; chunk by user_id range when applications passes ~1M rows.
  * ponytail: freezes without a report-only mode; ops-40's soak period would add an INVARIANTS_REPORT_ONLY env.
@@ -45,6 +45,13 @@ export const HOURLY: Check[] = [
       union all
       select a.id from credit_ledger l join applications a on a.id = l.application_id
        where l.reason = 'submission' and a.status not in ('submitted','refunded') and a.updated_at < now() - interval '1 minute'`),
+  },
+  {
+    id: "I-1",
+    freezes: false,
+    // Pages, and does not freeze as the spec's A-SUB-2 has it: one user's own extension can report twice, and a freeze stops everyone.
+    what: "more than one submitted attempt on one application: the employer may hold two applications",
+    query: count(sql`select application_id from submission_attempts where state = 'submitted' group by application_id having count(*) > 1`),
   },
   {
     id: "I-6",

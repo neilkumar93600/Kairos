@@ -6,13 +6,13 @@ import { env } from "../lib/env";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { AMBIGUOUS, FAILURE_MESSAGES, resendCore } from "../services/submissions";
-import type { LinkAction, LinkPage } from "./links";
+import { LinkRefusal, type LinkAction, type LinkPage } from "./links";
 
 /**
  * The emailed resend link (05-api 10.4, WP-44 core): a GET that only reads, and a POST that uses the token up and re-approves
  * for the extension channel in one transaction. An ambiguous failure needs the acknowledgement: the form's button is that
  * acknowledgement, because the page's signed-link renderer has no checkbox and the page says what it means.
- * The path id must equal the token's entity. A refusal the user can act on is a result page; the token stays used for it.
+ * The path id must equal the token's entity. A refusal the user can act on is a result page, and the link stays usable.
  */
 const pathMatches = (req: Request, entityId: string) => req.params.id === entityId;
 
@@ -41,17 +41,17 @@ export const resendLinkAction: LinkAction = {
   },
   async act(tx, target, req): Promise<LinkPage | null> {
     if (!pathMatches(req, target.entityId)) return null;
-    const row = await readTarget(tx as never, target.entityId, target.userId);
+    const row = await readTarget(tx, target.entityId, target.userId);
     if (!row || row.status !== "failed") return null;
     try {
       // The button is the acknowledgement: the page in front of it said what it means for an ambiguous code.
-      await tx.transaction((sp) => resendCore(sp, target.userId, target.entityId, "extension", true));
+      await resendCore(tx, target.userId, target.entityId, "extension", true);
       return { title: "Queued", body: "Open the Kairos extension to send it." };
     } catch (err) {
       if (!(err instanceof HttpError)) throw err;
       logger.info({ applicationId: target.entityId, code: err.code }, "resend link refused");
-      if (err.status === 402) return { title: "Not enough credits", body: `You have no credits left for this. Add some at ${env().WEB_ORIGIN}/billing, then open Kairos to send it.` };
-      return { title: "This application cannot be sent again", body: "Open Kairos to see where it stands." };
+      if (err.status === 402) throw new LinkRefusal({ title: "Not enough credits", body: `You have no credits left for this. Add some at ${env().WEB_ORIGIN}/billing, then use this link again.` });
+      throw new LinkRefusal({ title: "This application cannot be sent again", body: "Open Kairos to see where it stands." });
     }
   },
 };

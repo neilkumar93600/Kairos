@@ -59,6 +59,8 @@ export const MATRIX: Record<string, MatrixEntry> = {
   },
   "POST /api/webhooks/postmark-events": { public: "Postmark delivery events: the token is the credential; it only adds or lifts address-hash suppressions" },
   "POST /api/contact": { public: "the public contact form: stores a message and reads nothing back" },
+  "GET /api/applications/:id/resend-link": { public: "the signed token is the credential; GET only reads, and shows what a POST would do" },
+  "POST /api/applications/:id/resend-link": { public: "the signed token is the credential; single use, it re-approves one failed application of the token's own user" },
   "GET /api/unsubscribe": { public: "the signed token is the credential; GET only reads, and shows what a POST would stop" },
   "POST /api/unsubscribe": { public: "the signed token is the credential; it turns off one optional mail kind for the token's own user" },
   "POST /api/newsletter": { public: "the public newsletter form: the same 202 for every address, reads nothing back" },
