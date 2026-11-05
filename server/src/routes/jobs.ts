@@ -12,6 +12,7 @@ import { fetchPostingFromBoard, importJob, jobUpsertValues, type ImportIo } from
 import { enqueue } from "../jobs/queues";
 import { scoreImported } from "../jobs/score-matches";
 import { logger } from "../lib/logger";
+import { cleanText } from "../services/normalize-posting";
 import { renderResumeText } from "../services/resume-doc";
 import { metered } from "../services/allowance";
 import { planFor } from "../services/submissions";
@@ -40,7 +41,7 @@ const importIo = (plan: PlanId, signal: AbortSignal | undefined): ImportIo => ({
     // until the owner activates it.
     const [created] = await db()
       .insert(companies)
-      .values({ ats, boardToken, name, apiRegion: region, active: false, inactiveReason: "import_pending", discoveredBy: "import" })
+      .values({ ats, boardToken, name: cleanText(name), apiRegion: region, active: false, inactiveReason: "import_pending", discoveredBy: "import" })
       .onConflictDoNothing({ target: [companies.ats, companies.boardToken] })
       .returning({ id: companies.id, name: companies.name, active: companies.active });
     if (created) return created;

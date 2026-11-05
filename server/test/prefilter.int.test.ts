@@ -181,6 +181,9 @@ describe.skipIf(!hasTestDb)("the SQL prefilter against Postgres", () => {
     );
     const text = plan.rows.map((r) => r["QUERY PLAN"]).join("\n");
     expect(text).toMatch(/jobs_title_lc_trgm_idx/);
+    // Named as an index the plan reads, not only in passing: neither of the plans this replaced may be there.
+    expect(text).not.toMatch(/Seq Scan on jobs/);
+    expect(text).not.toMatch(/Index Scan Backward using jobs_visible_open_idx/);
     expect(await jobsForUser(db, user, toUserPrefilter(PREFS, new Map()), { visibleDays: 30, limit: 400 })).toHaveLength(50);
   });
 
