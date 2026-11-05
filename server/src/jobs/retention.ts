@@ -128,6 +128,19 @@ export const RETENTION_RULES = {
     days: 1,
     run: () => batched(() => sql`delete from verified_claims where claim_hash in (select claim_hash from verified_claims where expires_at < now() limit ${BATCH})`),
   },
+  /**
+   * Finished outbox rows (WP-22): only ids, and nothing reads them once the job is done; a week is for looking back at an
+   * incident. ponytail: scans a table of a week's approvals daily, since the live index leaves done rows out.
+   */
+  outbox_done: {
+    days: 7,
+    run: (d: number) => batched(() => sql`delete from outbox where id in (select id from outbox where status = 'done' and updated_at < ${before(d)} limit ${BATCH})`),
+  },
+  /** A dead row nobody resumed: by then the application behind it has been settled or withdrawn by hand. */
+  outbox_dead: {
+    days: 90,
+    run: (d: number) => batched(() => sql`delete from outbox where id in (select id from outbox where status = 'dead' and updated_at < ${before(d)} limit ${BATCH})`),
+  },
   /** Sensitive answer and receipt values, after submitted or withdrawn (processScrubApplications). */
   scrub_applications: { days: 7, run: null },
 } as const;
