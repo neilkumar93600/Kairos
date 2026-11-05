@@ -125,6 +125,52 @@ describe.skipIf(!hasTestDb)("resume library and imports (R1)", () => {
     expect(await tdb.select().from(schema.resumes).where(eq(schema.resumes.userId, me.id))).toEqual(before);
   });
 
+  describe("the writer on a library resume (WP-31)", () => {
+    const setup = async () => {
+      const first = (await request(app).get("/api/resumes")).body.resumes[0] as { id: string };
+      const [row] = await tdb.select({ profileId: schema.resumes.resumeProfileId }).from(schema.resumes).where(eq(schema.resumes.id, first.id));
+      const now = new Date();
+      const [emp] = await tdb
+        .insert(schema.employments)
+        .values({ userId: me.id, resumeProfileId: row!.profileId, title: "Backend Engineer", company: "Initech", startMonth: "2018-01", endMonth: "2023-12", confirmed: true, confirmedAt: now, assertedBy: "user" })
+        .returning();
+      const [role] = await tdb.insert(schema.facts).values({ userId: me.id, resumeProfileId: row!.profileId, employmentId: emp!.id, kind: "role", text: "Backend Engineer at Initech", confirmed: true, confirmedAt: now }).returning();
+      const doc = (await request(app).get(`/api/resumes/${first.id}`)).body.resume as ResumeInput;
+      return { id: first.id, doc, roleId: role!.id };
+    };
+
+    it("PUT holds a headline to the truth lock: its citations, its words, and years only as computed from the role dates", async () => {
+      const { id, doc, roleId } = await setup();
+      const put = (text: string, factIds = [roleId]) => request(app).put(`/api/resumes/${id}`).send({ ...doc, headline: { text, factIds } });
+      const ok = await put("Backend Engineer · 6 years");
+      expect(ok.status).toBe(200);
+      expect(ok.body.resume.headline.text).toBe("Backend Engineer · 6 years");
+      for (const [text, factIds] of [["Backend Engineer · 9 years", [roleId]], ["Backend Engineer at Globex Corp", [roleId]], ["Backend Engineer", ["00000000-0000-0000-0000-000000000000"]]] as const) {
+        const res = await put(text, [...factIds]);
+        expect(res.status, text).toBe(422);
+        expect(res.body.error).toMatchObject({ code: "truth_lock", details: { lineIds: ["headline"] } });
+      }
+    });
+
+    it("POST /resumes/suggestions: 404 for an id that is not the caller's, and the headline needs the gateway's v2 (503 on the legacy client)", async () => {
+      const { id } = await setup();
+      expect((await request(app).post("/api/resumes/suggestions").send({ scope: "resume", resumeId: "00000000-0000-0000-0000-000000000000" })).status).toBe(404);
+      const res = await request(app).post("/api/resumes/suggestions").send({ scope: "headline", resumeId: id });
+      expect(res.status).toBe(503);
+      expect(res.body.error.code).toBe("ai_unavailable");
+      expect(chatJson).not.toHaveBeenCalled();
+    });
+
+    it("takes one before_ai revision for a burst of AI calls, so reviews cannot prune the user's edits", async () => {
+      const { id } = await setup();
+      const { snapshotBeforeAi } = await import("../src/services/resume-library");
+      await snapshotBeforeAi(me.id, id);
+      await snapshotBeforeAi(me.id, id);
+      const revisions = await tdb.select({ reason: schema.resumeRevisions.reason }).from(schema.resumeRevisions).where(eq(schema.resumeRevisions.resumeId, id));
+      expect(revisions.filter((r) => r.reason === "before_ai")).toHaveLength(1);
+    });
+  });
+
   it("refuses a line citing an unconfirmed fact, and an import the plan's profile count excludes", async () => {
     const [f] = await tdb.insert(schema.facts).values({ userId: me.id, kind: "role", text: "Led a team", confirmed: false }).returning();
     const first = (await request(app).get("/api/resumes")).body.resumes[0];
