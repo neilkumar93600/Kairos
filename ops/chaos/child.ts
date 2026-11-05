@@ -15,7 +15,7 @@ import { approveApplications } from "../../server/src/services/submissions";
  * real: approveApplications, the outbox drain and sweep, processCloudApply, the reconcilers and BullMQ. Only Chromium is
  * scripted, because the applier must never open a real employer's page from a test.
  *   approver  approves every draft, one at a time, as a user would (a kill mid-approval leaves it draft or approved).
- *   worker    the outbox drain and sweep, and the two reconcilers on their production periods.
+ *   worker    the outbox drain and sweep, and the two reconcilers on their production periods (the lease sweep settles).
  *   applier   the cloud-apply consumer.
  */
 const role = process.argv[2];

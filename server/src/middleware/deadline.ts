@@ -27,6 +27,7 @@ export const ROUTE_DEADLINES: [method: string, path: RegExp, ms: number][] = [
   ["PATCH", /^\/applications\/[^/]+$/, DEADLINE.edit],
   // Money paths: a 503 while the work goes on invites a retry. Billing makes up to four Stripe calls of 10 s each.
   ["POST", /^\/applications\/approve$/, DEADLINE.render],
+  ["POST", /^\/applications\/[^/]+\/resend$/, DEADLINE.render],
   ["POST", /^\/billing\//, DEADLINE.billing],
   // WP-17: an upload reads in a thread killed at 20 s, then encrypts and stores; tailoring a copy is a model call.
   ["POST", /^\/profile\/imports$/, 25_000],

@@ -1,7 +1,8 @@
 /**
- * The process-kill chaos harness (WP-22 acceptance): scripted approvals through the real seam while processes are killed
- * with SIGKILL and Postgres restarts once. It passes when every application is terminal within 10 minutes of its approval,
- * with zero duplicate attempts and zero double charges.
+ * The process-kill chaos harness (WP-22 and WP-29 acceptance): scripted approvals through the real seam while processes are
+ * killed with SIGKILL and Postgres restarts once. It passes when every application is terminal within 10 minutes of its
+ * approval, with zero duplicate attempts and zero double charges, zero charges for an attempt nobody reported, and at
+ * least CHAOS_MIN_CRASHES (50) appliers killed with an attempt open, so the crashes land at random phases of real sends.
  *
  * STATUS: this has never run. It needs a real Postgres and Redis, and the machine it was written on has neither.
  *
@@ -10,7 +11,7 @@
  *   npx tsx ops/chaos/run.ts
  *
  * Run it from the repo root. .github/workflows/chaos.yml does exactly that on demand. CHAOS_PG_RESTART_CMD is split on
- * spaces and run without a shell. Optional: CHAOS_APPROVALS (1000), CHAOS_LIMIT_MINUTES (10), CHAOS_APPLIERS (2).
+ * spaces and run without a shell. Optional: CHAOS_APPROVALS (1000), CHAOS_LIMIT_MINUTES (10), CHAOS_APPLIERS (2), CHAOS_MIN_CRASHES (50).
  *
  * Use a disposable database and Redis. The child applier consumes the cloud-apply queue with a scripted browser and writes
  * real ledger rows, so on a database with real work it would mark real applications sent. Staging is fine only as a new
@@ -45,6 +46,7 @@ const PG_RESTART = need("CHAOS_PG_RESTART_CMD").split(" ").filter(Boolean);
 const APPROVALS = Number(process.env.CHAOS_APPROVALS ?? 1000);
 const LIMIT_MS = Number(process.env.CHAOS_LIMIT_MINUTES ?? 10) * 60_000;
 const APPLIERS = Number(process.env.CHAOS_APPLIERS ?? 2);
+const MIN_CRASHES = Number(process.env.CHAOS_MIN_CRASHES ?? 50);
 /** Past the limit, so a late application is measured and reported rather than cut off. */
 const GIVE_UP_MS = LIMIT_MS + 5 * 60_000;
 const PER_USER = 20;
@@ -103,7 +105,7 @@ async function seed(): Promise<void> {
       jobs.slice(0, Math.min(PER_USER, APPROVALS - made)).map((j) => ({
         userId,
         jobId: j.id,
-        resumeLines: [{ id: "l1", section: "Experience", text: "Ran chaos", factIds: ["f1"] }],
+        resumeLines: [{ id: "l1", section: "Experience", text: "Ran chaos", factIds: [] }],
         answers: [{ fieldKey: "first_name", label: "First name", value: "Chaos", source: "profile" as const }],
       })),
     );
@@ -183,14 +185,23 @@ async function main(): Promise<void> {
   const restartAt = started + between(30_000, 120_000);
   let kills = 0;
   let pgRestarts = 0;
+  const crashesByPhase: Record<string, number> = {};
 
   for (;;) {
-    await pause(between(5_000, 20_000));
+    await pause(between(2_000, 8_000));
     const names = [...children.keys()];
-    const victim = names[between(0, names.length)];
+    // Mostly the appliers: a crash of one with an attempt open is what the 50-crash acceptance counts.
+    const appliers = names.filter((n) => n.startsWith("applier"));
+    const victim = appliers.length && Math.random() < 0.8 ? appliers[between(0, appliers.length)] : names[between(0, names.length)];
+    const phases = victim?.startsWith("applier")
+      ? await retrying(() => db.select({ phase: schema.submissionAttempts.phase }).from(schema.submissionAttempts).where(sql`${schema.submissionAttempts.state} = 'open' and ${schema.submissionAttempts.channel} = 'cloud'`))
+      : [];
     if (victim && children.get(victim)?.kill("SIGKILL")) {
       kills += 1;
-      console.log(`chaos: killed ${victim} (${kills})`);
+      // The open attempts at the moment of the kill, across appliers: which phases this run actually crashed through.
+      const phase = phases[between(0, phases.length)]?.phase;
+      if (phase) crashesByPhase[phase] = (crashesByPhase[phase] ?? 0) + 1;
+      console.log(`chaos: killed ${victim} (${kills}), ${phases.length} attempts open`);
     }
     if (!pgRestarts && Date.now() >= restartAt) {
       console.log("chaos: restarting Postgres");
@@ -214,9 +225,11 @@ async function main(): Promise<void> {
   const charges = await retrying(() => db.select({ id: schema.creditLedger.applicationId }).from(schema.creditLedger).where(sql`${schema.creditLedger.reason} = 'submission'`));
   const clicks = readFileSync(clickLog, "utf8").split("\n").filter(Boolean);
   const outbox = await outboxCounts();
-  const result = verdict({ approvals: APPROVALS, limitMs: LIMIT_MS, apps, clicks, charges: charges.map((c) => c.id!), outbox, kills, pgRestarts });
+  // What a run reported: a result the applier wrote, or a late report. A charge with none of these was never reported.
+  const reported = await retrying(() => db.select({ id: schema.submissionAttempts.applicationId }).from(schema.submissionAttempts).where(sql`${schema.submissionAttempts.state} = 'submitted'`));
+  const result = verdict({ approvals: APPROVALS, limitMs: LIMIT_MS, apps, clicks, charges: charges.map((c) => c.id!), reported: reported.map((r) => r.id), outbox, kills, pgRestarts, crashesByPhase, minCrashes: MIN_CRASHES });
   const slowestSettleS = Math.round(Math.max(0, ...apps.map((a) => a.settleMs ?? 0)) / 1000);
-  console.log(JSON.stringify({ ...result, approvals: APPROVALS, kills, pgRestarts, clicks: clicks.length, charges: charges.length, outbox, slowestSettleS }, null, 2));
+  console.log(JSON.stringify({ ...result, approvals: APPROVALS, kills, pgRestarts, clicks: clicks.length, charges: charges.length, crashesByPhase, outbox, slowestSettleS }, null, 2));
   await pool.end();
   process.exit(result.pass ? 0 : 1);
 }

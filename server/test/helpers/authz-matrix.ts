@@ -114,6 +114,7 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "POST /api/applications/:id/drafts": { request: (t) => ({ path: `/api/applications/${t.applicationId}/drafts`, body: { kind: "cover_letter" } }) },
   "POST /api/applications/:id/stage/clear": { request: (t) => ({ path: `/api/applications/${t.applicationId}/stage/clear` }) },
   "POST /api/applications/:id/withdraw": { request: (t) => ({ path: `/api/applications/${t.applicationId}/withdraw` }) },
+  "POST /api/applications/:id/resend": { fresh: true, request: (t) => ({ path: `/api/applications/${t.applicationId}/resend`, body: { channel: "extension", acknowledgeUnconfirmed: true } }) },
 
   "GET /api/credits": own("/api/credits"),
   "GET /api/inbox": own("/api/inbox"),
@@ -123,6 +124,8 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "POST /api/billing/portal": { ...own("/api/billing/portal"), fresh: true },
 
   "GET /api/extension/queue": own("/api/extension/queue"),
+  "POST /api/extension/claim": { request: (t) => ({ path: "/api/extension/claim", body: { applicationId: t.applicationId } }) },
+  "POST /api/extension/release": { request: (t) => ({ path: "/api/extension/release", body: { applicationId: t.applicationId } }) },
   "POST /api/extension/report": {
     request: (t) => ({
       path: "/api/extension/report",

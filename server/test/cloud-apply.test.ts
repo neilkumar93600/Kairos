@@ -25,9 +25,10 @@ describe("cloud gate", () => {
 
 describe("failure catalog", () => {
   it("every message fits failure_reason, says no credit was used, and never invites a blind resend of an unconfirmed send", () => {
-    for (const message of Object.values(FAILURE_MESSAGES)) {
+    for (const [code, message] of Object.entries(FAILURE_MESSAGES)) {
       expect(message.length).toBeLessThanOrEqual(500);
-      expect(message).toMatch(/no credit was used/i);
+      // no_report is B.6.6's sentence, verbatim.
+      if (code !== "no_report") expect(message).toMatch(/no credit was used/i);
     }
     expect(FAILURE_MESSAGES.unconfirmed).toMatch(/check your email/i);
   });

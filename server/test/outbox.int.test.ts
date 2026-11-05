@@ -44,10 +44,11 @@ const { processSweepSubmitting } = await import("../src/jobs/reconcile");
 const { RETENTION_RULES } = await import("../src/jobs/retention");
 const { redis } = await import("../src/lib/redis");
 const { resetFlagCache } = await import("../src/lib/flags");
-const { approveApplications, claimForCloud, FAILURE_MESSAGES } = await import("../src/services/submissions");
+const { approveApplications, FAILURE_MESSAGES } = await import("../src/services/submissions");
+const { settleAll } = await import("./helpers/settle");
 
 const MARKER = "zq.marker@pii.example";
-const LINE = { id: "l1", section: "Experience", text: `Built billing for ${MARKER}`, factIds: ["f1"] };
+const LINE = { id: "l1", section: "Experience", text: `Built billing for ${MARKER}`, factIds: [] };
 const ANSWER = { fieldKey: "first_name", label: "First name", value: MARKER, source: "profile" as const };
 const SUBMITTED = { outcome: "submitted", filledFields: [{ fieldKey: "first_name", label: "First name", value: "Test" }] };
 
@@ -96,7 +97,7 @@ describe.skipIf(!hasTestDb)("the outbox against Postgres and Redis", () => {
   async function approved() {
     const id = await draft();
     await expect(approveApplications(db, member, [id], "cloud")).resolves.toEqual([id]);
-    return { id, key: cloudApplyKey(id) };
+    return { id, key: cloudApplyKey(id, 1) };
   }
 
   /** A real consumer runs until the job finishes, the way the applier does. */
@@ -232,6 +233,7 @@ describe.skipIf(!hasTestDb)("the outbox against Postgres and Redis", () => {
       const fill = fakeBrowser({ fill: async () => SUBMITTED });
       await consume(key, (job) => processCloudApply(job as never));
       expect(fill).toHaveBeenCalledTimes(1);
+      await settleAll(db);
       expect((await appOf(id)).status).toBe("submitted");
 
       await due(key);
@@ -254,13 +256,18 @@ describe.skipIf(!hasTestDb)("the outbox against Postgres and Redis", () => {
       const fill = fakeBrowser({ fill: async () => SUBMITTED });
       await consume(key, (job) => processCloudApply(job as never));
       expect(fill).toHaveBeenCalledTimes(1);
+      await settleAll(db);
       expect(await charges(id)).toHaveLength(1);
     });
 
     it("the applier died past the claim: re-delivery opens no browser, and the sweep settles it unconfirmed with no charge", async () => {
       const { id, key } = await approved();
       await drainOutbox();
-      expect(await claimForCloud(db, id)).toBe(true); // the claim committed, then the process died mid-browser
+      // The claim and the launch mark committed, then the process died mid-browser.
+      const claim = await db.execute<{ id: string }>(sql`select claim_cloud_attempt(${id}, 1, 'dead') as id`);
+      const attemptId = claim.rows[0]!.id;
+      await db.execute(sql`select mark_browser_launched(${attemptId})`);
+      await db.execute(sql`select mark_attempt_phase(${attemptId}, 'filling')`);
       await (await q().getJob(key))!.remove();
       await due(key);
       await sweepOutbox();
@@ -272,9 +279,9 @@ describe.skipIf(!hasTestDb)("the outbox against Postgres and Redis", () => {
       expect(fill).not.toHaveBeenCalled();
       expect((await appOf(id)).status).toBe("submitting");
 
-      await db.update(schema.applications).set({ updatedAt: sql`now() - interval '9 minutes'` }).where(eq(schema.applications.id, id));
-      await expect(processSweepSubmitting()).resolves.toEqual({ swept: 1 });
-      expect(await appOf(id)).toMatchObject({ status: "failed", failureReason: FAILURE_MESSAGES.unconfirmed });
+      await db.update(schema.submissionAttempts).set({ heartbeatAt: sql`now() - interval '2 minutes'` }).where(eq(schema.submissionAttempts.id, attemptId));
+      await expect(processSweepSubmitting()).resolves.toEqual({ swept: 0, closed: 1, settled: 1 });
+      expect(await appOf(id)).toMatchObject({ status: "failed", failureCode: "unconfirmed", failureReason: FAILURE_MESSAGES.unconfirmed });
       expect(await charges(id)).toEqual([]);
     });
 
@@ -379,7 +386,7 @@ describe.skipIf(!hasTestDb)("the outbox against Postgres and Redis", () => {
     });
 
     async function deadRow(id: string) {
-      const key = cloudApplyKey(id);
+      const key = `apply-${id}`; // the previous release's form: a payload with no attempt number
       await db.insert(schema.outbox).values({ queue: "cloud-apply", dedupeKey: key, payload: { applicationId: id }, status: "dead", attempts: MAX_ATTEMPTS, lastError: "job_failed" });
       return rowOf(key);
     }
@@ -444,7 +451,7 @@ describe.skipIf(!hasTestDb)("the outbox against Postgres and Redis", () => {
 
     it("refuses a cloud apply that may be past the browser step: the application is submitting", async () => {
       const id = await draft(member, "approved");
-      expect(await claimForCloud(db, id)).toBe(true);
+      await db.execute(sql`select claim_cloud_attempt(${id}, 0, 'w')`);
       const row = await deadRow(id);
 
       const res = await resume(row.id);

@@ -15,6 +15,8 @@
 export const ERROR_CATALOG: Record<string, readonly number[]> = {
   ai_refused: [422],
   ai_unavailable: [503],
+  acknowledgement_required: [409],
+  already_claimed: [409],
   already_subscribed: [409],
   approvals_frozen: [503],
   bad_request: [400],
@@ -37,6 +39,7 @@ export const ERROR_CATALOG: Record<string, readonly number[]> = {
   last_base: [409],
   limit_reached: [409],
   no_text_layer: [422],
+  not_approvable: [409],
   not_base: [409],
   not_found: [404],
   origin_not_allowed: [403],

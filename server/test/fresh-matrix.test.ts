@@ -34,7 +34,7 @@ const entries = Object.entries(MATRIX).filter((e): e is [string, TenantEntry] =>
 describe("session-fresh matrix", () => {
   it("flags approve, checkout, portal and every admin route", () => {
     const flagged = entries.filter(([, e]) => e.fresh).map(([k]) => k);
-    expect(flagged.filter((k) => !k.includes("/api/admin/")).sort()).toEqual(["POST /api/applications/approve", "POST /api/billing/checkout", "POST /api/billing/portal"]);
+    expect(flagged.filter((k) => !k.includes("/api/admin/")).sort()).toEqual(["POST /api/applications/:id/resend", "POST /api/applications/approve", "POST /api/billing/checkout", "POST /api/billing/portal"]);
     expect(entries.filter(([k]) => k.includes("/api/admin/")).every(([, e]) => e.fresh)).toBe(true);
   });
 

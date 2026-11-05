@@ -27,7 +27,8 @@ export interface JobData {
   /** One import (WP-17). `resumeProfileId` is the shape queued before WP-17; such a job is skipped (backfill-sources). */
   "parse-resume": { importId: string } | { resumeProfileId: string };
   "classify-email": { inboundEmailId: string };
-  "cloud-apply": { applicationId: string };
+  /** attemptNo is absent on a job of the previous release (WP-29): it then runs the application's current attempt. */
+  "cloud-apply": { applicationId: string; attemptNo?: number };
   "cost-rollup": { schedule: true };
   "ledger-watch": { schedule: true };
   /** The job name picks the task (jobs/schedules.ts). */

@@ -71,6 +71,14 @@ export const approveApplicationsSchema = z.object({
 });
 export type ApproveApplicationsInput = z.infer<typeof approveApplicationsSchema>;
 
+/** POST /api/applications/:id/resend (05-api 10.4): the extension by default; an ambiguous failure needs the acknowledgement. */
+export const resendRequestSchema = z.strictObject({
+  channel: z.enum(["extension", "cloud"]).default("extension"),
+  acknowledgeUnconfirmed: z.boolean().default(false),
+});
+/** POST /api/extension/claim and /release (05-api 13.3). */
+export const extensionClaimSchema = z.strictObject({ applicationId: z.uuid() });
+
 /** What the extension or cloud applier reports back after trying to submit. */
 export const submissionReportSchema = z.object({
   applicationId: z.uuid(),

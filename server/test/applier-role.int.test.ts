@@ -32,6 +32,7 @@ const { closeDb, db } = await import("../src/db/client");
 const schema = await import("../src/db/schema");
 const { processCloudApply } = await import("../src/jobs/cloud-apply");
 const { closeBrowser } = await import("../src/jobs/browser-pool");
+const { settleAll } = await import("./helpers/settle");
 
 describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
   let admin: Db;
@@ -87,14 +88,36 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
     "select llm_calls_drop_old_partitions(0)",
     "select * from outbox",
     "update outbox set status = 'done'",
+    // WP-29: the definer functions replaced the interim grants. No table read or write of a send, and no ledger.
+    "select * from applications",
+    "select answers from applications",
+    "update applications set status = 'submitted'",
+    "update applications set submitted_at = now()",
+    "select apply_url from jobs",
+    "select * from submission_attempts",
+    "update submission_attempts set state = 'submitted'",
+    "insert into credit_ledger (user_id, delta, reason) values ('x', -1, 'submission')",
+    "select id from credit_ledger",
   ])("refuses: %s", async (query) => {
     await expect(asApplier(query)).rejects.toMatchObject({ code: "42501" });
   });
 
   it("reads the granted columns", async () => {
-    await expect(asApplier("select id, apply_url, closed_at from jobs limit 1")).resolves.toBeDefined();
     await expect(asApplier("select user_id, plan, status, past_due_since from subscriptions limit 1")).resolves.toBeDefined();
-    await expect(asApplier("select id from credit_ledger limit 1")).resolves.toBeDefined();
+    await expect(asApplier("select * from applier_job(gen_random_uuid())")).resolves.toBeDefined();
+    await expect(asApplier("select claim_cloud_attempt(gen_random_uuid(), 1, 'w')")).resolves.toBeDefined();
+    await expect(asApplier("select * from get_applier_payload(gen_random_uuid())")).resolves.toBeDefined();
+    await expect(asApplier("select mark_browser_launched(gen_random_uuid())")).resolves.toBeDefined();
+    await expect(asApplier("select mark_attempt_phase(gen_random_uuid(), 'filling')")).resolves.toBeDefined();
+    await expect(asApplier("select record_attempt_result(gen_random_uuid(), 'failed', 'applier_error', '{}')")).resolves.toBeDefined();
+  });
+
+  it("no other runtime role may call the applier's functions, and the function refuses an ambiguity it may not report", async () => {
+    for (const role of ["kairos_api", "kairos_worker", "kairos_readonly", "kairos_metrics"]) {
+      await expect(asRole(role, "select claim_cloud_attempt(gen_random_uuid(), 1, 'w')")).rejects.toMatchObject({ code: "42501" });
+      await expect(asRole(role, "select record_attempt_result(gen_random_uuid(), 'submitted', null, '{}')")).rejects.toMatchObject({ code: "42501" });
+    }
+    await expect(asApplier("select record_attempt_result(gen_random_uuid(), 'failed', 'no_report', '{}')")).rejects.toMatchObject({ code: "22023" });
   });
 
   async function approvedCloudRow(plan: "pro" | "starter") {
@@ -123,7 +146,7 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
   const charges = async (userId: string) =>
     (await admin.select().from(schema.creditLedger).where(eq(schema.creditLedger.userId, userId))).filter((l) => l.reason === "submission");
 
-  it("runs the applier's whole path as kairos_applier: read, claim, plan check, submit, one ledger debit", async () => {
+  it("runs the applier's whole path as kairos_applier: read, claim, plan check, submit; settlement alone writes the debit", async () => {
     const { rows: [who] } = await db().execute<{ name: string }>(sql`select current_user as name`);
     expect(who?.name).toBe("kairos_applier");
     const { userId, id } = await approvedCloudRow("pro");
@@ -131,6 +154,9 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
 
     await expect(processCloudApply({ data: { applicationId: id } } as never)).resolves.toEqual({ submitted: true });
 
+    expect((await statusOf(id)).status).toBe("submitting");
+    expect(await charges(userId)).toHaveLength(0);
+    await settleAll(admin);
     expect((await statusOf(id)).status).toBe("submitted");
     expect(await charges(userId)).toHaveLength(1);
   });
@@ -139,11 +165,13 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
     const challenged = await approvedCloudRow("pro");
     fakeBrowser({ frames: ["https://www.google.com/recaptcha/api2/bframe?k=key"] });
     await processCloudApply({ data: { applicationId: challenged.id } } as never);
+    await settleAll(admin);
     expect((await statusOf(challenged.id)).status).toBe("failed");
     expect(await charges(challenged.userId)).toHaveLength(0);
 
     const lapsed = await approvedCloudRow("starter");
     await processCloudApply({ data: { applicationId: lapsed.id } } as never);
+    await settleAll(admin);
     expect((await statusOf(lapsed.id)).status).toBe("failed");
     expect(await charges(lapsed.userId)).toHaveLength(0);
   });
@@ -284,6 +312,8 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       ["kairos_api", "update application_events set kind = 'sent'", false],
       ["kairos_worker", "delete from submission_attempts", false],
       ["kairos_applier", "select notes from tracker_items limit 1", false],
+      ["kairos_api", "select applier_job(gen_random_uuid())", false],
+      ["kairos_worker", "select mark_browser_launched(gen_random_uuid())", false],
     ] as const)("%s: %s -> allowed %s", async (role, query, allowed) => {
       if (allowed) await expect(asRole(role, query)).resolves.toBeDefined();
       else await expect(asRole(role, query)).rejects.toMatchObject({ code: expect.stringMatching(/^(42501|25006)$/) });

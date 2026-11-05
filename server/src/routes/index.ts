@@ -11,6 +11,8 @@ import { billingRouter } from "./billing";
 import { contactRouter } from "./contact";
 import { creditsRouter } from "./credits";
 import { extensionRouter } from "./extension";
+import { signedLinkRouter } from "./links";
+import { resendLinkAction } from "./resend-link";
 import { filesRouter } from "./files";
 import { forwardingRouter } from "./forwarding";
 import { importsRouter } from "./imports";
@@ -34,6 +36,8 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   // The per-address limit guards the GET page; a mail client's one-click POST comes from Gmail's or Yahoo's shared addresses,
   // where a burst would 429 real unsubscribes. A POST costs a signature check first and reaches the database only for a signed token.
   router.use("/unsubscribe", routeDeadline, (req, res, next) => (req.method === "POST" ? next() : limits.link(req, res, next)), unsubscribeRouter);
+  // The signed resend link (05-api 10.4): the token is the credential, and it must stay above the session chain below.
+  router.use("/applications/:id/resend-link", routeDeadline, limits.link, signedLinkRouter(resendLinkAction));
   // Public newsletter (WP-50): its own classes per route (routes/newsletter.ts), ahead of the anonymous class.
   router.use("/newsletter", routeDeadline, newsletterRouter(limits));
   router.use(routeDeadline, limits.anon);
@@ -55,7 +59,7 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   // flow yet), but always reads the session uncached.
   const freshAuthed = [requireAuth(gateway, "session-fresh"), limits.user, noStore];
   const approveAuthed = [
-    requireAuth(gateway, (req) => (req.method === "POST" && req.path === "/approve" ? "session-fresh" : "session"), { enforceAge: () => env().FRESH_SESSION_ENFORCE }),
+    requireAuth(gateway, (req) => (req.method === "POST" && (req.path === "/approve" || /^\/[^/]+\/resend$/.test(req.path)) ? "session-fresh" : "session"), { enforceAge: () => env().FRESH_SESSION_ENFORCE }),
     limits.user,
     noStore,
   ];

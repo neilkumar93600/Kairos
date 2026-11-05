@@ -28,7 +28,7 @@ const { approveApplications } = await import("../src/services/submissions");
 const { processInvariantsHourly } = await import("../src/jobs/invariants");
 const { processCloudApply } = await import("../src/jobs/cloud-apply");
 
-const LINE = { id: "l1", section: "Experience", text: "Built the billing service", factIds: ["f1"] };
+const LINE = { id: "l1", section: "Experience", text: "Built the billing service", factIds: [] };
 const ANSWER = { fieldKey: "first_name", label: "First name", value: "Test", source: "profile" as const };
 
 const users = new Map<string, SessionUser>();

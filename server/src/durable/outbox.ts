@@ -13,7 +13,7 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 /**
  * The durable seam for money and sending (WP-22, ADR-001 Revision 3): a Postgres outbox drained into BullMQ. To use it:
  *
- *   1. In the transaction of the business change: await emitOutbox(tx, "cloud-apply", { applicationId }, key).
+ *   1. In the transaction of the business change: await emitOutbox(tx, "cloud-apply", { applicationId, attemptNo }, key).
  *      The key is stable for one piece of work (a retry reuses it, a new attempt gets its own) and becomes the job id.
  *   2. Write the consumer as an ordinary BullMQ processor that is safe to run twice: delivery is at least once. It marks
  *      nothing here. A job BullMQ calls completed is the row's completion, which keeps the applier free of any outbox grant.
@@ -49,8 +49,11 @@ export function assertIdsOnly(data: object): void {
   }
 }
 
-/** Today one approval is one send, so the application id is stable. WP-29: add the attempt number here and in processReconcileApply. */
-export const cloudApplyKey = (applicationId: string): string => `apply-${applicationId}`;
+/**
+ * One key per attempt, so a resend is its own row and job: a `done` row under one key would swallow the next attempt through
+ * ON CONFLICT DO NOTHING. Rows of the previous release keep `apply-<id>`; processReconcileApply reads both forms.
+ */
+export const cloudApplyKey = (applicationId: string, attemptNo: number): string => `apply-${applicationId}-${attemptNo}`;
 
 /**
  * Records follow-up work in the caller's transaction. The same key twice is one row. Throws (which rolls the caller back) on
@@ -230,22 +233,25 @@ export async function outboxSummary(): Promise<{ pending: number; enqueued: numb
 /**
  * Why a dead cloud-apply row may not run again, or null. The job's own claim would stop a second send, but this is the guard
  * for the operator: `submitting` means a browser may have clicked submit, and only settlement may decide that one. Anything
- * else but `approved` has nothing to send. Fails closed on a row with no application. WP-29 writes the attempts; a resend's
- * earlier attempt refuses here too until WP-29 scopes this query to the row's attempt number.
+ * else but `approved` has nothing to send. Fails closed on a row with no application. Scoped to the row's attempt: an earlier
+ * attempt's settled send does not refuse a resend's row, and a row of an earlier attempt has nothing left to run. A payload
+ * of the previous release has no number and means the current attempt.
  */
-async function cloudApplyRefusal(tx: Tx, applicationId: unknown): Promise<string | null> {
+async function cloudApplyRefusal(tx: Tx, applicationId: unknown, rowAttemptNo: unknown): Promise<string | null> {
   if (typeof applicationId !== "string") return "no_application";
   // Locked, so nothing can claim it between this read and the resume's commit.
-  const [app] = await tx.select({ status: applications.status, channel: applications.channel }).from(applications).where(eq(applications.id, applicationId)).for("update");
+  const [app] = await tx.select({ status: applications.status, channel: applications.channel, attemptNo: applications.attemptNo }).from(applications).where(eq(applications.id, applicationId)).for("update");
   if (!app) return "no_application";
   if (app.status === "submitting") return "past_browser_step";
   if (app.status !== "approved" || app.channel !== "cloud") return "not_approved";
+  if (typeof rowAttemptNo === "number" && rowAttemptNo !== app.attemptNo) return "stale_attempt";
   const [attempt] = await tx
     .select({ id: submissionAttempts.id })
     .from(submissionAttempts)
     .where(
       and(
         eq(submissionAttempts.applicationId, applicationId),
+        eq(submissionAttempts.attemptNo, Math.max(app.attemptNo, 1)),
         eq(submissionAttempts.channel, "cloud"),
         or(isNotNull(submissionAttempts.browserLaunchedAt), isNotNull(submissionAttempts.submitSeenAt), eq(submissionAttempts.state, "open")),
       ),
@@ -256,7 +262,7 @@ async function cloudApplyRefusal(tx: Tx, applicationId: unknown): Promise<string
 
 /** What may refuse a resume, per queue the outbox feeds. Default deny: a queue with no entry does not resume (no_refusal_check). */
 const RESUME_REFUSALS: Record<OutboxQueue, (tx: Tx, payload: Record<string, unknown>) => Promise<string | null>> = {
-  "cloud-apply": (tx, payload) => cloudApplyRefusal(tx, payload.applicationId),
+  "cloud-apply": (tx, payload) => cloudApplyRefusal(tx, payload.applicationId, payload.attemptNo),
 };
 
 /**
