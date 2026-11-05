@@ -176,3 +176,23 @@ export const emailSuppressions = pgTable(
     check("email_suppressions_reason_ck", sql`${t.reason} IN ('hard_bounce','spam_complaint','manual')`),
   ],
 );
+
+/**
+ * The optional mail a person turned off, kept by address after the account is erased, on purpose (WP-35, like
+ * email_suppressions): a person who unsubscribed and signs up again with the same address stays opted out until they turn
+ * the kind on themselves. Keyed by HMAC(USER_HASH_KEY, "suppress:" + address) (lib/mailer.ts addressHash), so no address is
+ * stored. The kinds are profiles.mail_opt_out's keys; turning a kind back on deletes its row.
+ */
+export const mailOptOuts = pgTable(
+  "mail_opt_outs",
+  {
+    addressHash: bytea("address_hash").notNull(),
+    kind: text("kind").notNull(),
+    createdAt: tstz("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.addressHash, t.kind] }),
+    check("mail_opt_outs_hash_ck", sql`octet_length(${t.addressHash}) = 32`),
+    check("mail_opt_outs_kind_ck", sql`${t.kind} IN ('digest','outcome_report','autopilot_summary','reminders')`),
+  ],
+);

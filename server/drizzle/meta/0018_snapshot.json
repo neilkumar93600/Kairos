@@ -1,5 +1,5 @@
 {
-  "id": "73bbb8ac-ab46-48fc-8804-f72fd91282bc",
+  "id": "e2e8cca8-8bde-421f-8e49-2af84a9d2f63",
   "prevId": "9e6eaabb-d71a-48d9-b486-cd53eea6d1e5",
   "version": "7",
   "dialect": "postgresql",
@@ -4607,6 +4607,55 @@
       },
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.mail_opt_outs": {
+      "name": "mail_opt_outs",
+      "schema": "",
+      "columns": {
+        "address_hash": {
+          "name": "address_hash",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "mail_opt_outs_address_hash_kind_pk": {
+          "name": "mail_opt_outs_address_hash_kind_pk",
+          "columns": [
+            "address_hash",
+            "kind"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "mail_opt_outs_hash_ck": {
+          "name": "mail_opt_outs_hash_ck",
+          "value": "octet_length(\"mail_opt_outs\".\"address_hash\") = 32"
+        },
+        "mail_opt_outs_kind_ck": {
+          "name": "mail_opt_outs_kind_ck",
+          "value": "\"mail_opt_outs\".\"kind\" IN ('digest','outcome_report','autopilot_summary','reminders')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.notifications": {

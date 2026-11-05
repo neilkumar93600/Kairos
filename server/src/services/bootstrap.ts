@@ -6,6 +6,7 @@ import { CONSENT_PURPOSE } from "../lib/broadcast";
 import { env } from "../lib/env";
 import { grantFreeCredits } from "./credits";
 import { emailHashIfKeyed } from "./erasure";
+import { keptOptOuts } from "./mail-preferences";
 
 function forwardingAddressFor(userId: string): string {
   const suffix = randomBytes(4).toString("hex");
@@ -23,17 +24,20 @@ export async function bootstrapUser(db: Db, userId: string): Promise<boolean> {
     const [account] = await tx.select({ email: user.email }).from(user).where(eq(user.id, userId));
     const mailHash = account ? emailHashIfKeyed(account.email) : null;
     // The optional mail kinds start off until the person consents (MAIL_CONSENT_DEFAULT, owner-actions/WP-35.md).
+    // An address that objected before (even through an erased account) stays opted out of those kinds.
+    const kept = account ? await keptOptOuts(tx, account.email) : new Set<(typeof MAIL_OPT_OUTS)[number]>();
     const optIn = env().MAIL_CONSENT_DEFAULT === "opt_in";
+    const wanted = optIn ? MAIL_OPT_OUTS.filter((k) => !kept.has(k)) : [];
     const profile = await tx
       .insert(profiles)
-      .values({ userId, forwardingAddress: forwardingAddressFor(userId), preferences: null, normalizedEmailHash: mailHash, mailOptOut: optIn ? [] : [...MAIL_OPT_OUTS] })
+      .values({ userId, forwardingAddress: forwardingAddressFor(userId), preferences: null, normalizedEmailHash: mailHash, mailOptOut: MAIL_OPT_OUTS.filter((k) => !wanted.includes(k)) })
       .onConflictDoNothing({ target: profiles.userId })
       .returning({ userId: profiles.userId });
     if (profile.length) {
       // The default digest search (B-4); only with a new profile, so a person who deleted it does not get it back.
       await tx.insert(savedSearches).values({ userId, name: "My matches" }).onConflictDoNothing();
-      if (optIn) {
-        await tx.insert(consentRecords).values(MAIL_OPT_OUTS.map((key) => ({ userId, purpose: CONSENT_PURPOSE[key], version: env().PRIVACY_NOTICE_VERSION }))).onConflictDoNothing();
+      if (wanted.length) {
+        await tx.insert(consentRecords).values(wanted.map((key) => ({ userId, purpose: CONSENT_PURPOSE[key], version: env().PRIVACY_NOTICE_VERSION }))).onConflictDoNothing();
       }
     }
     const plan = await tx.insert(subscriptions).values({ userId, plan: "free" }).onConflictDoNothing({ target: subscriptions.userId }).returning({ userId: subscriptions.userId });
