@@ -28,7 +28,9 @@ export const claimVerifierEscalation: AgentSpec<ClaimVerifierInput, ClaimVerifie
   output: ClaimVerifierOutput,
   schemaSnapshot: snap,
   maxTokens: 400,
-  maxInputTokens: 2_500,
+  // agents/09 4 says 2,500; its prompt alone is about 1,650, which left too little for one long paragraph and its facts.
+  // 3,600 x $2 + 400 x $10 = $0.0112, under the $0.012 cap.
+  maxInputTokens: 3_600,
   timeoutMs: 30_000,
   expectedCostUsd: 0.0045,
   maxCostPerCallUsd: 0.012,

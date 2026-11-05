@@ -327,15 +327,15 @@ async function escalationAllowed(): Promise<boolean> {
  */
 function chunk(items: Pending[], facts: ReadonlyMap<string, string>, spec: AgentSpec<ClaimVerifierInput, ClaimVerifierOutput>, maxClaims: number) {
   const system = spec.prompts[activePromptVersion(spec)]?.system ?? "";
-  // 3 bytes a token (llm/estimate.ts); 150 tokens for the fences, headers and target line.
-  const budget = (spec.maxInputTokens - estimateInputTokens([system]) - 150) * 3;
+  // 3 bytes a token (llm/estimate.ts); 300 tokens for the fences, headers and target line.
+  const budget = (spec.maxInputTokens - estimateInputTokens([system]) - 300) * 3;
   const chunks: Pending[][] = [];
   const oversize: Pending[] = [];
   let cur: Pending[] = [];
   let curFacts = new Set<string>();
   let bytes = 0;
   const cost = (p: Pending, known: Set<string>) =>
-    Buffer.byteLength(p.item.text, "utf8") + 40 + p.item.factIds.filter((id) => !known.has(id)).reduce((n, id) => n + Buffer.byteLength(facts.get(id)!.slice(0, 400), "utf8") + 10, 0);
+    Buffer.byteLength(p.item.text, "utf8") + 70 + p.item.factIds.filter((id) => !known.has(id)).reduce((n, id) => n + Buffer.byteLength(facts.get(id)!.slice(0, 400), "utf8") + 10, 0);
   for (const p of items) {
     if (cost(p, new Set()) > budget) {
       oversize.push(p);

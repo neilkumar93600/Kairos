@@ -287,6 +287,11 @@ describe("runAgent", () => {
 const text = (n: number) => "Built and ran billing services for a team. ".repeat(Math.ceil(n / 43)).slice(0, n);
 const maxFacts = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `fact-${i}`, kind: "role", text: text(400) }));
 const maxJob = { title: text(200), company: text(200), descriptionText: text(20_000) };
+const maxClaim = {
+  claims: [{ id: "c01", kind: "prose", text: text(1_500), factRefs: ["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"] }],
+  facts: ["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"].map((ref) => ({ ref, text: text(400) })),
+  target: { companyName: text(200), jobTitle: text(200) },
+};
 const MAX_INPUTS: Record<keyof typeof AGENTS, unknown> = {
   "fit-scorer": { profileSummary: text(6_000), job: { title: text(200), companyName: text(200), location: text(200), remote: true, descriptionText: text(20_000) } },
   "resume-parser": { resumeText: text(30_000) },
@@ -294,6 +299,10 @@ const MAX_INPUTS: Record<keyof typeof AGENTS, unknown> = {
   "resume-writer": { scope: "resume", refine: "use_numbers", resumeView: text(12_000), facts: maxFacts(60), noteFact: { id: "note-1", kind: "metric", text: text(400) }, job: maxJob, maxSuggestions: 15 },
   "answer-drafter": { label: text(500), facts: maxFacts(60), savedAnswers: Array.from({ length: 20 }, () => ({ label: text(500), answer: text(5_000) })), job: maxJob },
   "cover-letter-writer": { facts: maxFacts(60), job: maxJob },
+  // The verifiers' wire schema (agents/08 3) is wider than their prompt ceiling on purpose: services/verify.ts chunks, and
+  // the render never truncates a claim, so an oversize call is refused. This is the largest single claim it sends.
+  "claim-verifier": maxClaim,
+  "claim-verifier-escalation": maxClaim,
 };
 
 describe("runAgent input contract (llm-agents-05, v01)", () => {
