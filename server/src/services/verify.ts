@@ -12,6 +12,7 @@ import { HttpError } from "../lib/errors";
 import { getFlags, type VerifierMode, type VerifierPath } from "../lib/flags";
 import { logger } from "../lib/logger";
 import { count } from "../lib/metrics";
+import { signal } from "../lib/sentry";
 import { activePromptVersion, runAgent } from "../llm/gateway";
 import { estimateInputTokens } from "../llm/estimate";
 
@@ -24,8 +25,8 @@ import { estimateInputTokens } from "../llm/estimate";
  *    (`verifier.verdicts`, label path:verdict:mode), and nothing is dropped; a verifier failure is logged and ignored;
  *  - enforce: only "supported" survives, and a verifier failure throws (the route answers 503 ai_unavailable and
  *    refunds), so nothing unverified is ever returned or stored.
- * ponytail: shadow awaits the verifier in the request, so its latency is measured before enforce; move it to the
- * background if the 7-day shadow shows the wait matters.
+ * ponytail: shadow awaits the verifier in the request, up to 8 s, so its latency is measured before enforce and a slow
+ * verifier cannot cost a user the route's deadline; move it to the background if the 7-day shadow shows the wait matters.
  */
 
 export type FinalVerdict = "supported" | "unsupported" | "contradicted" | "unverified";
@@ -70,10 +71,14 @@ export interface VerifyDeps {
   callsToday(): Promise<{ verifier: number; escalation: number; filledAt: number }>;
   random(): number;
   now(): number;
+  /** The most a shadow verification may hold up a request; past it the request goes on and nothing is dropped. */
+  shadowBudgetMs: number;
 }
 
 /** B.9.6, agents/09 2: escalations a UTC day are at most this share of verifier calls. */
 export const ESCALATION_SHARE = 0.15;
+/** agents/09 2: the owner hears about it here, before the cap starts dropping claims. */
+const ESCALATION_WARN_SHARE = 0.1;
 const COUNTS_CACHE_MS = 10_000;
 /** The roll-up behind llm_cost_daily runs every minute: escalations this process started since then are added on top. */
 const ROLLUP_LAG_MS = 90_000;
@@ -115,6 +120,7 @@ const defaultDeps: VerifyDeps = {
   },
   random: Math.random,
   now: Date.now,
+  shadowBudgetMs: 8_000,
 };
 
 let deps: VerifyDeps = defaultDeps;
@@ -138,7 +144,7 @@ const STEERING: RegExp[] = [
   /\bverdict\b/i,
   /\bclaim[- ]?(?:verifier|checker)\b/i,
   /\b(?:note|message|instruction)s?\s+(?:to|for)\s+(?:the\s+)?(?:checker|verifier|reviewer|model|ai|assistant)\b/i,
-  /\b(?:mark|judge|treat|rate|label|consider|classify)\w*\s+(?:this|it|the (?:claim|line|statement|answer))\s+(?:as\s+)?(?:supported|verified|true|accurate|correct)\b/i,
+  /\b(?:mark|judge|treat|rate|label|consider|classify)\w*\s+(?:this(?: (?:claim|line|statement|answer))?|it|the (?:claim|line|statement|answer))\s+(?:as\s+)?(?:supported|verified|true|accurate|correct)\b/i,
   /\bthis (?:claim|line|statement|answer) (?:is|was|has been) (?:supported|verified|true|accurate|correct)\b/i,
   /\b(?:status|verification)\s*[:=]\s*(?:supported|verified|true|pass(?:ed)?)\b/i,
 ];
@@ -181,7 +187,8 @@ export async function verifyClaims(items: ClaimItem[], facts: ReadonlyMap<string
   const mode = await deps.mode(opts.path);
   if (!items.length) return { mode, verdicts: new Map(), dropped: [] };
   try {
-    const verdicts = await judge(items, facts, opts);
+    const judged = judge(items, facts, opts);
+    const verdicts = mode === "shadow" ? await withinShadowBudget(judged) : await judged;
     for (const v of verdicts.values()) count("verifier.verdicts", 1, `${opts.path}:${v}:${mode}`);
     const dropped: Dropped[] =
       mode === "enforce"
@@ -195,6 +202,20 @@ export async function verifyClaims(items: ClaimItem[], facts: ReadonlyMap<string
     if (mode === "enforce") throw err;
     logger.warn({ path: opts.path, code: (err as { code?: string }).code ?? null }, "claim verifier failed in shadow; nothing dropped");
     return { mode, verdicts: new Map(), dropped: [] };
+  }
+}
+
+/** Rejects past the budget; the judging itself runs on, and still fills the memo. */
+async function withinShadowBudget<T>(work: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error("shadow verification over budget"), { code: "shadow_budget" })), deps.shadowBudgetMs);
+    timer.unref();
+  });
+  try {
+    return await Promise.race([work, late]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -270,12 +291,13 @@ async function judge(items: ClaimItem[], facts: ReadonlyMap<string, string>, opt
     const esc = chunk(uncertain, facts, claimVerifierEscalation, ESCALATION_MAX_CLAIMS);
     for (const p of esc.oversize) setAll(p.hex, "unverified");
     for (const c of esc.chunks) {
-      if (!(await escalationAllowed())) {
-        count("verifier.escalation_capped", c.length, opts.path);
-        for (const p of c) setAll(p.hex, "unverified");
-        continue;
-      }
       try {
+        // Inside the try: a cap that cannot be read allows nothing, and the claims fail closed like any escalation failure.
+        if (!(await escalationAllowed())) {
+          count("verifier.escalation_capped", c.length, opts.path);
+          for (const p of c) setAll(p.hex, "unverified");
+          continue;
+        }
         for (const [hex, verdict] of await send(claimVerifierEscalation, c, facts, opts)) {
           if (verdict === "uncertain") {
             setAll(hex, "unverified");
@@ -315,6 +337,7 @@ async function escalationAllowed(): Promise<boolean> {
   const dayStart = Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), new Date(now).getUTCDate());
   localEscalations = localEscalations.filter((t) => t >= dayStart);
   const recent = localEscalations.filter((t) => t >= c.filledAt - ROLLUP_LAG_MS).length;
+  if (c.verifier >= 100 && c.escalation + recent > ESCALATION_WARN_SHARE * c.verifier) signal("verifier_escalation_high");
   if (c.escalation + recent + 1 > ESCALATION_SHARE * c.verifier) return false;
   localEscalations.push(now);
   return true;

@@ -197,7 +197,10 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
   // The fallback ladder (2.6): the primary model, then the tier-up model if the spec allows and
   // the share cap permits. Defer throws retryable; fail-closed throws non-retryable.
   for (let chain = 0; chain < 2; chain++) {
-    const perCallCap = chain === 0 ? spec.maxCostPerCallUsd : (spec.tierUp?.maxCostPerCallUsd ?? spec.maxCostPerCallUsd);
+    // A model_pin is an operator's rollback: its cap is that model's worst case at this agent's own token ceilings, or a
+    // pin to a pricier model would refuse every call. The other budget scopes still apply.
+    const primaryCap = model === spec.model ? spec.maxCostPerCallUsd : estimateCallUsd(spec.maxInputTokens, maxTokens, model);
+    const perCallCap = chain === 0 ? primaryCap : (spec.tierUp?.maxCostPerCallUsd ?? spec.maxCostPerCallUsd);
     const result = await runOnModel(model, perCallCap, chain === 0 ? callKind : "tier_up");
     if (result.ok) {
       return {

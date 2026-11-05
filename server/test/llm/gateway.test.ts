@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { runAgent, configureGateway, type GatewayDeps } from "../../src/llm/gateway";
+import { rolloutBucket, runAgent, configureGateway, type GatewayDeps, type GatewayFlags } from "../../src/llm/gateway";
 import { Budget } from "../../src/llm/budget";
 import { memorySpendStore } from "../../src/llm/spend-store";
 import { fakeAnthropic, type Scripted } from "../../src/llm/testing";
@@ -7,6 +7,7 @@ import { resetBreakers } from "../../src/llm/breaker";
 import { acquire, resetLimiter } from "../../src/llm/limiter";
 import { AgentError } from "../../src/llm/errors";
 import { userHash } from "../../src/llm/redact";
+import { claimVerifier } from "../../src/agents/claim-verifier/spec";
 import { fitScorer } from "../../src/agents/fit-scorer/spec";
 import { resumeTailor } from "../../src/agents/resume-tailor/spec";
 import { AGENTS } from "../../src/agents/registry";
@@ -393,5 +394,91 @@ describe("budget scope refusal", () => {
     const err = await runAgent(fitScorer, fitInput, {}).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AgentError);
     expect((err as AgentError).code).toBe("auth");
+  });
+});
+
+describe("pins, canaries and shadows (03-agent-runtime 4.5, 14.2; WP-26)", () => {
+  const v2 = { ...fitScorer, prompts: { ...fitScorer.prompts, 2: { version: 2, system: "VERSION TWO ".repeat(250), fingerprint: "ab".repeat(32) } } };
+  const flagsWith = (extra: Partial<GatewayFlags>): (() => GatewayFlags) => () => ({ llmPaused: false, batchPaused: false, disabled: {}, promptPin: {}, ...extra });
+  let rows: CallRow[];
+  const setup = (flags: () => GatewayFlags) => {
+    const fake = fakeAnthropic(okFit());
+    configureGateway({ client: () => fake, budget: new Budget(memorySpendStore()), writeRow: async (r) => (rows.push(r), "x"), now: () => Date.now(), sleep: async () => {}, flags });
+    return fake;
+  };
+  const systemOf = (req: Record<string, unknown> | undefined) => (req!.system as { text: string }[])[0]!.text;
+  /** A user whose bucket for fit-scorer is inside (or outside) a 50% rollout. */
+  const userIn = (inside: boolean) => Array.from({ length: 200 }, (_, i) => `user-${i}`).find((u) => rolloutBucket("fit-scorer", { userId: u })! < 50 === inside)!;
+
+  beforeEach(() => {
+    rows = [];
+    resetBreakers();
+    resetLimiter();
+  });
+  afterEach(() => configureGateway({ writeRow: async () => null, flags: () => ({ llmPaused: false, batchPaused: false, disabled: {}, promptPin: {} }) }));
+
+  it("model_pin replaces the primary model", async () => {
+    const fake = setup(flagsWith({ modelPin: { "fit-scorer": "claude-sonnet-5-5" } }));
+    const r = await runAgent(fitScorer, fitInput, {});
+    expect(r.model).toBe("claude-sonnet-5-5");
+    expect(fake.requests[0]!.model).toBe("claude-sonnet-5-5");
+  });
+
+  it("a canary serves its share of users the other version as call_kind canary, and the rest the active one", async () => {
+    const fake = setup(flagsWith({ promptCanary: { "fit-scorer": { version: 2, percent: 50 } } }));
+    await runAgent(v2, fitInput, { userId: userIn(true) });
+    expect(systemOf(fake.requests[0])).toContain("VERSION TWO");
+    expect(rows[0]).toMatchObject({ callKind: "canary", promptVersion: 2 });
+    await runAgent(v2, fitInput, { userId: userIn(false) });
+    expect(systemOf(fake.requests[1])).not.toContain("VERSION TWO");
+    expect(rows[1]).toMatchObject({ callKind: "primary", promptVersion: 1 });
+  });
+
+  it("a pin beats a canary; a canary on a version that is not loaded, or a call with no user or job, runs the active one", async () => {
+    setup(flagsWith({ promptPin: { "fit-scorer": 1 }, promptCanary: { "fit-scorer": { version: 2, percent: 100 } } }));
+    await runAgent(v2, fitInput, { userId: "u" });
+    expect(rows.at(-1)).toMatchObject({ callKind: "primary", promptVersion: 1 });
+    setup(flagsWith({ promptCanary: { "fit-scorer": { version: 9, percent: 100 } } }));
+    await runAgent(v2, fitInput, { userId: "u" });
+    expect(rows.at(-1)).toMatchObject({ callKind: "primary", promptVersion: 1 });
+    setup(flagsWith({ promptCanary: { "fit-scorer": { version: 2, percent: 100 } } }));
+    await runAgent(v2, fitInput, {});
+    expect(rows.at(-1)).toMatchObject({ callKind: "primary", promptVersion: 1 });
+  });
+
+  it("a verifier never runs a canary, whatever the flag says: its candidate never decides a verdict", async () => {
+    const candidate = { ...claimVerifier, prompts: { ...claimVerifier.prompts, 2: { version: 2, system: "CANDIDATE ".repeat(300), fingerprint: "cd".repeat(32) } } };
+    const fake = fakeAnthropic([{ content: [{ type: "text", text: JSON.stringify({ verdicts: [{ claimId: "c01", verdict: "unsupported", factRef: null }] }) }], stop_reason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 } }]);
+    configureGateway({ client: () => fake, budget: new Budget(memorySpendStore()), writeRow: async (r) => (rows.push(r), "x"), now: () => Date.now(), sleep: async () => {}, flags: flagsWith({ promptCanary: { "claim-verifier": { version: 2, percent: 100 } } }) });
+    const input = { claims: [{ id: "c01", kind: "resume_line" as const, text: "Built billing", factRefs: ["f1"] }], facts: [{ ref: "f1", text: "Built billing" }], target: null };
+    const r = await runAgent(candidate, input, { userId: "u" });
+    expect(r.promptVersion).toBe(1);
+    expect(rows[0]).toMatchObject({ callKind: "primary", promptVersion: 1 });
+    expect((fake.requests[0]!.system as { text: string }[])[0]!.text).not.toContain("CANDIDATE");
+  });
+
+  it("a shadow runs the other version in addition, under the ops budget; production's result stands", async () => {
+    const fake = setup(flagsWith({ promptShadow: { "fit-scorer": { version: 2, percent: 5 } } }));
+    const user = Array.from({ length: 2_000 }, (_, i) => `user-${i}`).find((u) => rolloutBucket("fit-scorer", { userId: u })! < 5)!;
+    const seen = await new Promise<{ shadow: unknown; production: unknown }>((resolve, reject) => {
+      runAgent(v2, fitInput, { userId: user, budgetClass: "interactive" }, { onShadow: (shadow, production) => resolve({ shadow, production }) }).then((r) => {
+        expect(r.promptVersion).toBe(1);
+      }, reject);
+    });
+    expect(seen.shadow).toEqual(seen.production);
+    expect(fake.requests).toHaveLength(2);
+    const shadowRow = rows.find((r) => r.callKind === "shadow")!;
+    expect(shadowRow).toMatchObject({ promptVersion: 2, budgetClass: "ops" });
+  });
+
+  it("no shadow outside its share, and a failing shadow never touches production", async () => {
+    const fake = setup(flagsWith({ promptShadow: { "fit-scorer": { version: 2, percent: 5 } } }));
+    const outside = Array.from({ length: 200 }, (_, i) => `user-${i}`).find((u) => rolloutBucket("fit-scorer", { userId: u })! >= 5)!;
+    await runAgent(v2, fitInput, { userId: outside });
+    expect(fake.requests).toHaveLength(1);
+    const flaky = fakeAnthropic([...okFit(), { status: 401, type: "authentication_error" }]);
+    configureGateway({ client: () => flaky });
+    const inside = Array.from({ length: 2_000 }, (_, i) => `user-${i}`).find((u) => rolloutBucket("fit-scorer", { userId: u })! < 5)!;
+    await expect(runAgent(v2, fitInput, { userId: inside })).resolves.toMatchObject({ promptVersion: 1 });
   });
 });

@@ -22,7 +22,17 @@ export const adminRouter = Router();
 adminRouter.get("/flags", async (_req, res) => {
   const [flags, rows] = await Promise.all([getFlags(), db().select().from(opsFlags)]);
   res.json({
-    flags: { ...flags, extensionOnly: [...flags.extensionOnly], features: Object.fromEntries(flags.features) },
+    flags: {
+      ...flags,
+      extensionOnly: [...flags.extensionOnly],
+      features: Object.fromEntries(flags.features),
+      agentDisabled: [...flags.agentDisabled],
+      promptPin: Object.fromEntries(flags.promptPin),
+      modelPin: Object.fromEntries(flags.modelPin),
+      promptCanary: Object.fromEntries(flags.promptCanary),
+      promptShadow: Object.fromEntries(flags.promptShadow),
+      verifierMode: Object.fromEntries(flags.verifierMode),
+    },
     rows: rows.map((r) => ({ key: r.key, value: r.value, updatedBy: r.updatedBy, updatedAt: r.updatedAt })),
     env: { PAUSE_SCORING: env().PAUSE_SCORING, LLM_SHED_LEVEL: env().LLM_SHED_LEVEL, CLOUD_APPLIER_OPEN: env().CLOUD_APPLIER_OPEN },
   });

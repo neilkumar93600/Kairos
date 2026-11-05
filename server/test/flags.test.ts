@@ -1,12 +1,16 @@
 import { getTableName } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
+import { readFileSync } from "node:fs";
 import { CACHE_MS, getFlags, resetFlagCache, resolveFlags, schemaFor } from "../src/lib/flags";
 
 /** WP-27: ops_flags with a 10 s cache; the env values of WP-04 and WP-06 stay as fallback and pause-only override. */
 const off = { PAUSE_SCORING: false, LLM_SHED_LEVEL: 0, CLOUD_APPLIER_OPEN: false };
 const rows = (o: Record<string, unknown>) => new Map(Object.entries(o));
 const none = new Map<string, boolean>();
+
+// ops_flags_key_ck as migration 0018 sets it (the int tests run the real constraint).
+const OPS_FLAGS_KEY_CK = new RegExp(readFileSync(new URL("../drizzle/0018_verified_claims.sql", import.meta.url), "utf8").match(/CHECK \(key ~ '([^']+)'\)/)![1]!);
 
 describe("resolveFlags", () => {
   it("is all off with an empty table and an unset env", () => {
@@ -42,6 +46,54 @@ describe("resolveFlags", () => {
 
   it("works with an env that has no PAUSE_SCORING or LLM_SHED_LEVEL (the applier's)", () => {
     expect(resolveFlags(rows({}), none, { CLOUD_APPLIER_OPEN: false }).llmShedLevel).toBe(0);
+  });
+});
+
+describe("per-agent flags and verifier_mode (WP-26)", () => {
+  it("reads each family; a bad value or an unknown agent is ignored", () => {
+    const f = resolveFlags(
+      rows({
+        "verifier_mode:tailor": "enforce",
+        "verifier_mode:drafts": "off",
+        "agent_disabled:fit-scorer": true,
+        "agent_disabled:resume-parser": false,
+        "prompt_pin:resume-tailor": 2,
+        "prompt_pin:nobody": 2,
+        "model_pin:answer-drafter": "claude-sonnet-5-5",
+        "model_pin:resume-writer": "gpt-9",
+        "prompt_canary:resume-writer": { version: 2, percent: 10 },
+        "prompt_shadow:claim-verifier": { version: 2, percent: 5 },
+        "prompt_shadow:fit-scorer": { version: 2, percent: 50 },
+      }),
+      none,
+      off,
+    );
+    expect(f.verifierMode.get("tailor")).toBe("enforce");
+    expect(f.verifierMode.has("drafts")).toBe(false);
+    expect([...f.agentDisabled]).toEqual(["fit-scorer"]);
+    expect(Object.fromEntries(f.promptPin)).toEqual({ "resume-tailor": 2 });
+    expect(Object.fromEntries(f.modelPin)).toEqual({ "answer-drafter": "claude-sonnet-5-5" });
+    expect(f.promptCanary.get("resume-writer")).toEqual({ version: 2, percent: 10 });
+    expect(f.promptShadow.get("claim-verifier")).toEqual({ version: 2, percent: 5 });
+    expect(f.promptShadow.has("fit-scorer")).toBe(false); // a shadow doubles cost: at most 5%
+  });
+
+  it("defaults every path to shadow: no row, no entry", () => {
+    expect(resolveFlags(rows({}), none, off).verifierMode.size).toBe(0);
+  });
+
+  it("schemaFor knows the keys the migration's ops_flags_key_ck allows, and no others", () => {
+    expect(schemaFor("verifier_mode:prepare")?.safeParse("enforce").success).toBe(true);
+    expect(schemaFor("verifier_mode:prepare")?.safeParse("off").success).toBe(false);
+    expect(schemaFor("verifier_mode:unknown")).toBeUndefined();
+    expect(schemaFor("model_pin:claim-verifier")?.safeParse("claude-haiku-5-5").success).toBe(true);
+    expect(schemaFor("model_pin:claim-verifier")?.safeParse("claude-opus-5-5").success).toBe(false);
+    expect(schemaFor("prompt_pin:nobody")).toBeUndefined();
+    expect(schemaFor("prompt_pin:fit-scorer:extra")).toBeUndefined();
+    for (const key of ["agent_disabled:interview-coach", "prompt_pin:jd-analyst", "prompt_canary:fit-scorer", "prompt_shadow:reply-classifier", "verifier_mode:patch"]) {
+      expect(schemaFor(key), key).toBeDefined();
+      expect(key).toMatch(OPS_FLAGS_KEY_CK);
+    }
   });
 });
 
