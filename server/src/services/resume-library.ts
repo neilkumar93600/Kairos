@@ -219,20 +219,8 @@ async function interim<T>(insert: () => Promise<T>): Promise<T> {
   try {
     return await insert();
   } catch (err) {
-    interface DbErrorChain {
-      code?: string;
-      constraint?: string;
-      cause?: DbErrorChain;
-    }
-    let curr = err as DbErrorChain | null | undefined;
-    let code: string | undefined;
-    let constraint: string | undefined;
-    while (curr) {
-      if (typeof curr.code === "string") code ??= curr.code;
-      if (typeof curr.constraint === "string") constraint ??= curr.constraint;
-      curr = curr.cause;
-    }
-    if ((code === "23505" && constraint === "resumes_user_uq") || String(err).includes("resumes_user_uq")) throw ONE_RESUME_UNTIL_0011();
+    const e = err as { code?: string; constraint?: string; cause?: { code?: string; constraint?: string } };
+    if ((e.cause ?? e).code === "23505" && (e.cause ?? e).constraint === "resumes_user_uq") throw ONE_RESUME_UNTIL_0011();
     throw err;
   }
 }

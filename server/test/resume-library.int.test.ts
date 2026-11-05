@@ -19,7 +19,8 @@ import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from ".
 if (hasTestDb) process.env.DATABASE_URL = testDbUrl("library");
 process.env.DATA_KEKS = `v1:${Buffer.from([...Array(32).keys()]).toString("base64")}`;
 const chatJson = vi.hoisted(() => vi.fn());
-vi.mock("../src/services/llm", () => ({ chatJson }));
+// Spread the real module: the error handler reads LlmError from it, and a missing mock export throws inside the handler.
+vi.mock("../src/services/llm", async (orig) => ({ ...(await orig<typeof import("../src/services/llm")>()), chatJson }));
 const queued = vi.hoisted(() => [] as { importId: string }[]);
 vi.mock("../src/jobs/queues", async (orig) => ({
   ...(await orig<typeof import("../src/jobs/queues")>()),
