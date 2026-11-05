@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { verdict, type ChaosFacts } from "../../ops/chaos/verdict";
-import { afterJobState, assertIdsOnly, emitOutbox, MAX_ATTEMPTS } from "../src/durable/outbox";
+import { addSpendsAttempt, afterJobState, assertIdsOnly, emitOutbox, MAX_ATTEMPTS } from "../src/durable/outbox";
+import { completedRetention, OUTBOX_QUEUES, QUEUE_CONFIG, type QueueName } from "../src/jobs/queues";
 
 const APP = "3f0e8a52-6a41-4d6e-9f7a-0a1b2c3d4e5f";
 
@@ -45,6 +46,42 @@ describe("the sweep's decision", () => {
       expect(afterJobState(state, 0)).toBe("retry");
       expect(afterJobState(state, MAX_ATTEMPTS - 2)).toBe("retry");
       expect(afterJobState(state, MAX_ATTEMPTS - 1)).toBe("dead");
+    }
+  });
+});
+
+describe("a failed add", () => {
+  it.each<[string, unknown]>([
+    ["the drain's deadline", new Error("timeout")],
+    ["a socket error", Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" })],
+    ["a closed connection", new Error("Connection is closed.")],
+    ["a full Redis", Object.assign(new Error("OOM command not allowed"), { name: "ReplyError" })],
+    ["a Redis reloading", Object.assign(new Error("LOADING"), { name: "ReplyError" })],
+  ])("spends no attempt on %s", (_, err) => {
+    expect(addSpendsAttempt(err)).toBe(false);
+  });
+
+  it.each<[string, unknown]>([
+    ["BullMQ refusing the id", new Error("Custom Id cannot contain :")],
+    ["a broken row", new TypeError("cannot read properties of undefined")],
+  ])("spends one on %s", (_, err) => {
+    expect(addSpendsAttempt(err)).toBe(true);
+  });
+});
+
+describe("the completed job the sweep reads", () => {
+  it("an outbox-fed queue removes completed jobs by age alone, and that age outlives many sweeps", () => {
+    expect(OUTBOX_QUEUES.length).toBeGreaterThan(0);
+    for (const name of OUTBOX_QUEUES) {
+      const kept = completedRetention(name);
+      expect(kept.count, `${name}: a count evicts finished work the sweep has not read`).toBeUndefined();
+      expect(kept.age).toBeGreaterThanOrEqual(3600);
+    }
+  });
+
+  it("every other queue keeps its count and its 24 hours", () => {
+    for (const name of Object.keys(QUEUE_CONFIG) as QueueName[]) {
+      if (!(OUTBOX_QUEUES as readonly string[]).includes(name)) expect(completedRetention(name)).toEqual({ age: 24 * 3600, count: 5000 });
     }
   });
 });

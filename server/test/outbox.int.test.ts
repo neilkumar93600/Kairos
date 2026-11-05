@@ -25,11 +25,11 @@ const POOR = "outbox-poor-0001";
 process.env.ADMIN_USER_IDS = ADMIN;
 process.env.OWNER_USER_IDS = `${MEMBER},${POOR}`; // the cloud channel is owner-only until CLOUD_APPLIER_OPEN
 
-// Redis refuses when the test says so; everything else in the module stays real.
-const redisDown = vi.hoisted(() => ({ on: false }));
+// The add fails with this error when the test sets one; everything else in the module stays real.
+const redisDown = vi.hoisted(() => ({ error: null as Error | null }));
 vi.mock("../src/jobs/queues", async (orig) => {
   const real = await orig<typeof import("../src/jobs/queues")>();
-  return { ...real, redrive: ((...args: Parameters<typeof real.redrive>) => (redisDown.on ? Promise.reject(new Error("redis down")) : real.redrive(...args))) as typeof real.redrive };
+  return { ...real, redrive: ((...args: Parameters<typeof real.redrive>) => (redisDown.error ? Promise.reject(redisDown.error) : real.redrive(...args))) as typeof real.redrive };
 });
 
 const { createApp } = await import("../src/app");
@@ -116,7 +116,7 @@ describe.skipIf(!hasTestDb)("the outbox against Postgres and Redis", () => {
   beforeEach(async () => {
     await resetDb(db);
     resetFlagCache();
-    redisDown.on = false;
+    redisDown.error = null;
     await q().obliterate({ force: true });
     member = await seedUser(db, { id: MEMBER, credits: 20 });
   });
@@ -140,7 +140,9 @@ describe.skipIf(!hasTestDb)("the outbox against Postgres and Redis", () => {
 
       await expect(drainOutbox()).resolves.toBe(1);
       expect((await rowOf(key)).status).toBe("enqueued");
-      expect((await q().getJob(key))?.data).toEqual({ applicationId: id });
+      const job = await q().getJob(key);
+      expect(job?.data).toEqual({ applicationId: id });
+      expect(job?.opts.removeOnComplete).toEqual({ age: 2 * 3600 }); // the sweep reads it: no count may evict it
 
       await expect(drainOutbox()).resolves.toBe(0);
       expect(await q().getWaitingCount()).toBe(1);
@@ -177,15 +179,39 @@ describe.skipIf(!hasTestDb)("the outbox against Postgres and Redis", () => {
 
     it("Redis refusing the add keeps the row pending and spends no attempt", async () => {
       const { key } = await approved();
-      redisDown.on = true;
+      redisDown.error = Object.assign(new Error(`connect ECONNREFUSED ${MARKER}`), { code: "ECONNREFUSED" });
       await expect(drainOutbox()).resolves.toBe(1);
+      // A code, never the exception's own text.
       expect(await rowOf(key)).toMatchObject({ status: "pending", attempts: 0, lastError: "enqueue_failed" });
 
       await expect(drainOutbox()).resolves.toBe(0); // backing off, a few seconds
-      redisDown.on = false;
+      redisDown.error = null;
       await due(key);
       await expect(drainOutbox()).resolves.toBe(1);
       expect(await rowOf(key)).toMatchObject({ status: "enqueued", lastError: null });
+    });
+  });
+
+  describe("an add BullMQ refuses", () => {
+    it("spends an attempt with the code alone, backs off, and the last one leaves a dead row", async () => {
+      const { key } = await approved();
+      redisDown.error = new Error(`Custom Id cannot contain : for ${MARKER}`);
+      await expect(drainOutbox()).resolves.toBe(1);
+      const row = await rowOf(key);
+      expect(row).toMatchObject({ status: "pending", attempts: 1, lastError: "enqueue_rejected" });
+      expect(row.availableAt.getTime()).toBeGreaterThan(Date.now());
+
+      await db.update(schema.outbox).set({ attempts: MAX_ATTEMPTS - 1 }).where(eq(schema.outbox.dedupeKey, key));
+      await due(key);
+      await expect(drainOutbox()).resolves.toBe(1);
+      expect(await rowOf(key)).toMatchObject({ status: "dead", attempts: MAX_ATTEMPTS, lastError: "enqueue_rejected" });
+    });
+
+    it("leaves a row of a queue this release does not know, for the release that does", async () => {
+      await db.insert(schema.outbox).values({ queue: "from-next-release", dedupeKey: "next-1", payload: {} });
+      redisDown.error = new TypeError("no such queue");
+      await drainOutbox();
+      expect(await rowOf("next-1")).toMatchObject({ status: "pending", attempts: 0, lastError: "enqueue_failed" });
     });
   });
 
@@ -450,6 +476,14 @@ describe.skipIf(!hasTestDb)("the outbox against Postgres and Redis", () => {
       const pending = await resume((await rowOf(key)).id);
       expect(pending.status).toBe(409);
       expect(pending.body.error.details).toEqual({ reason: "not_dead" });
+    });
+
+    it("default deny: refuses a dead row of a queue with no refusal check", async () => {
+      await db.insert(schema.outbox).values({ queue: "notify", dedupeKey: "other-1", payload: {}, status: "dead", attempts: MAX_ATTEMPTS });
+      const res = await resume((await rowOf("other-1")).id);
+      expect(res.status).toBe(409);
+      expect(res.body.error.details).toEqual({ reason: "no_refusal_check" });
+      expect((await rowOf("other-1")).status).toBe("dead");
     });
 
     it("refuses a dead row whose application is gone, an unknown id, and a free-text reason", async () => {

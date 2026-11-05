@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNotNull, lte, or, sql } from "drizzle-orm";
 import { db, type Db } from "../db/client";
 import { applications, opsAudit, outbox, submissionAttempts } from "../db/schema";
-import { queue, QUEUES, redrive, type JobData, type QueueName } from "../jobs/queues";
+import { queue, QUEUE_CONFIG, redrive, type JobData, type OutboxQueue, type QueueName } from "../jobs/queues";
 import { HttpError, notFound } from "../lib/errors";
 import { deadline } from "../lib/lifecycle";
 import { logger } from "../lib/logger";
@@ -17,7 +17,7 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
  *      The key is stable for one piece of work (a retry reuses it, a new attempt gets its own) and becomes the job id.
  *   2. Write the consumer as an ordinary BullMQ processor that is safe to run twice: delivery is at least once. It marks
  *      nothing here. A job BullMQ calls completed is the row's completion, which keeps the applier free of any outbox grant.
- *   3. If re-running by hand could repeat an outside effect, add the queue's refusal to resumeOutbox.
+ *   3. Add the queue to OUTBOX_QUEUES (jobs/queues.ts) and its refusal to RESUME_REFUSALS below; the compiler asks for both.
  *
  * What runs it: startOutboxDrain in the worker (rows to jobs, 1 s poll) and sweepOutbox on the maintenance queue (jobs to
  * outcomes, every minute). A crash between the commit and the add leaves the row pending for the next drain. A crash between
@@ -56,7 +56,7 @@ export const cloudApplyKey = (applicationId: string): string => `apply-${applica
  * Records follow-up work in the caller's transaction. The same key twice is one row. Throws (which rolls the caller back) on
  * a key or payload that is not ids.
  */
-export async function emitOutbox<N extends QueueName>(tx: Db | Tx, name: N, data: JobData[N], key: string): Promise<void> {
+export async function emitOutbox<N extends OutboxQueue>(tx: Db | Tx, name: N, data: JobData[N], key: string): Promise<void> {
   assertIdsOnly(data);
   if (!ID_SHAPE.test(key)) throw new Error("outbox key is not id-shaped");
   await tx.insert(outbox).values({ queue: name, dedupeKey: key, payload: data }).onConflictDoNothing({ target: outbox.dedupeKey });
@@ -64,24 +64,31 @@ export async function emitOutbox<N extends QueueName>(tx: Db | Tx, name: N, data
 
 /**
  * One pass: up to BATCH due rows become BullMQ jobs. SKIP LOCKED lets replicas share the work, and the locks are held over
- * the Redis calls so the mark commits only after its add. A refused add leaves the row pending and costs no attempt: Redis
- * being down delays the work, it does not fail it. The add replaces a finished job of the same id, or a re-delivered row's
- * add would be a no-op on the failed job BullMQ keeps for 7 days.
+ * the Redis calls so the mark commits only after its add. An add that Redis could not take leaves the row pending and costs
+ * no attempt: Redis being down delays the work, it does not fail it. An add BullMQ refuses spends one (addSpendsAttempt), so
+ * a poison row dies and pages like a poison job. The add replaces a finished job of the same id, or a re-delivered row's add
+ * would be a no-op on the failed job BullMQ keeps for 7 days.
  */
 export async function drainOutbox(): Promise<number> {
-  return db().transaction(async (tx) => {
+  const out = await db().transaction(async (tx) => {
     const rows = await tx
-      .select({ id: outbox.id, queue: outbox.queue, dedupeKey: outbox.dedupeKey, payload: outbox.payload })
+      .select({ id: outbox.id, queue: outbox.queue, dedupeKey: outbox.dedupeKey, payload: outbox.payload, attempts: outbox.attempts })
       .from(outbox)
       .where(and(eq(outbox.status, "pending"), lte(outbox.availableAt, sql`now()`)))
       .orderBy(asc(outbox.availableAt))
       .limit(BATCH)
       .for("update", { skipLocked: true });
-    if (rows.length === 0) return 0;
+    if (rows.length === 0) return { drained: 0, deadKeys: [] };
 
     const added = await Promise.allSettled(rows.map((r) => deadline(redrive(r.queue as QueueName, r.payload as never, r.dedupeKey, true), REDIS_DEADLINE_MS)));
     const ok = rows.filter((_, i) => added[i]!.status === "fulfilled").map((r) => r.id);
-    const refused = rows.filter((_, i) => added[i]!.status === "rejected").map((r) => r.id);
+    // A row of a queue this release does not know is the next release's, mid-deploy: left alone, not poison.
+    const spends = (r: (typeof rows)[number], i: number) => {
+      const a = added[i]!;
+      return a.status === "rejected" && r.queue in QUEUE_CONFIG && addSpendsAttempt(a.reason);
+    };
+    const poison = rows.filter(spends);
+    const refused = rows.filter((r, i) => added[i]!.status === "rejected" && !spends(r, i)).map((r) => r.id);
     if (ok.length) {
       await tx.update(outbox).set({ status: "enqueued", lastError: null, availableAt: sql`now() + interval '1 minute'`, updatedAt: sql`now()` }).where(inArray(outbox.id, ok));
     }
@@ -89,8 +96,39 @@ export async function drainOutbox(): Promise<number> {
       logger.warn({ refused: refused.length }, "outbox rows not enqueued");
       await tx.update(outbox).set({ lastError: "enqueue_failed", availableAt: sql`now() + interval '5 seconds'`, updatedAt: sql`now()` }).where(inArray(outbox.id, refused));
     }
-    return rows.length;
+    const dead = poison.filter((r) => afterJobState("failed", r.attempts) === "dead");
+    await spendAttempt(tx, poison.filter((r) => !dead.includes(r)).map((r) => r.id), "pending", "enqueue_rejected");
+    await spendAttempt(tx, dead.map((r) => r.id), "dead", "enqueue_rejected");
+    return { drained: rows.length, deadKeys: dead.map((r) => r.dedupeKey) };
   });
+  reportDead(out.deadKeys);
+  return out.drained;
+}
+
+/**
+ * Whether a failed add is the row's fault, not Redis's: the deadline, a socket error (it has a code), a closed connection or
+ * any reply from Redis (OOM on a full noeviction Redis, READONLY, LOADING) say Redis could not take it, and retrying is right.
+ * What is left is BullMQ refusing the id or the data, which no retry will change. The text never reaches the row.
+ */
+export function addSpendsAttempt(err: unknown): boolean {
+  const e = err as { name?: string; code?: unknown; message?: string };
+  if (e.code !== undefined || e.name === "ReplyError" || e.name === "MaxRetriesPerRequestError" || e.name === "AbortError") return false;
+  return !/^(timeout$|Connection is closed)/.test(e.message ?? "");
+}
+
+/** A delivery came to nothing: one attempt spent, and either the back-off (30 s, 1 min, 2 min, 4 min) or the end. The code only: an error's own text can hold anything. */
+async function spendAttempt(tx: Tx, ids: string[], status: "pending" | "dead", code: "job_failed" | "job_lost" | "enqueue_rejected"): Promise<void> {
+  if (!ids.length) return;
+  await tx
+    .update(outbox)
+    .set({ status, attempts: sql`${outbox.attempts} + 1`, lastError: code, availableAt: sql`now() + make_interval(secs => 30 * power(2, ${outbox.attempts}))`, updatedAt: sql`now()` })
+    .where(inArray(outbox.id, ids));
+}
+
+function reportDead(keys: string[]): void {
+  if (!keys.length) return;
+  logger.error({ keys }, "outbox rows dead: an operator must look");
+  signal("outbox_dead", keys.length);
 }
 
 /** Age of the oldest row that has not reached Redis yet. Re-deliveries have their own bound (attempts), so they do not count. */
@@ -162,29 +200,13 @@ export async function sweepOutbox(): Promise<{ done: number; retried: number; de
     const wait = ids((r) => r.action === "wait");
     if (done.length) await tx.update(outbox).set({ status: "done", lastError: null, updatedAt: sql`now()` }).where(inArray(outbox.id, done));
     if (wait.length) await tx.update(outbox).set({ availableAt: sql`now() + interval '1 minute'` }).where(inArray(outbox.id, wait));
-    for (const action of ["retry", "dead"] as const) {
-      for (const code of ["job_failed", "job_lost"]) {
-        const these = ids((r) => r.action === action && r.code === code);
-        if (!these.length) continue;
-        await tx
-          .update(outbox)
-          .set({
-            status: action === "retry" ? "pending" : "dead",
-            attempts: sql`${outbox.attempts} + 1`,
-            lastError: code,
-            // 30 s, 1 min, 2 min, 4 min, on top of BullMQ's own retries of each delivery.
-            availableAt: sql`now() + make_interval(secs => 30 * power(2, ${outbox.attempts}))`,
-            updatedAt: sql`now()`,
-          })
-          .where(inArray(outbox.id, these));
-      }
+    for (const code of ["job_failed", "job_lost"] as const) {
+      await spendAttempt(tx, ids((r) => r.action === "retry" && r.code === code), "pending", code);
+      await spendAttempt(tx, ids((r) => r.action === "dead" && r.code === code), "dead", code);
     }
     return { done: done.length, retried: ids((r) => r.action === "retry").length, deadKeys: seen.filter((r) => r.action === "dead").map((r) => r.dedupeKey) };
   });
-  if (out.deadKeys.length) {
-    logger.error({ keys: out.deadKeys }, "outbox rows dead: an operator must look");
-    signal("outbox_dead", out.deadKeys.length);
-  }
+  reportDead(out.deadKeys);
   const summary = await outboxSummary();
   gauge("outbox_dead", summary.dead);
   gauge("outbox_pending", summary.pending);
@@ -213,7 +235,8 @@ export async function outboxSummary(): Promise<{ pending: number; enqueued: numb
  */
 async function cloudApplyRefusal(tx: Tx, applicationId: unknown): Promise<string | null> {
   if (typeof applicationId !== "string") return "no_application";
-  const [app] = await tx.select({ status: applications.status, channel: applications.channel }).from(applications).where(eq(applications.id, applicationId));
+  // Locked, so nothing can claim it between this read and the resume's commit.
+  const [app] = await tx.select({ status: applications.status, channel: applications.channel }).from(applications).where(eq(applications.id, applicationId)).for("update");
   if (!app) return "no_application";
   if (app.status === "submitting") return "past_browser_step";
   if (app.status !== "approved" || app.channel !== "cloud") return "not_approved";
@@ -231,6 +254,11 @@ async function cloudApplyRefusal(tx: Tx, applicationId: unknown): Promise<string
   return attempt ? "past_browser_step" : null;
 }
 
+/** What may refuse a resume, per queue the outbox feeds. Default deny: a queue with no entry does not resume (no_refusal_check). */
+const RESUME_REFUSALS: Record<OutboxQueue, (tx: Tx, payload: Record<string, unknown>) => Promise<string | null>> = {
+  "cloud-apply": (tx, payload) => cloudApplyRefusal(tx, payload.applicationId),
+};
+
 /**
  * The operator's resume of a dead row: back to pending with its attempts reset, and an ops_audit row in the same transaction.
  * Only a dead row: the others are moving, or finished. `reason` is a short code (the audit row must hold no free text).
@@ -239,7 +267,8 @@ export async function resumeOutbox(id: string, actor: string, reason: string): P
   return db().transaction(async (tx) => {
     const [row] = await tx.select().from(outbox).where(eq(outbox.id, id)).for("update");
     if (!row) throw notFound("Outbox row");
-    const refusal = row.status !== "dead" ? "not_dead" : row.queue === QUEUES.cloudApply ? await cloudApplyRefusal(tx, (row.payload as { applicationId?: unknown }).applicationId) : null;
+    const check = Object.hasOwn(RESUME_REFUSALS, row.queue) ? RESUME_REFUSALS[row.queue as OutboxQueue] : undefined;
+    const refusal = row.status !== "dead" ? "not_dead" : check ? await check(tx, row.payload as Record<string, unknown>) : "no_refusal_check";
     if (refusal) {
       logger.warn({ outboxId: id, refusal, actor }, "outbox resume refused");
       throw new HttpError(409, "resume_refused", "This item cannot be resumed", { reason: refusal });

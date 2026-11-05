@@ -130,7 +130,8 @@ export const RETENTION_RULES = {
   },
   /**
    * Finished outbox rows (WP-22): only ids, and nothing reads them once the job is done; a week is for looking back at an
-   * incident. ponytail: scans a table of a week's approvals daily, since the live index leaves done rows out.
+   * incident. ponytail: each batch scans, since the live index leaves done rows out; fine at a week of approvals, and past
+   * about a million rows add a partial index on (updated_at) WHERE status = 'done'.
    */
   outbox_done: {
     days: 7,
