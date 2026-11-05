@@ -1,0 +1,31 @@
+{
+  "caseId": "resume-writer-0304",
+  "promptVersion": 2,
+  "promptSha256": "606e076c399bb43ebf29377c97f98508070772ea210ba8e73e00287d15d07db0",
+  "inputHash": "6752173dbf22fd513cd6cb36e663253649054fbff6e05c4b4e2338c62c97806b",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "headline",
+            "entryId": null,
+            "lineId": null,
+            "action": "add",
+            "after": "Data Analyst · SQL",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f1",
+              "f3"
+            ],
+            "needsFact": null,
+            "tag": "show_scope",
+            "priority": "high",
+            "appendYears": false
+          }
+        ]
+      }
+    }
+  ]
+}

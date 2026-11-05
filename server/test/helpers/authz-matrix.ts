@@ -138,6 +138,7 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "POST /api/profile/facts/confirm": { request: (t) => ({ path: "/api/profile/facts/confirm", body: { ids: [t.factId] } }) },
   "GET /api/resumes": own("/api/resumes"),
   "POST /api/resumes": { request: (t) => ({ path: "/api/resumes", body: { from: "duplicate", sourceId: t.resumeId, name: "Copy" } }) },
+  "POST /api/resumes/suggestions": { request: (t) => ({ path: "/api/resumes/suggestions", body: { scope: "resume", resumeId: t.resumeId } }) },
   "POST /api/resumes/tailor": { request: (t) => ({ path: "/api/resumes/tailor", body: { jobId: t.jobId } }) },
   "GET /api/resumes/:id": { request: (t) => ({ path: `/api/resumes/${t.resumeId}` }) },
   "PUT /api/resumes/:id": { request: (t) => ({ path: `/api/resumes/${t.resumeId}`, body: { name: "Base resume", density: "comfortable", contact: { name: "Test User", email: "user@test.local", phone: "", location: "", links: [] }, sections: [] } }) },

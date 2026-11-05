@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { AGENTS, PLANNED_AGENTS } from "../../src/agents/registry";
+import { AGENTS, LATER_VERSIONS, PLANNED_AGENTS } from "../../src/agents/registry";
 import { promptAsset } from "../../src/agents/prompt-asset";
 import { estimateCallUsd } from "../../src/llm/estimate";
 import type { ClaudeModel } from "../../src/agents/types";
@@ -40,14 +40,16 @@ describe("agent registry", () => {
     }
   });
 
-  for (const [id, spec] of Object.entries(AGENTS)) {
+  // agents/03 9: the checks run on the second spec object of a version too, while both exist. The lock's `active` is the AGENTS entry's.
+  for (const spec of [...Object.values(AGENTS), ...LATER_VERSIONS] as (typeof AGENTS)[keyof typeof AGENTS][]) {
+    const id = LATER_VERSIONS.includes(spec) ? `${spec.id}@v${spec.promptVersion}` : spec.id;
     const activePrompt = spec.prompts[spec.promptVersion]!;
     it(`${id}: the active prompt exists and the lock matches the computed fingerprints`, () => {
       expect(activePrompt, `${id} has a prompt for its active version`).toBeDefined();
-      expect(lock[id]!.active).toBe(spec.promptVersion);
+      expect(lock[spec.id]!.active).toBe(AGENTS[spec.id as keyof typeof AGENTS].promptVersion);
       for (const [version, asset] of Object.entries(spec.prompts)) {
-        const fresh = promptAsset(id, Number(version), asset.system, spec.schemaSnapshot).fingerprint;
-        expect(lock[id]!.versions[version], `${id}@v${version} fingerprint must match the lock`).toBe(fresh);
+        const fresh = promptAsset(spec.id, Number(version), asset.system, spec.schemaSnapshot).fingerprint;
+        expect(lock[spec.id]!.versions[version], `${id}@v${version} fingerprint must match the lock`).toBe(fresh);
       }
     });
 
@@ -68,7 +70,7 @@ describe("agent registry", () => {
       expect(spec.batchEligible).not.toBe("if_zdr_allows");
       expect(["claude-haiku-5-5", "claude-sonnet-5-5"]).toContain(spec.model);
       expect(spec.dailyEnvelopeUsd).toBeGreaterThan(0);
-      expect(spec.evalSet).toMatch(new RegExp(`evals/${id}/cases.jsonl$`));
+      expect(spec.evalSet).toMatch(new RegExp(`evals/${spec.id}/cases.jsonl$`));
     });
   }
 });

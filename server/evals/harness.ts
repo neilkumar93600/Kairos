@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { AGENTS, type RegisteredAgent } from "../src/agents/registry";
+import { AGENTS, LATER_VERSIONS, type RegisteredAgent } from "../src/agents/registry";
 import type { AgentCallContext, AgentSpec } from "../src/agents/types";
 import type { AnswerDrafterInput } from "../src/agents/answer-drafter/schema";
 import { Budget } from "../src/llm/budget";
@@ -17,7 +17,7 @@ import { fakeAnthropic, type ScriptedResponse } from "../src/llm/testing";
 import { draftAnswer } from "../src/services/draft-writer";
 import { parseResumeToFacts, type ResumeContact } from "../src/services/resume-parser";
 import { classifySensitive, isProfileQuestion } from "../src/services/sensitive";
-import { grade, verdictTally, type CaseTag, type EvalCase, type Failure, type GraderId, type VerdictTally } from "./graders";
+import { grade, tagTally, verdictTally, type CaseTag, type EvalCase, type Failure, type GraderId, type VerdictTally } from "./graders";
 
 /**
  * The eval runner (03-agent-runtime 13.4, 15.2). Every case goes through the production entry of its agent (runAgent,
@@ -32,7 +32,17 @@ import { grade, verdictTally, type CaseTag, type EvalCase, type Failure, type Gr
 
 export const EVALS_DIR = dirname(fileURLToPath(import.meta.url));
 const TAGS = ["golden", "adversarial", "injection", "self_preference", "sensitive", "regression", "refine", "hard", "fresh_public"] as const satisfies readonly CaseTag[];
-const GRADERS = ["fixture", "budget", "schema", "fact_ids", "containment", "sensitive", "injection_echo", "verdict"] as const satisfies readonly GraderId[];
+const GRADERS = ["fixture", "budget", "schema", "fact_ids", "containment", "sensitive", "injection_echo", "verdict", "refine", "needs_fact", "fix_spelling", "headline"] as const satisfies readonly GraderId[];
+/** resume-writer v2 (agents/05 8): at least this share of labelled suggestions carry an accepted tag. */
+export const TAG_ACCURACY_BAR = 0.8;
+/** The spec object a case runs under: its version's, else the AGENTS entry. An unknown version is an authoring error. */
+function specOf(c: EvalCase): AgentSpec<unknown, unknown> {
+  const entry = AGENTS[c.agentId] as AgentSpec<unknown, unknown>;
+  if (c.promptVersion === undefined || c.promptVersion === entry.promptVersion) return entry;
+  const later = LATER_VERSIONS.find((s) => s.id === c.agentId && s.promptVersion === c.promptVersion);
+  if (!later) throw new Error(`${c.id}: ${c.agentId} has no spec object for version ${c.promptVersion}`);
+  return later as AgentSpec<unknown, unknown>;
+}
 /** The labelled-set pass bars as fractions (B.9.10; agents/08 9 and 09 6). The escalation's false-reject figure is advisory. */
 export const VERDICT_BARS: Partial<Record<RegisteredAgent, { falseAccept: number; falseReject: number }>> = {
   "claim-verifier": { falseAccept: 0.01, falseReject: 0.08 },
@@ -46,6 +56,7 @@ const caseSchema = z
   .object({
     id: z.string().regex(/^[a-z-]+-\d{4}$/),
     agentId: z.enum(Object.keys(AGENTS) as [RegisteredAgent, ...RegisteredAgent[]]),
+    promptVersion: z.number().int().optional(),
     tags: z.array(z.enum(TAGS)).min(1),
     input: z.record(z.string(), z.unknown()),
     expect: z
@@ -56,6 +67,9 @@ const caseSchema = z
         label: z.number().min(0).max(100).optional(),
         verdicts: z.record(z.string(), VERDICT).optional(),
         acceptable: z.record(z.string(), z.array(VERDICT).min(1)).optional(),
+        needsFact: z.boolean().optional(),
+        tags: z.array(z.string().min(1)).optional(),
+        headlineYears: z.number().int().optional(),
       })
       .strict(),
     cleanTwinOf: z.string().optional(),
@@ -124,6 +138,17 @@ export interface CaseResult {
   costUsd: number;
   /** The verifier labels' counts for this case; zero-tolerance reruns add up. */
   tally?: VerdictTally;
+  /** resume-writer v2: the case's level and its tag labels' counts. */
+  level?: string;
+  tagCounts?: { labelled: number; correct: number };
+}
+
+/** The invented-detail rate of one level (WP-31 acceptance: 0 at every level). */
+export interface LevelBar {
+  level: string;
+  cases: number;
+  invented: number;
+  ok: boolean;
 }
 
 export interface VerdictBar {
@@ -139,6 +164,10 @@ export interface Report {
   results: CaseResult[];
   /** The false-accept and false-reject rates of each labelled agent. Fixture replies only prove the plumbing. */
   verdictBars: VerdictBar[];
+  /** resume-writer v2, per experience level. Fixture replies only prove the plumbing. */
+  levelBars: LevelBar[];
+  /** resume-writer v2 tag accuracy over the labelled cases; null when none ran. */
+  tagAccuracy: number | null;
   spentUsd: number;
   passed: boolean;
 }
@@ -228,7 +257,7 @@ function capturing(real: AnthropicLike): AnthropicLike & { requests: Record<stri
 const NO_CONTACT: ResumeContact = { name: "", email: "", links: [] };
 
 /** The production entry of each agent: what a route or worker calls, minus storage. */
-async function entry(agentId: RegisteredAgent, input: Record<string, unknown>, ctx: AgentCallContext): Promise<unknown> {
+async function entry(agentId: RegisteredAgent, spec: AgentSpec<unknown, unknown>, input: Record<string, unknown>, ctx: AgentCallContext): Promise<unknown> {
   if (agentId === "resume-parser") {
     // The service drops personal-details lines and the contact header before the model sees anything.
     const i = input as { resumeText: string; contact?: ResumeContact };
@@ -240,10 +269,12 @@ async function entry(agentId: RegisteredAgent, input: Record<string, unknown>, c
     const i = input as AnswerDrafterInput;
     if (classifySensitive(i.label) || isProfileQuestion(i.label)) return draftAnswer({ ...i, savedAnswers: i.savedAnswers ?? undefined }, { callCtx: ctx });
   }
-  return (await runAgent(AGENTS[agentId] as AgentSpec<unknown, unknown>, input, ctx)).data;
+  return (await runAgent(spec, input, ctx)).data;
 }
 
 function addTally(result: CaseResult, c: EvalCase, outcome: { output?: unknown; error?: unknown }): void {
+  const tags = tagTally(c, outcome.error === undefined ? outcome.output : undefined);
+  if (tags) result.tagCounts = { labelled: (result.tagCounts?.labelled ?? 0) + tags.labelled, correct: (result.tagCounts?.correct ?? 0) + tags.correct };
   // A call that errored judged nothing: every label counts against it, through an empty output.
   const t = verdictTally(c, outcome.error === undefined ? outcome.output : undefined);
   if (!t) return;
@@ -268,7 +299,7 @@ async function runCase(c: EvalCase, client: AnthropicLike & { requests: Record<s
   // budget_class 'eval' (13.4): never counted against a user's caps; one synthetic user per case.
   const ctx: AgentCallContext = { userId: `eval-${c.id}`, plan: "pro", budgetClass: "eval" };
   try {
-    return { outcome: { output: await entry(c.agentId, c.input as Record<string, unknown>, ctx), requests: client.requests }, costUsd };
+    return { outcome: { output: await entry(c.agentId, specOf(c), c.input as Record<string, unknown>, ctx), requests: client.requests }, costUsd };
   } catch (error) {
     return { outcome: { error, requests: client.requests }, costUsd };
   }
@@ -285,11 +316,12 @@ export async function runEval(opts: RunOptions): Promise<Report> {
 
   for (const agentId of Object.keys(AGENTS) as RegisteredAgent[]) {
     if (opts.agents && !opts.agents.includes(agentId)) continue;
-    const spec = AGENTS[agentId] as AgentSpec<unknown, unknown>;
     const cases = loadCases(dir, agentId).filter((c) => !opts.caseIds || opts.caseIds.includes(c.id));
 
     for (const c of cases) {
-      const result: CaseResult = { agentId, caseId: c.id, tags: c.tags, negative: false, failures: [], costUsd: 0 };
+      const spec = specOf(c);
+      const level = (c.input as { level?: string }).level;
+      const result: CaseResult = { agentId, caseId: c.id, tags: c.tags, negative: false, failures: [], costUsd: 0, ...(level ? { level } : {}) };
       results.push(result);
       if (opts.mode === "fixtures") {
         const fx = loadFixture(dir, c);
@@ -344,6 +376,7 @@ export async function runEval(opts: RunOptions): Promise<Report> {
         agentId,
         caseId: c.id,
         tags: c.tags,
+        ...((c.input as { level?: string }).level ? { level: (c.input as { level: string }).level } : {}),
         negative: true,
         failures: n.failsOn.filter((g) => !caught.has(g)).map((g) => ({ grader: g, detail: `missed a bad output: ${n.note}` })),
         costUsd: 0,
@@ -359,7 +392,25 @@ export async function runEval(opts: RunOptions): Promise<Report> {
     const bar = VERDICT_BARS[agentId]!;
     return [{ agentId, claims: sum("goldNegative") + sum("goldPositive"), falseAcceptRate, falseRejectRate, ok: falseAcceptRate <= bar.falseAccept && falseRejectRate <= bar.falseReject }];
   });
-  return { mode: opts.mode, results, verdictBars, spentUsd, passed: results.length > 0 && results.every((r) => r.failures.length === 0) && verdictBars.every((b) => b.ok) };
+  const leveled = results.filter((r) => r.level && !r.negative);
+  const levelBars = [...new Set(leveled.map((r) => r.level!))].sort().map((level): LevelBar => {
+    const rs = leveled.filter((r) => r.level === level);
+    const invented = rs.filter((r) => r.failures.some((f) => f.grader === "containment" || f.grader === "fact_ids")).length;
+    return { level, cases: rs.length, invented, ok: invented === 0 };
+  });
+  const tagged = results.filter((r) => r.tagCounts);
+  const labelled = tagged.reduce((n, r) => n + r.tagCounts!.labelled, 0);
+  const tagAccuracy = labelled ? tagged.reduce((n, r) => n + r.tagCounts!.correct, 0) / labelled : null;
+  return {
+    mode: opts.mode,
+    results,
+    verdictBars,
+    levelBars,
+    tagAccuracy,
+    spentUsd,
+    passed:
+      results.length > 0 && results.every((r) => r.failures.length === 0) && verdictBars.every((b) => b.ok) && levelBars.every((b) => b.ok) && (tagAccuracy === null || tagAccuracy >= TAG_ACCURACY_BAR),
+  };
 }
 
 /** A markdown table per agent, then every failure; CI appends it to the job summary. */
@@ -386,6 +437,9 @@ export function formatReport(report: Report): string {
     const pct = (x: number) => `${(100 * x).toFixed(1)}%`;
     lines.push(`Labelled claims, ${b.agentId}: ${b.claims}; false accept ${pct(b.falseAcceptRate)} (bar ${pct(bar.falseAccept)}), false reject ${pct(b.falseRejectRate)} (bar ${pct(bar.falseReject)}): ${b.ok ? "ok" : "OVER THE BAR"}${report.mode === "fixtures" ? ", from fixtures, which prove the plumbing only; real rates need --live" : ""}.`);
   }
+  const proof = report.mode === "fixtures" ? ", from hand-written fixtures, which prove the plumbing only; the real rate needs --live" : "";
+  for (const b of report.levelBars) lines.push(`Invented detail at level ${b.level}: ${b.invented} of ${b.cases} cases (bar 0): ${b.ok ? "ok" : "OVER THE BAR"}${proof}.`);
+  if (report.tagAccuracy !== null) lines.push(`Tag accuracy: ${(100 * report.tagAccuracy).toFixed(1)}% (bar ${100 * TAG_ACCURACY_BAR}%)${proof}.`);
   const failed = report.results.filter((r) => r.failures.length);
   if (failed.length) lines.push("");
   for (const r of failed) for (const f of r.failures) lines.push(`- FAIL ${r.caseId}${r.negative ? " (negative)" : ""} [${f.grader}] ${f.detail}`);

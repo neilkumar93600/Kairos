@@ -1,0 +1,31 @@
+{
+  "caseId": "resume-writer-0314",
+  "promptVersion": 2,
+  "promptSha256": "606e076c399bb43ebf29377c97f98508070772ea210ba8e73e00287d15d07db0",
+  "inputHash": "59ae117910ce4661aa75533e0153c4ff9124c954b28e573f643cca88ba32eb02",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "headline",
+            "entryId": null,
+            "lineId": null,
+            "action": "add",
+            "after": "QA Engineer · Playwright",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f1",
+              "f3"
+            ],
+            "needsFact": null,
+            "tag": "show_scope",
+            "priority": "high",
+            "appendYears": false
+          }
+        ]
+      }
+    }
+  ]
+}

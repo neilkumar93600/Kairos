@@ -5,7 +5,7 @@ import { coverLetterWriter } from "./cover-letter-writer/spec";
 import { fitScorer } from "./fit-scorer/spec";
 import { resumeParser } from "./resume-parser/spec";
 import { resumeTailor } from "./resume-tailor/spec";
-import { resumeWriter } from "./resume-writer/spec";
+import { resumeWriter, resumeWriterV2 } from "./resume-writer/spec";
 import type { AgentId, AgentSpec } from "./types";
 
 /**
@@ -28,6 +28,12 @@ export const AGENTS = {
   "claim-verifier": claimVerifier,
   "claim-verifier-escalation": claimVerifierEscalation,
 } as const satisfies Record<RegisteredAgent, AnyAgentSpec>;
+
+/**
+ * Second spec objects (agents/03-fit-scorer.md 9): a version whose input changes runs under its own object until
+ * cut-over, when it replaces the AGENTS entry. The registry test and the eval run on these too. Callers import them.
+ */
+export const LATER_VERSIONS: readonly AnyAgentSpec[] = [resumeWriterV2];
 
 export function getAgent<K extends RegisteredAgent>(id: K): (typeof AGENTS)[K] {
   return AGENTS[id];
