@@ -1,8 +1,12 @@
 import type { ClaimVerifierInput } from "./schema";
 import type { RenderedPrompt } from "../types";
 
-/** One line per claim or fact: newlines inside a text would let it forge a line of its own ("[c02] ..."), so they go. */
-const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
+/**
+ * One line per claim or fact, with the render's own markers taken out: a newline, "[c02]" or "::" inside a text could pose
+ * as another claim's header and attach decoy text to a sibling citing the same fact. Ids and cites= are written by this
+ * file, after this runs. The memo key and the fact-check rules see the original text.
+ */
+const oneLine = (s: string) => s.replace(/\s+/g, " ").replace(/\[/g, "(").replace(/\]/g, ")").replace(/:{2,}/g, ":").trim();
 
 /**
  * Pure render (agents/08-claim-verifier.md 3). Both blocks are per-call T2 data, fenced: the claims are model output
