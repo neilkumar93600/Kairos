@@ -1,4 +1,4 @@
-import { defineRailway, github, postgres, preserve, project, redis, service, type VariableValue } from "railway/iac";
+import { bucket, defineRailway, github, postgres, preserve, project, redis, service, type VariableValue } from "railway/iac";
 
 /*
  * Kairos on Railway (WP-15; 06-infrastructure 1.1 to 1.8): project `kairos`, two environments.
@@ -126,5 +126,9 @@ export default defineRailway((ctx) => {
     },
   });
 
-  return project("kairos", { resources: [db, cache, api, worker, applier, pgbackup] });
+  // Object storage on Railway's S3-compatible buckets (server/src/lib/storage.ts), one per BUCKETS entry. Listed here
+  // because a whole-project apply deletes what the file leaves out. Credentials are set by hand as R2_* variables.
+  const buckets = ["uploads", "renders", "snapshots", "backups", "tombstones"].map((name) => bucket(name, { region: "iad" }));
+
+  return project("kairos", { resources: [db, cache, ...buckets, api, worker, applier, pgbackup] });
 });
