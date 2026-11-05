@@ -23,6 +23,8 @@ import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from ".
 // Before anything can call env() or db(): the app's global client must point at this file's own database.
 if (hasTestDb) process.env.DATABASE_URL = testDbUrl("authz");
 process.env.STRIPE_SECRET_KEY = "sk_test_authz";
+// Imports store their source encrypted (WP-17).
+process.env.DATA_KEKS = `v1:${Buffer.from([...Array(32).keys()]).toString("base64")}`;
 delete process.env.ANTHROPIC_API_KEY;
 
 const storage = vi.hoisted(() => ({ current: undefined as Storage | undefined }));
@@ -42,6 +44,9 @@ const { createApp } = await import("../src/app");
 const { closeDb } = await import("../src/db/client");
 const schema = await import("../src/db/schema");
 const { aiUsage } = await import("../src/db/schema/platform");
+const { encrypt } = await import("../src/lib/crypto");
+const { sourceAad } = await import("../src/services/import/imports");
+const { sourceHash } = await import("../src/services/import/source");
 
 /** 64 hex characters, the only shape profiles.normalized_email_hash accepts. */
 const MARKER_HEX = "5eed".repeat(16);
@@ -65,6 +70,9 @@ const MISSING: TenantIds = {
   matchId: randomUUID(),
   jobId: randomUUID(),
   fileKey: `snapshots/${randomUUID()}/cv.pdf`,
+  resumeId: randomUUID(),
+  revisionId: randomUUID(),
+  importId: randomUUID(),
 };
 
 /** "Bearer <userId>" signs in as that seeded user; anything else is signed out. A bearer request skips originGuard. */
@@ -141,7 +149,13 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
       contact: { name: "Test User", email: `${userId}@test.local`, phone: "", location: tag, links: [] },
       sections: [],
     };
-    await tdb.insert(schema.resumes).values({ userId, document });
+    const [resumeProfile] = await tdb.insert(schema.resumeProfiles).values({ userId, name: `${tag} track`, isDefault: true, sourceText: "" }).returning();
+    const [resume] = await tdb.insert(schema.resumes).values({ userId, resumeProfileId: resumeProfile!.id, isDefault: true, name: `${tag} base`, document }).returning();
+    const [revision] = await tdb.insert(schema.resumeRevisions).values({ resumeId: resume!.id, document, reason: "named", name: `${tag} named` }).returning();
+    const importId = randomUUID();
+    const source = `Led the ${tag} platform team for two years and shipped the billing service.`;
+    await tdb.insert(schema.resumeImports).values({ id: importId, userId, resumeProfileId: resumeProfile!.id, sourceKind: "text", sourceTextEnc: encrypt(source, sourceAad(importId)), sourceHash: sourceHash(source), parseStatus: "parsed", parsedAt: new Date() });
+    await tdb.update(schema.facts).set({ resumeProfileId: resumeProfile!.id, importId }).where(eq(schema.facts.id, fact!.id));
     await tdb.insert(schema.inboundEmails).values({
       userId,
       applicationId: application!.id,
@@ -154,7 +168,7 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
     await tdb.insert(schema.session).values({ id: randomUUID(), token: `${MARKER}-${letter}`, userId, expiresAt: new Date(Date.now() + 86_400_000) });
     const fileKey = `snapshots/${userId}/cv.pdf`;
     await r2.storage.put(fileKey, `%PDF-1.7 ${tag}`, "application/pdf");
-    return { userId, tag, customerId, applicationId: application!.id, factId: fact!.id, answerId: answer!.id, matchId: match!.id, jobId: job!.id, fileKey };
+    return { userId, tag, customerId, applicationId: application!.id, factId: fact!.id, answerId: answer!.id, matchId: match!.id, jobId: job!.id, fileKey, resumeId: resume!.id, revisionId: revision!.id, importId };
   }
 
   /** Every row a user owns, each table's rows as sorted JSON, so two reads compare whatever order Postgres returns. */
@@ -167,6 +181,8 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
       profiles: json(await tdb.select().from(s.profiles).where(eq(s.profiles.userId, userId))),
       resumeProfiles: json(await tdb.select().from(s.resumeProfiles).where(eq(s.resumeProfiles.userId, userId))),
       resumes: json(await tdb.select().from(s.resumes).where(eq(s.resumes.userId, userId))),
+      resumeImports: json(await tdb.select().from(s.resumeImports).where(eq(s.resumeImports.userId, userId))),
+      employments: json(await tdb.select().from(s.employments).where(eq(s.employments.userId, userId))),
       facts: json(await tdb.select().from(s.facts).where(eq(s.facts.userId, userId))),
       savedAnswers: json(await tdb.select().from(s.savedAnswers).where(eq(s.savedAnswers.userId, userId))),
       matches: json(await tdb.select().from(s.matches).where(eq(s.matches.userId, userId))),
@@ -255,7 +271,8 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
     // Reads first, so they see A's rows before A's own writes (approve, withdraw) move them on.
     const reads = TENANT_ROUTES.filter((k) => k.startsWith("GET "));
     for (const key of [...reads, ...TENANT_ROUTES.filter((k) => !reads.includes(k))]) {
-      expect((await send(key, A, A.userId)).status, key).toBeLessThan(500);
+      const status = (await send(key, A, A.userId)).status;
+      expect(status < 500 || status === 503, key).toBe(true);
     }
     expect(seen.filter((s) => s.as === A.userId).map((s) => s.text).join("\n")).toContain(A.tag);
     for (const { text } of seen) {

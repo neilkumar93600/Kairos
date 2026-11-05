@@ -118,10 +118,15 @@
 }
 
 /* The painting panel (.lp-panel from landing.css). 16:10 until the split layout, then the landing's 4:3. The card
-   sits on the left over the calm side; each painting keeps its object on the right. */
-.lp .hiw-chapter > .lp-panel { grid-area: panel; align-self: start; }
+   sits on the left over the calm side, pinned near the top; each painting keeps its object on the right.
+   --pin-y is the panel's top padding, so the card's top edge (and its pin) sits there; --thread-x is the card's
+   centre (the same 5% and min(88%, 344px) as the card below, halved). */
+.lp .hiw-chapter > .lp-panel { --pin-y: 28px; --thread-x: 50%; grid-area: panel; align-self: start; }
 @media (min-width: 768px) {
-  .lp .hiw-chapter > .lp-panel { aspect-ratio: 16 / 10; }
+  .lp .hiw-chapter > .lp-panel {
+    --pin-y: 40px; --thread-x: calc(5% + min(44%, 172px));
+    aspect-ratio: 16 / 10; align-items: start; padding-block-start: var(--pin-y);
+  }
   .lp .hiw-chapter .lp-panel__card { justify-self: start; width: min(88%, 344px); margin-inline-start: 5%; }
 }
 @media (min-width: 1280px) {
@@ -130,8 +135,53 @@
 }
 /* Phones: the card sits at the top and the painting's object (gate, table, bridge, stone, post box) shows below it. */
 @media (max-width: 767px) {
-  .lp .hiw-chapter > .lp-panel { place-items: start center; padding-block: 16px 112px; }
+  .lp .hiw-chapter > .lp-panel { place-items: start center; padding-block: var(--pin-y) 112px; }
   .lp .hiw-chapter .lp-panel__art > img { object-position: 70% 100% !important; }
+}
+
+/* ===== Pinned paper step cards (DESIGN "Reference layer"): Paper White, the ring plus the over-art shadow
+   (.lp-float-card without glass), radius --r-card 20. Each hangs from a 10 px ink pin at its top centre and tilts
+   around it. The tilt is static, so it stays under reduced motion; the hover settle does not. ===== */
+.lp .hiw-steps { --m: 1; }  /* motion switch for the hover settle, 0 under reduced motion */
+html[data-motion="reduced"] .lp .hiw-steps { --m: 0; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="full"]) .lp .hiw-steps { --m: 0; }
+}
+.lp .hiw-paper { --tilt: -1.5deg; rotate: var(--tilt); transform-origin: 50% 0; }
+.lp .hiw-chapter:nth-child(even) .hiw-paper { --tilt: 1.2deg; }
+@media (max-width: 767px) {
+  .lp .hiw-paper { --tilt: -0.8deg; }
+  .lp .hiw-chapter:nth-child(even) .hiw-paper { --tilt: 0.8deg; }
+}
+.lp .hiw-paper::before {
+  content: ""; position: absolute; top: -5px; inset-inline-start: calc(50% - 5px); width: 10px; height: 10px;
+  border-radius: 50%; background: var(--ink); box-shadow: 0 0 0 2px var(--canvas);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lp .hiw-paper {
+    transition: rotate 300ms var(--ease-out), translate 300ms var(--ease-out), box-shadow 300ms var(--ease-out);
+  }
+  .lp .hiw-paper:hover {
+    rotate: calc(var(--tilt) * (1 - var(--m))); translate: 0 calc(-3px * var(--m));
+    box-shadow: var(--edge), var(--sh-over-art-hover);
+  }
+}
+
+/* The connector: one dashed Stone thread through the pins, drawn on each panel over its painting and under its
+   card. Below 1280 the head and facts sit between the paintings, so it breaks there and each card from step 2 on
+   hangs from a short thread off its panel's top edge. From 1280 the paintings form one column, so each thread
+   runs to its chapter's edges (clipped there) and the five join into one line from the first pin to the last. */
+.lp .hiw-chapter > .lp-panel::before {
+  content: ""; position: absolute; inset-inline-start: calc(var(--thread-x) - 0.5px); top: 0; width: 1px;
+  height: var(--pin-y);
+  background: repeating-linear-gradient(to bottom, var(--rule) 0 4px, transparent 4px 8px);
+}
+.lp .hiw-chapter:first-child > .lp-panel::before { content: none; }
+@media (min-width: 1280px) {
+  .lp .hiw-chapter { overflow: clip; }  /* clip, not hidden: no scroll container, so the sticky panel still works */
+  .lp .hiw-chapter > .lp-panel::before { top: -2000px; bottom: -2000px; height: auto; }
+  .lp .hiw-chapter:first-child > .lp-panel::before { content: ""; top: var(--pin-y); }
+  .lp .hiw-chapter:last-child > .lp-panel::before { bottom: auto; height: calc(2000px + var(--pin-y)); }
 }
 
 /* ===== Sample card contents (inside FloatingCard: strong glass, so 14 px Deep Ash passes) ===== */
@@ -180,5 +230,6 @@
     border-color: CanvasText;
   }
   .lp .hiw-index::before { background: CanvasText; }
+  .lp .hiw-paper { border: 1px solid CanvasText; }
   .lp .hiw-badge__on { background: Highlight; color: HighlightText; }
 }

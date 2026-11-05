@@ -112,6 +112,8 @@ const SIGNALS = {
   backup_stale: 1,
   /** The latest dump's manifest has a warning: a table shrank, the dump shrank, or it nears R2's 5 GiB put (WP-13). */
   backup_warning: 1,
+  /** Resume imports failed after their parse attempts (WP-17, A-PARSE): the parser or the model is down. 5 an hour. */
+  resume_parse_failed: 5,
   /** ops_flags could not be read: the kill switches are running on their last answer or the env alone (WP-27). */
   flags_unreadable: 1,
   /** A money or approval invariant failed (jobs/invariants.ts): approvals_frozen was set (WP-27). Pages. */

@@ -8,7 +8,8 @@ const external = Object.keys(pkg.dependencies).filter((name) => !name.startsWith
 
 await build({
   // pgbackup.ts runs in its own image (ops/pgbackup/Dockerfile), the Railway cron service of WP-13.
-  entryPoints: ["src/api.ts", "src/worker.ts", "src/applier.ts", "src/migrate.ts", "src/pgbackup.ts"],
+  // workers/extract-thread.ts is the api's file-extraction thread; services/import/extract.ts loads dist/workers/extract-thread.js.
+  entryPoints: ["src/api.ts", "src/worker.ts", "src/applier.ts", "src/migrate.ts", "src/pgbackup.ts", "src/workers/extract-thread.ts"],
   outdir: "dist",
   bundle: true,
   platform: "node",

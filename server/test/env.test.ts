@@ -21,8 +21,19 @@ describe("parseEnv", () => {
 
   const prod = {
     ...base, NODE_ENV: "production", POSTMARK_SERVER_TOKEN: "pm-token", BETTER_AUTH_URL: "https://kairos.app", WEB_ORIGIN: "https://kairos.app",
+    DATA_KEKS: "v1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
     USER_HASH_KEY: Buffer.alloc(32, 9).toString("base64"),
   };
+
+  it("refuses production without DATA_KEKS: resume imports store their source encrypted (WP-17)", () => {
+    expect(() => parseEnv({ ...prod, DATA_KEKS: "" })).toThrow(/DATA_KEKS: required in production/);
+  });
+
+  it("defaults the import limits conservatively and refuses out-of-range ones", () => {
+    expect(parseEnv(base)).toMatchObject({ IMPORT_MAX_PAGES: 10, IMPORT_MAX_CHARS: 40_000, IMPORT_DAILY_LIMIT: 20, IMPORT_OVER_SLOT_LIMIT: "refuse" });
+    expect(() => parseEnv({ ...base, IMPORT_MAX_PAGES: "0" })).toThrow(/IMPORT_MAX_PAGES/);
+    expect(() => parseEnv({ ...base, IMPORT_OVER_SLOT_LIMIT: "maybe" })).toThrow(/IMPORT_OVER_SLOT_LIMIT/);
+  });
 
   it("refuses production without USER_HASH_KEY, which keys the erasure hashes (WP-25)", () => {
     expect(() => parseEnv({ ...prod, USER_HASH_KEY: "" })).toThrow(/USER_HASH_KEY: required in production \(erasure hashes\)/);

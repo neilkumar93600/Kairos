@@ -14,7 +14,7 @@ import { scrubContent } from "../services/sensitive";
  * of contact messages, submission_attempts.evidence at 90 days (WP-42's to schedule). below_bar keys on
  * status_changed_at (matches_retention_idx); the scrub selects on terminal_at (applications_scrub_due_idx) and nulls
  * questions. jobs_closed marks a purge by the emptied description_text (still NOT NULL), so no description_purged_at.
- * A closed job a tracker item (or, with WP-17, a tailored resume) points at is never deleted, only purged: both are
+ * A closed job a tracker item or a tailored resume (WP-17) points at is never deleted, only purged: both are
  * ON DELETE SET NULL, so the item would silently lose its posting (DB-reviewer round 2).
  * ponytail: inbound_body scans inbound_emails per batch; add (received_at) WHERE text_body <> '' at scale.
  * ponytail: jobs has no closed_at index, so jobs_closed scans jobs once per batch; add jobs_closed_idx (02-database 11)
@@ -70,11 +70,11 @@ export const RETENTION_RULES = {
   jobs_closed: {
     days: 180,
     run: async (d: number) =>
-      // WP-17: add `and not exists (select 1 from resumes r where r.job_id = j.id)` at its integration.
       (await batched(() => sql`delete from jobs where id in (
         select j.id from jobs j where j.closed_at < ${before(d)}
           and not exists (select 1 from applications a where a.job_id = j.id)
-          and not exists (select 1 from tracker_items t where t.job_id = j.id) limit ${BATCH})`)) +
+          and not exists (select 1 from tracker_items t where t.job_id = j.id)
+          and not exists (select 1 from resumes r where r.job_id = j.id) limit ${BATCH})`)) +
       (await batched(() => sql`update jobs set description_text = '', raw = null where id in (
         select id from jobs where closed_at < ${before(d)} and (description_text <> '' or raw is not null) limit ${BATCH})`)),
   },

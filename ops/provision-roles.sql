@@ -184,6 +184,15 @@ END $$;
 -- kairos_metrics (Grafana): aggregates only, never a user id or free text. metrics_minute joins it below (WP-27).
 GRANT SELECT ON llm_cost_daily TO kairos_metrics;
 
+-- WP-17: resume imports, employments and the revision writer. The parse job (worker) writes imports, employments and
+-- facts; snapshot_resume() (SECURITY DEFINER, owned by kairos_migrator) is the only writer of resume_revisions, so the
+-- runtime roles keep SELECT there and lose INSERT, UPDATE and DELETE.
+GRANT SELECT, INSERT, UPDATE, DELETE ON resume_imports, employments TO kairos_api;
+-- 02-database 7.7: the worker claims, parses and backfills imports (S/I/U, no DELETE); it deletes unconfirmed imported roles.
+GRANT SELECT, INSERT, UPDATE ON resume_imports TO kairos_worker;
+GRANT SELECT, INSERT, UPDATE, DELETE ON employments TO kairos_worker;
+REVOKE INSERT, UPDATE, DELETE ON resume_revisions FROM kairos_api, kairos_worker;
+GRANT EXECUTE ON FUNCTION snapshot_resume(uuid, text, text, text, text) TO kairos_api, kairos_worker;
 -- Operator flags, audit and metrics (WP-27, 0009). ops_audit is insert-only for every runtime role (and a trigger blocks
 -- the owner). Nothing writes feature_flags yet, so it is read-only. The applier reads the flags and writes no table of
 -- its own metrics: it counts into Redis and the worker folds the counts into metrics_minute (jobs/alerts.ts), so the
@@ -242,7 +251,7 @@ GRANT DELETE ON contact_messages TO kairos_api;
 -- The erasure worker pseudonymises an erased admin's id in feature_flags.updated_by too (WP-25); nothing else changes.
 GRANT UPDATE (updated_by) ON feature_flags TO kairos_worker;
 
--- Newsletter sign-ups (WP-50, migration 0016). The api takes a sign-up (insert or the upsert's update), confirms and
+-- Newsletter sign-ups (WP-50, migration 0018). The api takes a sign-up (insert or the upsert's update), confirms and
 -- unsubscribes by token hash, and deletes an erased account's rows in the erasure transaction. The worker sets the token
 -- hashes when it renders the confirm email and runs the 30-day retention delete; it never inserts a sign-up.
 -- kairos_readonly gets nothing: the table is addresses.

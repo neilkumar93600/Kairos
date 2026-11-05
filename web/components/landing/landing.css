@@ -352,7 +352,7 @@
   .lp-dark-card__art { position: absolute; inset: 0; z-index: -1; }
   .lp-dark-card__art > img { object-fit: cover; }
   .lp-dark-card :is(h2, h3, p) { color: var(--on-dark); }
-  .lp-dark-card :focus-visible { outline-color: var(--on-dark); }
+  .lp .lp-dark-card :focus-visible { outline-color: var(--on-dark); }   /* .lp scope: the later `.lp :focus-visible` reset otherwise turned it back to Ink, invisible on Aubergine */
   @media (min-width: 768px) {
     .lp-dark-card { padding: 72px 48px; }
   }

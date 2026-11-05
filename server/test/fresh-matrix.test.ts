@@ -17,6 +17,7 @@ const { createApp } = await import("../src/app");
 const ids: TenantIds = {
   applicationId: "00000000-0000-4000-8000-000000000001", factId: "00000000-0000-4000-8000-000000000002", answerId: "00000000-0000-4000-8000-000000000003",
   matchId: "00000000-0000-4000-8000-000000000004", jobId: "00000000-0000-4000-8000-000000000005", fileKey: "snapshots/u/x.pdf",
+  resumeId: "00000000-0000-4000-8000-000000000006", revisionId: "00000000-0000-4000-8000-000000000007", importId: "00000000-0000-4000-8000-000000000008",
 };
 const calls: boolean[] = [];
 const app = createApp({

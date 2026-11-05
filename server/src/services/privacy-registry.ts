@@ -64,9 +64,21 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
   },
   { table: "consent_records", column: "user_id", erase: "cascade", export: ALL },
   { table: "resume_profiles", column: "user_id", erase: "cascade", export: ALL },
+  // WP-17: name, target_roles and document are the user's; revisions go with their resume.
   { table: "resumes", column: "user_id", erase: "cascade", export: ALL },
   { table: "resume_revisions", column: "resume_id", parent: "resumes", erase: "cascade", export: ALL },
-  { table: "facts", column: "user_id", erase: "cascade", export: ALL },
+  // WP-17's import_id and employment_id go with the row; source_span_hash is an internal identity key.
+  { table: "facts", column: "user_id", erase: "cascade", export: { omit: ["source_span_hash"] } },
+  // WP-17. The source text is stored only encrypted, AAD resume_imports:<importId>:source_text. file_name is personal
+  // and exported; file_key is a storage key (the file itself, uploads/<userId>/<importId>.pdf|docx, is exported from R2
+  // and erased with the user's prefix; the bucket's 30-day lifecycle rule is WP-17's owner action).
+  {
+    table: "resume_imports",
+    column: "user_id",
+    erase: "cascade",
+    export: { omit: ["file_key"], decrypt: { source_text_enc: "source_text" } },
+  },
+  { table: "employments", column: "user_id", erase: "cascade", export: { omit: ["import_key"] } },
   { table: "saved_answers", column: "user_id", erase: "cascade", export: ALL },
   { table: "matches", column: "user_id", erase: "cascade", export: ALL },
   // WP-42's columns (resume_snapshot, questions, verification, resume_line_entries, resume_file_key) go with the row;
@@ -109,9 +121,9 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
   },
   // WP-27. The admin who acted, as a user id or 'system:<job>'. Rewritten to the pseudonym by the erasure worker; the
   // ops_audit trigger (migration 0015) accepts only that. metrics_minute holds no user data (counters by name and label).
-  { table: "ops_audit", column: "actor", erase: "pseudonymise", export: ALL },
-  { table: "ops_flags", column: "updated_by", erase: "pseudonymise", export: ALL },
-  { table: "feature_flags", column: "updated_by", erase: "pseudonymise", export: ALL },
+  { table: "ops_audit", column: "actor", erase: "pseudonymise", export: false, why: "internal operator audit log, not user data; pseudonymised at erasure" },
+  { table: "ops_flags", column: "updated_by", erase: "pseudonymise", export: false, why: "internal operator switches, not user data; pseudonymised at erasure" },
+  { table: "feature_flags", column: "updated_by", erase: "pseudonymise", export: false, why: "internal feature flags, not user data; pseudonymised at erasure" },
   {
     table: "llm_calls",
     column: "user_hash",
@@ -139,17 +151,6 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
  * PRIVACY_REGISTRY, and the coverage tests fail until they do.
  */
 export const AT_MERGE: Record<string, readonly PrivacyEntry[]> = {
-  // WP-17 (resume library and imports). At merge also: facts gains export omit ["source_span_hash"]. Its uploads live
-  // under uploads/<userId>/, emptied by the worker; the 30-day uploads lifecycle rule is WP-17's owner action.
-  "WP-17": [
-    {
-      table: "resume_imports",
-      column: "user_id",
-      erase: "cascade",
-      export: { omit: ["file_key"], decrypt: { source_text_enc: "source_text" } },
-    },
-    { table: "employments", column: "user_id", erase: "cascade", export: { omit: ["import_key"] } },
-  ],
   // WP-24 (reply encryption): inbound_emails gains decrypt { text_body_enc, preview_enc } with their AAD column names.
 };
 

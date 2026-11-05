@@ -49,7 +49,7 @@ describe.skipIf(!hasTestDb)("known defects (expected failures)", () => {
 
   // D-13: the cloud job is enqueued after the approve transaction commits. If Redis is down the application stays
   // 'approved' with no job and nothing ever sends it. Required: roll back, or record the job in the same transaction.
-  it.fails("D-13: an approved cloud application never ends up without a queued job when the enqueue fails", async () => {
+  it("D-13: an approved cloud application never ends up without a queued job when the enqueue fails", async () => {
     const userId = await seedUser(db, { credits: 5 });
     signedInAs = userId;
     await db.update(schema.subscriptions).set({ plan: "pro", interval: "week", status: "active" }).where(eq(schema.subscriptions.userId, userId));

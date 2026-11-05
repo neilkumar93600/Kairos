@@ -1,6 +1,6 @@
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import { baseEnv } from "../lib/env";
+import { baseEnv, resetEnvCache } from "../lib/env";
 import { logger } from "../lib/logger";
 import * as schema from "./schema";
 
@@ -37,6 +37,7 @@ export async function closeDb(): Promise<void> {
   const closing = pool;
   pool = undefined;
   database = undefined;
+  resetEnvCache();
   await closing?.end();
 }
 

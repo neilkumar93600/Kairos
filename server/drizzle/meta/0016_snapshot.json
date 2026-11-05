@@ -1,5 +1,5 @@
 {
-  "id": "50b954b7-8e1f-44ab-b93d-9656599ee352",
+  "id": "b94965ae-fcfb-45ab-8edf-261cafd48772",
   "prevId": "1028c211-c813-41e7-a8eb-d093a8c122e2",
   "version": "7",
   "dialect": "postgresql",
@@ -470,6 +470,265 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.employments": {
+      "name": "employments",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resume_profile_id": {
+          "name": "resume_profile_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "import_id": {
+          "name": "import_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "company": {
+          "name": "company",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "location": {
+          "name": "location",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dates_text": {
+          "name": "dates_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "start_month": {
+          "name": "start_month",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "end_month": {
+          "name": "end_month",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_current": {
+          "name": "is_current",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "asserted_by": {
+          "name": "asserted_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'import'"
+        },
+        "confirmed": {
+          "name": "confirmed",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "import_key": {
+          "name": "import_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "employments_import_uq": {
+          "name": "employments_import_uq",
+          "columns": [
+            {
+              "expression": "resume_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "import_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "employments_user_idx": {
+          "name": "employments_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "employments_import_idx": {
+          "name": "employments_import_idx",
+          "columns": [
+            {
+              "expression": "import_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"employments\".\"import_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "employments_user_id_user_id_fk": {
+          "name": "employments_user_id_user_id_fk",
+          "tableFrom": "employments",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "employments_resume_profile_id_resume_profiles_id_fk": {
+          "name": "employments_resume_profile_id_resume_profiles_id_fk",
+          "tableFrom": "employments",
+          "tableTo": "resume_profiles",
+          "columnsFrom": [
+            "resume_profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "employments_import_id_resume_imports_id_fk": {
+          "name": "employments_import_id_resume_imports_id_fk",
+          "tableFrom": "employments",
+          "tableTo": "resume_imports",
+          "columnsFrom": [
+            "import_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "employments_title_ck": {
+          "name": "employments_title_ck",
+          "value": "char_length(btrim(title)) BETWEEN 1 AND 200"
+        },
+        "employments_company_ck": {
+          "name": "employments_company_ck",
+          "value": "char_length(btrim(company)) BETWEEN 1 AND 200"
+        },
+        "employments_location_ck": {
+          "name": "employments_location_ck",
+          "value": "char_length(location) <= 120"
+        },
+        "employments_dates_text_ck": {
+          "name": "employments_dates_text_ck",
+          "value": "char_length(dates_text) <= 60"
+        },
+        "employments_start_month_ck": {
+          "name": "employments_start_month_ck",
+          "value": "start_month ~ '^\\d{4}-(0[1-9]|1[0-2])$'"
+        },
+        "employments_end_month_ck": {
+          "name": "employments_end_month_ck",
+          "value": "end_month ~ '^\\d{4}-(0[1-9]|1[0-2])$'"
+        },
+        "employments_dates_ck": {
+          "name": "employments_dates_ck",
+          "value": "start_month IS NULL OR end_month IS NULL OR start_month <= end_month"
+        },
+        "employments_current_ck": {
+          "name": "employments_current_ck",
+          "value": "NOT is_current OR end_month IS NULL"
+        },
+        "employments_asserted_by_ck": {
+          "name": "employments_asserted_by_ck",
+          "value": "asserted_by IN ('user','import','model')"
+        },
+        "employments_confirmed_at_ck": {
+          "name": "employments_confirmed_at_ck",
+          "value": "confirmed = (confirmed_at IS NOT NULL)"
+        },
+        "employments_import_key_ck": {
+          "name": "employments_import_key_ck",
+          "value": "import_key ~ '^[0-9a-f]{64}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.facts": {
       "name": "facts",
       "schema": "",
@@ -509,6 +768,24 @@
         "source_span": {
           "name": "source_span",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_span_hash": {
+          "name": "source_span_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "import_id": {
+          "name": "import_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "employment_id": {
+          "name": "employment_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": false
         },
@@ -578,6 +855,59 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "facts_import_identity_uq": {
+          "name": "facts_import_identity_uq",
+          "columns": [
+            {
+              "expression": "resume_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source_span_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "facts_import_idx": {
+          "name": "facts_import_idx",
+          "columns": [
+            {
+              "expression": "import_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"facts\".\"import_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "facts_employment_idx": {
+          "name": "facts_employment_idx",
+          "columns": [
+            {
+              "expression": "employment_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"facts\".\"employment_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -606,6 +936,32 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "facts_import_id_resume_imports_id_fk": {
+          "name": "facts_import_id_resume_imports_id_fk",
+          "tableFrom": "facts",
+          "tableTo": "resume_imports",
+          "columnsFrom": [
+            "import_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "facts_employment_id_employments_id_fk": {
+          "name": "facts_employment_id_employments_id_fk",
+          "tableFrom": "facts",
+          "tableTo": "employments",
+          "columnsFrom": [
+            "employment_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -619,6 +975,10 @@
         "facts_confirmed_at_ck": {
           "name": "facts_confirmed_at_ck",
           "value": "confirmed = (confirmed_at IS NOT NULL)"
+        },
+        "facts_span_hash_ck": {
+          "name": "facts_span_hash_ck",
+          "value": "source_span_hash ~ '^[0-9a-f]{64}$'"
         }
       },
       "isRLSEnabled": false
@@ -844,6 +1204,242 @@
       },
       "isRLSEnabled": false
     },
+    "public.resume_imports": {
+      "name": "resume_imports",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resume_profile_id": {
+          "name": "resume_profile_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_kind": {
+          "name": "source_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "file_name": {
+          "name": "file_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "file_key": {
+          "name": "file_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_text_enc": {
+          "name": "source_text_enc",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_hash": {
+          "name": "source_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parse_status": {
+          "name": "parse_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "parse_attempts": {
+          "name": "parse_attempts",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "parse_error": {
+          "name": "parse_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "parser_version": {
+          "name": "parser_version",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "parsed_at": {
+          "name": "parsed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "duplicate_fact_ids": {
+          "name": "duplicate_fact_ids",
+          "type": "uuid[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::uuid[]"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "resume_imports_user_idx": {
+          "name": "resume_imports_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "resume_imports_source_uq": {
+          "name": "resume_imports_source_uq",
+          "columns": [
+            {
+              "expression": "resume_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "resume_imports_pending_idx": {
+          "name": "resume_imports_pending_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"resume_imports\".\"parse_status\" in ('pending','parsing')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "resume_imports_user_id_user_id_fk": {
+          "name": "resume_imports_user_id_user_id_fk",
+          "tableFrom": "resume_imports",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "resume_imports_resume_profile_id_resume_profiles_id_fk": {
+          "name": "resume_imports_resume_profile_id_resume_profiles_id_fk",
+          "tableFrom": "resume_imports",
+          "tableTo": "resume_profiles",
+          "columnsFrom": [
+            "resume_profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "resume_imports_duplicates_ck": {
+          "name": "resume_imports_duplicates_ck",
+          "value": "cardinality(duplicate_fact_ids) <= 200"
+        },
+        "resume_imports_kind_ck": {
+          "name": "resume_imports_kind_ck",
+          "value": "source_kind IN ('pdf','docx','linkedin_pdf','text')"
+        },
+        "resume_imports_file_name_ck": {
+          "name": "resume_imports_file_name_ck",
+          "value": "char_length(file_name) BETWEEN 1 AND 120"
+        },
+        "resume_imports_file_key_ck": {
+          "name": "resume_imports_file_key_ck",
+          "value": "starts_with(file_key, 'uploads/' || user_id || '/')"
+        },
+        "resume_imports_enc_ck": {
+          "name": "resume_imports_enc_ck",
+          "value": "octet_length(source_text_enc) BETWEEN 30 AND 262144"
+        },
+        "resume_imports_hash_ck": {
+          "name": "resume_imports_hash_ck",
+          "value": "source_hash ~ '^[0-9a-f]{64}$'"
+        },
+        "resume_imports_status_ck": {
+          "name": "resume_imports_status_ck",
+          "value": "parse_status IN ('pending','parsing','parsed','failed')"
+        },
+        "resume_imports_error_ck": {
+          "name": "resume_imports_error_ck",
+          "value": "parse_error ~ '^[a-z0-9_]{1,40}$'"
+        },
+        "resume_imports_attempts_ck": {
+          "name": "resume_imports_attempts_ck",
+          "value": "parse_attempts BETWEEN 0 AND 10"
+        },
+        "resume_imports_shape_ck": {
+          "name": "resume_imports_shape_ck",
+          "value": "(parse_status <> 'failed' OR parse_error IS NOT NULL) AND (parse_status <> 'parsed' OR parsed_at IS NOT NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.resume_profiles": {
       "name": "resume_profiles",
       "schema": "",
@@ -955,6 +1551,26 @@
           "primaryKey": false,
           "notNull": true
         },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'edit'"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'user'"
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1004,7 +1620,20 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "resume_revisions_reason_ck": {
+          "name": "resume_revisions_reason_ck",
+          "value": "reason IN ('edit','named','before_ai','before_tailor','restore')"
+        },
+        "resume_revisions_name_ck": {
+          "name": "resume_revisions_name_ck",
+          "value": "name IS NULL OR char_length(btrim(name)) BETWEEN 1 AND 80"
+        },
+        "resume_revisions_created_by_ck": {
+          "name": "resume_revisions_created_by_ck",
+          "value": "created_by IN ('user','system')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.resumes": {
@@ -1030,6 +1659,71 @@
           "primaryKey": false,
           "notNull": false
         },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'base'"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'Resume'"
+        },
+        "is_default": {
+          "name": "is_default",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "target_roles": {
+          "name": "target_roles",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "base_resume_id": {
+          "name": "base_resume_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "base_version": {
+          "name": "base_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "application_id": {
+          "name": "application_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
         "document": {
           "name": "document",
           "type": "jsonb",
@@ -1052,21 +1746,6 @@
         }
       },
       "indexes": {
-        "resumes_user_uq": {
-          "name": "resumes_user_uq",
-          "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "resumes_resume_profile_idx": {
           "name": "resumes_resume_profile_idx",
           "columns": [
@@ -1079,6 +1758,119 @@
           ],
           "isUnique": false,
           "where": "\"resumes\".\"resume_profile_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "resumes_user_kind_idx": {
+          "name": "resumes_user_kind_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "resumes_default_uq": {
+          "name": "resumes_default_uq",
+          "columns": [
+            {
+              "expression": "resume_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"resumes\".\"is_default\" and \"resumes\".\"kind\" = 'base' and \"resumes\".\"archived_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "resumes_user_job_uq": {
+          "name": "resumes_user_job_uq",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "job_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"resumes\".\"kind\" = 'tailored' and \"resumes\".\"archived_at\" is null and \"resumes\".\"job_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "resumes_base_idx": {
+          "name": "resumes_base_idx",
+          "columns": [
+            {
+              "expression": "base_resume_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"resumes\".\"base_resume_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "resumes_job_idx": {
+          "name": "resumes_job_idx",
+          "columns": [
+            {
+              "expression": "job_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"resumes\".\"job_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "resumes_application_idx": {
+          "name": "resumes_application_idx",
+          "columns": [
+            {
+              "expression": "application_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"resumes\".\"application_id\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1110,12 +1902,76 @@
           ],
           "onDelete": "set null",
           "onUpdate": "no action"
+        },
+        "resumes_base_resume_id_resumes_id_fk": {
+          "name": "resumes_base_resume_id_resumes_id_fk",
+          "tableFrom": "resumes",
+          "tableTo": "resumes",
+          "columnsFrom": [
+            "base_resume_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "resumes_job_id_jobs_id_fk": {
+          "name": "resumes_job_id_jobs_id_fk",
+          "tableFrom": "resumes",
+          "tableTo": "jobs",
+          "columnsFrom": [
+            "job_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "resumes_application_id_applications_id_fk": {
+          "name": "resumes_application_id_applications_id_fk",
+          "tableFrom": "resumes",
+          "tableTo": "applications",
+          "columnsFrom": [
+            "application_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "resumes_kind_ck": {
+          "name": "resumes_kind_ck",
+          "value": "kind IN ('base','tailored')"
+        },
+        "resumes_shape_ck": {
+          "name": "resumes_shape_ck",
+          "value": "(kind = 'base' AND job_id IS NULL AND base_resume_id IS NULL AND application_id IS NULL) OR (kind = 'tailored' AND NOT is_default)"
+        },
+        "resumes_name_ck": {
+          "name": "resumes_name_ck",
+          "value": "char_length(btrim(name)) BETWEEN 1 AND 80"
+        },
+        "resumes_target_roles_ck": {
+          "name": "resumes_target_roles_ck",
+          "value": "cardinality(target_roles) <= 10"
+        },
+        "resumes_version_ck": {
+          "name": "resumes_version_ck",
+          "value": "version >= 1 AND (base_version IS NULL OR base_version >= 1)"
+        },
+        "resumes_document_ck": {
+          "name": "resumes_document_ck",
+          "value": "jsonb_typeof(document) = 'object' AND octet_length(document::text) <= 400000"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.saved_answers": {
@@ -3496,7 +4352,7 @@
       "checkConstraints": {
         "email_sends_kind_ck": {
           "name": "email_sends_kind_ck",
-          "value": "\"email_sends\".\"kind\" IN ('digest','autopilot_hourly','autopilot_paused','resend_available','offer_pause_notice','offer_pause_applied','forwarding_code','outcome_report','return_to_draft','contact_message','newsletter_confirm')"
+          "value": "\"email_sends\".\"kind\" IN ('digest','autopilot_hourly','autopilot_paused','resend_available','offer_pause_notice','offer_pause_applied','forwarding_code','outcome_report','return_to_draft','contact_message')"
         },
         "email_sends_status_ck": {
           "name": "email_sends_status_ck",
@@ -3520,7 +4376,7 @@
         },
         "email_sends_user_ck": {
           "name": "email_sends_user_ck",
-          "value": "\"email_sends\".\"user_id\" IS NOT NULL OR \"email_sends\".\"kind\" IN ('contact_message','newsletter_confirm')"
+          "value": "\"email_sends\".\"user_id\" IS NOT NULL OR \"email_sends\".\"kind\" = 'contact_message'"
         }
       },
       "isRLSEnabled": false
@@ -3713,221 +4569,6 @@
       },
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.newsletter_subscribers": {
-      "name": "newsletter_subscribers",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "email": {
-          "name": "email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "email_hash": {
-          "name": "email_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "source": {
-          "name": "source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "confirm_seq": {
-          "name": "confirm_seq",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
-        "confirm_requested_at": {
-          "name": "confirm_requested_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "confirm_token_hash": {
-          "name": "confirm_token_hash",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "confirm_expires_at": {
-          "name": "confirm_expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "unsubscribe_token_hash": {
-          "name": "unsubscribe_token_hash",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "confirmed_at": {
-          "name": "confirmed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "unsubscribed_at": {
-          "name": "unsubscribed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "newsletter_subscribers_email_uq": {
-          "name": "newsletter_subscribers_email_uq",
-          "columns": [
-            {
-              "expression": "email",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "newsletter_subscribers_confirm_uq": {
-          "name": "newsletter_subscribers_confirm_uq",
-          "columns": [
-            {
-              "expression": "confirm_token_hash",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"newsletter_subscribers\".\"confirm_token_hash\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "newsletter_subscribers_unsubscribe_uq": {
-          "name": "newsletter_subscribers_unsubscribe_uq",
-          "columns": [
-            {
-              "expression": "unsubscribe_token_hash",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"newsletter_subscribers\".\"unsubscribe_token_hash\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "newsletter_subscribers_email_hash_idx": {
-          "name": "newsletter_subscribers_email_hash_idx",
-          "columns": [
-            {
-              "expression": "email_hash",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"newsletter_subscribers\".\"email_hash\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "newsletter_subscribers_inactive_idx": {
-          "name": "newsletter_subscribers_inactive_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "confirm_requested_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"newsletter_subscribers\".\"status\" <> 'confirmed'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "newsletter_subscribers_email_ck": {
-          "name": "newsletter_subscribers_email_ck",
-          "value": "\"newsletter_subscribers\".\"email\" = lower(btrim(\"newsletter_subscribers\".\"email\")) AND char_length(\"newsletter_subscribers\".\"email\") BETWEEN 3 AND 254 AND position('@' in \"newsletter_subscribers\".\"email\") > 1"
-        },
-        "newsletter_subscribers_email_hash_ck": {
-          "name": "newsletter_subscribers_email_hash_ck",
-          "value": "\"newsletter_subscribers\".\"email_hash\" ~ '^[0-9a-f]{64}$'"
-        },
-        "newsletter_subscribers_source_ck": {
-          "name": "newsletter_subscribers_source_ck",
-          "value": "\"newsletter_subscribers\".\"source\" IN ('popup','blog-index','blog-post','about')"
-        },
-        "newsletter_subscribers_status_ck": {
-          "name": "newsletter_subscribers_status_ck",
-          "value": "\"newsletter_subscribers\".\"status\" IN ('pending','confirmed','unsubscribed')"
-        },
-        "newsletter_subscribers_seq_ck": {
-          "name": "newsletter_subscribers_seq_ck",
-          "value": "\"newsletter_subscribers\".\"confirm_seq\" >= 1"
-        },
-        "newsletter_subscribers_hash_ck": {
-          "name": "newsletter_subscribers_hash_ck",
-          "value": "(\"newsletter_subscribers\".\"confirm_token_hash\" IS NULL OR octet_length(\"newsletter_subscribers\".\"confirm_token_hash\") = 32) AND (\"newsletter_subscribers\".\"unsubscribe_token_hash\" IS NULL OR octet_length(\"newsletter_subscribers\".\"unsubscribe_token_hash\") = 32)"
-        },
-        "newsletter_subscribers_confirm_ck": {
-          "name": "newsletter_subscribers_confirm_ck",
-          "value": "(\"newsletter_subscribers\".\"confirm_token_hash\" IS NULL) = (\"newsletter_subscribers\".\"confirm_expires_at\" IS NULL) AND (\"newsletter_subscribers\".\"confirm_token_hash\" IS NULL OR \"newsletter_subscribers\".\"status\" = 'pending')"
-        },
-        "newsletter_subscribers_state_ck": {
-          "name": "newsletter_subscribers_state_ck",
-          "value": "(\"newsletter_subscribers\".\"status\" <> 'pending' OR (\"newsletter_subscribers\".\"confirmed_at\" IS NULL AND \"newsletter_subscribers\".\"unsubscribed_at\" IS NULL)) AND (\"newsletter_subscribers\".\"status\" <> 'confirmed' OR (\"newsletter_subscribers\".\"confirmed_at\" IS NOT NULL AND \"newsletter_subscribers\".\"unsubscribed_at\" IS NULL)) AND (\"newsletter_subscribers\".\"status\" <> 'unsubscribed' OR \"newsletter_subscribers\".\"unsubscribed_at\" IS NOT NULL)"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.notifications": {

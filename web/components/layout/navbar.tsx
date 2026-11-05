@@ -9,6 +9,7 @@ import { siteConfig } from "@/lib/site";
 import { cn } from "@/lib/utils";
 import { ButtonLink } from "../shared/button";
 import { LogoMark } from "../shared/logo";
+import { RainbowButton } from "../shared/rainbow-button";
 
 export interface NavbarProps {
   /**
@@ -27,7 +28,7 @@ const CLOSE_MS = 120; // the sheet fades out before dialog.close()
 function NavLogo() {
   return (
     <Link href="/" aria-label={nav.logoAria} className="inline-flex min-h-11 items-center gap-2 text-ink transition-opacity duration-300 hover:opacity-70">
-      <LogoMark className="size-6" />
+      <LogoMark />
       <span aria-hidden="true" className="font-display text-xl font-medium leading-none tracking-[-0.02em]">
         {siteConfig.name}
       </span>
@@ -102,9 +103,9 @@ export function Navbar({ variant = "default", sheetExtra }: NavbarProps) {
             <Link href="/login" className={cn(textLink, "hidden text-[15px] font-medium text-ink lg:inline-flex")}>
               {nav.login}
             </Link>
-            <ButtonLink href="/sign-up" className="max-sm:h-10 max-sm:px-4">
+            <RainbowButton href="/sign-up" className="max-sm:px-4">
               {nav.startFree}
-            </ButtonLink>
+            </RainbowButton>
             <button
               ref={menuRef}
               type="button"

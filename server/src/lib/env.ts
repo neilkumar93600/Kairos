@@ -304,6 +304,15 @@ const envSchema = z.object({
       return out;
     }),
 
+  // Resume imports (WP-17; owner-actions/WP-17.md). Conservative defaults until the owner sets them.
+  /** Pages of an uploaded PDF (a LinkedIn profile export included) read for text; later pages are ignored. */
+  IMPORT_MAX_PAGES: z.coerce.number().int().min(1).max(30).default(10),
+  /** Characters of extracted text kept from one file, cut at a line break. */
+  IMPORT_MAX_CHARS: z.coerce.number().int().min(5_000).max(60_000).default(40_000),
+  /** Imports (files and pasted text) one user may start in 24 hours, on top of the upload class's 10 an hour. */
+  IMPORT_DAILY_LIMIT: z.coerce.number().int().min(1).max(500).default(20),
+  /** An import into a resume profile beyond the plan's resumeProfiles count (after a downgrade): refuse (403) or allow. */
+  IMPORT_OVER_SLOT_LIMIT: z.enum(["refuse", "allow"]).default("refuse"),
   // Privacy (WP-25). Defaults are the spec's; counsel signs off the values (owner-actions/WP-25.md).
   /** The terms and privacy notice version a sign-up agrees to, stored in consent_records. Bump it with each new notice. */
   PRIVACY_NOTICE_VERSION: z.string().regex(/^[A-Za-z0-9._-]{1,40}$/).default("2026-10-30"),
@@ -391,6 +400,9 @@ const envSchema = z.object({
   if (e.NODE_ENV === "production" && !e.USER_HASH_KEY) {
     ctx.addIssue({ code: "custom", path: ["USER_HASH_KEY"], message: "required in production (erasure hashes)" });
   }
+}).superRefine((e, ctx) => {
+  // WP-17 ships the first encrypted write on the request path (resume_imports.source_text_enc): no key, no import.
+  if (e.NODE_ENV === "production" && !e.DATA_KEKS) ctx.addIssue({ code: "custom", path: ["DATA_KEKS"], message: "required in production" });
 });
 
 /** Key names only, for the test that keeps APPLIER_FORBIDDEN complete as secrets are added. */
@@ -438,15 +450,30 @@ export function setProcessRole(next: ProcessRole): void {
   role = next;
 }
 
+export function resetEnvCache(): void {
+  cached = undefined;
+  cachedApplier = undefined;
+}
+
 /** Parses process.env once for the api and the worker. Throws in the applier, so no applier path reaches a secret. */
 export function env(): Env {
   if (role === "applier") throw new Error("env() is not available in the applier; use applierEnv() or baseEnv()");
+  if (process.env.NODE_ENV === "test") {
+    if (cached && (cached.DATABASE_URL !== process.env.DATABASE_URL || (process.env.STRIPE_SECRET_KEY && !cached.STRIPE_SECRET_KEY))) {
+      cached = undefined;
+    }
+  }
   cached ??= parseEnv(process.env);
   return cached;
 }
 
 /** The applier's own env (envFor('applier')), parsed once. */
 export function applierEnv(): ApplierEnv {
+  if (process.env.NODE_ENV === "test") {
+    if (cachedApplier && cachedApplier.DATABASE_URL !== process.env.DATABASE_URL) {
+      cachedApplier = undefined;
+    }
+  }
   cachedApplier ??= envFor("applier", process.env);
   return cachedApplier;
 }

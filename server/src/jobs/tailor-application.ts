@@ -2,7 +2,10 @@ import type { Job } from "bullmq";
 import { and, eq, sql } from "drizzle-orm";
 import type { ApplicationAnswer, ResumeLine } from "@auto-career/shared";
 import { db } from "../db/client";
-import { applications, companies, facts, jobs, profiles, savedAnswers, user } from "../db/schema";
+import { applications, companies, facts, jobs, profiles, resumes, savedAnswers, user } from "../db/schema";
+import { HttpError } from "../lib/errors";
+import { recordEvent } from "../services/events";
+import { copyFor, createCopy } from "../services/resume-library";
 import { logger } from "../lib/logger";
 import { slo } from "../lib/metrics";
 import { tailorResume } from "../services/tailor";
@@ -65,7 +68,40 @@ export async function processTailorApplication(job: Job<JobData["tailor-applicat
     .update(applications)
     .set({ resumeLines: ifEmpty(applications.resumeLines, kept), answers: ifEmpty(applications.answers, answers), updatedAt: new Date() })
     .where(and(eq(applications.id, row.app.id), eq(applications.status, "draft")));
+  await ensureTailoredCopy(row.app.userId, row.app.id, { id: row.job.id, title: row.job.title, company: row.companyName });
   // S3: 95% of drafts ready within 60 s of the request.
   slo("s3", Date.now() - row.app.createdAt.getTime() <= 60_000);
   return { lines: kept.length, answers: answers.length };
+}
+
+/**
+ * PRD 6.2 and D2: every draft has a tailored copy in the library, started from the base whose target roles best match
+ * the job title (else the default), with a before_tailor revision; a copy the user made first is linked to the draft.
+ * ponytail: the pipeline's tailored lines stay on applications.resume_lines, not written into the copy's document;
+ * mapping them into the document is the resume-tailor suggestion mode of WP-41.
+ */
+async function ensureTailoredCopy(userId: string, applicationId: string, job: { id: string; title: string; company: string }) {
+  let copy = await copyFor(userId, job.id);
+  if (copy && !copy.applicationId) await db().update(resumes).set({ applicationId }).where(eq(resumes.id, copy.id));
+  if (!copy) {
+    try {
+      copy = await createCopy({ id: userId }, await planFor(db(), userId), job);
+    } catch (err) {
+      // A concurrent copy won the unique index: that copy is the job's, which is what was wanted. Before the contract
+      // migration (resumes_user_uq still there) the draft simply has no copy yet; the draft itself is already written.
+      if (!(err instanceof HttpError && (err.code === "exists" || err.code === "service_unavailable"))) throw err;
+      copy = await copyFor(userId, job.id);
+    }
+  }
+  // The tracker card's version chip (PRD 9.2): once per copy, so a rerun of this job records nothing twice.
+  if (copy) {
+    await recordEvent(db(), {
+      userId,
+      applicationId,
+      kind: "resume_linked",
+      actor: "system",
+      payload: { resumeId: copy.id, resumeName: copy.name },
+      dedupeKey: `resume_linked:${copy.id}`,
+    });
+  }
 }
