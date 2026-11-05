@@ -417,7 +417,7 @@ function Workspace({ initial, jobId = null, initialSuggestions = [], initialFit 
 
   return (
     <Ctx.Provider value={value}>
-      <div className="flex flex-col gap-4 pb-24 sm:pb-0 xl:-mx-6 xl:h-[calc(100dvh-8rem)] xl:min-h-[40rem]">
+      <div className="flex flex-col gap-4 pb-24 sm:pb-0 xl:h-[calc(100dvh-8rem)] xl:min-h-[40rem]">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <nav aria-label="Breadcrumb" className="min-w-0">
             <ol className="flex min-w-0 flex-wrap items-center gap-x-2 font-display text-[26px] leading-[1.2] tracking-[-0.025em]">
@@ -627,7 +627,7 @@ function PrintCopy({ doc, onMeasure }: { doc: Resume; onMeasure: (m: Measure) =>
 /** Same frame as the loaded workspace: header, the editor panel, the page and the right rail. */
 export function WorkspaceSkeleton() {
   return (
-    <div aria-busy="true" className="flex flex-col gap-4 xl:-mx-6 xl:h-[calc(100dvh-8rem)] xl:min-h-[40rem]">
+    <div aria-busy="true" className="flex flex-col gap-4 xl:h-[calc(100dvh-8rem)] xl:min-h-[40rem]">
       <h1 className="sr-only">Resume</h1>
       <span role="status" className="sr-only">
         Loading your resume

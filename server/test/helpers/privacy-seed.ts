@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { encrypt } from "../../src/lib/crypto";
 import { eq, sql } from "drizzle-orm";
 import type { Db } from "../../src/db/client";
 import * as schema from "../../src/db/schema";
@@ -22,6 +23,28 @@ export async function seedEverything(db: Db, email: string, mark = MARK) {
   const [resume] = await db.insert(schema.resumes).values({ userId: id, resumeProfileId: rp!.id, document: { marker: mark } as never }).returning();
   await db.insert(schema.resumeRevisions).values({ resumeId: resume!.id, document: { marker: mark } as never });
   await db.insert(schema.facts).values({ userId: id, resumeProfileId: rp!.id, kind: "skill" as never, text: `Go ${mark}` });
+  const importId = randomUUID();
+  const enc = encrypt(`resume ${mark}`, { table: "resume_imports", id: importId, column: "source_text" });
+  await db.insert(schema.resumeImports).values({
+    id: importId,
+    userId: id,
+    resumeProfileId: rp!.id,
+    sourceKind: "text",
+    sourceTextEnc: enc,
+    sourceHash: randomBytes(32).toString("hex"),
+    parseStatus: "parsed",
+    parsedAt: new Date(),
+  });
+  await db.insert(schema.employments).values({
+    userId: id,
+    resumeProfileId: rp!.id,
+    title: `Role ${mark}`,
+    company: `Co ${mark}`,
+    importKey: randomBytes(32).toString("hex"),
+    assertedBy: "user",
+    confirmed: true,
+    confirmedAt: new Date(),
+  });
   await db.insert(schema.savedAnswers).values({ userId: id, questionKey: "visa", label: "Visa?", answer: mark });
   const [co] = await db.insert(schema.companies).values({ name: "Co", ats: "greenhouse", boardToken: randomUUID() }).returning();
   const [job] = await db
@@ -38,8 +61,49 @@ export async function seedEverything(db: Db, email: string, mark = MARK) {
       receipt: { filledFields: [{ fieldKey: "q", label: "Gender", value: mark }], channel: "extension" },
     })
     .returning();
+  const [trackerItem] = await db.insert(schema.trackerItems).values({
+    userId: id,
+    jobId: job!.id,
+    applicationId: app!.id,
+    title: `Role ${mark}`,
+    company: `Co ${mark}`,
+    stage: "applied",
+  }).returning();
+  await db.insert(schema.applicationEvents).values({
+    trackerItemId: trackerItem!.id,
+    applicationId: app!.id,
+    userId: id,
+    kind: "sent",
+    actor: "system",
+  });
+  await db.insert(schema.submissionAttempts).values({
+    applicationId: app!.id,
+    userId: id,
+    attemptNo: 1,
+    channel: "extension",
+    ats: "greenhouse",
+    phase: "reported",
+    state: "submitted",
+    finishedAt: new Date(),
+  });
+  await db.insert(schema.emailSends).values({
+    kind: "digest",
+    entityId: id,
+    userId: id,
+    status: "sent",
+    sentAt: new Date(),
+  });
+  await db.insert(schema.notifications).values({
+    userId: id,
+    kind: "autopilot_sent",
+    entityId: app!.id,
+  });
   await db.insert(schema.creditLedger).values({ userId: id, delta: -1, reason: "submission", applicationId: app!.id });
+  // WP-35: bootstrapUser made the default saved search; a reminder about the application.
+  await db.insert(schema.reminders).values({ userId: id, kind: "no_reply", applicationId: app!.id, dueAt: new Date() });
   await db.insert(schema.inboundEmails).values({ userId: id, applicationId: app!.id, providerMessageId: randomUUID(), sender: "hr@co.example", subject: "Re", textBody: mark });
+  // WP-24: a Gmail code held for the user; privacy-scripts.int.test.ts needs a row in every exported table.
+  await db.insert(schema.forwardingVerifications).values({ userId: id, provider: "gmail", code: "123456", expiresAt: new Date(Date.now() + 3 * 86_400_000) });
   await db.insert(schema.contactMessages).values({ name: "Ann", email: email.toUpperCase(), topic: "support", message: mark });
   await db.execute(sql`insert into user_daily_usage (user_id, day) values (${id}, current_date)`);
   await db.execute(sql`insert into ai_usage (user_id, day, feature, used) values (${id}, current_date, 'jobTailor', 1)`);

@@ -6,10 +6,15 @@ describe("retention rules (WP-25)", () => {
   it("defaults to the spec's periods, pending counsel", () => {
     expect(Object.fromEntries(Object.entries(RETENTION_RULES).map(([k, r]) => [k, r.days]))).toEqual({
       inbound_body: 180,
+      reminders: 90,
+      inbound_hidden: 30,
+      forwarding_codes: 3,
+      forwarding_stale: 30,
       contact_messages: 365,
       matches_below_bar: 30,
       board_requests: 180,
       jobs_closed: 180,
+      verified_claims: 1,
       scrub_applications: 7,
     });
   });

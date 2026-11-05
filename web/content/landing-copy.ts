@@ -35,7 +35,6 @@ export const landingCopy = {
       "A light painted valley at dawn under the headline Job applications you would sign, with a sample match card.",
     ogSiteName: "Kairos",
     twitterCard: "summary_large_image",
-    lang: "en",
     orgJsonLd: {
       name: "Kairos",
       legalName: "Gray Matter Labs",
@@ -55,133 +54,114 @@ export const landingCopy = {
       fit: "Fit 82",
       fitTail: "passes your rules",
     },
+    // Landing v3 side card at the window's right: a later step of the same story. Synthetic company.
+    sent: { title: "Data Analyst · Company 052", word: "Sent", tail: "receipt saved" },
+    // Landing v3 app mockup (docs/DESIGN.md "Hero app mockup"). SAMPLE data, synthetic companies. The first row is
+    // the draft open in the pane. aria is the whole picture's label: the mockup is one role="img".
+    app: {
+      aria: "Sample of the Kairos review queue: three drafts wait for approval, and the open draft shows two resume lines, each citing a fact you confirmed. Nothing is sent until you press Approve.",
+      title: "Review queue",
+      count: "3 drafts waiting",
+      status: "Draft",
+      rows: [
+        { role: "Backend Engineer", company: "Company 109 · Remote", fit: "Fit 86" },
+        { role: "Platform Engineer", company: "Company 031 · Hybrid", fit: "Fit 79" },
+        { role: "Data Engineer", company: "Company 077 · Remote", fit: "Fit 74" },
+      ],
+      label: "Tailored resume",
+      lines: [
+        { text: "Led the move of the payments API to an event queue.", cites: "cites #03" },
+        { text: "Wrote the on-call runbook the team still uses.", cites: "cites #07" },
+      ],
+      approve: "Approve",
+    },
   },
 
-  // 08 1.3. Plain text, no logos.
+  // 08 1.3. Plain text, no logos. caption, items and trailing are shared with /how-it-works (AtsHub); label, h2 and
+  // subline are the landing intro (docs/DESIGN.md "Landing v3 mid-page chapter" > "1. Where it applies").
   strip: {
+    label: "Where it applies",
+    h2: "Through the employer's own career page.",
+    subline: "Kairos fills the Greenhouse, Lever or Ashby form with your details and the answers you approved.",
     caption: "Applies through employer career pages on",
     items: ["Greenhouse", "Lever", "Ashby"],
     trailing: "We do not automate LinkedIn.",
   },
 
-  // 08 1.4. Cards are numbered 001 to 003 by the builder.
+  // Landing v3 mid-page chapter, "What goes wrong" (docs/DESIGN.md "Landing v3 mid-page chapter" > 2): what people
+  // report about other auto-apply tools, drawn as the clock rail those tools send on. Panel slips read sample.skipped[0]
+  // and sample.uncited; the Data Clerk slip is the panel's own. The items carry the meaning; the panel is aria-hidden.
   problems: {
     pill: "Reported, not measured",
     h2: "What people report about auto-apply tools.",
-    cards: [
+    subline: "Each one is a check Kairos runs before anything is sent.",
+    items: [
       { title: "Poor matches", body: "Applications sent to jobs that do not fit." },
       { title: "Invented resumes", body: "Skills the person does not have." },
       { title: "No edit step", body: "A draft you cannot change." },
     ],
-  },
-
-  // 08 1.5 intro
-  howItWorks: {
-    pill: "How it works", // optional
-    h2: "Fit, cite, approve, receipt.",
-    subline:
-      "Each application passes a fit gate, cites your facts and waits for approval. Submitted ones leave a receipt.",
-  },
-
-  // 08 1.5.1. Rule strings for the skip reason are rendered from fit-sample.json and fit.ts.
-  step1: {
-    badge: "1",
-    h3: "A fit gate before anything else.",
-    body: "Role, location, salary and visa are hard rules. Break one and it is skipped.",
-    card: {
-      sampleChip: "SAMPLE",
-      sponsorshipLegend: "Needs visa sponsorship",
-      sponsorshipOptions: ["Yes", "No"], // default Yes
-      skippedRow: "{id} · Skipped · {reason}",
-      passRow: "{id} · Passes",
-      skipRow: "{id} · Skipped",
-      runLine: "{total} postings · {skipped} skipped · {passed} pass",
-      liveRegion: "Needs sponsorship {value}. {skipped} postings skipped. {passed} pass.",
+    panel: {
+      head: "Sent today",
+      outside: "Outside your rules",
+      noFact: "No fact behind this",
+      clerk: "Data Clerk · Company 212",
+      edit: "Edit",
+      unread: "Sent before you read it",
     },
   },
 
-  // 08 1.5.2
-  step2: {
-    badge: "2",
-    h3: "Resumes that cannot make things up.",
-    body: "Each line cites a fact you confirmed, or it is not saved.",
-    card: {
-      sampleChip: "SAMPLE",
-      line: "Wrote backend services in TypeScript for the billing team",
-      cite: "cites #07, #12",
-      citeAria: "Cites facts number 7 and 12",
-      refusedLine: "Led a team of 6 engineers", // shown for 320 ms, falls and fades
-      button: "Try a line without a fact",
-      saved: "Saved. Cites facts #07, #12.",
-      refused: "Not saved. Cites no confirmed fact.",
+  // Landing v3 mid-page chapter, the signature (docs/DESIGN.md "3. The three checks"). The held sheet reads
+  // hero.app.rows[0], hero.app.lines and `sample`; only its own labels live here. stageAria is the stage's one label.
+  steps: {
+    label: "How it works",
+    h2: "Three checks before anything is sent.",
+    subline: "The last check is yours: the application waits, untouched, until you approve it.",
+    stageAria:
+      "Sample application for Backend Engineer at Company 109 on a writing desk. Two postings that break your rules are struck out and set aside. Two resume lines each cite a fact you confirmed; a third line cites nothing and is marked not saved. The application waits for your approval.",
+    cards: [
+      { step: "Step 1", line: "Jobs that break your rules are skipped.", body: "Role, location, salary and visa are hard rules, checked before any model runs." },
+      { step: "Step 2", line: "Every resume line cites a fact you confirmed.", body: "A line with no confirmed fact behind it is not saved." },
+      // `try` points at the Approve button, so it renders only with scripts on (data-requires-js), like the button.
+      { step: "Step 3", line: "Sent only after you approve, with a receipt.", try: "Try it on the sample.", body: "Nothing is sent." },
+    ],
+    sheet: {
+      // Step 1 only (shown while the stage is armed, before step 2): the hard rules the held posting passes, ticked.
+      // Role and Location values are read from hero.app.rows[0]; Salary and Visa are SAMPLE values.
+      rules: { label: "Your rules", names: ["Role", "Location", "Salary", "Visa"], salary: "In your range", visa: "Not needed" },
+      label: "Tailored resume",
+      noCite: "cites none",
+      notSaved: "No fact behind this · not saved",
+      confirmed: "Confirmed by you",
+      confirmedShort: "Confirmed",
+      waiting: "Waiting for your approval",
+      approvedBy: "Approved by you",
     },
-  },
-
-  // 08 1.5.3. Mock words 20, floating card 3.
-  spotlight: {
-    pill: "The moment", // optional
-    h2: "Nothing is sent until you approve it.",
-    body: "Edit anything. Approve one or a batch. Withdraw before it sends.",
-    mock: {
-      chip: "SAMPLE · NOTHING SENT",
-      title: "Software Engineer · Company 014",
-      lines: "4 lines · each cites a fact",
-      answers: "7 answers · 0 guessed",
-      button: "Approve sample draft",
-      approvedButton: "Approved · sample",
-      live: "Approved. Sample updated.",
-    },
-    floating: {
-      awaiting: "Awaiting your approval",
-      approved: "Approved by you · {approvedTime}",
-    },
-  },
-
-  // 08 1.5.4. G3: the gated body ships until the extension and receipts are confirmed live.
-  step3: {
-    badge: "3",
-    h3: "Sent through the employer's form. Then a receipt.",
-    body: "The extension (in beta) saves every field, answer, resume version and confirmation page. Failed submits cost nothing.",
-    bodyLive:
-      "Kairos saves every field, answer, resume version and confirmation page. Failed submits cost nothing.", // ship when G3 passes
-    card: {
-      sampleChip: "SAMPLE",
-      header: "Receipt",
-      rows: [
-        { label: "Form", value: "the employer's page" },
-        { label: "Answers", value: "7 · approved by you" },
-        { label: "Credit", value: "−1 · charged once" },
-      ],
-      answersApproved: "Approved · {approvedAt}", // replaces the Answers value after the visitor approves
-      failedChip: "Failed · 0 credits",
-      live: "Approved. Sample receipt updated.",
-    },
-  },
-
-  // 08 1.5.5. G3: the gated first sentence ships. The honesty sentence is never gated.
-  step4: {
-    badge: "4",
-    h3: "Replies come to an address you control.",
-    body: "Reply tracking (in beta) tags each reply to its application.",
-    bodyLive: "Replies are tagged to their application.", // ship when G3 passes
-    honesty: "We cannot promise interviews.", // preceded by the 8 px hollow square
-    openRowSquareAria: "Open.",
-    card: {
-      sampleChip: "SAMPLE",
-      rows: [
-        "Reply · tagged to 0233",
-        "Interview request · tagged to 0233",
-        "Offer · tagged to 0233",
-      ],
+    approve: {
+      idle: "Approve sample",
+      pending: "Approving",
+      done: "Approved",
+      live: "Approved. Sample receipt updated. Nothing was sent.",
+      receipt: "See the sample receipt", // links to #features once approved
     },
   },
 
   // 08 1.6. The only dark surface.
   darkCard: {
+    label: "καιρός", // the word itself, rendered with lang="el"
     h2: "Kairos is Greek for the right moment.",
     sub: "You choose it. Nothing is sent until you do.",
     cta: "Start with 25 free applications",
     chip: "Failed submits cost nothing", // dark-glass fact chip beside the button; same fact as pricing
+    // SAMPLE timeline of one application beside the copy: the pipeline does its part, then waits for your moment.
+    moment: {
+      aria: "Sample timeline of one application: matched at 08:12, drafted at 08:14 with every line cited, and now waiting for your approval.",
+      title: "Data Engineer · Company 014",
+      rows: [
+        { time: "08:12", text: "Matched · Fit 82" },
+        { time: "08:14", text: "Drafted · every line cited" },
+        { time: "Now", text: "Waiting for you" },
+      ],
+    },
   },
 
   // 08 1.7. Plan names, taglines, prices, allowances and features are read from shared/src/plans.ts.
@@ -207,30 +187,16 @@ export const landingCopy = {
     // G3: the offer pause depends on reply tracking, so the gated line ships.
     guarantee: "Failed submits cost nothing. Cancel any time.",
     guaranteeLive: "Failed submits cost nothing. Billing pauses when an offer email arrives.", // ship when G3 passes
-    fullPricing: "See full pricing",
+    fullPricing: "Compare every plan", // Landing v3: quiet link to /pricing, where the full compare lives
   },
 
-  // 08 1.8. Three rows; the Review and Replies rows are dropped.
-  compare: {
-    pill: "No products named",
-    h2: "How it compares with typical auto-apply.",
-    columns: ["People report", "Kairos"],
-    rows: [
-      { topic: "Jobs", reported: "Matches that do not fit", kairos: "Only jobs past your rules" },
-      { topic: "Resume", reported: "Skills they do not have", kairos: "Every line cites a fact" },
-      {
-        topic: "Billing",
-        reported: "Charges after cancelling",
-        kairos: "Cancel any time. Failed submits cost nothing.",
-      },
-    ],
-  },
 
   // 08 1.9. items feed json-ld.tsx; answers are the Drop 1 answers, all within 40 words.
   faq: {
-    pill: "Questions", // optional
     h2: "What people ask before signing up.",
-    contact: "Something else?", // followed by siteConfig.supportEmail, never typed here
+    contact: "Something else?", // /pricing: followed by siteConfig.supportEmail, never typed here
+    subline: "Short answers on where it applies, what it writes and what it costs.", // Landing v3 left column
+    contactLink: "Contact us", // Landing v3: quiet link to /contact
     items: [
       {
         q: "Which job sites does it apply on?",
@@ -254,7 +220,8 @@ export const landingCopy = {
       },
       {
         q: "Can I upload my resume?",
-        a: "Version 1 takes pasted text.",
+        // ships with R1 (file import). Until then the honest answer is "Version 1 takes pasted text."
+        a: "Yes. Upload a PDF or DOCX, or the PDF LinkedIn saves of your profile. Nothing from it is used until you confirm each fact.",
       },
     ],
   },
@@ -269,27 +236,79 @@ export const landingCopy = {
 
   // 08 section 6. Link hrefs come from siteConfig.footer.
   footer: {
-    logoAria: "Kairos, home",
     wordmark: "Kairos",
-    tagline: "Fit-first job applications, sent only when you approve.",
-    groups: [
-      { title: "Product", links: ["How it works", "Pricing", "Blog"] },
-      { title: "Company", links: ["About", "Careers", "Contact"] },
-      { title: "Legal", links: ["Terms", "Privacy", "Cookies", "Refunds"] },
-    ],
     copyright: "© {BUILD_YEAR} Kairos. A product of Gray Matter Labs.",
-    legalNote: "Legal pages under review.", // drop when G8 passes
     motionLegend: "Motion",
     motionOptions: ["Full", "Reduced"],
-    motionHelp:
-      "Reduced turns off the floating and drifting effects. The page says the same things either way.",
     motionLive: "Motion set to {mode}.",
+  },
+
+  // Landing v3 coda (docs/DESIGN.md "Landing v3 mid-page chapter" > "4. What you get"): the chapter's sample application
+  // after approval. Built features only. G3: `line` ships with "(in beta)"; swap to `lineLive` when G3 passes.
+  bento: {
+    label: "What you get",
+    h2: "Everything that went out, and what came back.",
+    subline: "The same sample application, after you approve it.",
+    cards: [
+      {
+        title: "A receipt for every send",
+        line: "The extension (in beta) keeps the form, your answers and the confirmation page.",
+        lineLive: "Kairos keeps the form, your answers and the confirmation page.", // ship when G3 passes
+      },
+      {
+        title: "Replies, sorted",
+        line: "Reply tracking (in beta) files each reply to its application.",
+        lineLive: "Each reply is filed to its application as interview or other.", // ship when G3 passes
+      },
+      {
+        title: "Credits only for sends that land",
+        line: "One credit per application that goes through, none for a failed submit.", // not gated
+      },
+    ],
+    more: "See every step",
+    // Coda panel, aria-hidden: every fact here is also in the text column. Rows of Company 109 only (sample).
+    panel: {
+      head: "Backend Engineer · Company 109",
+      approved: "Approved by you",
+      receiptHead: "Receipt",
+      receipt: [
+        ["Form", "Employer's page"],
+        ["Answers", "7 · approved by you"],
+        ["Resume", "Lines you approved"],
+      ],
+      saved: "Confirmation page saved",
+      repliesHead: "Replies, sorted",
+      replies: [
+        { text: "Are you free on Thursday?", tag: "Interview" },
+        { text: "Thank you for applying", tag: "Other" },
+      ],
+      creditsHead: "Credits",
+      charged: ["Credit", "−1 · charged once"],
+      failed: "A failed submit · 0 credits",
+    },
   },
 
   // Shared strings used by chips and islands.
   shared: {
     sampleChip: "SAMPLE",
     sampleChipAria: "Sample data",
+  },
+
+  // Shared SAMPLE data for the mid-page chapter (docs/DESIGN.md "Landing v3 mid-page chapter"). Synthetic names only.
+  // The held application is the hero's open draft: hero.app.rows[0] (Backend Engineer · Company 109 · Remote, Fit 86)
+  // with hero.app.lines (cites #03, cites #07). Problem panel, chapter and coda read from here so they cannot drift.
+  sample: {
+    facts: [
+      { id: "Fact #03", topic: "payments API" },
+      { id: "Fact #07", topic: "on-call runbook" },
+    ],
+    // The line no confirmed fact backs: other tools send it (problem panel); Kairos marks it not saved (chapter).
+    uncited: { before: "Led a team of ", claim: "12", after: " engineers" },
+    // Postings outside the person's rules: other tools sent the first (problem panel); the fit gate skips both (chapter).
+    skipped: [
+      { role: "Night Auditor", company: "Company 078", reason: "Skipped · title" },
+      { role: "Sales Director", company: "Company 107", reason: "Skipped · location" },
+    ],
   },
 } as const;
 

@@ -330,12 +330,14 @@ Every error from `/api/*` except Better Auth's own routes (4.6) leaves as
 | `bad_signature` | 400 | Stripe webhook | none | |
 | `price_unavailable` | 400 | `POST /api/billing/checkout` | none | |
 | `invalid_body` | 422 | body fails its schema | zod issues array (kept [code]) | |
+| `invalid_body` | 400 | `POST /api/webhooks/postmark/inbound/:pathSecret` only: the Postmark payload fails its schema (14.3) | the failing field paths, never a value | Length alone never fails it (WP-24) |
 | `truth_lock` | 422 | `PUT /api/resume`, `PATCH /api/applications/:id`, `POST /api/applications/:id/drafts`, revision restore | 4.5 | |
 | `profile_only` | 422 | `POST /api/applications/:id/drafts` | none | |
 | `invalid_scope` | 422 | `POST /api/resume/suggestions` (an id that is not in the resume) | none | |
 | `unsupported_board` | 422 | `POST /api/jobs/import` | none | |
 | `idempotency_key_reused` | 422 | `workflow-id` routes with a key whose earlier request differed | none | yes |
-| `limit_reached` | 422 | `POST /api/saved-searches` (10), rehearsal sessions per application (2) | `{ limit }` | yes |
+| `limit_reached` | 422 | rehearsal sessions per application (2) | `{ limit }` | yes |
+| `limit_reached` (saved searches) | 409 | `POST /api/saved-searches` (10) *[Amended 2026-11-05, WP-35: 409 with the code catalog's `limit_reached`, as the resume cap above]* | `{ limit }` | yes |
 | `payment_required` | 402 | `POST /api/applications/approve`, resend | `{ available, requested }` | |
 | `rate_limited` | 429 | any rate-limited or metered route; a spent daily AI allowance is `details.reason = "daily_allowance"` with `resetsAt` (never 402) | 6.6 | |
 | `limit_reached` (resume cap) | 409 | `POST /api/resumes` (10 base resumes per profile) *[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 11)]* | `{ limit }` | |
@@ -693,6 +695,8 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `usage.today` | `GET /api/usage/today` | session | | 200 `usageTodayResponseSchema` | | none | new | P1 |
 | `notifications.list` | `GET /api/notifications` | session | `notificationsQuerySchema` | 200 `notificationsResponseSchema` | | none | new | P2 |
 | `notifications.read` | `POST /api/notifications/read` | session | `notificationsReadSchema` | 200 `{ updated }` | | natural | new | P2 |
+| `emailPreferences.get` | `GET /api/email-preferences` | session | | 200 `{ emailPreferences }` | `not_found` | none | new | WP-35 |
+| `emailPreferences.patch` | `PATCH /api/email-preferences` | session | `emailPreferencesPatchSchema` | 200 `{ emailPreferences }` | `invalid_body` | natural | new | WP-35 |
 | `forwarding.status` | `GET /api/forwarding/status` | session | | 200 `forwardingStatusSchema` | | none | new | P6 |
 | `forwarding.confirm` | `POST /api/forwarding/confirm` | session | `forwardingConfirmSchema` | 200 `{ state }` | | natural | new | P6 |
 | `mail.unsubscribe.page` | `GET /api/unsubscribe?t=` | signed-token . link | query `t` | 200 HTML | `link_expired` | none | new | P6 |
@@ -751,6 +755,7 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `applications.approve` | `POST /api/applications/approve` | session-nocache | `approveApplicationsSchema` | 200 `approveResponseSchema` | `forbidden`, `payment_required` | workflow-id | frozen+additive | P2 |
 | `applications.drafts` | `POST /api/applications/:id/drafts` | session . ai_burst | `draftRequestSchema` | 200 `draftResponseSchema` | `not_found`, `profile_only`, `forbidden`, `truth_lock`, `ai_unavailable` | none | frozen | P3 |
 | `applications.withdraw` | `POST /api/applications/:id/withdraw` | session | | 200 `{ ok: true }` | `not_found` | natural | frozen | P2 |
+| `applications.stage.clear` | `POST /api/applications/:id/stage/clear` | session | | 200 `{ stage, detached }` (`stage`: `applied` for a submitted application, else null) | `not_found`, `conflict` | natural | new | P2 |
 | `applications.prepare` | `POST /api/applications/:id/prepare` | session . prepare | | 202 `{ id, draftState }` | `not_found`, `conflict` | workflow-id | new | P3 |
 | `applications.pdf` | `GET /api/applications/:id/pdf` | session | | 200 `application/pdf` | `not_found`, `not_ready` | none | new | P3 |
 | `applications.events` | `GET /api/applications/:id/events` | session | `pageQuerySchema` | 200 `eventsResponseSchema` | `not_found` | none | new | P2 |
@@ -784,8 +789,8 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `extension.release` | `POST /api/extension/release` | session | `extensionClaimSchema` | 200 `{ released }` | `not_found` | natural | new | P2 |
 | `extension.resumePdf` | `GET /api/extension/applications/:id/resume.pdf?t=` | signed-token . pdf_link | query `t` | 200 `application/pdf` | `link_expired` | none | new | P3 |
 | `webhooks.stripe` | `POST /api/webhooks/stripe` | stripe-signature . webhook_ip | raw JSON | 200 `{ received, duplicate? }` | `bad_signature` | workflow-id | frozen | P2 |
-| `webhooks.postmark.inbound` | `POST /api/webhooks/postmark/inbound/:pathSecret` | postmark-basic-path . webhook_ip | Postmark JSON | 200 `{ stored, duplicate? }` | 400 `invalid_body`, 403 `forbidden` | workflow-id | new | P1 |
-| `webhooks.inbound.legacy` | `POST /api/webhooks/inbound-email?token=` | public (query token) . webhook_ip | Postmark JSON | 200 `{ stored }` | `unauthorized`, `invalid_body` | workflow-id | frozen (sunset) | P1 to P2 + 7 days |
+| `webhooks.postmark.inbound` | `POST /api/webhooks/postmark/inbound/:pathSecret` | postmark-basic-path . webhook_ip | Postmark JSON | 200 `{ stored, duplicate? }` | 400 `invalid_body`, 404 `route_not_found` (a failed check, WP-24) | workflow-id | new | P1 |
+| `webhooks.inbound.legacy` | `POST /api/webhooks/inbound-email?token=` | public (query token) . webhook_ip | Postmark JSON | 200 `{ stored }` | 403 `forbidden`, 422 `invalid_body` | workflow-id | frozen (sunset) | P1 to P2 + 7 days |
 
 **Admin** (all `admin` auth, `admin_write` on writes, never CORS; section 16)
 
@@ -1208,7 +1213,7 @@ The skeleton answers `{ applicationId: null }` with status 200 for every refusal
 
 **`GET /api/applications`** keeps its query (`status`, validated against `APPLICATION_STATUSES`; an invalid value is 400 `invalid_param`), its order (`updatedAt desc`, `id` tiebreaker) and its default and frozen limit of 200. Rows are built by `serializeApplicationRow`: the frozen keys (`id`, `status`, `channel`, `approvedAt`, `submittedAt`, `failureReason`, `job { id, title, location, applyUrl }`, `company { name, ats }`) plus the optional `draftState`, `stage`, `approvedBy` and `updatedAt`. The list never carries lines, answers, letters or the job description, so a page of 200 stays under 100 KB.
 
-**`GET /api/applications/:id`** returns `{ application, job, companyName }` through three explicit serializers; nothing is spread from a row (A-4).
+**`GET /api/applications/:id`** returns `{ application, job, companyName }` through three explicit serializers; nothing is spread from a row (A-4). WP-24 adds `stage` beside them, additive and nullable: the reply-driven stage, which `applications.stage.clear` can undo.
 
 | Object | Exposed (frozen keys, byte-compatible) | Exposed (additive, optional) | Never exposed |
 |---|---|---|---|
@@ -1317,7 +1322,7 @@ The response is the same object as GET. `channel` is derived from the plan (`ext
 
 ### 10.8 Saved searches
 
-`GET /api/saved-searches` returns `{ searches }` (at most 10, `createdAt asc`). `POST` creates one (201, `{ search }`; 422 `limit_reached` `details { limit: 10 }` at the eleventh). `PATCH /:id` merges; `DELETE /:id` is 204 whether or not it existed. Filters are `{ minScore?, roles?, companies?, remoteOnly? }` over the user's own matches and add no scoring (arch B.7.10). Frequency `off` stops the digest email only; the search still filters the web feed if a future screen uses it.
+`GET /api/saved-searches` returns `{ searches }` (at most 10, `createdAt asc`). `POST` creates one (201, `{ search }`; 409 `limit_reached` `details { limit: 10 }` at the eleventh *[Amended 2026-11-05, WP-35: 409, as the code catalog; a duplicate name is 409 `exists`]*). `PATCH /:id` merges; `DELETE /:id` is 204 whether or not it existed. Filters are `{ minScore?, roles?, companies?, remoteOnly? }` over the user's own matches and add no scoring (arch B.7.10). Frequency `off` stops the digest email only; the search still filters the web feed if a future screen uses it.
 
 ### 10.9 Interview rehearsal (P6)
 
@@ -1433,6 +1438,8 @@ Rules (arch B.8.10): limits come only from `shared/src/plans.ts` (`aiDailyAllowa
 **Notifications** (P2): `GET /api/notifications?unread=true&limit&cursor` returns `{ notifications, unread, nextCursor? }`, newest first, default 50; titles are joined at read time (the table stores ids and codes only), so a notification never carries personal text. `POST /api/notifications/read` takes `{ ids: uuid[] }` (1 to 100) or `{ all: true }`, sets `read_at` once and answers `{ updated }`.
 
 **Forwarding** (P6): `GET /api/forwarding/status` returns `{ state, address, lastMailAt, verification }`; `verification` is the Gmail code and confirmation link Kairos received for the user (expires after 3 days) or `null`. `POST /api/forwarding/confirm` with `{ provider }` records "I have set it up" (the only signal Google or Outlook gives) and answers `{ state }`.
+
+**Email preferences** (WP-35): `GET /api/email-preferences` returns `{ emailPreferences: { digest, outcomeReport, autopilotSummary, reminders } }` (true means send); `PATCH` with any non-empty subset answers the same object. They are `profiles.mail_opt_out` (inverted); turning one on records consent and off withdraws it, and the send path reads them at send time. Account mail has no switch.
 
 **Unsubscribe** (P6): non-transactional mail (`digest`, `outcome_report`, `autopilot_summary`) carries `List-Unsubscribe: <API_PUBLIC_ORIGIN/api/unsubscribe?t=...>` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058). `GET /api/unsubscribe?t=` shows what will stop; `POST /api/unsubscribe` takes the token from the form field `t` or, for the one-click form post a mail client sends, from the query string, appends the kind to `profiles.mail_opt_out` and answers a confirmation page. Transactional mail (receipts, resend links, verification codes, billing notices) cannot be opted out. The token is `purpose: "unsubscribe"` in `action_tokens` (valid 90 days, deterministic per user, kind and month). A second click shows "already unsubscribed" and changes nothing, because an unsubscribe is naturally idempotent (`_db/platform.md` section 4.10). The opt-out lives in `profiles.mail_opt_out` (section 24.1).
 
@@ -1668,7 +1675,7 @@ The user forwards employer replies to a private address `u-<id8>-<hex8>@replies.
 | HTTP Basic | The webhook URL configured in Postmark embeds credentials (`https://user:pass@api.../...`). The route compares the decoded user and password with `POSTMARK_INBOUND_BASIC_USER` and `POSTMARK_INBOUND_BASIC_PASSWORD`. Every comparison hashes both sides with SHA-256 and uses `crypto.timingSafeEqual`, so length does not leak. |
 | TLS only | The route answers only when `req.protocol === "https"` (trust proxy hop). Postmark's published webhook IP range is optional defense in depth, not relied on (the origin address can change per attempt). |
 
-**Failures.** Any failed check answers **403 `forbidden`** with no detail, which makes Postmark stop retrying that message (kept from arch B.6.12); the operator can re-drive it from Postmark. A payload that fails the schema answers **400 `invalid_body`** (P-05); Postmark retries a non-200 answer up to 10 times and then marks the message "Inbound Error", which is acceptable for a payload that can never become valid.
+**Failures.** Any failed check answers **404 `route_not_found`**, exactly as a route that does not exist (WP-24, replacing the earlier 403, so the route cannot be told from a missing one; Postmark keeps retrying until a corrected URL takes the message). A payload that fails the schema answers **400 `invalid_body`** (P-05); Postmark retries a non-200 answer up to 10 times and then marks the message "Inbound Error", which is acceptable for a payload that can never become valid.
 
 **Parser.** `express.json({ limit: "50mb" })` on this route only (default 1 MB elsewhere). Postmark's own limit is believed to be 35 MB including base64 attachments [unverified, integrations section 6]; 50 MB leaves room. A request whose `Content-Length` exceeds 5 MB takes the large-body gate, one permit per replica (2.4); a second one waits for nothing and answers 503 `service_unavailable` with `Retry-After: 5`, which Postmark retries. The parsed object is reduced at once: only the fields below are copied; `Attachments` (and its `Content`), `HtmlBody`, `StrippedTextReply` and the raw `Headers` array are dropped, except the spam score read from `Headers`.
 
@@ -1699,7 +1706,7 @@ A failure at step 5 or 6 answers 503 and Postmark retries. If the process dies b
 
 ### 14.4 The legacy route `POST /api/webhooks/inbound-email?token=`
 
-Kept exactly as the skeleton has it (401 `unauthorized` for a bad token, 422 `invalid_body` for a bad payload, 200 `{ stored }`), but it now calls the same `storeInboundEmail` and workflow as 14.3, so both URLs feed one table [`_db/messaging.md`]. It exists for the week in which Postmark is reconfigured to the new URL.
+Kept as WP-00 left it (403 `forbidden` for a bad token, 422 `invalid_body` for a bad payload, 200 `{ stored }`), but it now calls the same `storeInboundEmail` and workflow as 14.3, so both URLs feed one table [`_db/messaging.md`]. It exists for the week in which Postmark is reconfigured to the new URL.
 
 - Every call increments `kairos_legacy_inbound_calls_total` and logs a warning; the `token` query parameter is redacted.
 - Removal gate: the new route has received at least one real message, the legacy counter has been zero for 48 hours, and 7 days have passed since the reconfiguration. Removal is one deleted route and one deleted env var (`INBOUND_WEBHOOK_SECRET`).

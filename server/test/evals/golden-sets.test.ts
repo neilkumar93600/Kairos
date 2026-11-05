@@ -16,7 +16,7 @@ describe("the committed golden sets", () => {
     const report = await runEval({ mode: "fixtures" });
     expect(report.passed, formatReport(report)).toBe(true);
     // Each drafting agent seeds injection cases; the answer drafter covers every kind of protected question.
-    for (const id of ["resume-tailor", "resume-writer", "answer-drafter", "cover-letter-writer", "fit-scorer", "resume-parser"]) {
+    for (const id of ["resume-tailor", "resume-writer", "answer-drafter", "cover-letter-writer", "fit-scorer", "resume-parser", "claim-verifier", "claim-verifier-escalation"]) {
       expect(report.results.some((r) => r.agentId === id && r.tags.includes("injection")), id).toBe(true);
       expect(report.results.some((r) => r.agentId === id && r.negative), id).toBe(true);
     }

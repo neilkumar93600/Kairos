@@ -1,7 +1,9 @@
 "use client";
 
+import { Children, isValidElement } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { CaretDown, X } from "@phosphor-icons/react";
+import { CheckIcon } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 export interface FilterOption {
@@ -47,20 +49,49 @@ export function inDateRange(iso: string | null | undefined, range: string): bool
   return !!iso && Date.now() - new Date(iso).getTime() <= days * 86_400_000;
 }
 
-/** A row of pill dropdown chips. */
+/**
+ * Glass filter bar (DESIGN.md "Reference layer" > App): one glass panel row of labelled segments split by hairlines,
+ * two per row below 640, and a quiet Clear once any segment holds a value. Clear drops every filter param, the same
+ * as FilterEmpty's action, so callers need no new props.
+ */
 export function FilterBar({ label, children }: { label: string; children: React.ReactNode }) {
+  const clear = useClearFilters();
+  // ponytail: reads the FilterMenu children's `current` props instead of a context; a wrapped menu would hide from it.
+  const active = Children.toArray(children).some((c) => isValidElement<{ current?: string }>(c) && c.type === FilterMenu && c.props.current !== "all");
   return (
-    <div role="group" aria-label={label} className="mb-4 flex flex-wrap gap-2">
+    <div role="group" aria-label={label} className="glass-panel mb-4 grid grid-cols-2 rounded-card p-1 sm:flex sm:flex-wrap sm:items-center">
       {children}
+      {active ? (
+        <button
+          type="button"
+          onClick={clear}
+          aria-label="Clear filters"
+          className={`inline-flex min-h-11 cursor-pointer items-center justify-center gap-1.5 self-center rounded-pill px-4 text-sm font-medium text-ink transition-colors duration-300 ease-out hover:bg-sunk active:bg-sunk/70 max-sm:nth-of-type-[odd]:col-span-2 sm:ml-auto ${ring}`}
+        >
+          <X aria-hidden size={16} weight="light" className="text-icon" />
+          Clear
+        </button>
+      ) : null}
     </div>
   );
 }
 
 const ring = "focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-ink";
 
+// Hairline before every segment except the first of its row (odd cells in the two-column grid, the first one in the
+// sm+ row), and one above the second grid row. Inset so the lines never touch the panel's rounded edge. Counted with
+// *-of-type: an open menu inserts focus-guard spans into the bar, and only the segments and Clear are buttons.
+const seg = [
+  "relative flex min-h-14 min-w-0 cursor-pointer items-center justify-between gap-3 rounded-input px-4 py-2 text-left transition-colors duration-300 ease-out",
+  "max-sm:last-of-type:nth-of-type-[odd]:col-span-2 sm:w-52 sm:max-w-full",
+  "before:absolute before:inset-y-3 before:left-0 before:w-px before:bg-line max-sm:nth-of-type-[odd]:before:hidden sm:first-of-type:before:hidden",
+  "max-sm:nth-of-type-[n+3]:after:absolute max-sm:nth-of-type-[n+3]:after:inset-x-3 max-sm:nth-of-type-[n+3]:after:top-0 max-sm:nth-of-type-[n+3]:after:h-px max-sm:nth-of-type-[n+3]:after:bg-line",
+  ring,
+].join(" ");
+
 /**
- * Synthex-style pill chip: glass-soft on the backdrop, Bone while a value is active, shows "Label: Value",
- * opens a menu of the real values with counts. `options` excludes the "all" entry; `allLabel` names it.
+ * One labelled segment of the glass filter bar: a Deep Ash caption over the ink value and a caret, Bone while a value
+ * is set, opening a menu of the real values with counts. `options` excludes the "all" entry; `allLabel` names it.
  */
 export function FilterMenu({
   label,
@@ -94,18 +125,15 @@ export function FilterMenu({
   );
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        className={`inline-flex min-h-11 items-center gap-2 rounded-pill px-4 text-sm text-ink transition-colors duration-300 ease-out ${ring} ${
-          active ? "bg-sunk shadow-[inset_0_0_0_1.5px_var(--ink)]" : "glass-soft hover:bg-surface"
-        }`}
-      >
-        <span>
-          {label}
-          {active && chosen ? <span className="font-medium">: {chosen.label}</span> : null}
+      <DropdownMenuTrigger className={`${seg} ${active ? "bg-sunk" : "hover:bg-sunk/60 data-popup-open:bg-sunk/60"}`}>
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-xs leading-4 text-faint">{label}</span>
+          <span className="sr-only">: </span>
+          <span className="truncate text-sm leading-5 font-medium text-ink">{active && chosen ? chosen.label : allLabel}</span>
         </span>
-        <ChevronDownIcon aria-hidden className="size-4 shrink-0 text-faint" />
+        <CaretDown aria-hidden size={16} weight="light" className="shrink-0 text-icon" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" sideOffset={6} className="w-auto min-w-56 max-w-[calc(100vw-2rem)] rounded-card bg-surface p-2">
+      <DropdownMenuContent align="start" sideOffset={6} className="w-auto min-w-[max(14rem,var(--anchor-width))] max-w-[calc(100vw-2rem)] rounded-card p-2">
         <DropdownMenuRadioGroup value={current} onValueChange={(v) => onChange(String(v))}>
           <DropdownMenuRadioItem value="all" closeOnClick className={item}>
             <span className="flex-1">{allLabel}</span>

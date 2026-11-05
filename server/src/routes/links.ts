@@ -1,8 +1,10 @@
 import express, { Router, type Request, type Response } from "express";
 import { db } from "../db/client";
 import { env } from "../lib/env";
+import { escapeHtml } from "../lib/html";
 import { logger } from "../lib/logger";
-import { consumeActionToken, peekActionToken, verifyLink, type LinkTarget, type StoredPurpose } from "../lib/action-tokens";
+import { hit } from "../middleware/rate-limit";
+import { consumeActionToken, peekActionToken, tokenHash, verifyLink, type LinkTarget, type StoredPurpose } from "../lib/action-tokens";
 
 type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
 
@@ -27,6 +29,14 @@ export interface LinkAction {
    * resend an application or undo an offer pause; those need the form's own field.
    */
   oneClick?: true;
+  /**
+   * The link is not used up: GET and POST check the signature and that the row exists and has not expired, and ignore
+   * used_at. Only for an action that is idempotent and only ever turns one thing off (unsubscribe), so single use protects
+   * nothing and a second click (a client's one-click POST, then the footer link, then a refresh) must still succeed.
+   */
+  reusable?: true;
+  /** The 410 page for this action, when the generic "expired" one would mislead (unsubscribe: "already used" mostly means done). */
+  gone?: LinkPage | (() => LinkPage);
   show(target: LinkTarget, req: Request): Promise<LinkPage | null>;
   act(tx: Tx, target: LinkTarget, req: Request): Promise<LinkPage | null>;
 }
@@ -40,8 +50,7 @@ const PAGE_HEADERS = {
   "content-type": "text/html; charset=utf-8",
 };
 
-const ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
-export const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ESCAPES[c]!);
+export { escapeHtml };
 
 const EXPIRED: LinkPage = { title: "This link has expired", body: "It was already used, or it is too old. Open Kairos to continue." };
 
@@ -69,6 +78,16 @@ const keyMissing = () => {
 const REFUSED = new Error("signed link refused");
 
 /**
+ * A reusable link is not used up, so a valid token's POST would otherwise cost a transaction, about five statements and a
+ * profile row lock on every call, unmetered, for the token's 90 days. They are counted per token instead of per address,
+ * so Gmail's and Yahoo's shared servers are never punished: 10 an hour per token, where a legitimate person makes about
+ * three (the client's one-click POST, the footer link, a refresh). Counted only after the signature verified, so forged
+ * tokens never touch the limiter table; single-use links need no limit, their first use ends them.
+ */
+const REUSABLE_POSTS_PER_HOUR = 10;
+const HOUR_MS = 3_600_000;
+
+/**
  * The GET page and the POST action of one signed link. A malformed, forged, used, expired or unknown token gets the
  * same 410 page (link_expired), and so does a target the action refuses (`show`/`act` returning null).
  *
@@ -82,25 +101,33 @@ const REFUSED = new Error("signed link refused");
  */
 export function signedLinkRouter(action: LinkAction): Router {
   const router = Router({ mergeParams: true });
+  const gonePage = (): LinkPage => (typeof action.gone === "function" ? action.gone() : (action.gone ?? EXPIRED));
 
   router.get("/", async (req, res) => {
     const token = tokenOf(req.query.t);
-    if (keyMissing()) return render(res, 410, EXPIRED);
-    const target = await peekActionToken(db(), token, action.purpose);
+    if (keyMissing()) return render(res, 410, gonePage());
+    const target = await peekActionToken(db(), token, action.purpose, undefined, action.reusable === true);
     const page = target && (await action.show(target, req));
-    if (!page) return render(res, 410, EXPIRED);
+    if (!page) return render(res, 410, gonePage());
     render(res, 200, page, token);
   });
 
   // The form posts `t` as a field; only a one-click action also reads it from the query string.
   router.post("/", express.urlencoded({ extended: false, limit: "2kb", parameterLimit: 10 }), async (req, res) => {
     const token = tokenOf(req.body?.t) || (action.oneClick ? tokenOf(req.query.t) : "");
-    if (keyMissing()) return render(res, 410, EXPIRED);
+    if (keyMissing()) return render(res, 410, gonePage());
     // A forged token never opens a transaction or touches the database.
-    if (!verifyLink(token, action.purpose)) return render(res, 410, EXPIRED);
+    if (!verifyLink(token, action.purpose)) return render(res, 410, gonePage());
+    if (action.reusable) {
+      const { count, resetAt } = await hit(`link:${tokenHash(token).toString("hex")}`, HOUR_MS);
+      if (count > REUSABLE_POSTS_PER_HOUR) {
+        res.set("retry-after", String(Math.max(1, Math.ceil((resetAt.getTime() - Date.now()) / 1000))));
+        return render(res, 429, { title: "Too many tries", body: "This link was used many times in a short while. Try again in an hour, or turn the emails off in Kairos under Settings." });
+      }
+    }
     const page = await db()
       .transaction(async (tx) => {
-        const target = await consumeActionToken(tx, token, action.purpose);
+        const target = action.reusable ? await peekActionToken(tx, token, action.purpose, undefined, true) : await consumeActionToken(tx, token, action.purpose);
         const done = target && (await action.act(tx, target, req));
         // A refused target rolls the use back too: the link was not the right one for this page, so it stays usable.
         if (!done) throw REFUSED;
@@ -110,7 +137,7 @@ export function signedLinkRouter(action: LinkAction): Router {
         if (err === REFUSED) return null;
         throw err;
       });
-    render(res, page ? 200 : 410, page ?? EXPIRED);
+    render(res, page ? 200 : 410, page ?? gonePage());
   });
 
   return router;

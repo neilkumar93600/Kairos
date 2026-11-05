@@ -131,15 +131,50 @@
     {
       "idx": 18,
       "version": "7",
-      "when": 1793720846230,
-      "tag": "0018_wp23_board_requests",
+      "when": 1793720777315,
+      "tag": "0018_verified_claims",
       "breakpoints": true
     },
     {
       "idx": 19,
       "version": "7",
-      "when": 1793851342844,
-      "tag": "0019_wp23_import_backfill",
+      "when": 1793872583336,
+      "tag": "0019_inbound_v2",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793872585445,
+      "tag": "0020_inbound_v2_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793872789698,
+      "tag": "0021_stage_clear",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793873923779,
+      "tag": "0022_unsubscribe_digests",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793874263600,
+      "tag": "0023_wp23_board_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793874266420,
+      "tag": "0024_wp23_import_backfill",
       "breakpoints": true
     }
   ]

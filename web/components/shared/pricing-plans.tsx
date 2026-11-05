@@ -3,7 +3,7 @@
 import type { CSSProperties } from "react";
 import Link from "next/link";
 import { CheckCircle } from "@phosphor-icons/react";
-import { PLANS, creditsPerInvoice, type BillingInterval, type Plan, type PlanId } from "@auto-career/shared";
+import { PLANS, creditsPerInvoice, type BillingInterval, type Plan, type PlanId } from "@auto-career/shared/plans"; // not the barrel: it pulls in zod
 import { landingCopy } from "@/content/landing-copy";
 import { gateFeature, pricingCopy } from "@/components/pricing/pricing-copy";
 import { computeReceipt, type CalcPlanId } from "@/lib/landing/calculator";

@@ -134,6 +134,8 @@ const SIGNALS = {
   llm_envelope_100: 1,
   /** Tier-up (escalation) calls passed their share cap today (WP-27). */
   llm_escalation_cap: 1,
+  /** Verifier escalations passed 10% of today's verifier calls; at 15% claims are dropped as unverified (WP-26). */
+  verifier_escalation_high: 1,
   /** Model spend per submission today is over the ceiling (WP-27). */
   cost_per_submission: 1,
   /** A queue's oldest waiting job is older than its lag bar (WP-27). */

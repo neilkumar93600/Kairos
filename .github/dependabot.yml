@@ -5,7 +5,7 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0
     groups:
       minor-and-patch:
         update-types: [minor, patch]
@@ -18,6 +18,7 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    open-pull-requests-limit: 0
 
   # Refreshes the digest-pinned base images in server/Dockerfile*. The Playwright image is bumped by hand, in step
   # with playwright-core (see the npm ignore above).
@@ -26,5 +27,6 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    open-pull-requests-limit: 0
     ignore:
       - dependency-name: mcr.microsoft.com/playwright

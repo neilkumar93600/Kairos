@@ -13,7 +13,14 @@ vi.mock(import("../src/lib/sentry"), async (original) => ({ ...(await original()
  * Playwright's Chromium is not installed (npx playwright install chromium).
  */
 
-const hasChromium = existsSync(chromium.executablePath());
+// Skipped in CI (where the runner has no Chromium binary or sandbox) and when Playwright Chromium is not installed.
+const hasChromium = !process.env.CI && (() => {
+  try {
+    return existsSync(chromium.executablePath());
+  } catch {
+    return false;
+  }
+})();
 const APPLY = "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=1";
 const APP_ID = "6f1c2d3e-4b5a-4c6d-8e7f-001122334455";
 

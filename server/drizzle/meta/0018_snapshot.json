@@ -1,5 +1,5 @@
 {
-  "id": "bd51c481-a300-40a4-986f-ab3fe2748f67",
+  "id": "29e778f6-aac1-4527-a23d-f35295bc191c",
   "prevId": "9e6eaabb-d71a-48d9-b486-cd53eea6d1e5",
   "version": "7",
   "dialect": "postgresql",
@@ -2072,212 +2072,6 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.board_requests": {
-      "name": "board_requests",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "host": {
-          "name": "host",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "path": {
-          "name": "path",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "detected_ats": {
-          "name": "detected_ats",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "times_seen": {
-          "name": "times_seen",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'open'"
-        },
-        "company_id": {
-          "name": "company_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "last_seen_at": {
-          "name": "last_seen_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "resolved_at": {
-          "name": "resolved_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "board_requests_user_target_uq": {
-          "name": "board_requests_user_target_uq",
-          "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "host",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "path",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "board_requests_open_idx": {
-          "name": "board_requests_open_idx",
-          "columns": [
-            {
-              "expression": "host",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "path",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"board_requests\".\"status\" = 'open'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "board_requests_company_idx": {
-          "name": "board_requests_company_idx",
-          "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"board_requests\".\"company_id\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "board_requests_user_id_user_id_fk": {
-          "name": "board_requests_user_id_user_id_fk",
-          "tableFrom": "board_requests",
-          "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "board_requests_company_id_companies_id_fk": {
-          "name": "board_requests_company_id_companies_id_fk",
-          "tableFrom": "board_requests",
-          "tableTo": "companies",
-          "columnsFrom": [
-            "company_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "board_requests_host_ck": {
-          "name": "board_requests_host_ck",
-          "value": "host ~ '^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$' AND host !~ '^[0-9.]+$'"
-        },
-        "board_requests_path_ck": {
-          "name": "board_requests_path_ck",
-          "value": "path ~ '^/[A-Za-z0-9._~%/+=@:,-]{0,199}$'"
-        },
-        "board_requests_ats_ck": {
-          "name": "board_requests_ats_ck",
-          "value": "detected_ats IS NULL OR detected_ats ~ '^[a-z0-9_-]{1,40}$'"
-        },
-        "board_requests_status_ck": {
-          "name": "board_requests_status_ck",
-          "value": "status IN ('open','added','rejected')"
-        },
-        "board_requests_resolved_ck": {
-          "name": "board_requests_resolved_ck",
-          "value": "(status = 'open') = (resolved_at IS NULL)"
-        },
-        "board_requests_company_ck": {
-          "name": "board_requests_company_ck",
-          "value": "status = 'added' OR company_id IS NULL"
-        },
-        "board_requests_times_ck": {
-          "name": "board_requests_times_ck",
-          "value": "times_seen >= 1"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.companies": {
@@ -5624,7 +5418,84 @@
       "checkConstraints": {
         "ops_flags_key_ck": {
           "name": "ops_flags_key_ck",
-          "value": "key ~ '^(pause_cloud_apply|pause_scoring|llm_paused|approvals_frozen|cloud_applier_open|llm_shed_level|extension_only:(greenhouse|lever|ashby))$'"
+          "value": "key ~ '^(pause_cloud_apply|pause_scoring|llm_paused|approvals_frozen|cloud_applier_open|llm_shed_level|extension_only:(greenhouse|lever|ashby)|verifier_mode:(suggestions|tailor|drafts|prepare|patch)|(agent_disabled|prompt_pin|model_pin|prompt_canary|prompt_shadow):(resume-parser|jd-analyst|fit-scorer|resume-tailor|resume-writer|answer-drafter|cover-letter-writer|claim-verifier|claim-verifier-escalation|reply-classifier|outcome-analyst|interview-coach))$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.verified_claims": {
+      "name": "verified_claims",
+      "schema": "",
+      "columns": {
+        "claim_hash": {
+          "name": "claim_hash",
+          "type": "bytea",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "verdict": {
+          "name": "verdict",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "check_source": {
+          "name": "check_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "verified_claims_expires_idx": {
+          "name": "verified_claims_expires_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "verified_claims_hash_ck": {
+          "name": "verified_claims_hash_ck",
+          "value": "octet_length(\"verified_claims\".\"claim_hash\") = 32"
+        },
+        "verified_claims_verdict_ck": {
+          "name": "verified_claims_verdict_ck",
+          "value": "\"verified_claims\".\"verdict\" in ('supported', 'unsupported', 'contradicted')"
+        },
+        "verified_claims_source_ck": {
+          "name": "verified_claims_source_ck",
+          "value": "\"verified_claims\".\"check_source\" in ('verifier', 'escalation')"
+        },
+        "verified_claims_expiry_ck": {
+          "name": "verified_claims_expiry_ck",
+          "value": "\"verified_claims\".\"expires_at\" > \"verified_claims\".\"created_at\" and \"verified_claims\".\"expires_at\" <= \"verified_claims\".\"created_at\" + interval '24 hours'"
         }
       },
       "isRLSEnabled": false

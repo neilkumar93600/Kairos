@@ -10,13 +10,13 @@ import { scrubContent } from "../services/sensitive";
  * idempotent, in batches of 5,000 rows (at most 50 a run), so two workers or a rerun change nothing twice. Periods are
  * the spec's defaults, overridable per rule with RETENTION_DAYS and pending counsel (owner-actions/WP-25.md).
  *
- * Rules for columns other packages are adding wait for them: hidden inbound rows (WP-44, messaging), the spam status
- * of contact messages, submission_attempts.evidence at 90 days (WP-42's to schedule). below_bar keys on
+ * Rules for columns other packages are adding wait for them: the spam status of contact messages, submission_attempts.evidence at 90 days (WP-42's to schedule). below_bar keys on
  * status_changed_at (matches_retention_idx); the scrub selects on terminal_at (applications_scrub_due_idx) and nulls
  * questions. jobs_closed marks a purge by the emptied description_text (still NOT NULL), so no description_purged_at.
  * A closed job a tracker item or a tailored resume (WP-17) points at is never deleted, only purged: both are
  * ON DELETE SET NULL, so the item would silently lose its posting (DB-reviewer round 2).
- * ponytail: inbound_body scans inbound_emails per batch; add (received_at) WHERE text_body <> '' at scale.
+ * ponytail: inbound_body's OR over the legacy plaintext keeps it off inbound_emails_body_purge_idx; drop the text_body
+ * half with the column (WP-46) and the index serves it.
  * ponytail: jobs has no closed_at index, so jobs_closed scans jobs once per batch; add jobs_closed_idx (02-database 11)
  * when jobs passes a few hundred thousand rows.
  */
@@ -38,12 +38,52 @@ async function batched(statement: () => ReturnType<typeof sql>): Promise<number>
 const before = (days: number) => sql`now() - make_interval(days => ${days}::int)`;
 
 export const RETENTION_RULES = {
-  /** Third-party reply bodies; the metadata stays with the account. */
+  /** Third-party reply bodies and previews (and the legacy plaintext); the metadata stays with the account. */
   inbound_body: {
     days: 180,
     run: (d: number) =>
-      batched(() => sql`update inbound_emails set text_body = '' where id in (
-        select id from inbound_emails where text_body <> '' and received_at < ${before(d)} limit ${BATCH})`),
+      batched(() => sql`update inbound_emails set text_body = null, text_body_enc = null, preview_enc = null where id in (
+        select id from inbound_emails where (text_body_enc is not null or text_body <> '') and received_at < ${before(d)} limit ${BATCH})`),
+  },
+  /** Hidden rows (a Gmail confirmation, likely spam) hold no body and are kept for support only (_db/messaging.md 4.6). */
+  inbound_hidden: {
+    days: 30,
+    run: (d: number) =>
+      batched(() => sql`delete from inbound_emails where id in (
+        select id from inbound_emails where hidden_reason is not null and received_at < ${before(d)} limit ${BATCH})`),
+  },
+  /**
+   * Gmail forwarding codes past expires_at (receipt + 3 days, set at ingest; the days value is not read): deleted, and
+   * an owner still awaiting verification goes back to not_started (_db/messaging.md 6.1). A few hundred rows at most.
+   */
+  forwarding_codes: {
+    days: 3,
+    run: async () =>
+      (
+        await db().execute(sql`
+          WITH gone AS (DELETE FROM forwarding_verifications WHERE expires_at < now() RETURNING user_id)
+          UPDATE profiles p SET forwarding_state = 'not_started' FROM gone
+           WHERE p.user_id = gone.user_id AND p.forwarding_state = 'awaiting_verification'`)
+      ).rowCount ?? 0,
+  },
+  /** An active forwarding connection with no visible mail for this long shows as stale (informational only). */
+  forwarding_stale: {
+    days: 30,
+    run: async (d: number) =>
+      (
+        await db().execute(sql`
+          UPDATE profiles p SET forwarding_state = 'stale'
+           WHERE p.forwarding_state = 'active'
+             AND NOT EXISTS (SELECT 1 FROM inbound_emails e
+                              WHERE e.user_id = p.user_id AND e.hidden_reason IS NULL AND e.received_at > ${before(d)})`)
+      ).rowCount ?? 0,
+  },
+  /** Finished reminders (WP-35, _db/applications.md 3.5): 90 days after they were sent or cancelled. A few rows a day, no index needed yet: when reminders passes a few hundred thousand rows add partial indexes `(sent_at) WHERE sent_at IS NOT NULL` and `(cancelled_at) WHERE cancelled_at IS NOT NULL` and select with two ORed conditions instead of the coalesce. */
+  reminders: {
+    days: 90,
+    run: (d: number) =>
+      batched(() => sql`delete from reminders where id in (
+        select id from reminders where coalesce(sent_at, cancelled_at) < ${before(d)} limit ${BATCH})`),
   },
   contact_messages: {
     days: 365,
@@ -72,12 +112,20 @@ export const RETENTION_RULES = {
       (await batched(() => sql`update jobs set description_text = '', raw = null where id in (
         select id from jobs where closed_at < ${before(d)} and (description_text <> '' or raw is not null) limit ${BATCH})`)),
   },
+  /** The verifier memo (WP-26): rows past their own expires_at (24 hours at most); the day count is not used. */
+  verified_claims: {
+    days: 1,
+    run: () => batched(() => sql`delete from verified_claims where claim_hash in (select claim_hash from verified_claims where expires_at < now() limit ${BATCH})`),
+  },
   /** Sensitive answer and receipt values, after submitted or withdrawn (processScrubApplications). */
   scrub_applications: { days: 7, run: null },
 } as const;
 export type RetentionRule = keyof typeof RETENTION_RULES;
 
-/** Each rule's period: RETENTION_DAYS where set, else the default. Throws on a name no rule has. */
+/**
+ * Each rule's period: RETENTION_DAYS where set, else the default. Throws on a name no rule has. An override of
+ * forwarding_codes has no effect: that rule keys on expires_at, set at ingest.
+ */
 export function retentionDays(overrides: Record<string, number> = env().RETENTION_DAYS): Record<RetentionRule, number> {
   for (const name of Object.keys(overrides)) if (!(name in RETENTION_RULES)) throw new Error(`unknown retention rule ${name} in RETENTION_DAYS`);
   return Object.fromEntries(Object.entries(RETENTION_RULES).map(([k, r]) => [k, overrides[k] ?? r.days])) as Record<RetentionRule, number>;

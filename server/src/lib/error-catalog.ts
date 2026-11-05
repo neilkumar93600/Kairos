@@ -28,7 +28,7 @@ export const ERROR_CATALOG: Record<string, readonly number[]> = {
   fact_cited: [409],
   forbidden: [403],
   internal: [500],
-  invalid_body: [422],
+  invalid_body: [400, 422],
   invalid_json: [400],
   invalid_param: [400],
   invalid_scope: [422],
