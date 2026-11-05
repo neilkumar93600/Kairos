@@ -172,6 +172,7 @@ profileRouter.patch("/facts/:id", validateBody(factPatchSchema), async (req, res
       .returning(FACT_COLUMNS);
   });
   if (!fact) throw notFound("Fact");
+  if (first) requestBackfill(userId, "facts");
   res.json({ fact });
 });
 
