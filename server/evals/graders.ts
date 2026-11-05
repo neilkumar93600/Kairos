@@ -74,6 +74,9 @@ const CLAIMS: { [K in RegisteredAgent]: (input: IO<K>["input"], output: IO<K>["o
   "cover-letter-writer": (input, out) => out.paragraphs.map((p, i) => ({ path: `paragraphs[${i}]`, text: p.text, factIds: p.factIds, allow: [input.job.company] })),
   // ponytail: the whole resume is the source, not the fact's own lines (v2 adds line offsets, agents/01 9.3).
   "resume-parser": (input, out) => out.facts.map((f, i) => ({ path: `facts[${i}]`, text: f.text, factIds: null, sources: [input.resumeText] })),
+  // No free text in a verdict: nothing to contain. Verdicts are graded against the labels by verdictTally.
+  "claim-verifier": () => [],
+  "claim-verifier-escalation": () => [],
   "fit-scorer": (input, out) =>
     out.reasons.map((r, i) => ({
       path: `reasons[${i}]`,
