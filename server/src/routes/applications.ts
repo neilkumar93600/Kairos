@@ -3,13 +3,15 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { APPLICATION_STATUSES, approveApplicationsSchema, draftRequestSchema, getPlan, updateApplicationSchema } from "@auto-career/shared";
 import { db } from "../db/client";
-import { applications, companies, facts, jobs, savedAnswers } from "../db/schema";
+import { applications, companies, facts, inboundEmails, jobs, savedAnswers } from "../db/schema";
+import { asActor } from "../lib/actor";
 import { HttpError, notFound } from "../lib/errors";
 import { keysetBefore, pageParams, slicePage, tsKey } from "../lib/pagination";
 import { APPLICATION_COLUMNS, JOB_COLUMNS } from "../lib/serializers";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
 import { enqueue } from "../jobs/queues";
+import { recordEvent } from "../services/events";
 import { draftAnswer, draftCoverLetter } from "../services/draft-writer";
 import { classifySensitive, isProfileQuestion } from "../services/sensitive";
 import { approveApplications, planFor } from "../services/submissions";
@@ -62,7 +64,8 @@ applicationsRouter.get("/", async (req, res) => {
 applicationsRouter.get("/:id", async (req, res) => {
   const id = parseParam(z.uuid(), req.params.id);
   const [row] = await db()
-    .select({ application: APPLICATION_COLUMNS, job: JOB_COLUMNS, companyName: companies.name })
+    // stage is additive and beside the frozen `application` keys: reply-driven (WP-24), and the user can clear it below.
+    .select({ application: APPLICATION_COLUMNS, stage: applications.stage, job: JOB_COLUMNS, companyName: companies.name })
     .from(applications)
     .innerJoin(jobs, eq(jobs.id, applications.jobId))
     .innerJoin(companies, eq(companies.id, jobs.companyId))
@@ -192,6 +195,44 @@ applicationsRouter.post("/:id/drafts", writerLimiter, validateBody(draftRequestS
     .limit(3);
   const answerFacts = topFacts(confirmed, `${label}\n${posting}`, 25);
   res.json(await metered(res, allowance, () => draftAnswer({ label, job, facts: answerFacts, savedAnswers: saved }, deps)));
+});
+
+/** The reply kind that sets each stage (jobs/classify-email.ts): the replies an undo takes back. */
+const KIND_OF_STAGE = { in_review: "confirmation", assessment: "assessment", interviewing: "interview", offer: "offer", rejected: "rejection" } as const;
+
+/**
+ * The user's undo of a stage set by mail (WP-24): anyone who learns the forwarding address, or a replayed signed rejection,
+ * can reach a final stage, and this is the way back. Clears the stage and detaches the replies of the kind that set it, so
+ * they stop counting for this application; they stay in the inbox. The trigger allows the clear only under asActor("user"),
+ * so no job can do this. Classified rows are never classified again, so nothing re-applies; a later genuine reply can
+ * move the stage again. Clearing a stage already clear is a no-op.
+ * Not session-fresh: it moves no money and no access, and only touches the caller's own tracking.
+ */
+applicationsRouter.post("/:id/stage/clear", async (req, res) => {
+  const id = parseParam(z.uuid(), req.params.id);
+  const userId = currentUser(req).id;
+  const detached = await db().transaction(async (tx) => {
+    await asActor(tx, "user");
+    const [app] = await tx
+      .select({ stage: applications.stage })
+      .from(applications)
+      .where(and(eq(applications.id, id), eq(applications.userId, userId)))
+      .for("update");
+    if (!app) throw notFound("Application");
+    if (!app.stage) return 0;
+    await tx.update(applications).set({ stage: null }).where(eq(applications.id, id));
+    const kind = app.stage === "applied" ? null : KIND_OF_STAGE[app.stage];
+    const rows = kind
+      ? await tx
+          .update(inboundEmails)
+          .set({ applicationId: null, linkedBy: "none" })
+          .where(and(eq(inboundEmails.applicationId, id), eq(inboundEmails.userId, userId), eq(inboundEmails.kind, kind)))
+          .returning({ id: inboundEmails.id })
+      : [];
+    await recordEvent(tx, { userId, applicationId: id, kind: "stage_changed", actor: "user", payload: { from: app.stage, to: null, undone: true, detached: rows.length } });
+    return rows.length;
+  });
+  res.json({ stage: null, detached });
 });
 
 applicationsRouter.post("/:id/withdraw", async (req, res) => {

@@ -241,6 +241,9 @@ GRANT SELECT, INSERT ON email_suppressions TO kairos_worker;
 -- real mail arrives or it expires. No runtime role but these two, and the readonly role sees nothing of it.
 GRANT SELECT, INSERT, UPDATE ON forwarding_verifications TO kairos_api;
 GRANT SELECT, DELETE ON forwarding_verifications TO kairos_worker;
+-- The user's undo of a mail-set stage (POST /api/applications/:id/stage/clear) detaches the replies that set it: these two
+-- columns only, so the api still cannot rewrite what a mail said, its tag or when it arrived.
+GRANT UPDATE (application_id, linked_by) ON inbound_emails TO kairos_api;
 
 -- Privacy (WP-25, migration 0015). The api runs the erasure transaction of Settings > Delete account
 -- (services/erasure.ts): it writes the task, the ledger archive and the erased-address hash, deletes the user's contact

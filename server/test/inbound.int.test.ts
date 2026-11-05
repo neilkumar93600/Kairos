@@ -554,6 +554,111 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
     });
   });
 
+  describe("POST /api/applications/:id/stage/clear", () => {
+    const REJECTION = { Subject: "Update", TextBody: "Unfortunately we chose someone else." };
+    const from = "Acme Talent <jobs@acme.com>";
+    const clear = (id: string) => request(app).post(`/api/applications/${id}/stage/clear`);
+    const signedRejection = async (MessageID: string) => {
+      await post(mail({ MessageID, ...REJECTION, RawEmail: signed("acme.com", from, address) }));
+      const [row] = await db.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, MessageID));
+      await processClassifyEmail({ data: { inboundEmailId: row!.id } });
+      return row!.id;
+    };
+
+    it("undoes a rejected stage, detaches the reply, records the undo, and a later genuine reply moves the stage again", async () => {
+      const id = await sentApplication();
+      const mailId = await signedRejection("u1");
+      expect(await stageOf(id)).toBe("rejected");
+      const shown = await request(app).get(`/api/applications/${id}`);
+      expect(shown.status).toBe(200);
+      expect(shown.body.stage).toBe("rejected");
+
+      const res = await clear(id);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ stage: null, detached: 1 });
+      expect(await stageOf(id)).toBeNull();
+
+      const [row] = await db.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.id, mailId));
+      expect(row).toMatchObject({ applicationId: null, linkedBy: "none", kind: "rejection" });
+      expect((await inbox()).map((e) => e.subject)).toEqual(["Update"]);
+      const undo = (await eventsOf(id)).find((e) => e.kind === "stage_changed");
+      expect(undo).toMatchObject({ actor: "user", source: "user", payload: { from: "rejected", to: null, undone: true, detached: 1 } });
+
+      // A redelivery or a redrive of the classified mail applies nothing again.
+      expect((await post(mail({ MessageID: "u1", ...REJECTION }))).body).toEqual({ stored: false, duplicate: true });
+      expect((await processClassifyEmail({ data: { inboundEmailId: mailId } })).applied).toBe(false);
+      expect(await stageOf(id)).toBeNull();
+
+      await post(mail({ MessageID: "u2", Subject: "Interview" }));
+      const [next] = await db.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, "u2"));
+      await processClassifyEmail({ data: { inboundEmailId: next!.id } });
+      expect(await stageOf(id)).toBe("interviewing");
+    });
+
+    it("detaches only the replies of the kind that set the stage", async () => {
+      const id = await sentApplication();
+      await post(mail({ MessageID: "k1", Subject: "Interview" }));
+      const [first] = await db.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, "k1"));
+      await processClassifyEmail({ data: { inboundEmailId: first!.id } });
+      await signedRejection("k2");
+      const res = await clear(id);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ stage: null, detached: 1 });
+      const [kept] = await db.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, "k1"));
+      expect(kept!.applicationId).toBe(id);
+    });
+
+    it("clearing a clear stage is a no-op with no event", async () => {
+      const id = await sentApplication();
+      const res = await clear(id);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ stage: null, detached: 0 });
+      expect(await eventsOf(id)).toEqual([]);
+    });
+
+    it("another user's application answers as a missing one and changes nothing; a bad id is 400", async () => {
+      const id = await sentApplication();
+      const mailId = await signedRejection("f1");
+      const owner = me;
+      const other = await seedUser(db);
+      me = { id: other, email: `${other}@test.local`, name: "Other", emailVerified: true };
+      const foreign = await clear(id);
+      const missing = await clear(randomUUID());
+      me = owner;
+      expect(foreign.status).toBe(404);
+      expect(missing.status).toBe(404);
+      expect(foreign.body.error.code).toBe(missing.body.error.code);
+      expect(foreign.body.error.message).toBe(missing.body.error.message);
+      expect(await stageOf(id)).toBe("rejected");
+      const [row] = await db.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.id, mailId));
+      expect(row!.applicationId).toBe(id);
+      expect((await clear("nope")).status).toBe(400);
+    });
+
+    it("no actor but a user can clear a stage, and every other backward move stays refused", async () => {
+      const id = await sentApplication();
+      await db.update(schema.applications).set({ stage: "rejected" }).where(eq(schema.applications.id, id));
+      const asWho = (actor: string | null, stage: string | null) =>
+        db.transaction(async (tx) => {
+          if (actor) await tx.execute(sql`select set_config('kairos.actor', ${actor}, true)`);
+          await tx.update(schema.applications).set({ stage: stage as "offer" | null }).where(eq(schema.applications.id, id));
+        });
+      // The test pool's own actor is ops; the job's pool sets none. Neither passes, nor does a system or empty one.
+      await expect(asWho(null, null)).rejects.toThrow();
+      for (const actor of ["", "system", "ops"]) await expect(asWho(actor, null)).rejects.toThrow();
+      expect(await stageOf(id)).toBe("rejected");
+      // A user action may clear, and nothing else: rejected to offer stays refused even for a user.
+      await expect(asWho("user", "offer")).rejects.toThrow();
+      await asWho("user", null);
+      expect(await stageOf(id)).toBeNull();
+
+      await db.update(schema.applications).set({ stage: "offer" }).where(eq(schema.applications.id, id));
+      await expect(asWho("ops", "interviewing")).rejects.toThrow();
+      await expect(asWho("user", "interviewing")).rejects.toThrow();
+      expect(await stageOf(id)).toBe("offer");
+    });
+  });
+
   describe("retention", () => {
     const ago = (days: number) => new Date(Date.now() - days * 86_400_000);
 

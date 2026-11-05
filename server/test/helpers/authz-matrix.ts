@@ -104,6 +104,7 @@ export const MATRIX: Record<string, MatrixEntry> = {
     why: "approves the caller's own drafts among the ids sent; another user's id is left out ({ approved: [] })",
   },
   "POST /api/applications/:id/drafts": { request: (t) => ({ path: `/api/applications/${t.applicationId}/drafts`, body: { kind: "cover_letter" } }) },
+  "POST /api/applications/:id/stage/clear": { request: (t) => ({ path: `/api/applications/${t.applicationId}/stage/clear` }) },
   "POST /api/applications/:id/withdraw": { request: (t) => ({ path: `/api/applications/${t.applicationId}/withdraw` }) },
 
   "GET /api/credits": own("/api/credits"),
