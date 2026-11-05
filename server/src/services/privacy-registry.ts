@@ -136,6 +136,15 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
     why: "per-email auth counters under the keyed address hash (lib/auth.ts limitByEmail); each row expires within its window, at most an hour",
   },
   { table: "auth_rate_limit", column: "key", by: "hash", erase: "keep", export: false, why: "Better Auth's per-IP and path counters, no user key; pruned by the library" },
+  {
+    // WP-26. Added by hand: no user id or text column, but the key is derived from the user's claim and fact texts.
+    table: "verified_claims",
+    column: "claim_hash",
+    by: "hash",
+    erase: "keep",
+    export: false,
+    why: "verifier verdicts under an HMAC (USER_HASH_KEY) of claim and cited-fact text, no text or user id; every row expires within 24 hours and the retention job deletes it",
+  },
 ];
 
 /**
