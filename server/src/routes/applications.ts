@@ -1,9 +1,9 @@
 import { Router } from "express";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { APPLICATION_STATUSES, approveApplicationsSchema, draftRequestSchema, getPlan, updateApplicationSchema } from "@auto-career/shared";
 import { db } from "../db/client";
-import { applications, companies, facts, inboundEmails, jobs, savedAnswers } from "../db/schema";
+import { applications, companies, facts, inboundEmails, jobs, savedAnswers, type ApplicationStage } from "../db/schema";
 import { asActor } from "../lib/actor";
 import { HttpError, notFound } from "../lib/errors";
 import { keysetBefore, pageParams, slicePage, tsKey } from "../lib/pagination";
@@ -202,37 +202,44 @@ const KIND_OF_STAGE = { in_review: "confirmation", assessment: "assessment", int
 
 /**
  * The user's undo of a stage set by mail (WP-24): anyone who learns the forwarding address, or a replayed signed rejection,
- * can reach a final stage, and this is the way back. Clears the stage and detaches the replies of the kind that set it, so
- * they stop counting for this application; they stay in the inbox. The trigger allows the clear only under asActor("user"),
- * so no job can do this. Classified rows are never classified again, so nothing re-applies; a later genuine reply can
- * move the stage again. Clearing a stage already clear is a no-op.
+ * can reach a final stage, and this is the way back. The stage returns to the bottom of the ladder: `applied` for a
+ * submitted application, where every submitted row starts (applications_stage_shape_ck, WP-46), and NULL otherwise. The
+ * replies of the kind that set it are detached, so they stop counting for this application; they stay in the inbox. The
+ * trigger allows this only under asActor("user"), so no job can do it. Classified rows are never classified again, so
+ * nothing re-applies; a later genuine reply can move the stage again. No stage, or `applied`, has nothing to undo: a no-op.
+ * Reply rows first, then the application, the classify job's order, so the two cannot deadlock.
  * Not session-fresh: it moves no money and no access, and only touches the caller's own tracking.
  */
 applicationsRouter.post("/:id/stage/clear", async (req, res) => {
   const id = parseParam(z.uuid(), req.params.id);
   const userId = currentUser(req).id;
-  const detached = await db().transaction(async (tx) => {
+  const owned = and(eq(applications.id, id), eq(applications.userId, userId));
+  const result = await db().transaction(async (tx) => {
     await asActor(tx, "user");
-    const [app] = await tx
-      .select({ stage: applications.stage })
-      .from(applications)
-      .where(and(eq(applications.id, id), eq(applications.userId, userId)))
-      .for("update");
+    const [app] = await tx.select({ stage: applications.stage }).from(applications).where(owned);
     if (!app) throw notFound("Application");
-    if (!app.stage) return 0;
-    await tx.update(applications).set({ stage: null }).where(eq(applications.id, id));
-    const kind = app.stage === "applied" ? null : KIND_OF_STAGE[app.stage];
-    const rows = kind
-      ? await tx
-          .update(inboundEmails)
-          .set({ applicationId: null, linkedBy: "none" })
-          .where(and(eq(inboundEmails.applicationId, id), eq(inboundEmails.userId, userId), eq(inboundEmails.kind, kind)))
-          .returning({ id: inboundEmails.id })
-      : [];
-    await recordEvent(tx, { userId, applicationId: id, kind: "stage_changed", actor: "user", payload: { from: app.stage, to: null, undone: true, detached: rows.length } });
-    return rows.length;
+    if (!app.stage || app.stage === "applied") return { stage: app.stage, detached: 0 };
+
+    const rows = await tx
+      .update(inboundEmails)
+      .set({ applicationId: null, linkedBy: "none" })
+      .where(and(eq(inboundEmails.applicationId, id), eq(inboundEmails.userId, userId), eq(inboundEmails.kind, KIND_OF_STAGE[app.stage])))
+      .returning({ id: inboundEmails.id });
+    const [moved] = await tx
+      .update(applications)
+      .set({ stage: sql<ApplicationStage | null>`CASE WHEN ${applications.status} = 'submitted' THEN 'applied' END` })
+      .where(and(owned, eq(applications.stage, app.stage)))
+      .returning({ stage: applications.stage });
+    if (!moved) {
+      // Changed since the read. A double click has nothing left to do; a reply moving it is rolled back for the user to look again.
+      const [now] = await tx.select({ stage: applications.stage }).from(applications).where(owned);
+      if (!rows.length && (!now?.stage || now.stage === "applied")) return { stage: now?.stage ?? null, detached: 0 };
+      throw new HttpError(409, "conflict", "This application's stage just changed. Look at it again and retry.");
+    }
+    await recordEvent(tx, { userId, applicationId: id, kind: "stage_changed", actor: "user", payload: { from: app.stage, to: moved.stage, undone: true, detached: rows.length } });
+    return { stage: moved.stage, detached: rows.length };
   });
-  res.json({ stage: null, detached });
+  res.json(result);
 });
 
 applicationsRouter.post("/:id/withdraw", async (req, res) => {

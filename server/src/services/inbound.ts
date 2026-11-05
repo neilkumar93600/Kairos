@@ -15,7 +15,8 @@ import { alignedDomains, atsOfDomain, linkCandidates, parseAddress } from "./lin
 /**
  * Storing a forwarded reply (05-api 14.3, _db/messaging.md 4.7, 4.10), shared by the Postmark route and the legacy
  * ?token= route. One transaction; the classify or forwarding_code job is queued after it commits. Runs as kairos_api,
- * which may insert inbound mail but never update or delete it.
+ * which may insert inbound mail but never delete it, and may update only application_id and linked_by, for the user's undo
+ * of a stage set by mail (POST /api/applications/:id/stage/clear). This path uses neither.
  */
 
 const FROM_MAX = 320;

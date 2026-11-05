@@ -2,15 +2,17 @@
 -- schema change. A reply can set `rejected`, which is final, and a same-ATS tenant or a replayed signed rejection can
 -- still reach it, so the user who owns the application can clear it (POST /api/applications/:id/stage/clear).
 --
--- applications_guard_stage as in 0009, with one new branch: a stage may become NULL only in a transaction marked as a
--- user action (asActor, set_config('kairos.actor', 'user', true)). The classify job, every other worker, and an operator
--- without the user's route set no such actor, so for them the stage stays forward-only and `rejected` stays final. The
+-- applications_guard_stage as in 0009, with one new branch, above "rejected is final": a stage may return to the bottom of
+-- the ladder, `applied` or NULL, from any stage, only in a transaction marked as a user action (asActor,
+-- set_config('kairos.actor', 'user', true)). `applied` is where a submitted row starts, and applications_stage_shape_ck
+-- (WP-46) refuses NULL there; NULL is for any other status. A user cannot pick any other stage. The classify job, every
+-- other worker, and an operator set no such actor, so for them the stage stays forward-only and `rejected` stays final. The
 -- previous release writes stage nowhere but forward, so it runs unchanged on this function.
 CREATE OR REPLACE FUNCTION applications_guard_stage() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE ranks text[] := ARRAY['applied','in_review','assessment','interviewing','offer'];
 BEGIN
   IF NEW.stage IS NOT DISTINCT FROM OLD.stage THEN RETURN NEW; END IF;
-  IF NEW.stage IS NULL AND kairos_actor() = 'user' THEN RETURN NEW; END IF;
+  IF (NEW.stage IS NULL OR NEW.stage = 'applied') AND kairos_actor() = 'user' THEN RETURN NEW; END IF;
   IF OLD.stage = 'rejected' THEN
     RAISE EXCEPTION 'stage rejected is final' USING ERRCODE = '23514', CONSTRAINT = 'applications_stage_guard';
   END IF;

@@ -102,7 +102,7 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
   };
 
   /** A sent application at a company. */
-  async function sentApplication(name = "Acme Robotics", domains = ["acme.com"], status: "submitted" | "submitting" = "submitted") {
+  async function sentApplication(name = "Acme Robotics", domains = ["acme.com"], status: "submitted" | "submitting" | "failed" = "submitted") {
     const [company] = await db.insert(schema.companies).values({ name, ats: "greenhouse", boardToken: `c-${randomUUID().slice(0, 8)}`, domains }).returning();
     const [job] = await db
       .insert(schema.jobs)
@@ -110,7 +110,7 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
       .returning();
     const [application] = await db
       .insert(schema.applications)
-      .values({ userId, jobId: job!.id, status, channel: "extension", approvedAt: new Date(), submittedAt: status === "submitted" ? new Date() : null })
+      .values({ userId, jobId: job!.id, status, channel: "extension", approvedAt: new Date(), submittedAt: status === "submitted" ? new Date() : null, failureCode: status === "failed" ? "unconfirmed" : null })
       .returning();
     return application!.id;
   }
@@ -575,19 +575,19 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
 
       const res = await clear(id);
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ stage: null, detached: 1 });
-      expect(await stageOf(id)).toBeNull();
+      expect(res.body).toEqual({ stage: "applied", detached: 1 });
+      expect(await stageOf(id)).toBe("applied");
 
       const [row] = await db.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.id, mailId));
       expect(row).toMatchObject({ applicationId: null, linkedBy: "none", kind: "rejection" });
       expect((await inbox()).map((e) => e.subject)).toEqual(["Update"]);
       const undo = (await eventsOf(id)).find((e) => e.kind === "stage_changed");
-      expect(undo).toMatchObject({ actor: "user", source: "user", payload: { from: "rejected", to: null, undone: true, detached: 1 } });
+      expect(undo).toMatchObject({ actor: "user", source: "user", payload: { from: "rejected", to: "applied", undone: true, detached: 1 } });
 
       // A redelivery or a redrive of the classified mail applies nothing again.
       expect((await post(mail({ MessageID: "u1", ...REJECTION }))).body).toEqual({ stored: false, duplicate: true });
       expect((await processClassifyEmail({ data: { inboundEmailId: mailId } })).applied).toBe(false);
-      expect(await stageOf(id)).toBeNull();
+      expect(await stageOf(id)).toBe("applied");
 
       await post(mail({ MessageID: "u2", Subject: "Interview" }));
       const [next] = await db.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, "u2"));
@@ -603,17 +603,52 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
       await signedRejection("k2");
       const res = await clear(id);
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ stage: null, detached: 1 });
+      expect(res.body).toEqual({ stage: "applied", detached: 1 });
       const [kept] = await db.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, "k1"));
       expect(kept!.applicationId).toBe(id);
     });
 
-    it("clearing a clear stage is a no-op with no event", async () => {
+    it("a stage with nothing to undo is a no-op with no event, and keeps what it has", async () => {
       const id = await sentApplication();
+      const none = await clear(id);
+      expect(none.status).toBe(200);
+      expect(none.body).toEqual({ stage: null, detached: 0 });
+      expect(await stageOf(id)).toBeNull();
+
+      await db.update(schema.applications).set({ stage: "applied" }).where(eq(schema.applications.id, id));
+      const applied = await clear(id);
+      expect(applied.status).toBe(200);
+      expect(applied.body).toEqual({ stage: "applied", detached: 0 });
+      expect(await eventsOf(id)).toEqual([]);
+    });
+
+    it("on an application that is not submitted the stage goes back to NULL", async () => {
+      const id = await sentApplication("Acme Robotics", ["acme.com"], "failed");
+      await signedRejection("n1");
+      expect(await stageOf(id)).toBe("rejected");
       const res = await clear(id);
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ stage: null, detached: 0 });
-      expect(await eventsOf(id)).toEqual([]);
+      expect(res.body).toEqual({ stage: null, detached: 1 });
+      expect(await stageOf(id)).toBeNull();
+      expect((await eventsOf(id)).find((e) => e.kind === "stage_changed")).toMatchObject({ payload: { from: "rejected", to: null } });
+    });
+
+    it("a double click undoes once: one event, and neither request fails", async () => {
+      const id = await sentApplication();
+      await signedRejection("d1");
+      const answers = await Promise.all([clear(id), clear(id)]);
+      expect(answers.map((a) => a.status)).toEqual([200, 200]);
+      expect(answers.map((a) => a.body.stage)).toEqual(["applied", "applied"]);
+      expect(answers.map((a) => a.body.detached).sort()).toEqual([0, 1]);
+      expect((await eventsOf(id)).filter((e) => e.kind === "stage_changed")).toHaveLength(1);
+    });
+
+    it("a later signed rejection can reach rejected again from applied", async () => {
+      const id = await sentApplication();
+      await signedRejection("a1");
+      expect((await clear(id)).status).toBe(200);
+      await signedRejection("a2");
+      expect(await stageOf(id)).toBe("rejected");
     });
 
     it("another user's application answers as a missing one and changes nothing; a bad id is 400", async () => {
@@ -635,27 +670,32 @@ describe.skipIf(!hasTestDb)("inbound messaging v2 against Postgres", () => {
       expect((await clear("nope")).status).toBe(400);
     });
 
-    it("no actor but a user can clear a stage, and every other backward move stays refused", async () => {
+    it("no actor but a user can move a stage back, only to applied or NULL, and every other backward move stays refused", async () => {
       const id = await sentApplication();
-      await db.update(schema.applications).set({ stage: "rejected" }).where(eq(schema.applications.id, id));
+      const set = (stage: "rejected" | "offer") => db.update(schema.applications).set({ stage }).where(eq(schema.applications.id, id));
       const asWho = (actor: string | null, stage: string | null) =>
         db.transaction(async (tx) => {
-          if (actor) await tx.execute(sql`select set_config('kairos.actor', ${actor}, true)`);
+          if (actor !== null) await tx.execute(sql`select set_config('kairos.actor', ${actor}, true)`);
           await tx.update(schema.applications).set({ stage: stage as "offer" | null }).where(eq(schema.applications.id, id));
         });
-      // The test pool's own actor is ops; the job's pool sets none. Neither passes, nor does a system or empty one.
-      await expect(asWho(null, null)).rejects.toThrow();
-      for (const actor of ["", "system", "ops"]) await expect(asWho(actor, null)).rejects.toThrow();
+      await set("rejected");
+      // The test pool's own actor is ops; a job's pool sets none. Neither passes, nor does a system or empty one.
+      for (const actor of [null, "", "system", "ops", "autopilot"]) {
+        for (const stage of [null, "applied"]) await expect(asWho(actor, stage), `${actor} to ${stage}`).rejects.toThrow();
+      }
       expect(await stageOf(id)).toBe("rejected");
-      // A user action may clear, and nothing else: rejected to offer stays refused even for a user.
+      // A user cannot pick a stage either: rejected to offer stays refused.
       await expect(asWho("user", "offer")).rejects.toThrow();
+      expect(await stageOf(id)).toBe("rejected");
+      await asWho("user", "applied");
+      expect(await stageOf(id)).toBe("applied");
+
+      await set("offer");
+      for (const actor of ["ops", "user"]) await expect(asWho(actor, "interviewing"), `${actor} backward`).rejects.toThrow();
+      await expect(asWho("ops", "applied")).rejects.toThrow();
+      expect(await stageOf(id)).toBe("offer");
       await asWho("user", null);
       expect(await stageOf(id)).toBeNull();
-
-      await db.update(schema.applications).set({ stage: "offer" }).where(eq(schema.applications.id, id));
-      await expect(asWho("ops", "interviewing")).rejects.toThrow();
-      await expect(asWho("user", "interviewing")).rejects.toThrow();
-      expect(await stageOf(id)).toBe("offer");
     });
   });
 
