@@ -38,10 +38,15 @@
 
 .lp .lp-page-hero__copy { display: flex; flex-direction: column; align-items: center; text-align: center; }
 .lp .lp-page-hero__copy > .lp-pill { margin-block-end: 20px; }
+.lp .lp-page-hero__crumbs { max-inline-size: 100%; margin-block-end: 20px; }
+.lp .lp-page-hero__crumbs:has(+ .lp-pill) { margin-block-end: 12px; }
+.lp .lp-page-hero__crumbs .bc-list { justify-content: center; }
 .lp .lp-page-hero__lead { margin-block-start: 20px; }
 .lp .lp-page-hero__cta { inline-size: 100%; margin-block-start: 28px; }
 @media (min-width: 768px) {
   .lp .lp-page-hero__cta { inline-size: auto; }
+  .lp .lp-page-hero__crumbs { margin-block-end: 24px; }
+  .lp .lp-page-hero__crumbs:has(+ .lp-pill) { margin-block-end: 16px; }
 }
 
 /* The band starts under the copy and overlaps it slightly, so the sky runs up behind the lead. */

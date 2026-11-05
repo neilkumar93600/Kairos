@@ -3,6 +3,8 @@ import "./motion.css";
 import type { ReactNode } from "react";
 import { landingCopy } from "@/content/landing-copy";
 import { Navbar } from "@/components/layout/navbar";
+import { NewsletterPopup } from "@/components/marketing/popup/newsletter-popup";
+import { TopBanner } from "@/components/marketing/top-banner/top-banner";
 import { Colophon } from "./entries/colophon";
 import { MotionToggle } from "./islands/motion-toggle";
 
@@ -24,11 +26,13 @@ export function LandingShell({ children, skipPricing = false }: { children: Reac
           {nav.skipPricing}
         </a>
       ) : null}
+      <TopBanner />
       <Navbar variant="landing" sheetExtra={<MotionToggle variant="compact" />} />
       <main id="main" tabIndex={-1} className="flex-1 overflow-x-clip">
         {children}
       </main>
       <Colophon />
+      <NewsletterPopup />
     </div>
   );
 }

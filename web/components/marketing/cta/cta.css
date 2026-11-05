@@ -1,0 +1,49 @@
+/* CtaBand and InlineCta (design direction 3.3 to 3.5). Prefixed cta-, scoped under .lp. */
+@layer theme, base, components, utilities;
+
+@layer components {
+  /* ===== Dark: .lp-dark-card owns surface, mesh, grain, padding and colours ===== */
+  .lp .cta-band--dark { padding-block-end: var(--gap-section); }
+  .lp .cta-dark__h2 { max-inline-size: 11em; margin-inline: auto; }
+  .lp .cta-dark__body { max-inline-size: 32ch; margin: 16px auto 0; }
+  .lp .cta-dark__actions { display: flex; flex-direction: column; gap: 8px; margin-block-start: 32px; }
+  .lp .cta-dark__link {
+    display: inline-flex; align-items: center; justify-content: center; min-block-size: 44px;
+    color: var(--on-dark); font: 500 16px / 1.25 var(--font-ui);
+  }
+  @media (min-width: 768px) {
+    .lp .cta-dark__actions { flex-direction: row; align-items: center; justify-content: center; gap: 24px; }
+  }
+
+  /* ===== Quiet: no surface; the top edge is the signature line ===== */
+  .lp .cta-quiet {
+    position: relative; display: grid; row-gap: 24px; padding-block: 40px;
+    border-block-end: 1px solid var(--border);
+  }
+  .lp .cta-quiet::before { content: ""; position: absolute; inset: 0 0 auto; block-size: 1px; background: var(--ink); }
+  .lp [data-post="pending"] .cta-quiet::before { clip-path: inset(0 100% 0 0); }
+  .lp [data-post="live"] .cta-quiet::before { animation: lp-sign var(--dur-sign) var(--ease-out) both; }
+  .lp .cta-quiet__body { max-inline-size: 46ch; margin-block-start: 12px; }
+  .lp .cta-quiet__actions { display: flex; flex-direction: column-reverse; gap: 8px; }
+  .lp .cta-quiet__link { display: inline-flex; align-items: center; min-block-size: 44px; font: 500 16px / 1.25 var(--font-ui); }
+  @media (min-width: 768px) {
+    .lp .cta-quiet { grid-template-columns: minmax(0, 1fr) auto; column-gap: 48px; align-items: end; padding-block: 48px; }
+    .lp .cta-quiet__actions { flex-direction: row; align-items: center; gap: 24px; }
+  }
+  @media (min-width: 1024px) { .lp .cta-quiet { padding-block: 56px; } }
+
+  /* ===== Inline: the rules of .enb-more (entry-bento.css) ===== */
+  .lp .cta-inline { display: inline-flex; align-items: center; gap: 8px; min-block-size: 44px; font: 500 16px / 1.25 var(--font-ui); }
+  .lp .cta-inline svg { flex: none; transition: translate var(--dur-colour) var(--ease-out); }
+  .lp .cta-inline:focus-visible svg { translate: 4px 0; }
+  @media (hover: hover) and (pointer: fine) {
+    .lp .cta-inline:hover { text-decoration-thickness: 1px; }
+    .lp .cta-inline:hover svg { translate: 4px 0; }
+  }
+  html[data-motion="reduced"] .lp .cta-inline:is(:hover, :focus-visible) { text-decoration-thickness: 2px; }
+  html[data-motion="reduced"] .lp .cta-inline svg { translate: none; transition: none; }
+  @media (prefers-reduced-motion: reduce) {
+    html:not([data-motion="full"]) .lp .cta-inline:is(:hover, :focus-visible) { text-decoration-thickness: 2px; }
+    html:not([data-motion="full"]) .lp .cta-inline svg { translate: none; transition: none; }
+  }
+}

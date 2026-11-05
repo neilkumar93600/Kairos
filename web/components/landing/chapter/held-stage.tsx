@@ -233,7 +233,7 @@ export function HeldStage() {
             )}
             {/* The seal: an empty dashed ring while the sheet waits, the Kairos mark once the visitor approves. Not a
                 control (the press is "Approve sample" in caption 3), so it is drawn as a ring, never as a button. */}
-            <span className="ens-seal">{approvedAt ? <LogoMark className="h-4" /> : null}</span>
+            <span className="ens-seal">{approvedAt ? <LogoMark className="h-6" /> : null}</span>
           </div>
         </div>
 

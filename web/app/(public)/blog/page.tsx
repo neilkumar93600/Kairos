@@ -1,37 +1,41 @@
 import type { Metadata } from "next";
 import { FeaturedPost, PostRow } from "@/components/blog/post-card";
 import { Entry10Start } from "@/components/landing/entries/entry-10-start";
+import { Breadcrumbs } from "@/components/marketing/breadcrumbs/breadcrumbs";
+import { NewsletterForm } from "@/components/marketing/newsletter/newsletter-form";
 import { PageHero } from "@/components/marketing/page-hero";
+import { marketingCopy } from "@/content/marketing-copy";
 import { posts } from "@/lib/blog";
 
+const { blog: copy, breadcrumbs } = marketingCopy;
+
 export const metadata: Metadata = {
-  title: "Blog",
-  description: "How Kairos works, and what we learn about applying to jobs well.",
+  title: copy.meta.title,
+  description: copy.meta.description,
   alternates: { canonical: "/blog" },
 };
 
-// Newest first; ties keep the order in lib/blog.ts.
-const sorted = [...posts].sort((a, b) => b.date.localeCompare(a.date));
-
 export default function BlogPage() {
-  const [latest, ...rest] = sorted;
+  const [latest, ...rest] = posts;
   return (
     <>
       <PageHero
         titleId="blog-title"
-        title="Notes on applying well"
-        lead="How Kairos decides, drafts and sends, written plainly."
-        art={{ src: "/landing/art/step-2-truth-lock.png", alt: "A writing desk by a window, a single sheet laid out on it." }}
+        crumbs={<Breadcrumbs items={[{ label: breadcrumbs.home, href: "/" }, { label: copy.meta.title }]} />}
+        title={copy.hero.title}
+        lead={copy.hero.lead}
+        art={{ src: "/landing/art/step-2-truth-lock.png", alt: copy.hero.artAlt }}
       />
-      <section aria-label="All posts" className="lp-wrap lp-wrap--main blog-list">
-        {latest ? <FeaturedPost post={latest} /> : null}
-        {rest.length ? (
-          <div className="blog-rows glass-panel">
-            {rest.map((p) => (
-              <PostRow key={p.slug} post={p} />
-            ))}
-          </div>
-        ) : null}
+      <section aria-label={copy.listLabel} className="lp-wrap lp-wrap--main blog-list">
+        <FeaturedPost post={latest} />
+        <div className="blog-rows glass-panel">
+          {rest.map((p) => (
+            <PostRow key={p.slug} post={p} />
+          ))}
+        </div>
+        <div className="blog-news">
+          <NewsletterForm variant="card" source="blog-index" />
+        </div>
       </section>
       <Entry10Start />
     </>

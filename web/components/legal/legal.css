@@ -1,69 +1,132 @@
-/* Legal reading layout: no art; the title sits on the site haze and the sections on one .glass-panel reading sheet
-   at a 36rem measure (about 70 characters of Urbanist; 66ch ran near 90). Nothing here sets background, border or box-shadow on a .glass-panel element, so its fallbacks
-   (globals.css) keep working. Scoped under .lp (LandingShell). */
-.lp .legal { padding-block: calc(var(--nav-h) + 40px) var(--gap-section); }
-.lp .legal__grid { display: grid; gap: 32px; width: min(100% - 2 * var(--gutter), 1080px); margin-inline: auto; }
-.lp .legal__title { font: 400 var(--t-hero) / 1.05 var(--font-head); letter-spacing: -0.03em; color: var(--ink); }
-.lp .legal__meta { margin-block-start: 12px; font: 400 var(--t-caption) / 1.5 var(--font-ui); color: var(--faint); }
-.lp .legal__intro { margin-block-start: 20px; max-width: 36rem; font: 400 var(--t-lead) / 1.5 var(--font-ui); color: var(--body); text-wrap: pretty; }
-.lp .legal__toc a { display: flex; align-items: center; min-height: 44px; color: var(--ink); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
-.lp .legal__toc a:hover { text-decoration-thickness: 2px; }
+/* Legal reading layout (owner reference, 2026-11-05): a centred PageHero with a short painted band, then two columns on
+   the site haze with no card: a sticky contents list and the long text. The block sits on --c-narrow, centred under the
+   hero. Paragraphs keep a readable measure; tables use the whole column. Scoped under .lp (LandingShell).
+   Signature: clause numerals, a CSS counter that hangs in the column gap from 1024 and repeats in the contents. */
+.lp .legal { --legal-measure: 39.5rem; padding-block-end: var(--gap-section); }
+
+/* The hero is shorter than other inner pages: this is a document, and the reader came for the text. */
+.lp .legal-hero.lp-page-hero { --band-h: 150px; padding-block-start: calc(var(--nav-h) + 32px); }
+.lp .legal-hero .lp-page-hero__band { margin-block-start: -4px; }
+@media (min-width: 768px) { .lp .legal-hero.lp-page-hero { --band-h: 190px; padding-block-start: calc(var(--nav-h) + 48px); } }
+@media (min-width: 1024px) { .lp .legal-hero.lp-page-hero { --band-h: 230px; padding-block-start: calc(var(--nav-h) + 56px); } }
+@media (min-width: 1280px) { .lp .legal-hero.lp-page-hero { --band-h: 260px; padding-block-start: calc(var(--nav-h) + 64px); } }
+
+.lp .legal__grid { display: grid; gap: 24px; width: min(100% - 2 * var(--gutter), var(--legal-block, var(--c-narrow))); margin-inline: auto; padding-block-start: 16px; }
+.lp .legal__side { display: grid; gap: 16px; min-width: 0; }
+
+/* Terms, Privacy, Cookies: the three documents share a refund section, so readers need to move between them. */
+.lp .legal__switch { display: flex; gap: 2px; width: 100%; max-width: 420px; margin-inline: auto; padding: 3px; border-radius: 999px; background: var(--sunk); }
+.lp .legal__switch a { position: relative; flex: 1; display: inline-flex; align-items: center; justify-content: center; min-height: 38px; padding-inline: 8px; border-radius: 999px; font: 500 var(--t-caption) / 1.2 var(--font-ui); color: var(--icon); transition: color 0.15s ease-out; }
+.lp .legal__switch a::after { content: ""; position: absolute; inset: -3px 0; } /* 44 px tall to the finger */
+.lp .legal__switch a:hover { color: var(--ink); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.lp .legal__switch a:active { opacity: 0.7; }
+.lp .legal__switch a[aria-current="page"] { background: var(--surface); color: var(--ink); box-shadow: var(--edge); text-decoration: none; }
+.lp .legal__switch a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .lp .legal__switch a { transition: none; } }
+
+/* Contents: the sidebar nav item from docs/04-ui-ux-brief.md, an 8 px radius with a Bone fill on the current item. */
+.lp .legal__toc ol { counter-reset: toc; list-style: none; margin: 0; padding: 0; }
+.lp .legal__toc li { counter-increment: toc; }
+.lp .legal__toc a { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: baseline; min-height: 44px; align-content: center; padding-inline: 10px; border-radius: 8px; font: 400 16px / 1.35 var(--font-ui); color: var(--icon); text-decoration: none; }
+.lp .legal__toc a::before { content: counter(toc, decimal-leading-zero); content: counter(toc, decimal-leading-zero) / ""; font: 400 var(--t-caption) / 1.35 var(--font-ui); font-variant-numeric: tabular-nums; color: var(--faint); }
+.lp .legal__toc a:hover { color: var(--ink); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
 .lp .legal__toc a:active { opacity: 0.7; }
-.lp .legal__toc ol { list-style: none; margin: 0; padding: 0; }
-.lp .legal__toc-m { border-radius: var(--r-card); padding-inline: 16px; }
-.lp .legal__toc-m summary { display: flex; align-items: center; min-height: 48px; cursor: pointer; font: 500 16px / 1.3 var(--font-ui); color: var(--ink); }
-.lp .legal__toc-m summary { list-style: none; justify-content: space-between; }
+.lp .legal__toc a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.lp .legal__toc-m { border-radius: var(--r-card); padding-inline: 8px; }
+.lp .legal__toc-m summary { display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding-inline: 10px; list-style: none; cursor: pointer; font: 500 16px / 1.3 var(--font-ui); color: var(--ink); }
 .lp .legal__toc-m summary::-webkit-details-marker { display: none; }
 .lp .legal__toc-m summary::after { content: ""; width: 8px; height: 8px; border: solid var(--ink); border-width: 0 2px 2px 0; transform: rotate(45deg) translateY(-2px); transition: transform 0.2s ease-out; }
 .lp .legal__toc-m[open] summary::after { transform: rotate(225deg) translateY(-2px); }
 .lp .legal__toc-m summary:hover { text-decoration: underline; }
 .lp .legal__toc-m summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 8px; }
+.lp .legal__toc-m ol { padding-block-end: 8px; }
 @media (prefers-reduced-motion: reduce) { .lp .legal__toc-m summary::after { transition: none; } }
 .lp .legal__toc-d { display: none; }
-.lp .legal__toc-label { font: 500 var(--t-micro) / 1.2 var(--font-ui); letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); margin-block-end: 8px; }
-.lp .legal__doc { padding: 4px 20px 8px; border-radius: var(--r-media); }
-.lp .legal__doc section { padding-block: 28px; margin-block: 0; border-block-start: 1px solid var(--border); scroll-margin-top: calc(var(--nav-h) + 16px); }
-.lp .legal__doc section:first-child { border-block-start: 0; padding-block-start: 24px; }
-.lp .legal__doc h2 { font: 500 24px / 1.25 var(--font-head); letter-spacing: -0.02em; color: var(--ink); }
-.lp .legal__doc p { margin-block-start: 14px; max-width: 36rem; font: 400 17px / 1.6 var(--font-ui); color: var(--body); text-wrap: pretty; }
+.lp .legal__toc-label { padding-inline: 10px; margin-block-end: 8px; font: 500 var(--t-micro) / 1.2 var(--font-ui); letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); }
+
+/* The document */
+.lp .legal__doc { counter-reset: clause; min-width: 0; }
+.lp .legal__note { display: grid; gap: 6px; max-width: var(--legal-measure); margin-block-end: 40px; padding: 14px 16px; border-radius: 12px; background: var(--sunk); }
+.lp .legal__meta { font: 400 var(--t-caption) / 1.5 var(--font-ui); color: var(--faint); }
+.lp .legal__draft { display: flex; align-items: baseline; gap: 8px; font: 500 15px / 1.4 var(--font-ui); color: var(--ink); text-wrap: pretty; }
+.lp .legal__draft .lp-square-open { flex: none; translate: 0 -1px; }
+/* The gap is padding under each section, not margin above it, so a section's timeline covers it and anchors land on the heading. */
+.lp .legal__doc section { position: relative; counter-increment: clause; padding-block-end: 48px; }
+.lp .legal__doc section::before {
+  content: counter(clause, decimal-leading-zero);
+  content: counter(clause, decimal-leading-zero) / "";
+  display: block;
+  margin-block-end: 6px;
+  font: 500 14px / 1.2 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+.lp .legal__doc h2 { font: 500 24px / 1.25 var(--font-head); letter-spacing: -0.02em; color: var(--ink); text-wrap: balance; }
+.lp .legal__doc section :is(p, li) { max-width: var(--legal-measure); font: 400 17px / 1.6 var(--font-ui); color: var(--body); text-wrap: pretty; }
+.lp .legal__doc section p { margin-block-start: 14px; }
+.lp .legal__doc ul { margin-block-start: 14px; padding-inline-start: 20px; list-style: disc; }
+.lp .legal__doc li::marker { color: var(--faint); }
+.lp .legal__doc li + li { margin-block-start: 8px; }
+.lp .legal__doc strong { font-weight: 500; color: var(--ink); }
+.lp .legal__doc :is(p, li, td, th) a { padding-block: 4px; color: var(--ink); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.lp .legal__doc :is(p, li, td, th) a:hover { text-decoration-thickness: 2px; }
+.lp .legal__ask { padding-block-start: 8px; }
+
+/* Tables stack below 768, where three columns would not fit on a phone. */
+.lp .legal__doc table { display: block; margin-block-start: 20px; font: 400 var(--t-body-sm) / 1.5 var(--font-ui); color: var(--body); }
+.lp .legal__doc thead { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
+.lp .legal__doc tbody, .lp .legal__doc tbody tr { display: block; }
+.lp .legal__doc tbody tr { padding-block: 12px; border-block-start: 1px solid var(--border); }
+.lp .legal__doc tbody th, .lp .legal__doc td { display: block; text-align: start; overflow-wrap: anywhere; }
+.lp .legal__doc tbody th { font-weight: 500; color: var(--ink); }
+.lp .legal__doc td { margin-block-start: 8px; }
+.lp .legal__doc td::before { content: attr(data-label); display: block; font: 500 var(--t-caption) / 1.5 var(--font-ui); color: var(--faint); }
+@media (min-width: 768px) {
+  .lp .legal__doc table { display: table; inline-size: 100%; border-collapse: collapse; }
+  .lp .legal__doc thead { position: static; inline-size: auto; block-size: auto; overflow: visible; clip-path: none; display: table-header-group; }
+  .lp .legal__doc tbody { display: table-row-group; }
+  .lp .legal__doc tbody tr { display: table-row; padding: 0; }
+  .lp .legal__doc :is(thead th, tbody th, td) { display: table-cell; padding: 12px 24px 12px 0; vertical-align: top; text-align: start; overflow-wrap: break-word; }
+  .lp .legal__doc :is(thead th, tbody th, td):last-child { padding-inline-end: 0; }
+  .lp .legal__doc thead th { padding-block-start: 0; font: 500 var(--t-caption) / 1.5 var(--font-ui); color: var(--faint); }
+  .lp .legal__doc tbody th { inline-size: 26%; }
+  .lp .legal__doc :is(tbody th, td) { border-block-start: 1px solid var(--border); margin: 0; }
+  .lp .legal__doc td::before { content: none; }
+}
 @media (min-width: 1024px) {
-  .lp .legal__grid { grid-template-columns: 200px minmax(0, calc(36rem + 96px)); column-gap: 64px; row-gap: 0; }
-  .lp .legal__doc { padding: 16px 48px 20px; }
-  .lp .legal__head, .lp .legal__doc { grid-column: 2; }
+  /* Column widths add up to one reading measure on the right, so prose and tables share a single right edge. */
+  .lp .legal__grid { --legal-block: calc(clamp(232px, 22vw, 280px) + clamp(48px, 6vw, 88px) + var(--legal-measure)); grid-template-columns: clamp(232px, 22vw, 280px) minmax(0, 1fr); column-gap: clamp(48px, 6vw, 88px); align-items: start; padding-block-start: 32px; }
+  .lp .legal__side {
+    position: sticky; top: calc(var(--nav-h) + 24px); gap: 24px;
+    max-block-size: calc(100svh - var(--nav-h) - 48px); overflow-y: auto; scrollbar-width: thin; padding: 2px;
+  }
+  .lp .legal__switch { max-width: none; }
   .lp .legal__toc-m { display: none; }
-  .lp .legal__toc-d { display: block; grid-column: 1; grid-row: 1 / span 2; position: sticky; top: calc(var(--nav-h) + 24px); align-self: start; }
-  .lp .legal__doc p { font-size: 18px; }
-  .lp .legal__head { padding-block-end: 40px; }
+  .lp .legal__toc-d { display: block; }
+  .lp .legal__toc-d li + li { margin-block-start: 2px; }
+  .lp .legal__toc-d a { min-height: 0; padding-block: 6px; font-size: 15px; }
+  .lp .legal__doc section { padding-block-end: 64px; }
+  .lp .legal__doc section::before { position: absolute; inset-block-start: 11px; inset-inline-end: 100%; margin: 0 20px 0 0; font-weight: 400; }
+  .lp .legal__doc h2 { font-size: 28px; line-height: 1.2; }
+  .lp .legal__doc section :is(p, li) { font-size: 18px; }
+  .lp .legal__note { margin-block-end: 56px; }
+}
+@media (min-width: 1024px) and (pointer: coarse) {
+  .lp .legal__toc-d a { padding-block: 11.5px; }
 }
 
-/* CSS-only current-section marker for the desktop contents: a bar beside the link is opaque while its section
-   covers a reading line 38% down the viewport. Opacity only; without support the list stays plain. */
-.lp .legal__toc-d a { position: relative; }
-.lp .legal__toc-d a::before { content: ""; position: absolute; inset-block: 10px; inset-inline-start: -12px; width: 2px; background: var(--ink); opacity: 0; }
+/* CSS-only current section: while a section covers a reading line 38% down the viewport, its link gets the Bone fill and
+   ink label. Without support the list stays plain. --lg-tl and --lg-scope come from legal-document.tsx. */
 @supports (timeline-scope: none) and (animation-timeline: view()) {
-  .lp .legal__grid { timeline-scope: --lg-1, --lg-2, --lg-3, --lg-4, --lg-5, --lg-6, --lg-7, --lg-8; }
-  .lp .legal__doc section { view-timeline-inset: 38% 61%; }
-  .lp .legal__toc-d a::before { animation: legal-on linear none; animation-range: cover; }
-  .lp .legal__doc section:nth-child(1) { view-timeline-name: --lg-1; }
-  .lp .legal__toc-d li:nth-child(1) a::before { animation-timeline: --lg-1; }
-  .lp .legal__doc section:nth-child(2) { view-timeline-name: --lg-2; }
-  .lp .legal__toc-d li:nth-child(2) a::before { animation-timeline: --lg-2; }
-  .lp .legal__doc section:nth-child(3) { view-timeline-name: --lg-3; }
-  .lp .legal__toc-d li:nth-child(3) a::before { animation-timeline: --lg-3; }
-  .lp .legal__doc section:nth-child(4) { view-timeline-name: --lg-4; }
-  .lp .legal__toc-d li:nth-child(4) a::before { animation-timeline: --lg-4; }
-  .lp .legal__doc section:nth-child(5) { view-timeline-name: --lg-5; }
-  .lp .legal__toc-d li:nth-child(5) a::before { animation-timeline: --lg-5; }
-  .lp .legal__doc section:nth-child(6) { view-timeline-name: --lg-6; }
-  .lp .legal__toc-d li:nth-child(6) a::before { animation-timeline: --lg-6; }
-  .lp .legal__doc section:nth-child(7) { view-timeline-name: --lg-7; }
-  .lp .legal__toc-d li:nth-child(7) a::before { animation-timeline: --lg-7; }
-  .lp .legal__doc section:nth-child(8) { view-timeline-name: --lg-8; }
-  .lp .legal__toc-d li:nth-child(8) a::before { animation-timeline: --lg-8; }
+  .lp .legal__grid { timeline-scope: var(--lg-scope); }
+  .lp .legal__doc section { view-timeline-name: var(--lg-tl); view-timeline-inset: 38% 61%; }
+  .lp .legal__toc-d a { animation: legal-on linear none; animation-range: cover; animation-timeline: var(--lg-tl); }
 }
-@keyframes legal-on { from, to { opacity: 1; } }
+@keyframes legal-on { from, to { background-color: var(--sunk); color: var(--ink); box-shadow: var(--edge); } }
 @media print {
-  .lp > :not(main), .lp .legal__toc-m, .lp .legal__toc-d { display: none !important; }
+  .lp > :not(main), .lp .legal-hero .lp-page-hero__band, .lp .legal__side { display: none !important; }
+  .lp .legal-hero.lp-page-hero { padding-block-start: 0; }
   .lp .legal { padding-block: 0; }
   .lp .legal__grid { display: block; width: auto; }
+  .lp .legal__doc section::before { position: static; }
 }

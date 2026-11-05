@@ -8,6 +8,8 @@ export interface PageHeroProps {
   /** id of the h1; the section is labelled by it. */
   titleId: string;
   title: ReactNode;
+  /** Breadcrumbs, first in the copy stack. */
+  crumbs?: ReactNode;
   /** Eyebrow pill above the h1. Only when it states a fact about the page. */
   pill?: ReactNode;
   lead?: ReactNode;
@@ -25,10 +27,11 @@ export interface PageHeroProps {
  * full-bleed band that dissolves into the haze above and below. Fixed band height per breakpoint, so nothing moves when the
  * painting decodes. The navbar overlaps the hero by --nav-h (Navbar variant "landing").
  */
-export function PageHero({ titleId, title, pill, lead, cta, art, children, className }: PageHeroProps) {
+export function PageHero({ titleId, title, crumbs, pill, lead, cta, art, children, className }: PageHeroProps) {
   return (
     <section aria-labelledby={titleId} className={cn("lp-page-hero", className)}>
       <div className="lp-wrap lp-wrap--copy lp-page-hero__copy">
+        {crumbs ? <div className="lp-page-hero__crumbs">{crumbs}</div> : null}
         {/* Light glass on the site haze (docs/DESIGN.md "Glass everywhere"): Ink 14/500 on it is above 13:1. */}
         {pill ? <p className="lp-pill glass-soft">{pill}</p> : null}
         <h1 id={titleId} className="lp-page-h1" tabIndex={-1}>

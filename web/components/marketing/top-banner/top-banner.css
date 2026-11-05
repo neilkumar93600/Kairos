@@ -1,0 +1,67 @@
+/* Top banner (design direction 3.1). Prefixed tb-, scoped under .lp. In flow, scrolls away; the haze shows through. */
+@layer theme, base, components, utilities;
+
+@layer components {
+  .lp .tb {
+    display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 1fr; flex: none;
+    transition: grid-template-rows var(--dur-toggle) var(--ease-out);
+  }
+  /* Clipped only while it folds: at rest a clip would cut the pill's glass shadow at the band's edge. */
+  .lp .tb[data-closing] { grid-template-rows: 0fr; overflow: clip; }
+  html[data-tb-off] .lp .tb { display: none; }
+
+  .lp .tb-in {
+    display: flex; align-items: center; justify-content: center;
+    min-block-size: 0; block-size: 48px; padding-inline: var(--gutter);
+  }
+
+  /* Glass comes from .glass-soft: size and padding only here. */
+  .lp .tb-pill {
+    min-block-size: 36px; max-inline-size: 100%; padding-inline: 14px 4px; gap: 8px;
+    transition: opacity var(--dur-toggle) var(--ease-out);
+  }
+  .lp .tb[data-closing] .tb-pill { opacity: 0; }
+
+  .lp .tb-link {
+    position: relative; display: inline-flex; align-items: center; gap: 8px; min-inline-size: 0; min-block-size: 36px;
+    color: var(--ink); font: 500 14px / 1.2 var(--font-ui);
+  }
+  .lp .tb-link::before { content: ""; position: absolute; inset-block: -4px; inset-inline: 0; }  /* 44 px target */
+  .lp .tb-text { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lp .tb-label { flex: none; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  /* Below 768 the label is out of sight but still in the link's name, so it never reads as a bare "Read the post". */
+  @media (max-width: 767.98px) {
+    .lp .tb-text { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    .lp .tb-label { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  }
+  /* Under 360 the pill wraps to two lines instead of truncating. Same 48 px floor, so nothing shifts on load. */
+  @media (max-width: 359.98px) {
+    .lp .tb-in { block-size: auto; min-block-size: 0; padding-block: 6px; }
+    .lp .tb-text { overflow: visible; text-overflow: clip; white-space: normal; }
+  }
+  @media (min-width: 768px) { .lp .tb-pill { max-inline-size: 640px; } }
+  @media (min-width: 1280px) { .lp .tb-pill { max-inline-size: 720px; } }
+
+  .lp .tb-arrow { flex: none; transition: translate var(--dur-colour) var(--ease-out); }
+  .lp .tb-link:focus-visible { outline-offset: 3px; border-radius: var(--r-pill); }
+  .lp .tb-link:focus-visible .tb-arrow { translate: 4px 0; }
+
+  .lp .tb-x {
+    position: relative; display: grid; flex: none; place-items: center; inline-size: 28px; block-size: 28px;
+    border-radius: var(--r-pill); color: var(--icon); cursor: pointer;
+    transition: background-color var(--dur-colour) var(--ease-out);
+  }
+  .lp .tb-x::before { content: ""; position: absolute; inset: -8px; }  /* 44 px target */
+
+  @media (hover: hover) and (pointer: fine) {
+    .lp .tb-link:hover .tb-arrow { translate: 4px 0; }
+    .lp .tb-x:hover { background: var(--sunk); }
+  }
+  html[data-motion="reduced"] .lp .tb-arrow { translate: none; transition: none; }
+  html[data-motion="reduced"] .lp .tb-link:is(:hover, :focus-visible) :is(.tb-text, .tb-label) { text-decoration-thickness: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    html:not([data-motion="full"]) .lp .tb-arrow { translate: none; transition: none; }
+    html:not([data-motion="full"]) .lp .tb-link:is(:hover, :focus-visible) :is(.tb-text, .tb-label) { text-decoration-thickness: 2px; }
+  }
+  @media print { .lp .tb { display: none; } }
+}

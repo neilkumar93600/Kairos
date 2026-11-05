@@ -42,7 +42,6 @@ export const siteConfig = {
         { href: "/terms", label: "Terms" },
         { href: "/privacy", label: "Privacy" },
         { href: "/cookies", label: "Cookies" },
-        { href: "/refunds", label: "Refunds" },
       ],
     },
   ],

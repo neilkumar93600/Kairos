@@ -330,10 +330,12 @@ Owner: ops agent · Depends on: Tasks 1, 13, 14 · Done when: staging passes the
 
 Owner: extension agent + founder · Depends on: Tasks 4 to 7 · Done when: the listing is published (unlisted for beta) and the production web app connects to it.
 
-- [ ] **Step 1:** Production build with `API_BASE=https://kairos.app` and `externally_connectable` matching `https://kairos.app/*` only; remove localhost.
-- [ ] **Step 2:** Write the permission justifications (`storage`, `sidePanel`, `tabs`, `alarms`, and the four ATS host patterns: `job-boards.greenhouse.io`, `boards.greenhouse.io`, `jobs.lever.co`, `jobs.ashbyhq.com`) and the privacy practices answers to match the privacy policy.
-- [ ] **Step 3:** Icons at 16, 48 and 128 px in `extension/public/` (referenced from `manifest.json`), screenshots at 1280×800 in the reference style, short description under 132 characters.
+- [x] **Step 1:** Production build with `API_BASE=https://kairos.app` and `externally_connectable` matching `https://kairos.app/*` only; remove localhost. (2026-11-05: `manifest.json` lists no origins; `build.mjs` adds the one for `API_BASE`.)
+- [ ] **Step 2:** Write the permission justifications (`storage`, `sidePanel`, `tabs`, and the four ATS host patterns; `alarms` was removed on 2026-11-05 because nothing used it, and comes back only if the lease work in Task 7 needs it: `job-boards.greenhouse.io`, `boards.greenhouse.io`, `jobs.lever.co`, `jobs.ashbyhq.com`) and the privacy practices answers to match the privacy policy.
+- [ ] **Step 3:** Icons at 16, 32, 48 and 128 px in `extension/public/icons/`, referenced from `manifest.json` (done 2026-11-05). Still to do: screenshots at 1280×800 in the reference style, short description under 132 characters.
 - [ ] **Step 4:** Submit as unlisted; set `NEXT_PUBLIC_EXTENSION_ID` on Vercel when the id is issued.
+- [ ] **Step 5 (added 2026-11-05):** Add `company` to `GET /api/extension/queue` (additive, one join; the frozen-shape contract allows it) and show it in place of the slug `describeSource` reads from the URL.
+- [ ] **Step 6 (added 2026-11-05):** When WP-29 lands the claim lease, send `POST /api/extension/claim` before opening the tab and show `already_claimed` in the row. Until then two panels can send the same application.
 
 ### Task 18: Launch gates and beta
 

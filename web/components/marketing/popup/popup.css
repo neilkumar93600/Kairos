@@ -1,0 +1,58 @@
+/* Newsletter popup (design direction 3.7). Prefixed nlp-. Inside the portal's own .lp scope. No blur on the backdrop:
+   the card's frost blurs the page, and a blurred backdrop would stack glass. */
+@layer theme, base, components, utilities;
+
+@layer components {
+  .lp .nlp-backdrop {
+    position: fixed; inset: 0; z-index: 50;
+    background: color-mix(in srgb, var(--canvas) 40%, transparent);
+    transition: opacity var(--dur-fade) var(--ease-out);
+  }
+  .lp .nlp-backdrop:is([data-starting-style], [data-ending-style]) { opacity: 0; }
+
+  /* Docked at 390; centred without transforms from 768. Glass comes from .glass-panel: radius only here. */
+  .lp .nlp {
+    --nlp-enter: 24px;
+    --nlp-art-h: 96px;
+    position: fixed; z-index: 50; inset-inline: 12px; inset-block-end: calc(12px + env(safe-area-inset-bottom));
+    max-block-size: calc(100svh - 24px); overflow-y: auto; overscroll-behavior: contain;
+    border-radius: var(--r-media); color: var(--body);
+    transition: opacity var(--dur-toggle) var(--ease-out), transform var(--dur-toggle) var(--ease-out);
+  }
+  .lp .nlp:focus-visible { outline: none; }
+  .lp .nlp[data-starting-style] { opacity: 0; transform: translateY(var(--nlp-enter)); }
+  .lp .nlp[data-ending-style] {
+    opacity: 0; transform: translateY(8px);
+    transition-duration: var(--dur-fade); transition-timing-function: var(--ease-in);
+  }
+  .lp .nlp-body { padding: 20px 24px 24px; }
+  @media (min-width: 768px) {
+    .lp .nlp {
+      --nlp-enter: var(--dist-reveal);
+      --nlp-art-h: 128px;
+      inset: 0; margin: auto; block-size: fit-content; inline-size: 440px; overflow: clip;
+    }
+    .lp .nlp-body { padding: 32px; }
+  }
+  @media (min-width: 1280px) {
+    .lp .nlp { --nlp-art-h: 144px; inline-size: 480px; }
+    .lp .nlp-body { padding: 32px 40px 40px; }
+  }
+
+  /* Short phones (320 x 568): a 64 px art band, so the card leaves the form room. */
+  @media (max-height: 599.98px) and (max-width: 767.98px) { .lp .nlp { --nlp-art-h: 64px; } }
+
+  /* The post box at the end of the path, dissolving into the frost. */
+  .lp .nlp-art { block-size: var(--nlp-art-h); mask-image: linear-gradient(to bottom, #000 55%, transparent); }
+
+  /* Solid paper, never glass (no glass on glass). */
+  .lp .nlp-x {
+    position: absolute; z-index: 1; inset-block-start: 12px; inset-inline-end: 12px;
+    display: grid; place-items: center; inline-size: 36px; block-size: 36px; border-radius: var(--r-pill);
+    background: var(--surface); box-shadow: var(--edge), var(--sh-over-art); color: var(--icon); cursor: pointer;
+  }
+  .lp .nlp-x::before { content: ""; position: absolute; inset: -4px; }  /* 44 px target */
+
+  .lp .nlp-desc { max-inline-size: 36ch; margin-block: 8px 20px; }
+  .lp .nlp-decline { display: inline-flex; align-items: center; min-block-size: 44px; margin-block-start: 12px; font: 500 15px / 1.25 var(--font-ui); cursor: pointer; }
+}

@@ -110,7 +110,7 @@
   font-weight: 500;
   letter-spacing: -0.02em;
 }
-.lp .ft-brand__logo svg { width: calc(30 * var(--u)); height: calc(30 * var(--u)); }
+.lp .ft-brand__logo svg { width: auto; height: calc(40 * var(--u)); }
 .lp .ft-brand__title {
   margin: calc(19 * var(--u)) 0 0;
   color: var(--ft-ink);

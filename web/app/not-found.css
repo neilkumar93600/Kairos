@@ -1,7 +1,7 @@
 /* ===== 404 scene (owner reference, 2026-10-30; docs/DESIGN.md > Inner pages) =====
    The reference's numbers are kept verbatim. Kairos adaptations: the footer's meadow loop instead of the reference's
-   file, an Aubergine Ink fallback instead of black, the lockup as the one link home. Nothing sits between the video
-   and the copy: no overlay, tint, blur or gradient, and nothing on the page animates. */
+   file, an Aubergine Ink fallback instead of black, the lockup as the way home, recovery links under the line (D4). Nothing sits between
+   the video and the copy: no overlay, tint, blur or gradient, and only the video moves. */
 
 .nf {
   position: relative;
@@ -11,6 +11,10 @@
   min-height: max(100svh, 760px);
   background: #1b0624; /* Aubergine Ink until the poster paints; DESIGN.md never uses pure black */
 }
+
+/* notFound() from a page (an unknown /blog slug) lands here inside LandingShell, because the (public) layout has already
+   rendered and dynamicParams is off the table with cacheComponents. Its chrome goes, so this is the same standalone scene. */
+.lp:has(> main .nf) > :not(main) { display: none; }
 
 .nf__media {
   position: absolute;
@@ -23,13 +27,40 @@
 }
 
 /* Reduced motion (html[data-motion]: the visitor's stored choice, else the OS, set before first paint): the video is
-   taken out and the poster under it shows. */
-html[data-motion="reduced"] .nf__video { display: none; }
+   taken out and the poster under it shows. Scripts off: it never starts. Either way nothing moves, so no pause control. */
+html[data-motion="reduced"] .nf__video,
+html[data-motion="reduced"] .nf__vctl,
+html:not([data-motion]) .nf__vctl { display: none; }
 
-/* The navbar lockup scaled up: mark height = wordmark size, gap 0.4em, Urbanist 500, -0.02em. 40px tall here. */
+/* Pause/play (WCAG 2.2.2): the footer's .ft__vctl look, its 44 px hit area centred on the 32 px disc. */
+.nf__vctl {
+  position: absolute;
+  inset-inline-end: 24px;
+  inset-block-end: calc(24px + env(safe-area-inset-bottom));
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid rgb(12 12 12 / 0.12);
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.55);
+  color: var(--ink);
+  cursor: pointer;
+}
+.nf__vctl::before { content: ""; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+.nf__vctl:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .nf__vctl:hover { background: rgb(255 255 255 / 0.9); }
+}
+
+/* The navbar lockup scaled up: mark height = wordmark size, gap 0.4em, Urbanist 500, -0.02em. 40px tall here.
+   The padding makes the target 44 px or more; top gives it back, so the ink stays at the reference's 80 / 32 px. */
 .nf__logo {
   position: absolute;
-  top: 80px;
+  top: 76px;
+  padding-block: 4px;
   left: 50%;
   transform: translateX(-50%);
   display: inline-flex;
@@ -40,7 +71,7 @@ html[data-motion="reduced"] .nf__video { display: none; }
   color: #fff;
   text-decoration: none;
 }
-/* The one link on the page: no hover change; keyboard focus shows a white underline instead of the Ink ring. */
+/* No hover change; keyboard focus shows a white underline instead of the Ink ring. */
 .nf__logo:focus-visible { outline: none; }
 .nf__logo:focus-visible span {
   text-decoration: underline;
@@ -73,6 +104,7 @@ html[data-motion="reduced"] .nf__video { display: none; }
   padding: 0 calc(-1 * var(--nf-track)) 0.05em 0;
   font: 600 295.751px / 1.1 var(--font-geist-mono), ui-monospace, monospace;
   letter-spacing: var(--nf-track);
+  white-space: nowrap; /* the three glyphs fit the box by under a pixel; inherited text settings must not break them */
   color: transparent;
   background: linear-gradient(247.3282658084845deg, rgb(255 255 255) 2.5334%, rgb(255 255 255 / 0.4) 93.612%);
   -webkit-background-clip: text;
@@ -87,6 +119,11 @@ html[data-motion="reduced"] .nf__video { display: none; }
   background: #fff;
 }
 
+/* Design direction 4.7: white on the poster measured under 4.5:1 in places at 390 (normal text there). A glyph shadow,
+   never an overlay, tint, blur or card. The recovery links are smaller and lower, on paler paint, so theirs is tighter. */
+.nf__msg { text-shadow: 0 1px 2px rgb(27 6 36 / 0.35), 0 0 24px rgb(27 6 36 / 0.25); }
+.nf__links a { text-shadow: 0 1px 2px rgb(27 6 36 / 0.6), 0 0 10px rgb(27 6 36 / 0.55); }
+
 .nf__msg {
   width: 100%;
   margin: 0;
@@ -95,9 +132,46 @@ html[data-motion="reduced"] .nf__video { display: none; }
   letter-spacing: -2px;
 }
 
+/* Hung under the group, not in it, so the reference's centring of the group stays exact. */
+.nf__links {
+  position: absolute;
+  top: calc(100% + 24px);
+  left: 0;
+  width: 100%;
+}
+.nf__links ul {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0 24px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.nf__links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font: 500 15px / 1.2 var(--font-display);
+  letter-spacing: 0;
+  color: #fff;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .nf__links a:hover { text-decoration-thickness: 2px; }
+}
+.nf__links a:focus-visible { outline: 2px solid #fff; outline-offset: 3px; border-radius: 2px; }
+
 @media (max-width: 640px) {
-  .nf { min-height: max(100svh, 500px); }
-  .nf__logo { top: 32px; font-size: 30px; } /* 75 percent */
+  .nf { min-height: max(100svh, 560px); }
+  .nf__logo { top: 25px; padding-block: 7px; font-size: 30px; } /* 75 percent; 30 + 14 = 44 px target, ink stays at 32 px */
+  .nf__vctl { inset-inline-end: 16px; inset-block-end: calc(16px + env(safe-area-inset-bottom)); }
+  .nf__links ul { gap: 0 16px; }
+  /* Up in the dark sky under the logo: over the pale fog at the bottom of the scene these fell short of 4.5:1 (owner, no overlays). */
+  .nf__links { inset-block: auto 100%; margin: 0 0 4px; }
+  .nf__links ul { justify-content: center; }
   .nf__content { width: min(100% - 40px, 360px); gap: 28px; }
   .nf__code { --nf-track: -0.09em; font-size: clamp(140px, 52vw, 200px); }
   .nf__rule { width: 100%; }

@@ -1,74 +1,43 @@
-"use client"
+"use client";
 
-import React from "react"
-import { motion, type MotionProps } from "motion/react"
+import Link from "next/link";
+import { motion, type MotionProps } from "motion/react";
+import type { ComponentProps, CSSProperties, ReactNode } from "react";
+import { useMotionAllowed } from "@/components/landing/motion/use-motion-allowed";
+import { cn } from "@/lib/utils";
 
-import { cn } from "@/lib/utils"
+const MotionLink = motion.create(Link);
 
-const animationProps: MotionProps = {
-  initial: { "--x": "100%", scale: 0.8 },
-  animate: { "--x": "-100%", scale: 1 },
+/** Magic UI's Shiny Button, adapted: a link, in Kairos type, and still when motion is off. */
+const sweep: MotionProps = {
+  initial: { "--x": "100%" } as MotionProps["initial"],
+  animate: { "--x": "-100%" } as MotionProps["animate"],
   whileTap: { scale: 0.95 },
-  transition: {
-    repeat: Infinity,
-    repeatType: "loop",
-    repeatDelay: 1,
-    type: "spring",
-    stiffness: 20,
-    damping: 15,
-    mass: 2,
-    scale: {
-      type: "spring",
-      stiffness: 200,
-      damping: 5,
-      mass: 0.5,
-    },
-  },
-}
+  transition: { repeat: Infinity, repeatType: "loop", repeatDelay: 1, type: "spring", stiffness: 20, damping: 15, mass: 2, scale: { type: "spring", stiffness: 200, damping: 5, mass: 0.5 } },
+};
 
-interface ShinyButtonProps
-  extends
-    Omit<React.HTMLAttributes<HTMLElement>, keyof MotionProps>,
-    MotionProps {
-  children: React.ReactNode
-  className?: string
-}
+// The label never drops below 55 percent, so it stays readable while the shine passes.
+const labelMask = "linear-gradient(-75deg, #000 calc(var(--x, 100%) + 20%), rgb(0 0 0 / 0.55) calc(var(--x, 100%) + 30%), #000 calc(var(--x, 100%) + 100%))";
+const ringMask = "linear-gradient(#000, #000) content-box exclude, linear-gradient(#000, #000)";
+const ringShine = "linear-gradient(-75deg, color-mix(in srgb, var(--primary) 14%, transparent) calc(var(--x, 100%) + 20%), color-mix(in srgb, var(--primary) 70%, transparent) calc(var(--x, 100%) + 25%), color-mix(in srgb, var(--primary) 14%, transparent) calc(var(--x, 100%) + 100%))";
 
-export const ShinyButton = React.forwardRef<
-  HTMLButtonElement,
-  ShinyButtonProps
->(({ children, className, ...props }, ref) => {
+type Props = { children: ReactNode; className?: string; href: ComponentProps<typeof Link>["href"] };
+
+export function ShinyButton({ children, className, href }: Props) {
+  const allowed = useMotionAllowed();
   return (
-    <motion.button
-      ref={ref}
+    <MotionLink
+      href={href}
       className={cn(
-        "relative cursor-pointer rounded-lg border px-6 py-2 font-medium backdrop-blur-xl transition-shadow duration-300 ease-in-out hover:shadow dark:bg-[radial-gradient(circle_at_50%_0%,var(--primary)/10%_0%,transparent_60%)] dark:hover:shadow-[0_0_20px_var(--primary)/10%]",
-        className
+        "kn-shiny relative inline-flex min-h-11 cursor-pointer items-center justify-center whitespace-nowrap rounded-lg px-5 text-[15px] font-medium text-ink backdrop-blur-xl transition-shadow duration-300 ease-in-out hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink focus-visible:outline-solid",
+        className,
       )}
-      {...animationProps}
-      {...props}
+      {...(allowed ? sweep : {})}
     >
-      <span
-        className="relative block size-full text-sm tracking-wide text-[rgb(0,0,0,65%)] uppercase dark:font-light dark:text-[rgb(255,255,255,90%)]"
-        style={{
-          maskImage:
-            "linear-gradient(-75deg,var(--primary) calc(var(--x) + 20%),transparent calc(var(--x) + 30%),var(--primary) calc(var(--x) + 100%))",
-        }}
-      >
+      <span className="relative block" style={{ maskImage: labelMask, WebkitMaskImage: labelMask } as CSSProperties}>
         {children}
       </span>
-      <span
-        style={{
-          mask: "linear-gradient(rgb(0,0,0), rgb(0,0,0)) content-box exclude,linear-gradient(rgb(0,0,0), rgb(0,0,0))",
-          WebkitMask:
-            "linear-gradient(rgb(0,0,0), rgb(0,0,0)) content-box exclude,linear-gradient(rgb(0,0,0), rgb(0,0,0))",
-          backgroundImage:
-            "linear-gradient(-75deg,var(--primary)/10% calc(var(--x)+20%),var(--primary)/50% calc(var(--x)+25%),var(--primary)/10% calc(var(--x)+100%))",
-        }}
-        className="absolute inset-0 z-10 block rounded-[inherit] p-px"
-      />
-    </motion.button>
-  )
-})
-
-ShinyButton.displayName = "ShinyButton"
+      <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-10 block rounded-[inherit] p-px" style={{ mask: ringMask, WebkitMask: ringMask, backgroundImage: ringShine } as CSSProperties} />
+    </MotionLink>
+  );
+}

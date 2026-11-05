@@ -1,43 +1,19 @@
-export interface Post {
-  slug: string;
-  title: string;
-  summary: string;
-  date: string;
+import { postDrafts, type PostDraft } from "@/content/blog-posts";
+
+export type { PostSection } from "@/content/blog-posts";
+
+export interface Post extends PostDraft {
   readingMinutes: number;
-  body: string[];
 }
 
-/** Launch posts. Move to MDX or a CMS once there are more than a handful. */
-const drafts: Omit<Post, "readingMinutes">[] = [
-  {
-    slug: "why-we-cap-applications-per-company",
-    title: "Why we cap applications per company",
-    summary: "Sending five applications to one employer in a week reads as spam to the recruiter. So by default we send two per 30 days.",
-    date: "2026-10-13",
-    body: [
-      "Most auto-apply tools count success in applications sent. Recruiters count it differently: they see the same name arrive for four roles in one week and stop reading.",
-      "Kairos sends at most two applications to the same company in 30 days by default. You can raise it to five in Preferences if a company is hiring for several roles you genuinely fit.",
-      "The cap works with the fit gate. Matches below your threshold never reach your queue, so the two slots go to the roles where you are strongest.",
-    ],
-  },
-  {
-    slug: "how-the-truth-lock-works",
-    title: "How the truth lock works",
-    summary: "Every tailored resume line has to point to a fact you confirmed. Lines that cite nothing are dropped before you see them.",
-    date: "2026-10-13",
-    body: [
-      "When you upload a resume, we split it into facts: roles, projects, skills and numbers. You confirm each one during onboarding.",
-      "When we tailor a resume for a job, the model must cite the facts each line uses. A line that cites a fact you do not have, or no fact at all, is removed before the draft reaches your queue.",
-      "You can still edit any line yourself. Your edits go through the same check, so a tired late-night edit cannot slip in a skill you have never used.",
-    ],
-  },
-];
+/** Reading time at about 220 words a minute, never less than one. Counts paragraphs and lists; headings are skimmed. */
+function readingMinutes(post: PostDraft): number {
+  const text = post.sections.flatMap((s) => [...s.body, ...(s.list ?? [])]).join(" ");
+  return Math.max(1, Math.round(text.trim().split(/\s+/).length / 220));
+}
 
-// About 220 words a minute, never less than one.
-export const posts: Post[] = drafts.map((p) => ({
-  ...p,
-  readingMinutes: Math.max(1, Math.round(p.body.join(" ").split(/\s+/).length / 220)),
-}));
+/** Newest first, as written in content/blog-posts.ts. */
+export const posts: Post[] = postDrafts.map((p) => ({ ...p, readingMinutes: readingMinutes(p) }));
 
 export function getPost(slug: string): Post | undefined {
   return posts.find((p) => p.slug === slug);

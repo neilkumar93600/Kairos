@@ -24,5 +24,14 @@ export type ExtensionMessage =
   | { type: "content:ready" }
   | { type: "content:report"; report: SubmissionReport };
 
+/** How one application ended. `unrecorded`: the employer confirmed it, our API did not take the report. `closed`: the tab closed first. */
+export type QueueOutcome = { outcome: "submitted" } | { outcome: "failed"; reason?: string } | { outcome: "unrecorded" } | { outcome: "closed" };
+
+/** From the background worker to the side panel. */
+export type PanelMessage = { type: "queue:update"; applicationId: string } & QueueOutcome;
+
+/** Session-storage flag: the employer confirmed this application but the API never heard. Outlives the panel, so Send stays hidden. */
+export const unrecordedKey = (applicationId: string) => `unrecorded:${applicationId}`;
+
 /** Messages the Kairos web app may send (externally_connectable). */
 export type ExternalMessage = { type: "connect"; oneTimeToken: string } | { type: "ping" };

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Instrument_Serif, Urbanist } from "next/font/google";
+import { BANNER_HEAD_SCRIPT } from "@/components/marketing/top-banner/banner-script";
 import { siteConfig } from "@/lib/site";
 import { MOTION_HEAD_SCRIPT } from "@/lib/motion/preference";
 import "./globals.css";
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <head>
         {/* Static constant from our own module, no user input (Next guide: preventing flash before hydration). */}
         <script dangerouslySetInnerHTML={{ __html: MOTION_HEAD_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: BANNER_HEAD_SCRIPT }} />
       </head>
       <body className="flex min-h-full flex-col">
         {/* The valley haze every glass surface blurs (globals.css .site-backdrop). Decorative. */}
