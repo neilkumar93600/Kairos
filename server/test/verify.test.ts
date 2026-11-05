@@ -11,6 +11,7 @@ import { claimHash, configureVerify, ESCALATION_SHARE, steeringPhrase, verifyCla
 import { tailorResume } from "../src/services/tailor";
 import { draftAnswer, draftCoverLetter } from "../src/services/draft-writer";
 import { suggestEdits } from "../src/services/resume-writer";
+import { refundable } from "../src/services/allowance";
 
 type Verdict = "supported" | "unsupported" | "contradicted" | "uncertain";
 type Judge = (claimText: string) => Verdict;
@@ -156,6 +157,14 @@ describe("verifyClaims modes", () => {
     await expect(verifyClaims([item("a", "a line that hangs")], FACTS, opts)).resolves.toMatchObject({ dropped: [], verdicts: new Map() });
   });
 
+  it("an enforced verification over its budget fails closed as a refundable retryable timeout, not at the route's deadline", async () => {
+    const hung: AnthropicLike = { messages: { create: () => new Promise(() => {}) } };
+    setup("enforce", { ...fakeModels({}), client: hung }, { enforceBudgetMs: 10 });
+    const err: unknown = await verifyClaims([item("a", "an enforced line that hangs")], FACTS, opts).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "timeout", retryable: true });
+    expect(refundable(err)).toBe(true);
+  });
+
   it("a claim too long for the wire or citing more than 8 facts is unverified, never sent cut short", async () => {
     const models = fakeModels({});
     setup("enforce", models);
@@ -200,14 +209,15 @@ describe("the verified_claims memo", () => {
   });
 
   it("the key changes with the text, the cited fact text, the target on prose and the version", () => {
-    const base = claimHash(item("a", "line"), FACTS, null, 1);
+    const base = claimHash(item("a", "line"), FACTS, null, 1, 1);
     expect(base).toHaveLength(32);
-    expect(claimHash(item("zzz", "line"), FACTS, null, 1)).toEqual(base); // the caller's handle is no part of it
-    expect(claimHash(item("a", "other"), FACTS, null, 1)).not.toEqual(base);
-    expect(claimHash(item("a", "line"), FACTS, null, 2)).not.toEqual(base);
-    expect(claimHash(item("a", "line"), new Map([["fact-uuid-aaa", "changed fact"]]), null, 1)).not.toEqual(base);
+    expect(claimHash(item("zzz", "line"), FACTS, null, 1, 1)).toEqual(base); // the caller's handle is no part of it
+    expect(claimHash(item("a", "other"), FACTS, null, 1, 1)).not.toEqual(base);
+    expect(claimHash(item("a", "line"), FACTS, null, 2, 1)).not.toEqual(base);
+    expect(claimHash(item("a", "line"), FACTS, null, 1, 2)).not.toEqual(base); // a verdict may be the escalation's
+    expect(claimHash(item("a", "line"), new Map([["fact-uuid-aaa", "changed fact"]]), null, 1, 1)).not.toEqual(base);
     const prose: ClaimItem = { ...item("a", "line"), kind: "prose" };
-    expect(claimHash(prose, FACTS, { companyName: "A", jobTitle: "E" }, 1)).not.toEqual(claimHash(prose, FACTS, { companyName: "B", jobTitle: "E" }, 1));
+    expect(claimHash(prose, FACTS, { companyName: "A", jobTitle: "E" }, 1, 1)).not.toEqual(claimHash(prose, FACTS, { companyName: "B", jobTitle: "E" }, 1, 1));
   });
 });
 
@@ -258,6 +268,29 @@ describe("escalation: Sonnet, fail closed, capped", () => {
     expect((await verifyClaims([item("a", "x one")], FACTS, opts)).dropped).toEqual([]);
     expect((await verifyClaims([item("b", "x two")], FACTS, opts)).dropped).toEqual([{ key: "b", rule: "unverified" }]);
     expect(models.of("escalation")).toHaveLength(1);
+  });
+
+  it("runs its calls in parallel, and each one takes its own slot of the cap", async () => {
+    const base = fakeModels({ verifier: () => "uncertain", escalation: () => "supported" });
+    let arrived = 0;
+    let open = () => {};
+    const bothArrived = new Promise<void>((resolve) => (open = resolve));
+    const client: AnthropicLike = {
+      messages: {
+        async create(body, options) {
+          if ((body as { model: string }).model === "claude-sonnet-5-5") {
+            if (++arrived === 2) open();
+            await bothArrived; // serial calls would wait here until the enforce budget failed the test
+          }
+          return base.client.messages.create(body, options);
+        },
+      },
+    };
+    setup("enforce", { ...base, client });
+    const items = Array.from({ length: 16 }, (_, i) => item(`k${i}`, `Led project ${i}`));
+    const r = await verifyClaims(items, FACTS, opts); // 16 claims: two calls of at most 15
+    expect(base.of("escalation")).toHaveLength(2);
+    expect(r.dropped).toEqual([]);
   });
 
   it("concurrent requests cannot both take the last slot", async () => {
@@ -331,6 +364,7 @@ describe("prompt injection: resume and job text cannot flip a verdict", () => {
     expect(text.indexOf("forged claim")).toBeGreaterThan(open.index!);
     expect(text.indexOf("forged claim")).toBeLessThan(text.indexOf(`<<END DATA id=${open[1]}>>`));
     expect(text).not.toContain("<<END DATA id=abc>>");
+    expect(text).not.toContain("[c02]");
     expect(text).toMatch(/<<DATA kind=cited_facts id=[0-9a-f]{16}>>/);
   });
 

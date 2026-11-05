@@ -131,6 +131,8 @@ export function resolveFlags(
 
 let cache: { at: number; flags: Flags } | undefined;
 let inflight: Promise<Flags> | undefined;
+/** Whether any load has succeeded in this process: until then `verifierMode` is not the owner's answer, only an empty map. */
+let everLoaded = false;
 
 async function load(from: Db): Promise<Flags> {
   const [flagRows, featureRows] = await Promise.all([from.select().from(opsFlags), from.select().from(featureFlags)]);
@@ -143,6 +145,7 @@ export async function getFlags(from: Db = db()): Promise<Flags> {
   inflight ??= load(from)
     .then((flags) => {
       cache = { at: Date.now(), flags };
+      everLoaded = true;
       return flags;
     })
     .catch((err: unknown) => {
@@ -158,6 +161,16 @@ export async function getFlags(from: Db = db()): Promise<Flags> {
       inflight = undefined;
     });
   return inflight;
+}
+
+/**
+ * A path's verifier mode: its row, else shadow. A process that has never read the table does not know the owner's answer
+ * (a boot-time database blip, an exhausted pool, a lost grant), so it enforces: a dropped line costs an edit, an unverified
+ * one could reach an employer. Once a load has succeeded the last answer stands through later failures.
+ */
+export function verifierModeOf(flags: Flags, path: VerifierPath, loadedOnce: boolean = everLoaded): VerifierMode {
+  if (!flags.loaded && !loadedOnce) return "enforce";
+  return flags.verifierMode.get(path) ?? "shadow";
 }
 
 /**
@@ -183,9 +196,15 @@ export function gatewayFlags() {
   };
 }
 
-/** Forgets the cache: the next read loads. A write calls it so its own process sees the change at once. */
+/** Forgets everything, as at process start. For tests; a write uses expireFlagCache. */
 export function resetFlagCache(): void {
   cache = undefined;
+  everLoaded = false;
+}
+
+/** The next read loads, so a write's own process sees the change at once; a load that fails still has the last answer. */
+function expireFlagCache(): void {
+  if (cache) cache = { ...cache, at: 0 };
 }
 
 type Tx = Pick<Db, "select" | "insert">;
@@ -209,6 +228,6 @@ export async function setFlag(key: string, value: unknown, actor: string, tx?: T
     return { before: prev?.value ?? null, after: parsed.data, changed: true };
   };
   const result = tx ? await run(tx) : await db().transaction((t) => run(t));
-  resetFlagCache();
+  expireFlagCache();
   return result;
 }

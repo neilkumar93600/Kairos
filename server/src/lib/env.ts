@@ -316,7 +316,10 @@ const envSchema = z.object({
   // Privacy (WP-25). Defaults are the spec's; counsel signs off the values (owner-actions/WP-25.md).
   /** The terms and privacy notice version a sign-up agrees to, stored in consent_records. Bump it with each new notice. */
   PRIVACY_NOTICE_VERSION: z.string().regex(/^[A-Za-z0-9._-]{1,40}$/).default("2026-10-30"),
-  /** Retention overrides in days, as "inbound_body=180,contact_messages=365" (rule names: jobs/retention.ts RETENTION_RULES). */
+  /**
+   * Retention overrides in days, as "inbound_body=180,contact_messages=365" (rule names: jobs/retention.ts RETENTION_RULES).
+   * verified_claims takes the key but ignores it: that rule goes by each row's own expires_at.
+   */
   RETENTION_DAYS: z
     .string()
     .default("")

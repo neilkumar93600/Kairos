@@ -2,7 +2,7 @@ import { getTableName } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
 import { readFileSync } from "node:fs";
-import { CACHE_MS, getFlags, resetFlagCache, resolveFlags, schemaFor } from "../src/lib/flags";
+import { CACHE_MS, getFlags, resetFlagCache, resolveFlags, schemaFor, setFlag, verifierModeOf } from "../src/lib/flags";
 
 /** WP-27: ops_flags with a 10 s cache; the env values of WP-04 and WP-06 stay as fallback and pause-only override. */
 const off = { PAUSE_SCORING: false, LLM_SHED_LEVEL: 0, CLOUD_APPLIER_OPEN: false };
@@ -80,6 +80,55 @@ describe("per-agent flags and verifier_mode (WP-26)", () => {
 
   it("defaults every path to shadow: no row, no entry", () => {
     expect(resolveFlags(rows({}), none, off).verifierMode.size).toBe(0);
+  });
+
+  describe("verifier mode when the table cannot be read", () => {
+    const fakeDb = (fails: () => boolean, table: Record<string, unknown>) =>
+      ({
+        select: () => ({
+          from: (t: Parameters<typeof getTableName>[0]) => (fails() ? Promise.reject(new Error("db down")) : Promise.resolve(getTableName(t) === "ops_flags" ? Object.entries(table).map(([key, value]) => ({ key, value })) : [])),
+        }),
+      }) as unknown as Db;
+
+    it("a process that has never loaded enforces every path, even one the owner has in shadow", async () => {
+      resetFlagCache();
+      const f = await getFlags(fakeDb(() => true, {}));
+      expect(f.loaded).toBe(false);
+      expect(verifierModeOf(f, "tailor")).toBe("enforce");
+      expect(verifierModeOf(f, "suggestions")).toBe("enforce");
+    });
+
+    it("after one good load the last answer stands through a failure, and a loaded process with no row is in shadow", async () => {
+      resetFlagCache();
+      let down = false;
+      const from = fakeDb(() => down, { "verifier_mode:tailor": "enforce" });
+      const good = await getFlags(from);
+      expect(verifierModeOf(good, "tailor")).toBe("enforce");
+      expect(verifierModeOf(good, "drafts")).toBe("shadow");
+      down = true;
+      vi.spyOn(Date, "now").mockReturnValue(Date.now() + CACHE_MS + 1);
+      const stale = await getFlags(from);
+      vi.restoreAllMocks();
+      expect(stale.loaded).toBe(false);
+      expect(verifierModeOf(stale, "tailor")).toBe("enforce");
+      expect(verifierModeOf(stale, "drafts")).toBe("shadow");
+    });
+
+    it("a flag write keeps the last answer for a load that fails right after it: the owner's enforce is not lost", async () => {
+      resetFlagCache();
+      let down = false;
+      const from = fakeDb(() => down, { "verifier_mode:tailor": "enforce" });
+      await getFlags(from);
+      const tx = {
+        select: () => ({ from: () => ({ where: () => ({ for: async () => [] }) }) }),
+        insert: () => ({ values: () => Object.assign(Promise.resolve(), { onConflictDoUpdate: async () => {} }) }),
+      };
+      await setFlag("verifier_mode:drafts", "shadow", "system:test", tx as never);
+      down = true;
+      const after = await getFlags(from);
+      expect(after.loaded).toBe(false);
+      expect(verifierModeOf(after, "tailor")).toBe("enforce");
+    });
   });
 
   it("schemaFor knows the keys the migration's ops_flags_key_ck allows, and no others", () => {

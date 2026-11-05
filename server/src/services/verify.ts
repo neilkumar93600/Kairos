@@ -9,11 +9,12 @@ import type { ClaimVerifierInput, ClaimVerifierOutput, Verdict } from "../agents
 import type { AgentCallContext, AgentSpec } from "../agents/types";
 import { env } from "../lib/env";
 import { HttpError } from "../lib/errors";
-import { getFlags, type VerifierMode, type VerifierPath } from "../lib/flags";
+import { getFlags, verifierModeOf, type VerifierMode, type VerifierPath } from "../lib/flags";
 import { logger } from "../lib/logger";
 import { count } from "../lib/metrics";
 import { signal } from "../lib/sentry";
 import { activePromptVersion, runAgent } from "../llm/gateway";
+import { AgentError } from "../llm/errors";
 import { estimateInputTokens } from "../llm/estimate";
 
 /**
@@ -73,6 +74,8 @@ export interface VerifyDeps {
   now(): number;
   /** The most a shadow verification may hold up a request; past it the request goes on and nothing is dropped. */
   shadowBudgetMs: number;
+  /** The most an enforced verification may take; past it the request fails closed: 503 ai_unavailable, allowance refunded. */
+  enforceBudgetMs: number;
 }
 
 /** B.9.6, agents/09 2: escalations a UTC day are at most this share of verifier calls. */
@@ -86,7 +89,7 @@ const ROLLUP_LAG_MS = 90_000;
 let countsCache: { day: string; filledAt: number; verifier: number; escalation: number } | null = null;
 
 const defaultDeps: VerifyDeps = {
-  mode: async (path) => (await getFlags()).verifierMode.get(path) ?? "shadow",
+  mode: async (path) => verifierModeOf(await getFlags(), path),
   async cacheGet(hashes) {
     if (!hashes.length) return new Map();
     const rows = await db()
@@ -121,6 +124,8 @@ const defaultDeps: VerifyDeps = {
   random: Math.random,
   now: Date.now,
   shadowBudgetMs: 8_000,
+  // A draft, this, and a truth repair share the route's 60 s. Serial attempts could otherwise run about 120 s.
+  enforceBudgetMs: 25_000,
 };
 
 let deps: VerifyDeps = defaultDeps;
@@ -162,17 +167,17 @@ const sha256 = (s: string) => createHash("sha256").update(s, "utf8").digest();
 
 /**
  * The memo key (agents/08 8): the claim text, its kind, the sorted fact ids, a digest of those facts' texts, the target
- * for prose, and the verifier version. Keyed with USER_HASH_KEY, so a guessed claim cannot be tested against a stolen
- * table. A version change (or a pin) is a miss by construction.
+ * for prose, and both agents' versions, since a verdict may be the escalation's. Keyed with USER_HASH_KEY, so a guessed
+ * claim cannot be tested against a stolen table. A version change (or a pin) of either is a miss by construction.
  */
-export function claimHash(item: ClaimItem, facts: ReadonlyMap<string, string>, target: VerifyOptions["target"], version: number): Buffer {
+export function claimHash(item: ClaimItem, facts: ReadonlyMap<string, string>, target: VerifyOptions["target"], version: number, escalationVersion: number): Buffer {
   const key = env().USER_HASH_KEY;
   if (!key) throw new Error("USER_HASH_KEY is not set");
   const ids = [...new Set(item.factIds)].sort();
   const factDigest = sha256(ids.map((id) => facts.get(id) ?? "").join("\u0000")).toString("hex");
   const t = item.kind === "prose" && target ? `${target.companyName}\u0000${target.jobTitle}` : "";
   return createHmac("sha256", key)
-    .update(["verified_claim:1", item.kind, item.text, ids.join(","), factDigest, t, `${claimVerifier.id}@v${version}`].join("\u0001"))
+    .update(["verified_claim:1", item.kind, item.text, ids.join(","), factDigest, t, `${claimVerifier.id}@v${version}`, `${claimVerifierEscalation.id}@v${escalationVersion}`].join("\u0001"))
     .digest();
 }
 
@@ -188,7 +193,7 @@ export async function verifyClaims(items: ClaimItem[], facts: ReadonlyMap<string
   if (!items.length) return { mode, verdicts: new Map(), dropped: [] };
   try {
     const judged = judge(items, facts, opts);
-    const verdicts = mode === "shadow" ? await withinShadowBudget(judged) : await judged;
+    const verdicts = await withinBudget(judged, mode === "shadow" ? deps.shadowBudgetMs : deps.enforceBudgetMs);
     for (const v of verdicts.values()) count("verifier.verdicts", 1, `${opts.path}:${v}:${mode}`);
     const dropped: Dropped[] =
       mode === "enforce"
@@ -205,11 +210,14 @@ export async function verifyClaims(items: ClaimItem[], facts: ReadonlyMap<string
   }
 }
 
-/** Rejects past the budget; the judging itself runs on, and still fills the memo. */
-async function withinShadowBudget<T>(work: Promise<T>): Promise<T> {
+/**
+ * Rejects past the budget with a retryable timeout, which a route answers as 503 ai_unavailable with a refund. The judging
+ * itself runs on, bounded by each agent's own timeouts, and still fills the memo.
+ */
+async function withinBudget<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const late = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(Object.assign(new Error("shadow verification over budget"), { code: "shadow_budget" })), deps.shadowBudgetMs);
+    timer = setTimeout(() => reject(new AgentError("timeout", "claim verification over its time budget", true)), ms);
     timer.unref();
   });
   try {
@@ -233,6 +241,7 @@ export async function requireVerifierOrShadow(path: VerifierPath): Promise<void>
 async function judge(items: ClaimItem[], facts: ReadonlyMap<string, string>, opts: VerifyOptions): Promise<Map<string, FinalVerdict>> {
   const out = new Map<string, FinalVerdict>();
   const version = activePromptVersion(claimVerifier);
+  const escalationVersion = activePromptVersion(claimVerifierEscalation);
   const pending: Pending[] = [];
   for (const raw of items) {
     const item = { ...raw, text: raw.text.trim(), factIds: [...new Set(raw.factIds)] };
@@ -252,7 +261,7 @@ async function judge(items: ClaimItem[], facts: ReadonlyMap<string, string>, opt
       out.set(item.key, "unverified");
       continue;
     }
-    const hash = claimHash(item, facts, opts.target, version);
+    const hash = claimHash(item, facts, opts.target, version, escalationVersion);
     pending.push({ item, hash, hex: hash.toString("hex") });
   }
 
@@ -290,13 +299,14 @@ async function judge(items: ClaimItem[], facts: ReadonlyMap<string, string>, opt
   if (uncertain.length && opts.escalate) {
     const esc = chunk(uncertain, facts, claimVerifierEscalation, ESCALATION_MAX_CLAIMS);
     for (const p of esc.oversize) setAll(p.hex, "unverified");
-    for (const c of esc.chunks) {
+    // In parallel, as the verifier's calls are. Each call checks and takes its slot of the cap in one tick.
+    await Promise.all(esc.chunks.map(async (c) => {
       try {
         // Inside the try: a cap that cannot be read allows nothing, and the claims fail closed like any escalation failure.
         if (!(await escalationAllowed())) {
           count("verifier.escalation_capped", c.length, opts.path);
           for (const p of c) setAll(p.hex, "unverified");
-          continue;
+          return;
         }
         for (const [hex, verdict] of await send(claimVerifierEscalation, c, facts, opts)) {
           if (verdict === "uncertain") {
@@ -312,7 +322,7 @@ async function judge(items: ClaimItem[], facts: ReadonlyMap<string, string>, opt
         logger.warn({ path: opts.path, code: (err as { code?: string }).code ?? null }, "claim escalation failed; claims unverified");
         for (const p of c) setAll(p.hex, "unverified");
       }
-    }
+    }));
   } else {
     for (const p of uncertain) setAll(p.hex, "unverified");
   }
@@ -329,7 +339,8 @@ async function judge(items: ClaimItem[], facts: ReadonlyMap<string, string>, opt
  * The daily cap (agents/09 2): the escalation call starts only if today's escalation calls, plus those this process
  * started since the roll-up last saw it, stay within 15% of today's verifier calls. Checked and recorded in one tick,
  * so concurrent requests in this process cannot both take the last slot. Other replicas can overshoot by the calls
- * they start within one counts refresh (10 s).
+ * they start within one counts refresh (10 s). With nothing rolled up yet (just after 00:00 UTC) nothing escalates: a floor
+ * would let Sonnet run past the share, and the window fails closed and lasts until the roll-up has seen 7 verifier calls.
  */
 async function escalationAllowed(): Promise<boolean> {
   const c = await deps.callsToday();

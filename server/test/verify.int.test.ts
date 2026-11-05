@@ -96,7 +96,7 @@ describe.skipIf(!hasTestDb)("the claim verifier against Postgres (WP-26)", () =>
     });
 
     it("rewrites an existing row without breaking the expiry check", async () => {
-      const hash = verify.claimHash(item(), FACTS, null, 1);
+      const hash = verify.claimHash(item(), FACTS, null, 1, 1);
       await db.insert(schema.verifiedClaims).values({ claimHash: hash, verdict: "unsupported", checkSource: "verifier", createdAt: new Date(Date.now() - 172_800_000), expiresAt: new Date(Date.now() - 100_000_000) });
       expect((await verify.verifyClaims([item()], FACTS, opts)).verdicts.get("k")).toBe("supported"); // expired: judged again
       const stored = await db.select().from(schema.verifiedClaims);
