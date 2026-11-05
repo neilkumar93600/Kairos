@@ -184,9 +184,7 @@ export const landingCopy = {
     betaTag: "(in beta)",
     betaFeatures: ["Chrome extension apply", "Cloud applier", "Reply tracking"],
     betaTaglines: { pro: "Applies with your laptop closed (in beta)." },
-    // G3: the offer pause depends on reply tracking, so the gated line ships.
     guarantee: "Failed submits cost nothing. Cancel any time.",
-    guaranteeLive: "Failed submits cost nothing. Billing pauses when an offer email arrives.", // ship when G3 passes
     fullPricing: "Compare every plan", // Landing v3: quiet link to /pricing, where the full compare lives
   },
 

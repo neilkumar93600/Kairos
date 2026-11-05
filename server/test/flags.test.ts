@@ -10,8 +10,8 @@ const off = { PAUSE_SCORING: false, LLM_SHED_LEVEL: 0, CLOUD_APPLIER_OPEN: false
 const rows = (o: Record<string, unknown>) => new Map(Object.entries(o));
 const none = new Map<string, boolean>();
 
-// ops_flags_key_ck as migration 0018 sets it (the int tests run the real constraint).
-const OPS_FLAGS_KEY_CK = new RegExp(readFileSync(new URL("../drizzle/0018_verified_claims.sql", import.meta.url), "utf8").match(/CHECK \(key ~ '([^']+)'\)/)![1]!);
+// ops_flags_key_ck as migration 0019 sets it (the int tests run the real constraint).
+const OPS_FLAGS_KEY_CK = new RegExp(readFileSync(new URL("../drizzle/0019_verified_claims.sql", import.meta.url), "utf8").match(/CHECK \(key ~ '([^']+)'\)/)![1]!);
 
 describe("resolveFlags", () => {
   it("is all off with an empty table and an unset env", () => {

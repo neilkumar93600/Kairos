@@ -10,6 +10,7 @@ import { logger } from "../lib/logger";
 import { addressHash, findSent, mailErrorCode, metadataKey, sendEmail, type Email, type Stream } from "../lib/mailer";
 import { signal } from "../lib/sentry";
 import { renderForwardingCode } from "../services/forwarding";
+import { renderNewsletterConfirm } from "../services/newsletter";
 import { enqueue, redrive, type JobData } from "./queues";
 
 /**
@@ -39,6 +40,7 @@ export type Renderer = (entityId: string, userId: string | null) => Promise<Rend
 /** One renderer per kind; a kind without one is never sent (its job fails, so Sentry hears of it). */
 export const RENDERERS: Partial<Record<EmailKind, Renderer>> = {
   forwarding_code: renderForwardingCode,
+  newsletter_confirm: renderNewsletterConfirm,
 };
 
 /**
@@ -46,6 +48,11 @@ export const RENDERERS: Partial<Record<EmailKind, Renderer>> = {
  * Each has an opt-out key (lib/broadcast.ts), which processNotify enforces at send time.
  */
 export const BROADCAST_KINDS: ReadonlySet<EmailKind> = new Set(Object.keys(BROADCAST_OPT_OUT) as EmailKind[]);
+/**
+ * Transactional kinds a spam complaint still stops, because anyone can type the address: the mail is not about the
+ * person's own account. Not broadcast kinds, which would queue them behind digest bursts.
+ */
+export const COMPLAINT_RESPECTING_KINDS: ReadonlySet<EmailKind> = new Set(["newsletter_confirm"]);
 /** BullMQ takes jobs without a priority first, so a transactional email never waits behind a broadcast burst. */
 export const BROADCAST_PRIORITY = 1000;
 
@@ -168,9 +175,9 @@ export async function processNotify(job: Pick<Job<JobData["notify"]>, "data">): 
   const email = optOut ? withBroadcastCompliance(plain, optOut, await unsubscribeUrl(db(), userId!, optOut), postalAddress()!) : plain;
   const hash = addressHash(email.to);
   const [suppressed] = await db().select({ reason: emailSuppressions.reason }).from(emailSuppressions).where(eq(emailSuppressions.addressHash, hash));
-  // A spam complaint stops broadcast mail only: the user still gets resend links, offer-pause notices and forwarding
-  // codes about their own account. A hard bounce or a manual suppression stops everything.
-  if (suppressed && (suppressed.reason !== "spam_complaint" || stream === "broadcast")) {
+  // A spam complaint stops broadcast mail and COMPLAINT_RESPECTING_KINDS: the user still gets resend links, offer-pause
+  // notices and forwarding codes about their own account. A hard bounce or a manual suppression stops everything.
+  if (suppressed && (suppressed.reason !== "spam_complaint" || stream === "broadcast" || COMPLAINT_RESPECTING_KINDS.has(kind))) {
     await finish(kind, entityId, "suppressed", { code: suppressed.reason });
     return { result: "suppressed", code: suppressed.reason };
   }

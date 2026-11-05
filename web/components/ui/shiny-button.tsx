@@ -1,74 +1,47 @@
-"use client"
+"use client";
 
-import React from "react"
-import { motion, type MotionProps } from "motion/react"
+import Link from "next/link";
+import { motion, type MotionProps } from "motion/react";
+import type { ComponentProps, CSSProperties, ReactNode } from "react";
+import { useMotionAllowed } from "@/components/landing/motion/use-motion-allowed";
+import { cn } from "@/lib/utils";
 
-import { cn } from "@/lib/utils"
+const MotionLink = motion.create(Link);
 
-const animationProps: MotionProps = {
-  initial: { "--x": "100%", scale: 0.8 },
-  animate: { "--x": "-100%", scale: 1 },
+/** Magic UI's Shiny Button, adapted: a link, in Kairos type, and still when motion is off. */
+const sweep: MotionProps = {
+  initial: { "--x": "100%", scale: 0.8 } as MotionProps["initial"],
+  animate: { "--x": "-100%", scale: 1 } as MotionProps["animate"],
   whileTap: { scale: 0.95 },
-  transition: {
-    repeat: Infinity,
-    repeatType: "loop",
-    repeatDelay: 1,
-    type: "spring",
-    stiffness: 20,
-    damping: 15,
-    mass: 2,
-    scale: {
-      type: "spring",
-      stiffness: 200,
-      damping: 5,
-      mass: 0.5,
-    },
-  },
-}
+  transition: { repeat: Infinity, repeatType: "loop", repeatDelay: 1, type: "spring", stiffness: 20, damping: 15, mass: 2, scale: { type: "spring", stiffness: 200, damping: 5, mass: 0.5 } },
+};
 
-interface ShinyButtonProps
-  extends
-    Omit<React.HTMLAttributes<HTMLElement>, keyof MotionProps>,
-    MotionProps {
-  children: React.ReactNode
-  className?: string
-}
+// Same stops as the reference. The 100% fallback is the still frame: every stop sits past the edge, so the label is solid.
+const labelMask = "linear-gradient(-75deg, #000 calc(var(--x, 100%) + 20%), transparent calc(var(--x, 100%) + 30%), #000 calc(var(--x, 100%) + 100%))";
+const ringMask = "linear-gradient(#000, #000) content-box exclude, linear-gradient(#000, #000)";
+// The reference's 10, 50, 10 stops, white on the Espresso face: a dark shine would disappear.
+const ringShine = "linear-gradient(-75deg, rgb(255 255 255 / 0.1) calc(var(--x, 100%) + 20%), rgb(255 255 255 / 0.5) calc(var(--x, 100%) + 25%), rgb(255 255 255 / 0.1) calc(var(--x, 100%) + 100%))";
 
-export const ShinyButton = React.forwardRef<
-  HTMLButtonElement,
-  ShinyButtonProps
->(({ children, className, ...props }, ref) => {
+type Props = { children: ReactNode; className?: string; href: ComponentProps<typeof Link>["href"] };
+
+export function ShinyButton({ children, className, href }: Props) {
+  const allowed = useMotionAllowed();
   return (
-    <motion.button
-      ref={ref}
+    <MotionLink
+      // useMotionAllowed is false on the hydration render and Motion reads `initial` only on mount, so remount when it
+      // flips. Without this the sweep starts at 0% instead of 100% and half of it is lost.
+      key={allowed ? "sweep" : "still"}
+      href={href}
       className={cn(
-        "relative cursor-pointer rounded-lg border px-6 py-2 font-medium backdrop-blur-xl transition-shadow duration-300 ease-in-out hover:shadow dark:bg-[radial-gradient(circle_at_50%_0%,var(--primary)/10%_0%,transparent_60%)] dark:hover:shadow-[0_0_20px_var(--primary)/10%]",
-        className
+        "kn-shiny relative inline-flex min-h-11 cursor-pointer items-center justify-center whitespace-nowrap rounded-lg bg-action px-5 text-[15px] font-medium text-white transition-[background-color,box-shadow] duration-300 ease-in-out hover:bg-action-hover hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink focus-visible:outline-solid",
+        className,
       )}
-      {...animationProps}
-      {...props}
+      {...(allowed ? sweep : {})}
     >
-      <span
-        className="relative block size-full text-sm tracking-wide text-[rgb(0,0,0,65%)] uppercase dark:font-light dark:text-[rgb(255,255,255,90%)]"
-        style={{
-          maskImage:
-            "linear-gradient(-75deg,var(--primary) calc(var(--x) + 20%),transparent calc(var(--x) + 30%),var(--primary) calc(var(--x) + 100%))",
-        }}
-      >
+      <span className="relative block" style={{ maskImage: labelMask, WebkitMaskImage: labelMask } as CSSProperties}>
         {children}
       </span>
-      <span
-        style={{
-          mask: "linear-gradient(rgb(0,0,0), rgb(0,0,0)) content-box exclude,linear-gradient(rgb(0,0,0), rgb(0,0,0))",
-          WebkitMask:
-            "linear-gradient(rgb(0,0,0), rgb(0,0,0)) content-box exclude,linear-gradient(rgb(0,0,0), rgb(0,0,0))",
-          backgroundImage:
-            "linear-gradient(-75deg,var(--primary)/10% calc(var(--x)+20%),var(--primary)/50% calc(var(--x)+25%),var(--primary)/10% calc(var(--x)+100%))",
-        }}
-        className="absolute inset-0 z-10 block rounded-[inherit] p-px"
-      />
-    </motion.button>
-  )
-})
-
-ShinyButton.displayName = "ShinyButton"
+      <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-10 block rounded-[inherit] p-px" style={{ mask: ringMask, WebkitMask: ringMask, backgroundImage: ringShine } as CSSProperties} />
+    </MotionLink>
+  );
+}

@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 import { posts } from "@/lib/blog";
 import { siteConfig } from "@/lib/site";
 
-const PUBLIC_PATHS = ["", "/pricing", "/how-it-works", "/about", "/blog", "/careers", "/contact", "/terms", "/privacy", "/cookies", "/refunds"];
+const PUBLIC_PATHS = ["", "/pricing", "/how-it-works", "/about", "/blog", "/careers", "/contact", "/terms", "/privacy", "/cookies"];
 
 export default function sitemap(): MetadataRoute.Sitemap {
   return [

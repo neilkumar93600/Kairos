@@ -9,7 +9,7 @@ import { siteConfig } from "@/lib/site";
 import { cn } from "@/lib/utils";
 import { ButtonLink } from "../shared/button";
 import { LogoMark } from "../shared/logo";
-import { RainbowButton } from "../shared/rainbow-button";
+import { ShinyButton } from "../ui/shiny-button";
 
 export interface NavbarProps {
   /**
@@ -103,9 +103,9 @@ export function Navbar({ variant = "default", sheetExtra }: NavbarProps) {
             <Link href="/login" className={cn(textLink, "hidden text-[15px] font-medium text-ink lg:inline-flex")}>
               {nav.login}
             </Link>
-            <RainbowButton href="/sign-up" className="max-sm:px-4">
+            <ShinyButton href="/sign-up" className="max-sm:px-4">
               {nav.startFree}
-            </RainbowButton>
+            </ShinyButton>
             <button
               ref={menuRef}
               type="button"

@@ -6,7 +6,7 @@ import { useId, useRef, useState, useSyncExternalStore, type Ref } from "react";
 import { Area, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from "recharts";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
 import { ButtonLink } from "../../shared/button";
-import { EmptyState } from "../../shared/empty-state";
+import { EmptyEm, EmptyState } from "../../shared/empty-state";
 import { Panel } from "../../shared/panel";
 
 export const DAYS = 14;
@@ -117,7 +117,7 @@ export function SubmittedChart({ submittedAt }: { submittedAt: (string | null)[]
       {total === 0 ? (
         <EmptyState
           flat
-          title="Nothing submitted in the last 14 days"
+          title={<><EmptyEm>Nothing submitted</EmptyEm> in the last 14 days</>}
           body="When you approve a draft and it goes through, it shows up here."
           action={
             <ButtonLink href="/queue" variant="secondary" size="sm">

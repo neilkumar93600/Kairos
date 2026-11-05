@@ -20,7 +20,7 @@ const { chromium } = createRequire(rootPkg)("playwright-core");
 // The R1-R4 pages (/resumes, /resumes/import, /tracker, /tracker/[itemId], /contacts) are mocked and treated as app routes once the web builds them; pass them with --routes.
 export const APP_ROUTES = ["/dashboard", "/matches", "/queue", "/applications", "/applications/app-1", "/inbox", "/resume", "/resume?job=job-12", "/profile", "/preferences", "/onboarding", "/billing", "/settings"];
 // No API, no session: shot once. Auth pages must stay cookie-free because proxy.ts bounces signed-in users to /dashboard.
-export const STATIC_ROUTES = ["/", "/how-it-works", "/pricing", "/about", "/careers", "/contact", "/blog", "/blog/how-the-truth-lock-works", "/login", "/sign-up", "/forgot-password", "/reset-password", "/verify-otp", "/terms", "/privacy", "/cookies", "/refunds", "/does-not-exist"];
+export const STATIC_ROUTES = ["/", "/how-it-works", "/pricing", "/about", "/careers", "/contact", "/newsletter", "/newsletter/confirm", "/newsletter/unsubscribe", "/blog", "/blog/how-the-truth-lock-works", "/login", "/sign-up", "/forgot-password", "/reset-password", "/verify-otp", "/terms", "/privacy", "/cookies", "/does-not-exist"];
 export const VIEWPORTS = { desktop: { tag: "d", width: 1440, height: 900 }, mobile: { tag: "m", width: 390, height: 844 } };
 
 const slug = (r) => (r === "/" ? "home" : r.replace(/^\//, "").replace(/[^a-zA-Z0-9]+/g, "-").replace(/-$/, ""));

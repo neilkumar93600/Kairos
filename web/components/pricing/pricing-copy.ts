@@ -41,7 +41,7 @@ export const pricingCopy = {
   calc: {
     title: "What your number would cost.",
     subline: "Pick how many applications you expect to send. The fewer you use, the more each one costs.",
-    rollover: "Unused paid credits roll over while you subscribe, up to two invoices' worth of your plan.",
+    rollover: "Unused paid credits stay on your balance while you subscribe.",
     label: "Applications per {unit}",
     valueText: "{n} submitted applications",
     // One result sentence: the smallest paid plan that covers the number, its price and the price per application.
@@ -76,7 +76,7 @@ export const pricingCopy = {
       {
         q: "Do you offer refunds?",
         a: "A failed submission never uses a credit, so there is nothing to refund for it. For plan charges, read the",
-        link: { href: "/refunds", label: "refund policy" },
+        link: { href: "/terms#refunds", label: "refund terms" },
       },
     ],
   },

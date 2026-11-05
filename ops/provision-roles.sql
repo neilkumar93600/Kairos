@@ -262,7 +262,7 @@ GRANT DELETE ON contact_messages TO kairos_api;
 -- The erasure worker pseudonymises an erased admin's id in feature_flags.updated_by too (WP-25); nothing else changes.
 GRANT UPDATE (updated_by) ON feature_flags TO kairos_worker;
 
--- Unsubscribe, digests and reminders (WP-35, migration 0022). The api serves the saved-search routes and the signed
+-- Unsubscribe, digests and reminders (WP-35, migration 0023). The api serves the saved-search routes and the signed
 -- unsubscribe link, so it reads and writes saved_searches (the person's own rows, by the route's WHERE) and keeps
 -- mail_opt_outs, the objection to optional mail by address hash, which outlives the account on purpose (the api writes
 -- and deletes it; the worker only reads it, in bootstrapUser). The worker claims searches for the digest tick (SELECT
@@ -278,8 +278,15 @@ GRANT SELECT ON mail_opt_outs TO kairos_worker;
 -- A time-zone change (api, PUT /api/profile/contact) fires profiles_timezone_digest, which updates saved_searches as the
 -- caller; saved_searches_guard locks the owner's profiles row, which both roles may update.
 
--- WP-26 (migration 0018, 02-database 4.2): the verified_claims memo holds hashes and verdicts, no text and no user id.
+-- WP-26 (migration 0019, 02-database 4.2): the verified_claims memo holds hashes and verdicts, no text and no user id.
 -- Both processes run the verifier (the routes on the api, prepare's tailor job on the worker) and read and write it;
 -- only the worker's retention job deletes expired rows. kairos_readonly and kairos_metrics read nothing here.
 GRANT SELECT, INSERT, UPDATE ON verified_claims TO kairos_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON verified_claims TO kairos_worker;
+
+-- Newsletter sign-ups (WP-50, migration 0018). The api takes a sign-up (insert or the upsert's update), confirms and
+-- unsubscribes by token hash, and deletes an erased account's rows in the erasure transaction. The worker sets the token
+-- hashes when it renders the confirm email and runs the 30-day retention delete; it never inserts a sign-up.
+-- kairos_readonly gets nothing: the table is addresses.
+GRANT SELECT, INSERT, UPDATE, DELETE ON newsletter_subscribers TO kairos_api;
+GRANT SELECT, UPDATE, DELETE ON newsletter_subscribers TO kairos_worker;

@@ -5,7 +5,7 @@ import { MagnifyingGlassMinus, MagnifyingGlassPlus } from "@phosphor-icons/react
 import type { Resume, ResumeEntry, ResumeLine, ResumeSection, ResumeSuggestion } from "@auto-career/shared";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { EmptyState } from "../shared/empty-state";
+import { EmptyEm, EmptyState } from "../shared/empty-state";
 import { IconButton, tabList, tabTrigger } from "./bits";
 import { PAGE_CONTENT_PX } from "./model";
 import { SuggestionActions } from "./review";
@@ -257,7 +257,7 @@ export function DocumentPane({ pages }: { pages: number }) {
               </>
             ) : (
               <EmptyState
-                title="No suggested edits"
+                title={<>No <EmptyEm>suggested edits</EmptyEm></>}
                 body="Run a review from the AI review tab, or ask for suggestions on a section. Each edit cites the facts it uses."
               />
             )}

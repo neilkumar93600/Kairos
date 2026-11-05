@@ -111,9 +111,19 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
   { table: "user_daily_usage", column: "user_id", erase: "cascade", export: ALL },
   { table: "ai_usage", column: "user_id", erase: "cascade", export: ALL },
   { table: "contact_messages", column: "email", by: "email", erase: "delete", export: { omit: ["email_hash", "message_hash"] } },
+  // WP-50. Deleted with the account by address or normalized hash; the token hashes are credentials, not exported.
+  {
+    table: "newsletter_subscribers",
+    column: "email",
+    by: "email",
+    erase: "delete",
+    export: { omit: ["email_hash", "confirm_token_hash", "unsubscribe_token_hash"] },
+  },
   // WP-44. Job payloads in Redis carry ids only and BullMQ keeps finished jobs at most 7 days: no entry, stated in the
   // privacy notice's processor tail (owner-actions/WP-25.md).
-  // Rows of kind contact_message have no user_id; their entity_id is the contact_messages id, never an address.
+  // Rows of kind contact_message and newsletter_confirm have no user_id, so the cascade and the export do not reach them;
+  // they age out at 120 days. Their entity_id is never an address: the contact_messages id, or `<subscriber uuid>:<seq>`,
+  // which names nobody once erasure or retention has deleted the subscriber row.
   { table: "email_sends", column: "user_id", erase: "cascade", export: ALL },
   { table: "notifications", column: "user_id", erase: "cascade", export: ALL },
   { table: "action_tokens", column: "user_id", erase: "cascade", export: false, why: "single-use signed-link hashes: a credential, not the user's data" },
@@ -162,7 +172,7 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
     by: "hash",
     erase: "keep",
     export: false,
-    why: "per-email auth counters under the keyed address hash (lib/auth.ts limitByEmail); each row expires within its window, at most an hour",
+    why: "per-email auth and newsletter sign-up counters under the keyed address hash (lib/auth.ts limitByEmail, routes/newsletter.ts); each count ends with its window, at most a day, and a later hit sweeps the row",
   },
   { table: "auth_rate_limit", column: "key", by: "hash", erase: "keep", export: false, why: "Better Auth's per-IP and path counters, no user key; pruned by the library" },
   {

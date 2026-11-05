@@ -4,7 +4,8 @@ import Link from "next/link";
 import { Suspense, useId, useState } from "react";
 import { useMatchActions, useMatches, type Match } from "@/hooks/use-matches";
 import { ButtonLink } from "../../shared/button";
-import { EmptyState } from "../../shared/empty-state";
+import { EmptyEm, EmptyState } from "../../shared/empty-state";
+import { postFans } from "@/content/blog-meta";
 import { ErrorNote } from "../../shared/error-note";
 import { Skeleton } from "../../shared/skeleton";
 import { FilterBar, FilterEmpty, FilterMenu, useClearFilters, useUrlParam } from "../applications/filter-chips";
@@ -121,13 +122,14 @@ function Matches() {
         <EmptyState
           icon={GateArt}
           large
-          title="No matches yet"
+          title={<>No <EmptyEm>matches</EmptyEm> yet</>}
           body="New postings are checked every 30 minutes. If this stays empty for a day, lower your fit bar or widen locations."
           action={
-            <ButtonLink href="/preferences" variant="secondary">
+            <ButtonLink href="/preferences">
               Adjust preferences
             </ButtonLink>
           }
+          fan={postFans.setup}
         />
       )}
 

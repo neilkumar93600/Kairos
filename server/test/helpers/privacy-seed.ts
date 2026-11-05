@@ -105,6 +105,7 @@ export async function seedEverything(db: Db, email: string, mark = MARK) {
   // WP-24: a Gmail code held for the user; privacy-scripts.int.test.ts needs a row in every exported table.
   await db.insert(schema.forwardingVerifications).values({ userId: id, provider: "gmail", code: "123456", expiresAt: new Date(Date.now() + 3 * 86_400_000) });
   await db.insert(schema.contactMessages).values({ name: "Ann", email: email.toUpperCase(), topic: "support", message: mark });
+  await db.insert(schema.newsletterSubscribers).values({ email: email.toLowerCase(), source: "popup" }); // WP-50, by address
   await db.execute(sql`insert into user_daily_usage (user_id, day) values (${id}, current_date)`);
   await db.execute(sql`insert into ai_usage (user_id, day, feature, used) values (${id}, current_date, 'jobTailor', 1)`);
   await db.insert(llmCalls).values({

@@ -18,7 +18,7 @@ export interface SavedSearchFilters {
 
 /**
  * F6: named filters over the user's matches and a digest frequency. The hourly digest tick (jobs/digest.ts) claims the
- * searches due at 08:00 in the user's time zone. saved_searches_guard (migration 0022) takes the profiles lock for the
+ * searches due at 08:00 in the user's time zone. saved_searches_guard (migration 0023) takes the profiles lock for the
  * limit of 10 and computes next_digest_at; the claim writes window_start, last_digest_at and next_digest_at.
  */
 export const savedSearches = pgTable(

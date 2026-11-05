@@ -1,6 +1,6 @@
 -- kairos:no-transaction
 -- inbound messaging v2 indexes and validations (WP-24; _db/messaging.md 4.5, 10.1). inbound_emails may pass 100,000
--- rows, so the indexes are built CONCURRENTLY and the checks 0019 added NOT VALID are validated here, out of 0019's
+-- rows, so the indexes are built CONCURRENTLY and the checks 0020 added NOT VALID are validated here, out of 0019's
 -- transaction (VALIDATE takes SHARE UPDATE EXCLUSIVE, so writes go on). Hand-written (drizzle-kit generate --custom);
 -- src/db/schema/messaging.ts declares the same indexes and checks.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "inbound_emails_unclassified_idx" ON "inbound_emails" USING btree ("received_at") WHERE "inbound_emails"."classified_at" IS NULL;--> statement-breakpoint

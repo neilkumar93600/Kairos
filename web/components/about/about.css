@@ -1,0 +1,47 @@
+/* /about pieces company.css does not cover (design direction 4.1, D7). Prefixed ab-, scoped under .lp. company.css stays untouched. */
+@layer theme, base, components, utilities;
+
+@layer components {
+  /* The rules panel: the attribution once, on the glass, then the numbered rows. */
+  .lp .ab-rules-label { padding-block: 20px 0; }
+  .lp .ab-rows { list-style: none; margin: 0; padding: 0; }
+  .lp .ab-reported { margin-block-start: 4px; }
+  .lp .ab-rules-more { margin-block-start: 16px; }
+
+  /* The does-not-do cards: company.css zeroes the margin the intro would give them, and bodies of 3 and 4 lines stagger the titles. */
+  .lp .lp-intro + .co-cards { margin-block-start: var(--gap-intro); }
+  @media (min-width: 1024px) { .lp .co-card__body { min-block-size: 4lh; } }
+
+  /* Who it is for: label left, what it means for them right, ruled like a ledger. Not a card trio (section 6). */
+  .lp .ab-who { padding-inline: 20px; border-radius: var(--r-media); }
+  .lp .ab-who__list { list-style: none; margin: 0; padding: 0; }
+  .lp .ab-who__row { display: grid; gap: 8px; padding-block: 24px; border-block-end: 1px solid var(--border); }
+  .lp .ab-who__not { padding-block: 20px 24px; font: 500 var(--t-body-sm) / 1.5 var(--font-ui); color: var(--ink); }
+  @media (min-width: 768px) {
+    .lp .ab-who { padding-inline: 28px; }
+    .lp .ab-who__row { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); column-gap: 32px; padding-block: 28px; }
+    .lp .ab-who__row > .lp-body-sm { padding-block-start: 3px; }
+  }
+
+  /* The sign-off: the page ends like a signed letter. The rule writes once when it comes into view. */
+  .lp .ab-signoff { margin-block-start: 32px; }
+  .lp .ab-signoff__rule { block-size: 1px; inline-size: 160px; margin-block-end: 12px; background: var(--ink); }
+  .lp [data-post="pending"] .ab-signoff__rule { clip-path: inset(0 100% 0 0); }
+  .lp [data-post="live"] .ab-signoff__rule { animation: lp-sign var(--dur-sign) var(--ease-out) both; }
+  .lp .ab-signoff__name { font: 500 15px / 1.4 var(--font-ui); color: var(--ink); }
+  @media (min-width: 768px) { .lp .ab-signoff__rule { inline-size: 200px; } }
+
+  .lp .ab-news { grid-column: 1 / -1; }
+  /* One hairline above the newsletter: the facts list does not close with its own rule. */
+  .lp .co-studio .co-facts > div:last-child { border-block-end: 0; }
+
+  /* Below 768 the does-not-do cards put index and icon on one row; title and body take the card's full width. */
+  @media (max-width: 767.98px) {
+    .lp .co-card {
+      grid-template-columns: 40px minmax(0, 1fr); grid-template-areas: "num icon" "title title" "body body";
+      row-gap: 0; align-items: center;
+    }
+    .lp .co-card__icon { justify-self: start; }
+    .lp .co-card__title { margin-block-start: 16px; }
+  }
+}

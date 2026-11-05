@@ -169,7 +169,7 @@ export function CommitInput({ value, onCommit, multiline, ...props }: { value: s
   }
   const commit = () => (draft !== value ? onCommit(draft) : undefined);
   const control =
-    "w-full rounded-input border border-body bg-field px-3 text-base text-ink transition-colors duration-300 ease-out placeholder:text-faint focus:border-action focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-ink";
+    "w-full rounded-input border border-body bg-field px-3 text-base text-ink transition-colors duration-300 ease-out placeholder:text-faint focus:border-action focus:outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-ink";
   if (multiline)
     return (
       <textarea

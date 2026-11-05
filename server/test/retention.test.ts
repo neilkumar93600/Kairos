@@ -11,6 +11,7 @@ describe("retention rules (WP-25)", () => {
       forwarding_codes: 3,
       forwarding_stale: 30,
       contact_messages: 365,
+      newsletter_inactive: 30,
       matches_below_bar: 30,
       board_requests: 180,
       jobs_closed: 180,

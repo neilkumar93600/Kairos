@@ -6,7 +6,7 @@ import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/
 import { useCredits, type LedgerEntry } from "@/hooks/use-credits";
 import { formatDate } from "@/lib/utils";
 import { Button } from "../../shared/button";
-import { EmptyState } from "../../shared/empty-state";
+import { EmptyEm, EmptyState } from "../../shared/empty-state";
 import { ErrorNote } from "../../shared/error-note";
 import { DataRow, Panel } from "../../shared/panel";
 import { Skeleton } from "../../shared/skeleton";
@@ -46,7 +46,7 @@ function CreditUsage({ entries }: { entries: LedgerEntry[] }) {
   return (
     <Panel title="Credits used per day" description="The last 14 days. Refunded submits are not counted.">
       {total === 0 ? (
-        <EmptyState flat title="No credits used in the last 14 days" body="Each application that goes through is counted here on the day it was sent." />
+        <EmptyState flat title={<>No <EmptyEm>credits</EmptyEm> used in the last 14 days</>} body="Each application that goes through is counted here on the day it was sent." />
       ) : (
         <>
           <ChartContainer config={usageConfig} className="aspect-auto h-44 w-full" role="img" aria-label={`${total} ${total === 1 ? "credit" : "credits"} used in the last 14 days`}>
@@ -110,7 +110,7 @@ export function CreditLedger() {
     <Panel title="Credit ledger" description="Newest first. One credit is used only when an application goes through." flush>
       {entries.length === 0 ? (
         <div className="px-6 pb-6">
-          <EmptyState flat title="No credit activity yet" body="Grants, submissions and refunds show up here as they happen." />
+          <EmptyState flat title={<>No <EmptyEm>credit activity</EmptyEm> yet</>} body="Grants, submissions and refunds show up here as they happen." />
         </div>
       ) : (
         <ul>

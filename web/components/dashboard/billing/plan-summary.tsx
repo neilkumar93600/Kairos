@@ -59,7 +59,7 @@ export function PlanSummary() {
       <div className="flex flex-wrap items-center gap-3 border-t border-line px-6 py-5">
         {paid ? (
           <Button variant="secondary" onClick={() => portal.mutate()} disabled={portal.isPending}>
-            Change, pause or cancel
+            Change or cancel
           </Button>
         ) : (
           PLANS.filter((p) => p.id !== "free").map((p) => (

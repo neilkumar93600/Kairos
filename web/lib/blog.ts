@@ -1,44 +1,46 @@
-export interface Post {
-  slug: string;
-  title: string;
-  summary: string;
-  date: string;
+import { postDrafts, type PostDraft } from "@/content/blog-posts";
+
+export type { PostSection } from "@/content/blog-posts";
+
+export interface Post extends PostDraft {
   readingMinutes: number;
-  body: string[];
+  /** Written once on the server in UTC, so a post never reads a day early and a client list cannot mismatch on hydration. */
+  dateLabel: string;
 }
 
-/** Launch posts. Move to MDX or a CMS once there are more than a handful. */
-const drafts: Omit<Post, "readingMinutes">[] = [
-  {
-    slug: "why-we-cap-applications-per-company",
-    title: "Why we cap applications per company",
-    summary: "Sending five applications to one employer in a week reads as spam to the recruiter. So by default we send two per 30 days.",
-    date: "2026-10-13",
-    body: [
-      "Most auto-apply tools count success in applications sent. Recruiters count it differently: they see the same name arrive for four roles in one week and stop reading.",
-      "Kairos sends at most two applications to the same company in 30 days by default. You can raise it to five in Preferences if a company is hiring for several roles you genuinely fit.",
-      "The cap works with the fit gate. Matches below your threshold never reach your queue, so the two slots go to the roles where you are strongest.",
-    ],
-  },
-  {
-    slug: "how-the-truth-lock-works",
-    title: "How the truth lock works",
-    summary: "Every tailored resume line has to point to a fact you confirmed. Lines that cite nothing are dropped before you see them.",
-    date: "2026-10-13",
-    body: [
-      "When you upload a resume, we split it into facts: roles, projects, skills and numbers. You confirm each one during onboarding.",
-      "When we tailor a resume for a job, the model must cite the facts each line uses. A line that cites a fact you do not have, or no fact at all, is removed before the draft reaches your queue.",
-      "You can still edit any line yourself. Your edits go through the same check, so a tired late-night edit cannot slip in a skill you have never used.",
-    ],
-  },
-];
+/** What a card needs: no article text, so the index's client list does not carry six articles. */
+export type PostSummary = Omit<Post, "sections" | "pull">;
 
-// About 220 words a minute, never less than one.
-export const posts: Post[] = drafts.map((p) => ({
-  ...p,
-  readingMinutes: Math.max(1, Math.round(p.body.join(" ").split(/\s+/).length / 220)),
+/** Reading time at about 220 words a minute, never less than one. Counts paragraphs and lists; headings are skimmed. */
+function readingMinutes(post: PostDraft): number {
+  const text = post.sections.flatMap((s) => [...s.body, ...(s.list ?? [])]).join(" ");
+  return Math.max(1, Math.round(text.trim().split(/\s+/).length / 220));
+}
+
+function dateLabel(date: string): string {
+  return new Date(date).toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+}
+
+/** Newest first, as written in content/blog-meta.ts. */
+export const posts: Post[] = postDrafts.map((p) => ({ ...p, readingMinutes: readingMinutes(p), dateLabel: dateLabel(p.date) }));
+
+export const postSummaries: PostSummary[] = posts.map(({ slug, title, summary, date, category, image, readingMinutes, dateLabel }) => ({
+  slug,
+  title,
+  summary,
+  date,
+  category,
+  image,
+  readingMinutes,
+  dateLabel,
 }));
 
 export function getPost(slug: string): Post | undefined {
   return posts.find((p) => p.slug === slug);
+}
+
+/** Two others, same category first, then newest. */
+export function relatedPosts(post: Post): PostSummary[] {
+  const others = postSummaries.filter((p) => p.slug !== post.slug);
+  return [...others.filter((p) => p.category === post.category), ...others.filter((p) => p.category !== post.category)].slice(0, 2);
 }

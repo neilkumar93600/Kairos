@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 // DESIGN.md Input Field: Mist fill, 1px Graphite border, 8px radius, 44px, 16px ink text (16px also stops iOS zoom).
 // Focus turns the border Espresso; keyboard focus adds the 2px ink ring at 3px.
 const control =
-  "w-full rounded-input border border-body bg-field px-3 text-base text-ink transition-colors duration-300 ease-out placeholder:text-faint focus:border-action focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-ink disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-bad";
+  "w-full rounded-input border border-body bg-field px-3 text-base text-ink transition-colors duration-300 ease-out placeholder:text-faint focus:border-action focus:outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-ink disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-bad";
 
 export function Input({ className, ...props }: ComponentProps<"input">) {
   return <input className={cn(control, "h-11", className)} {...props} />;

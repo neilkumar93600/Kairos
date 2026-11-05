@@ -6,7 +6,7 @@ import type { EmailKind } from "@auto-career/shared";
 import { useInbox } from "@/hooks/use-inbox";
 import { formatRelative } from "@/lib/utils";
 import { ButtonLink } from "../../shared/button";
-import { EmptyState } from "../../shared/empty-state";
+import { EmptyEm, EmptyState } from "../../shared/empty-state";
 import { ErrorNote } from "../../shared/error-note";
 import { Panel } from "../../shared/panel";
 import { Skeleton } from "../../shared/skeleton";
@@ -64,9 +64,9 @@ function List() {
   if (!data?.length)
     return (
       <EmptyState
-        title="No replies yet"
+        title={<>No <EmptyEm>replies</EmptyEm> yet</>}
         body="Set up the forwarding filter in Settings. Confirmations, interview invites and rejections then land here, tagged to the right application."
-        action={<ButtonLink href="/settings" variant="secondary">Open settings</ButtonLink>}
+        action={<ButtonLink href="/settings">Open settings</ButtonLink>}
       />
     );
 

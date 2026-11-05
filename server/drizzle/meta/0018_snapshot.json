@@ -1,5 +1,5 @@
 {
-  "id": "29e778f6-aac1-4527-a23d-f35295bc191c",
+  "id": "941368aa-bede-4a6e-9c69-6199bf919f3f",
   "prevId": "9e6eaabb-d71a-48d9-b486-cd53eea6d1e5",
   "version": "7",
   "dialect": "postgresql",
@@ -4352,7 +4352,7 @@
       "checkConstraints": {
         "email_sends_kind_ck": {
           "name": "email_sends_kind_ck",
-          "value": "\"email_sends\".\"kind\" IN ('digest','autopilot_hourly','autopilot_paused','resend_available','offer_pause_notice','offer_pause_applied','forwarding_code','outcome_report','return_to_draft','contact_message')"
+          "value": "\"email_sends\".\"kind\" IN ('digest','autopilot_hourly','autopilot_paused','resend_available','offer_pause_notice','offer_pause_applied','forwarding_code','outcome_report','return_to_draft','contact_message','newsletter_confirm')"
         },
         "email_sends_status_ck": {
           "name": "email_sends_status_ck",
@@ -4376,7 +4376,7 @@
         },
         "email_sends_user_ck": {
           "name": "email_sends_user_ck",
-          "value": "\"email_sends\".\"user_id\" IS NOT NULL OR \"email_sends\".\"kind\" = 'contact_message'"
+          "value": "\"email_sends\".\"user_id\" IS NOT NULL OR \"email_sends\".\"kind\" IN ('contact_message','newsletter_confirm')"
         }
       },
       "isRLSEnabled": false
@@ -4569,6 +4569,221 @@
       },
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.newsletter_subscribers": {
+      "name": "newsletter_subscribers",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email_hash": {
+          "name": "email_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "confirm_seq": {
+          "name": "confirm_seq",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "confirm_requested_at": {
+          "name": "confirm_requested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "confirm_token_hash": {
+          "name": "confirm_token_hash",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirm_expires_at": {
+          "name": "confirm_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "unsubscribe_token_hash": {
+          "name": "unsubscribe_token_hash",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "unsubscribed_at": {
+          "name": "unsubscribed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "newsletter_subscribers_email_uq": {
+          "name": "newsletter_subscribers_email_uq",
+          "columns": [
+            {
+              "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "newsletter_subscribers_confirm_uq": {
+          "name": "newsletter_subscribers_confirm_uq",
+          "columns": [
+            {
+              "expression": "confirm_token_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"newsletter_subscribers\".\"confirm_token_hash\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "newsletter_subscribers_unsubscribe_uq": {
+          "name": "newsletter_subscribers_unsubscribe_uq",
+          "columns": [
+            {
+              "expression": "unsubscribe_token_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"newsletter_subscribers\".\"unsubscribe_token_hash\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "newsletter_subscribers_email_hash_idx": {
+          "name": "newsletter_subscribers_email_hash_idx",
+          "columns": [
+            {
+              "expression": "email_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"newsletter_subscribers\".\"email_hash\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "newsletter_subscribers_inactive_idx": {
+          "name": "newsletter_subscribers_inactive_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "confirm_requested_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"newsletter_subscribers\".\"status\" <> 'confirmed'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "newsletter_subscribers_email_ck": {
+          "name": "newsletter_subscribers_email_ck",
+          "value": "\"newsletter_subscribers\".\"email\" = lower(btrim(\"newsletter_subscribers\".\"email\")) AND char_length(\"newsletter_subscribers\".\"email\") BETWEEN 3 AND 254 AND position('@' in \"newsletter_subscribers\".\"email\") > 1"
+        },
+        "newsletter_subscribers_email_hash_ck": {
+          "name": "newsletter_subscribers_email_hash_ck",
+          "value": "\"newsletter_subscribers\".\"email_hash\" ~ '^[0-9a-f]{64}$'"
+        },
+        "newsletter_subscribers_source_ck": {
+          "name": "newsletter_subscribers_source_ck",
+          "value": "\"newsletter_subscribers\".\"source\" IN ('popup','blog-index','blog-post','about')"
+        },
+        "newsletter_subscribers_status_ck": {
+          "name": "newsletter_subscribers_status_ck",
+          "value": "\"newsletter_subscribers\".\"status\" IN ('pending','confirmed','unsubscribed')"
+        },
+        "newsletter_subscribers_seq_ck": {
+          "name": "newsletter_subscribers_seq_ck",
+          "value": "\"newsletter_subscribers\".\"confirm_seq\" >= 1"
+        },
+        "newsletter_subscribers_hash_ck": {
+          "name": "newsletter_subscribers_hash_ck",
+          "value": "(\"newsletter_subscribers\".\"confirm_token_hash\" IS NULL OR octet_length(\"newsletter_subscribers\".\"confirm_token_hash\") = 32) AND (\"newsletter_subscribers\".\"unsubscribe_token_hash\" IS NULL OR octet_length(\"newsletter_subscribers\".\"unsubscribe_token_hash\") = 32)"
+        },
+        "newsletter_subscribers_confirm_ck": {
+          "name": "newsletter_subscribers_confirm_ck",
+          "value": "(\"newsletter_subscribers\".\"confirm_token_hash\" IS NULL) = (\"newsletter_subscribers\".\"confirm_expires_at\" IS NULL) AND (\"newsletter_subscribers\".\"confirm_token_hash\" IS NULL OR \"newsletter_subscribers\".\"status\" = 'pending')"
+        },
+        "newsletter_subscribers_state_ck": {
+          "name": "newsletter_subscribers_state_ck",
+          "value": "(\"newsletter_subscribers\".\"status\" <> 'pending' OR (\"newsletter_subscribers\".\"confirmed_at\" IS NULL AND \"newsletter_subscribers\".\"unsubscribed_at\" IS NULL)) AND (\"newsletter_subscribers\".\"status\" <> 'confirmed' OR (\"newsletter_subscribers\".\"confirmed_at\" IS NOT NULL AND \"newsletter_subscribers\".\"unsubscribed_at\" IS NULL)) AND (\"newsletter_subscribers\".\"status\" <> 'unsubscribed' OR \"newsletter_subscribers\".\"unsubscribed_at\" IS NOT NULL)"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.notifications": {
@@ -5418,84 +5633,7 @@
       "checkConstraints": {
         "ops_flags_key_ck": {
           "name": "ops_flags_key_ck",
-          "value": "key ~ '^(pause_cloud_apply|pause_scoring|llm_paused|approvals_frozen|cloud_applier_open|llm_shed_level|extension_only:(greenhouse|lever|ashby)|verifier_mode:(suggestions|tailor|drafts|prepare|patch)|(agent_disabled|prompt_pin|model_pin|prompt_canary|prompt_shadow):(resume-parser|jd-analyst|fit-scorer|resume-tailor|resume-writer|answer-drafter|cover-letter-writer|claim-verifier|claim-verifier-escalation|reply-classifier|outcome-analyst|interview-coach))$'"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.verified_claims": {
-      "name": "verified_claims",
-      "schema": "",
-      "columns": {
-        "claim_hash": {
-          "name": "claim_hash",
-          "type": "bytea",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "verdict": {
-          "name": "verdict",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "check_source": {
-          "name": "check_source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "verified_claims_expires_idx": {
-          "name": "verified_claims_expires_idx",
-          "columns": [
-            {
-              "expression": "expires_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "verified_claims_hash_ck": {
-          "name": "verified_claims_hash_ck",
-          "value": "octet_length(\"verified_claims\".\"claim_hash\") = 32"
-        },
-        "verified_claims_verdict_ck": {
-          "name": "verified_claims_verdict_ck",
-          "value": "\"verified_claims\".\"verdict\" in ('supported', 'unsupported', 'contradicted')"
-        },
-        "verified_claims_source_ck": {
-          "name": "verified_claims_source_ck",
-          "value": "\"verified_claims\".\"check_source\" in ('verifier', 'escalation')"
-        },
-        "verified_claims_expiry_ck": {
-          "name": "verified_claims_expiry_ck",
-          "value": "\"verified_claims\".\"expires_at\" > \"verified_claims\".\"created_at\" and \"verified_claims\".\"expires_at\" <= \"verified_claims\".\"created_at\" + interval '24 hours'"
+          "value": "key ~ '^(pause_cloud_apply|pause_scoring|llm_paused|approvals_frozen|cloud_applier_open|llm_shed_level|extension_only:(greenhouse|lever|ashby))$'"
         }
       },
       "isRLSEnabled": false

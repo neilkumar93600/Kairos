@@ -10,7 +10,7 @@ import { Button, ButtonLink } from "../../shared/button";
 import { ErrorNote } from "../../shared/error-note";
 import { DataRow, Panel } from "../../shared/panel";
 import { Skeleton } from "../../shared/skeleton";
-import { EmptyState } from "../../shared/empty-state";
+import { EmptyEm, EmptyState } from "../../shared/empty-state";
 import { SetupChecklist } from "./setup-checklist";
 import { SubmittedChart } from "./submitted-chart";
 
@@ -103,7 +103,7 @@ export function OverviewPanel() {
         ) : recent.length === 0 ? (
           <div className="px-6 pb-6">
             <EmptyState flat
-              title="Nothing submitted yet"
+              title={<><EmptyEm>Nothing submitted</EmptyEm> yet</>}
               body="Applications you approve and send appear here, newest first."
               action={
                 <ButtonLink href={draftCount ? "/queue" : "/matches"} variant="secondary" size="sm">

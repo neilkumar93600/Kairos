@@ -18,6 +18,7 @@ import { inboxRouter } from "./inbox";
 import { jobsRouter } from "./jobs";
 import { matchesRouter } from "./matches";
 import { meRouter } from "./me";
+import { newsletterRouter } from "./newsletter";
 import { notificationsRouter } from "./notifications";
 import { emailPreferencesRouter } from "./preferences";
 import { profileRouter } from "./profile";
@@ -33,6 +34,8 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   // The per-address limit guards the GET page; a mail client's one-click POST comes from Gmail's or Yahoo's shared addresses,
   // where a burst would 429 real unsubscribes. A POST costs a signature check first and reaches the database only for a signed token.
   router.use("/unsubscribe", routeDeadline, (req, res, next) => (req.method === "POST" ? next() : limits.link(req, res, next)), unsubscribeRouter);
+  // Public newsletter (WP-50): its own classes per route (routes/newsletter.ts), ahead of the anonymous class.
+  router.use("/newsletter", routeDeadline, newsletterRouter(limits));
   router.use(routeDeadline, limits.anon);
 
   router.use("/contact", limits.contact, contactRouter);

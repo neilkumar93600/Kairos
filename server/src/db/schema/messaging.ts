@@ -1,5 +1,6 @@
+import { NEWSLETTER_SOURCES } from "@auto-career/shared";
 import { sql } from "drizzle-orm";
-import { check, date, index, jsonb, pgTable, primaryKey, real, smallint, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, date, index, integer, jsonb, pgTable, primaryKey, real, smallint, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { applications } from "./applications";
 import { user } from "./auth";
 import { emailKind } from "./enums";
@@ -128,8 +129,10 @@ const tstz = (name: string) => timestamp(name, { withTimezone: true });
 /** Email kinds that go through the notify ledger; broadcast ones can be opted out of (05-api 12.1). */
 export const EMAIL_KINDS = [
   "digest", "autopilot_hourly", "autopilot_paused", "resend_available", "offer_pause_notice", "offer_pause_applied",
-  "forwarding_code", "outcome_report", "return_to_draft", "contact_message",
+  "forwarding_code", "outcome_report", "return_to_draft", "contact_message", "newsletter_confirm",
 ] as const;
+/** Kinds sent to an address that is not an account: their ledger rows have no user_id. */
+export const USERLESS_EMAIL_KINDS = ["contact_message", "newsletter_confirm"] as const;
 export const NOTIFICATION_KINDS = ["autopilot_sent", "autopilot_paused", "resend_available", "offer_pause_notice", "reply_important", "forwarding_code"] as const;
 export const ACTION_TOKEN_PURPOSES = ["resend", "offer_pause_undo", "unsubscribe"] as const;
 const list = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).join(","));
@@ -163,7 +166,7 @@ export const emailSends = pgTable(
     check("email_sends_error_ck", sql`${t.status} NOT IN ('failed','suppressed') OR ${t.errorCode} IS NOT NULL`),
     check("email_sends_attempts_ck", sql`${t.attempts} BETWEEN 1 AND 5`),
     check("email_sends_entity_len_ck", sql`char_length(${t.entityId}) BETWEEN 1 AND 200`),
-    check("email_sends_user_ck", sql`${t.userId} IS NOT NULL OR ${t.kind} = 'contact_message'`),
+    check("email_sends_user_ck", sql`${t.userId} IS NOT NULL OR ${t.kind} IN (${list(USERLESS_EMAIL_KINDS)})`),
   ],
 );
 
@@ -246,7 +249,7 @@ export const emailSuppressions = pgTable(
 /**
  * The optional mail a person turned off, kept by address after the account is erased, on purpose (WP-35, like
  * email_suppressions): a person who unsubscribed and signs up again with the same address stays opted out until they turn
- * the kind on themselves. Keyed by HMAC(USER_HASH_KEY, "suppress:" + address) (lib/mailer.ts addressHash), so no address is
+ * the kind on themselves. Keyed by HMAC(USER_HASH_KEY, "optout:" + normalized address) (services/mail-preferences.ts optOutHash), so no address is
  * stored. The kinds are profiles.mail_opt_out's keys; turning a kind back on deletes its row.
  */
 export const mailOptOuts = pgTable(
@@ -260,5 +263,61 @@ export const mailOptOuts = pgTable(
     primaryKey({ columns: [t.addressHash, t.kind] }),
     check("mail_opt_outs_hash_ck", sql`octet_length(${t.addressHash}) = 32`),
     check("mail_opt_outs_kind_ck", sql`${t.kind} IN ('digest','outcome_report','autopilot_summary','reminders')`),
+  ],
+);
+
+export const NEWSLETTER_STATUSES = ["pending", "confirmed", "unsubscribed"] as const;
+
+/**
+ * Marketing newsletter sign-ups (WP-50), double opt-in. Not an account: no user id. Stores the address and where the
+ * form was, nothing about the request (no IP, no user agent). Tokens are stored only as SHA-256:
+ *  - confirm: 32 random bytes minted when the confirm email is rendered (services/newsletter.ts), single use (nulled when
+ *    used), 7 days;
+ *  - unsubscribe: HMAC(USER_HASH_KEY, "newsletter-unsubscribe:" + id), so every later mail can carry the same link
+ *    without the token itself being stored.
+ * confirm_seq numbers the confirm emails: the notify ledger key is `<id>:<confirm_seq>`, and the sign-up bumps it at
+ * most once per 10 minutes, so repeated sign-ups for one address send at most one confirm email in that time.
+ * Erasure deletes a row by address or email_hash (services/erasure.ts); retention deletes pending and unsubscribed rows
+ * after 30 days (jobs/retention.ts newsletter_inactive).
+ */
+export const newsletterSubscribers = pgTable(
+  "newsletter_subscribers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Trimmed and lower-cased by newsletterSignupSchema. */
+    email: text("email").notNull(),
+    /** WP-25's keyed hash of the normalized address (services/erasure.ts emailHash), as contact_messages.email_hash. */
+    emailHash: text("email_hash"),
+    source: text("source").notNull(),
+    status: text("status").notNull().default("pending"),
+    confirmSeq: integer("confirm_seq").notNull().default(1),
+    confirmRequestedAt: tstz("confirm_requested_at").notNull().defaultNow(),
+    confirmTokenHash: bytea("confirm_token_hash"),
+    confirmExpiresAt: tstz("confirm_expires_at"),
+    unsubscribeTokenHash: bytea("unsubscribe_token_hash"),
+    createdAt: tstz("created_at").notNull().defaultNow(),
+    confirmedAt: tstz("confirmed_at"),
+    unsubscribedAt: tstz("unsubscribed_at"),
+  },
+  (t) => [
+    uniqueIndex("newsletter_subscribers_email_uq").on(t.email),
+    uniqueIndex("newsletter_subscribers_confirm_uq").on(t.confirmTokenHash).where(sql`${t.confirmTokenHash} IS NOT NULL`),
+    uniqueIndex("newsletter_subscribers_unsubscribe_uq").on(t.unsubscribeTokenHash).where(sql`${t.unsubscribeTokenHash} IS NOT NULL`),
+    index("newsletter_subscribers_email_hash_idx").on(t.emailHash).where(sql`${t.emailHash} IS NOT NULL`),
+    index("newsletter_subscribers_inactive_idx").on(t.status, t.confirmRequestedAt).where(sql`${t.status} <> 'confirmed'`),
+    check("newsletter_subscribers_email_ck", sql`${t.email} = lower(btrim(${t.email})) AND char_length(${t.email}) BETWEEN 3 AND 254 AND position('@' in ${t.email}) > 1`),
+    check("newsletter_subscribers_email_hash_ck", sql`${t.emailHash} ~ '^[0-9a-f]{64}$'`),
+    check("newsletter_subscribers_source_ck", sql`${t.source} IN (${list(NEWSLETTER_SOURCES)})`),
+    check("newsletter_subscribers_status_ck", sql`${t.status} IN (${list(NEWSLETTER_STATUSES)})`),
+    check("newsletter_subscribers_seq_ck", sql`${t.confirmSeq} >= 1`),
+    check(
+      "newsletter_subscribers_hash_ck",
+      sql`(${t.confirmTokenHash} IS NULL OR octet_length(${t.confirmTokenHash}) = 32) AND (${t.unsubscribeTokenHash} IS NULL OR octet_length(${t.unsubscribeTokenHash}) = 32)`,
+    ),
+    check("newsletter_subscribers_confirm_ck", sql`(${t.confirmTokenHash} IS NULL) = (${t.confirmExpiresAt} IS NULL) AND (${t.confirmTokenHash} IS NULL OR ${t.status} = 'pending')`),
+    check(
+      "newsletter_subscribers_state_ck",
+      sql`(${t.status} <> 'pending' OR (${t.confirmedAt} IS NULL AND ${t.unsubscribedAt} IS NULL)) AND (${t.status} <> 'confirmed' OR (${t.confirmedAt} IS NOT NULL AND ${t.unsubscribedAt} IS NULL)) AND (${t.status} <> 'unsubscribed' OR ${t.unsubscribedAt} IS NOT NULL)`,
+    ),
   ],
 );

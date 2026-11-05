@@ -61,6 +61,10 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "POST /api/contact": { public: "the public contact form: stores a message and reads nothing back" },
   "GET /api/unsubscribe": { public: "the signed token is the credential; GET only reads, and shows what a POST would stop" },
   "POST /api/unsubscribe": { public: "the signed token is the credential; it turns off one optional mail kind for the token's own user" },
+  "POST /api/newsletter": { public: "the public newsletter form: the same 202 for every address, reads nothing back" },
+  "POST /api/newsletter/confirm": { public: "the emailed confirm token is the credential; it confirms one address and returns nothing" },
+  "GET /api/newsletter/unsubscribe": { public: "changes and reads nothing: redirects to the web page that posts the token" },
+  "POST /api/newsletter/unsubscribe": { public: "RFC 8058 one-click: the token in the URL is the credential, no cookie is read" },
   "GET /api/auth-providers": { public: "the configured sign-in methods; no user data" },
 
   "GET /api/me": own("/api/me"),

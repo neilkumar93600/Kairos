@@ -7,7 +7,7 @@ import type { Fact } from "@/hooks/use-profile";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { Button } from "../shared/button";
-import { EmptyState } from "../shared/empty-state";
+import { EmptyEm, EmptyState } from "../shared/empty-state";
 import { Textarea } from "../shared/field";
 import { StatusWord, type StatusTone } from "../shared/status";
 import { ConfirmFacts, FactChips, HIT, IconButton, InlineError, NewFactNote, Rail, tabList, tabTrigger } from "./bits";
@@ -147,7 +147,7 @@ function MatchTab() {
       <EmptyState
         flat
         icon={Target}
-        title="Pick a target job"
+        title={<>Pick a <EmptyEm>target job</EmptyEm></>}
         body="Job match compares this resume with one posting, using confirmed facts only. Choose a match or paste a job link."
         action={
           <Button

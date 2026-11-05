@@ -21,7 +21,7 @@ Route groups in `web/app/` do not change URLs; they group layouts and access rul
 | `/how-it-works` | (public) | Four-step explanation | static |
 | `/about`, `/careers`, `/contact` | (public) | Company pages; contact form | contact posts to `/api/contact` |
 | `/blog`, `/blog/[slug]` | (public) | Posts | `web/lib/blog.ts` |
-| `/terms`, `/privacy`, `/cookies`, `/refunds` | (legal) | Policies | static |
+| `/terms`, `/privacy`, `/cookies` | (legal) | Policies; each carries the refund terms (`/refunds` redirects to `/terms#refunds`) | static |
 | `/login` | (auth) | Email + password, Google | Better Auth |
 | `/sign-up` | (auth) | Create account | Better Auth |
 | `/verify-otp?email=` | (auth) | Enter the 6-digit email code | Better Auth email OTP |
@@ -88,7 +88,7 @@ Route groups in `web/app/` do not change URLs; they group layouts and access rul
 | `/applications` | "No applications yet" | none |
 | `/inbox` | "No replies yet" + forwarding setup pointer | none |
 | `/profile` | "No facts yet" | Resume limit per plan (403) |
-| Side panel | "Nothing approved yet" | "Connect the extension from Settings" |
+| Side panel | "Nothing approved yet" + link to `/queue` | "Connect the extension" + link to `/settings`; load failure + Try again; a failed send shows its reason in the row |
 | Any dashboard API call | skeleton while loading | 401 → `/login`; error note with message |
 
 ## First-use journey

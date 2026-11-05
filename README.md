@@ -127,7 +127,7 @@ Kairos/
 │   │   ├── (auth)/            Login, sign-up, password reset, OTP verification
 │   │   ├── (dashboard)/       Dashboard, matches feed, review queue, applications, profile, settings
 │   │   ├── (landing)/         Editorial landing page with interactive scroll stage & bento showcases
-│   │   ├── (legal)/           Terms of service, privacy policy, cookie policy, refund policy
+│   │   ├── (legal)/           Terms of service, privacy policy, cookie policy (refund terms inside each)
 │   │   └── (public)/          About, how it works, pricing calculator, blog, careers, contact
 │   ├── components/            Frosted glass primitives, preference forms, resume builder, data tables
 │   ├── hooks/                 Client state hooks (use-me, use-matches, use-applications, use-resume)

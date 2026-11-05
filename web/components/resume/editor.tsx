@@ -30,7 +30,7 @@ import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { RetryNote } from "../dashboard/profile/fact-list";
 import { Button, ButtonLink } from "../shared/button";
-import { EmptyState } from "../shared/empty-state";
+import { EmptyEm, EmptyState } from "../shared/empty-state";
 import { Field, Input, Select, Textarea } from "../shared/field";
 import { Skeleton } from "../shared/skeleton";
 import { CommitInput, ConfirmFacts, FactChips, HIT, IconButton, InlineError, Rail, SuggestionSkeletons, Tag, iconButton, menuItem, tabList, tabTrigger } from "./bits";
@@ -114,7 +114,7 @@ function EditorTab() {
           <EmptyState
             flat
             icon={ListChecks}
-            title="Add facts first"
+            title={<><EmptyEm>Add facts</EmptyEm> first</>}
             body="Every line cites a fact you confirmed. Paste your resume on Profile and Kairos reads it into facts for you to check."
             action={
               <ButtonLink href="/profile" size="sm" variant="secondary" className={HIT}>

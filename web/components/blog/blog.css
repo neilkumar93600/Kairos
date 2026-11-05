@@ -1,80 +1,235 @@
-/* Blog index and post reading page. Scoped under .lp; reuses the landing tokens. */
+/* Blog index and post page (owner references 2026-11-05, spec D15). Scoped under .lp; landing tokens only; Urbanist only:
+   the shared closing band and dark CTA drop their serif line on these two pages. Colour comes from the paintings. */
+@layer theme, base, components, utilities;
 
-.lp .blog-meta { font-variant-numeric: tabular-nums; }
+@layer components {
+  .lp :is(.blog-page, .post-page) :is(.lp-serif-closing, .lp-serif-h2) { font-family: var(--font-head); letter-spacing: -0.025em; }
 
-/* Whole row is the target: the link's ::after covers the article. */
-.lp .blog-link { color: inherit; text-decoration: none; }
-.lp .blog-link::after { content: ""; position: absolute; inset: 0; }
-.lp .blog-link:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 5px; }
-.lp .blog-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 4px; }
+  .lp .blog-meta { font-variant-numeric: tabular-nums; }
 
-.lp .blog-list { padding-block: 56px 0; margin-block-end: calc(var(--gap-section) / 2); }
-@media (min-width: 1024px) { .lp .blog-list { padding-block-start: 72px; } }
+  /* ===== Shared pieces ===== */
+  .lp .blog-chip {
+    display: inline-flex; align-items: center; gap: 8px; inline-size: fit-content; min-block-size: 28px; padding-inline: 10px 12px;
+    border-radius: var(--r-pill); background: var(--sunk); font: 500 var(--t-caption) / 1 var(--font-ui); color: var(--ink);
+  }
+  .lp .blog-chip__dot { inline-size: 6px; block-size: 6px; border-radius: 50%; background: var(--ink); }
 
-/* Glass everywhere (owner, 2026-10-23): the featured post is one .glass-panel card, the other posts share one
-   .glass-panel list (rows stay transparent, hairline apart), and a post reads on a .glass-panel sheet. Nothing here
-   sets background, border or box-shadow on those elements, so the panel fallbacks in globals.css keep working. */
-.lp .blog-featured {
-  position: relative; display: grid; gap: 16px; margin-block-end: 16px;
-  padding: 24px 20px 28px; border-radius: var(--r-media);
+  /* The whole card or row is the target: the link's ::after covers it. The ring moves to the card, so it wraps what the target is. */
+  .lp .blog-link { color: inherit; text-decoration: none; }
+  .lp .blog-link::after { content: ""; position: absolute; inset: 0; }
+  .lp .blog-link:focus-visible { outline: none; }
+  .lp :is(.blog-cover, .blog-row, .blog-card, .post-author):has(.blog-link:focus-visible) { outline: 2px solid var(--ink); outline-offset: 3px; }
+  @media (hover: hover) and (pointer: fine) {
+    .lp :is(.blog-cover, .blog-row, .blog-card, .post-author):hover .blog-link {
+      text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px;
+    }
+    /* The small zoom: only under data-motion="full", so it is off under reduced motion and with scripts off. */
+    html[data-motion="full"] .lp :is(.blog-cover, .blog-row__art, .blog-card__art) img { transition: transform var(--dur-art) var(--ease-out); }
+    html[data-motion="full"] .lp :is(.blog-cover, .blog-row, .blog-card):hover img { transform: scale(1.03); }
+  }
+
+  /* ===== Index: header ===== */
+  .lp .blog-head { --t-page: 40px; padding-block: calc(var(--nav-h) + 24px) 32px; }
+  .lp .blog-head__row { display: grid; gap: 12px; margin-block-start: 16px; }
+  .lp .blog-head__title { font: 400 var(--t-page) / 1.04 var(--font-head); letter-spacing: -0.03em; color: var(--ink); text-wrap: balance; }
+  .lp .blog-head__title:focus { outline: none; }
+  .lp .blog-head__lead { max-inline-size: 34ch; }
+  @media (min-width: 768px) { .lp .blog-head { --t-page: 52px; padding-block: calc(var(--nav-h) + 32px) 40px; } }
+  @media (min-width: 1024px) {
+    .lp .blog-head { --t-page: 60px; }
+    .lp .blog-head__row { grid-template-columns: minmax(0, 1fr) auto; column-gap: 48px; align-items: end; }
+    .lp .blog-head__lead { padding-block-end: 8px; }
+  }
+  @media (min-width: 1280px) { .lp .blog-head { --t-page: 72px; } }
+
+  /* ===== Index: cover post beside the "Latest" list ===== */
+  .lp .blog-top { display: grid; gap: 40px; }
+  @media (min-width: 1024px) { .lp .blog-top { grid-template-columns: minmax(0, 1fr) clamp(320px, 30vw, 400px); gap: 40px; } }
+
+  /* Layers: painting, then a masked blur, then the body. The body stays unpositioned so .blog-link::after reaches the whole card. */
+  .lp .blog-cover {
+    position: relative; isolation: isolate; display: grid; align-items: end; overflow: hidden;
+    aspect-ratio: 4 / 5; border-radius: var(--r-media); background: var(--sunk);
+  }
+  @media (min-width: 640px) { .lp .blog-cover { aspect-ratio: 16 / 10; } }
+  @media (min-width: 1024px) { .lp .blog-cover { aspect-ratio: auto; min-block-size: 520px; } }
+  .lp .blog-cover img { z-index: -2; }
+  .lp .blog-cover__blur {
+    position: absolute; z-index: -1; inset: auto 0 0; block-size: 62%;
+    -webkit-backdrop-filter: blur(14px) saturate(130%); backdrop-filter: blur(14px) saturate(130%);
+    -webkit-mask-image: linear-gradient(to top, #000 55%, transparent); mask-image: linear-gradient(to top, #000 55%, transparent);
+  }
+  /* The scrim is the body's own background, so it grows with the title: Charcoal, not Ink, reads as shade on the warm paintings.
+     At 72 percent it passes 4.5:1 for Linen text even over pure white, so the crop cannot break it. */
+  .lp .blog-cover__body {
+    --scrim: color-mix(in srgb, var(--icon) 72%, transparent);
+    display: grid; gap: 12px; padding: 96px 20px 20px;
+    background: linear-gradient(to top, color-mix(in srgb, var(--icon) 84%, transparent), var(--scrim) calc(100% - 96px), transparent);
+  }
+  @media (min-width: 768px) { .lp .blog-cover__body { padding: 112px 32px 28px; gap: 16px; } }
+  /* From 1280 the title holds to the left and the shade moves to the blur layer as a wedge: full strength under the title
+     (the left 64 percent), thinning to the right, so the painting's object keeps its light. */
+  @media (min-width: 1280px) {
+    .lp .blog-cover__blur {
+      block-size: 66%;
+      background: linear-gradient(to right, color-mix(in srgb, var(--icon) 76%, transparent) 62%, color-mix(in srgb, var(--icon) 18%, transparent));
+      -webkit-mask-image: linear-gradient(to top, #000 66%, transparent); mask-image: linear-gradient(to top, #000 66%, transparent);
+    }
+    .lp .blog-cover__body { padding-inline-end: 36%; background: none; }
+  }
+  .lp .blog-cover .blog-chip { background: var(--surface); }
+  .lp .blog-cover__title { font: 400 var(--t-h3) / 1.14 var(--font-head); letter-spacing: -0.025em; color: var(--on-dark); max-inline-size: 24ch; }
+  @media (min-width: 768px) { .lp .blog-cover__title { font-size: var(--t-h2); } }
+  .lp .blog-cover .blog-meta { color: var(--on-dark); }
+  @media (forced-colors: active) {
+    .lp .blog-cover__body { background: Canvas; }
+    .lp .blog-cover__title, .lp .blog-cover .blog-meta { color: CanvasText; }
+  }
+
+  .lp .blog-latest { display: grid; align-content: start; gap: 20px; min-inline-size: 0; }
+  .lp .blog-latest__list { display: grid; gap: 20px; }
+  @media (min-width: 640px) and (max-width: 1023.98px) { .lp .blog-latest__list { grid-template-columns: 1fr 1fr; column-gap: 32px; } }
+  /* From 1024 the list runs the cover's full height: the last thumbnail ends on the cover's bottom edge. */
+  @media (min-width: 1024px) {
+    .lp .blog-latest { grid-template-rows: auto 1fr; }
+    .lp .blog-latest__list { align-content: space-between; }
+  }
+  .lp .blog-row { position: relative; display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 16px; align-items: center; border-radius: 14px; }
+  @media (min-width: 1280px) { .lp .blog-row { grid-template-columns: 96px minmax(0, 1fr); } }
+  .lp .blog-row__art { position: relative; overflow: hidden; aspect-ratio: 1; border-radius: 14px; background: var(--sunk); }
+  /* A tighter crop on the painting's object (scale, so the hover zoom's transform stays free): the four thumbnails stop looking alike. */
+  .lp .blog-row__art img { scale: 1.7; }
+  .lp .blog-row__text { display: grid; gap: 6px; }
+  .lp .blog-row__title { font: 500 17px / 1.3 var(--font-ui); letter-spacing: -0.01em; color: var(--ink); text-wrap: pretty; }
+
+  /* ===== Index: every post, searchable ===== */
+  .lp .blog-all { margin-block-start: 48px; padding-block-start: 40px; border-block-start: 1px solid var(--border); }
+  @media (min-width: 1024px) { .lp .blog-all { margin-block-start: 56px; padding-block-start: 48px; } }
+  .lp .blog-all__head { display: grid; gap: 16px; margin-block-end: 28px; }
+  .lp .blog-all__title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; }
+  .lp .blog-all__search { position: relative; color: var(--icon); }
+  .lp .blog-all__icon { position: absolute; inset-inline-start: 12px; inset-block-start: 13px; pointer-events: none; }
+  @media (min-width: 640px) {
+    .lp .blog-all__head { grid-template-columns: minmax(0, 1fr) minmax(0, 320px); align-items: center; column-gap: 32px; }
+  }
+
+  .lp .blog-grid { display: grid; gap: 20px; }
+  @media (min-width: 640px) { .lp .blog-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (min-width: 1024px) { .lp .blog-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; } }
+
+  /* Glass comes from .glass-panel; radius and padding only here. The painting sits inset, with a matching inner radius. */
+  .lp .blog-card { position: relative; display: flex; flex-direction: column; padding: 8px; border-radius: var(--r-media); }
+  .lp .blog-card__art { position: relative; overflow: hidden; aspect-ratio: 3 / 2; border-radius: 16px; background: var(--sunk); }
+  .lp .blog-card__body { display: flex; flex: 1; flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 12px 12px; }
+  .lp .blog-card__title { text-wrap: pretty; }
+  .lp .blog-card__body > .blog-meta { margin-block-start: auto; padding-block-start: 6px; }
+  .lp .blog-card--compact .lp-h4 { font-size: 18px; line-height: 1.3; }
+
+  .lp .blog-news { margin-block-start: var(--gap-intro); }
+  /* The reveal sits on the card itself, not a wrapper: no backdrop-filter under a moving ancestor (2.4). Same rise as .lp-reveal. */
+  @supports (animation-timeline: view()) {
+    html[data-motion="full"] .lp .blog-news .nl--card {
+      animation: lp-reveal linear both; animation-timeline: view(); animation-range: entry 0% entry 60%;
+    }
+  }
+
+  /* ===== Post: centred head ===== */
+  .lp .post { timeline-scope: --post-read; }
+  .lp .post__head {
+    --t-page: 34px;
+    display: grid; justify-items: center; gap: 16px; text-align: center;
+    padding-block: calc(var(--nav-h) + 16px) 40px;
+  }
+  .lp .post__head .bc { justify-self: center; }
+  .lp .post__head .bc-list { justify-content: center; }
+  .lp .post__title {
+    max-inline-size: 22ch; font: 400 var(--t-page) / 1.08 var(--font-head); letter-spacing: -0.03em; color: var(--ink); text-wrap: balance;
+  }
+  .lp .post__title:focus { outline: none; }
+  .lp .post__meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 12px; }
+  @media (min-width: 390px) { .lp .post__head { --t-page: 38px; } }
+  @media (min-width: 768px) { .lp .post__head { --t-page: 48px; padding-block: calc(var(--nav-h) + 32px) 56px; } }
+  @media (min-width: 1024px) { .lp .post__head { --t-page: 56px; gap: 20px; } }
+  @media (min-width: 1280px) { .lp .post__head { --t-page: 64px; padding-block: calc(var(--nav-h) + 40px) 72px; } }
+
+  /* ===== Post: columns. One column, then article plus sidebar from 900, then three from 1200, hairlines between. ===== */
+  .lp .post__grid { display: grid; }
+  .lp .post__main, .lp .post__side { min-inline-size: 0; }
+  .lp .post__about { display: none; }
+  .lp .post__side { margin-block-start: 56px; padding-block-start: 40px; border-block-start: 1px solid var(--border); }
+  @media (min-width: 900px) {
+    .lp .post__grid { --post-gap: 32px; grid-template-columns: minmax(0, 1fr) clamp(264px, 28vw, 304px); }
+    .lp .post__main { padding-inline-end: var(--post-gap); }
+    .lp .post__side { margin-block-start: 0; padding-block-start: 0; padding-inline-start: var(--post-gap); border-block-start: 0; border-inline-start: 1px solid var(--border); }
+  }
+  @media (min-width: 1200px) {
+    .lp .post__grid { grid-template-columns: clamp(164px, 15vw, 216px) minmax(0, 1fr) clamp(256px, 21vw, 304px); }
+    .lp .post__main { padding-inline-start: var(--post-gap); }
+    .lp .post__about { display: block; padding-inline-end: var(--post-gap); border-inline-end: 1px solid var(--border); }
+  }
+  @media (min-width: 1440px) { .lp .post__grid { --post-gap: 40px; } }
+
+  .lp .post__about-inner { position: sticky; inset-block-start: calc(var(--nav-h) + 24px); display: grid; justify-items: start; gap: 16px; }
+  .lp .post__side-h { font: 500 15px / 1.3 var(--font-ui); color: var(--ink); }
+  .lp .post__about-art { position: relative; overflow: hidden; inline-size: 100%; aspect-ratio: 1; border-radius: 16px; background: var(--sunk); }
+
+  .lp .post__hero { position: relative; overflow: hidden; aspect-ratio: 3 / 2; border-radius: var(--r-media); background: var(--sunk); }
+
+  /* The signature: the one scrubbed line in the set, written by scrolling through the article. No script. Hidden without
+     support, under reduced motion and scripts off (only html[data-motion="full"] turns it on), and in print. */
+  .lp .post__progress {
+    display: none; position: fixed; inset-inline: 0; inset-block-start: var(--nav-h); z-index: 39;
+    block-size: 2px; pointer-events: none; background: var(--ink);
+  }
+  .lp .post .prose { view-timeline-name: --post-read; }
+  @supports (animation-timeline: view()) {
+    @media screen {
+      html[data-motion="full"] .lp .post__progress {
+        display: block;
+        animation: lp-sign linear both; animation-timeline: --post-read; animation-range: contain 0% contain 100%;
+      }
+    }
+  }
+
+  /* ===== Post: the article ===== */
+  .lp .prose { margin-block-start: 32px; font: 400 17px / 1.6 var(--font-ui); color: var(--body); }
+  @media (min-width: 1024px) { .lp .prose { font-size: 18px; } }
+  .lp .prose > * + * { margin-block-start: 1.25em; }
+  .lp .prose h2 {
+    font: 400 var(--t-h3) / 1.2 var(--font-head); letter-spacing: -0.025em; color: var(--ink); text-wrap: balance;
+    margin-block-start: 2em;
+  }
+  .lp .prose > h2:first-child { margin-block-start: 0; }
+  /* The lead: the first paragraph, one step up and in Ink. */
+  .lp .prose > p:first-of-type { font-size: 19px; line-height: 1.5; color: var(--ink); }
+  @media (min-width: 1024px) { .lp .prose > p:first-of-type { font-size: 21px; } }
+  .lp .prose ul { padding-inline-start: 1.4em; list-style: disc; }
+  .lp .prose li + li { margin-block-start: 0.5em; }
+  .lp .prose > .post__pull {
+    margin-block: 2em; padding-inline-start: 20px; border-inline-start: 2px solid var(--ink);
+    font: 400 26px / 1.3 var(--font-head); letter-spacing: -0.022em; color: var(--ink); text-wrap: pretty;
+  }
+
+  /* ===== Post: after the article ===== */
+  .lp .post-share { display: flex; flex-wrap: wrap; align-items: center; gap: 0 20px; margin-block-start: 40px; }
+  .lp .post-share__label { inline-size: 100%; font: 500 15px / 1.3 var(--font-ui); color: var(--ink); }
+  @media (min-width: 480px) { .lp .post-share__label { inline-size: auto; } }
+  .lp .post-share__item {
+    display: inline-flex; align-items: center; gap: 6px; min-block-size: 44px; color: var(--ink); cursor: pointer;
+    font: 400 15px / 1.25 var(--font-ui); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
+  }
+  @media (hover: hover) and (pointer: fine) { .lp .post-share__item:hover { text-decoration-thickness: 2px; } }
+  .lp .post-share__item:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 4px; }
+  .lp .post-share__note { inline-size: 100%; }
+
+  .lp .post-author {
+    position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: center;
+    margin-block-start: 24px; padding-block: 24px; border-block: 1px solid var(--border);
+  }
+  .lp .post-author__mark { display: grid; place-items: center; inline-size: 64px; block-size: 64px; border-radius: 50%; background: var(--surface); box-shadow: var(--edge); }
+  .lp .post-author__title { margin-block-end: 2px; font: 500 17px / 1.3 var(--font-ui); color: var(--ink); }
+
+  .lp .post-related { margin-block-start: 40px; }
+  .lp .post-related__grid { display: grid; gap: 16px; margin-block-start: 16px; }
+  @media (min-width: 480px) { .lp .post-related__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 }
-@media (min-width: 768px) { .lp .blog-featured { padding: 40px 40px 44px; } }
-.lp .blog-featured__title { max-inline-size: 20ch; }
-
-.lp .blog-rows { padding-inline: 20px; border-radius: var(--r-media); }
-@media (min-width: 768px) { .lp .blog-rows { padding-inline: 40px; } }
-.lp .blog-row {
-  position: relative; display: grid; gap: 8px; min-block-size: 44px;
-  padding-block: 28px; border-block-start: 1px solid var(--border);
-  transition: background-color 300ms var(--ease-out);
-}
-.lp .blog-row:first-child { border-block-start: 0; }
-.lp .blog-row__summary { margin-block-start: 8px; max-inline-size: 60ch; }
-@media (min-width: 768px) {
-  .lp .blog-row { grid-template-columns: 200px 1fr; gap: 32px; }
-  .lp .blog-row > .blog-meta { padding-block-start: 4px; }
-}
-
-/* Post page */
-.lp .post { padding-block: calc(var(--nav-h) + 40px) var(--gap-section); }
-.lp .post__back { display: inline-flex; align-items: center; min-block-size: 44px; font: 500 15px / 1.2 var(--font-ui); }
-/* The reading sheet: --c-copy wide, padding keeps the prose at its 36rem measure (about 70 characters of Urbanist). */
-.lp .post__sheet { margin-block-start: 16px; padding: 28px 20px 32px; border-radius: var(--r-media); }
-@media (min-width: 768px) { .lp .post__sheet { padding: 48px 48px 40px; } }
-.lp .post__head { display: grid; gap: 16px; margin-block-end: 40px; }
-.lp .post__title {
-  font: 400 var(--t-h2) / 1.1 var(--font-head); letter-spacing: -0.025em; color: var(--ink); text-wrap: balance;
-}
-.lp .post__title:focus { outline: none; }
-@media (min-width: 1024px) { .lp .post__title { font-size: 48px; } }
-
-.lp .prose { max-inline-size: 36rem; font: 400 17px / 1.6 var(--font-ui); color: var(--body); }
-@media (min-width: 1024px) { .lp .prose { font-size: 18px; } }
-.lp .prose > * + * { margin-block-start: 1.25em; }
-.lp .prose :is(h2, h3) { font-family: var(--font-head); font-weight: 400; letter-spacing: -0.025em; line-height: 1.2; margin-block-start: 2em; color: var(--ink); }
-.lp .prose h2 { font-size: var(--t-h3); }
-.lp .prose h3 { font-size: var(--t-h4); }
-.lp .prose a { color: var(--ink); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
-.lp .prose a:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 2px; }
-.lp .prose :is(ul, ol) { padding-inline-start: 1.4em; }
-.lp .prose ul { list-style: disc; }
-.lp .prose ol { list-style: decimal; }
-.lp .prose li + li { margin-block-start: 0.5em; }
-.lp .prose blockquote { padding-inline-start: 20px; border-inline-start: 2px solid var(--ink); color: var(--ink); }
-.lp .prose :is(code, pre) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; background: var(--sunk); border-radius: 6px; }
-.lp .prose code { padding: 0.1em 0.35em; }
-.lp .prose pre { padding: 16px; overflow-x: auto; }
-.lp .prose pre code { padding: 0; background: none; }
-
-.lp .post__nav {
-  display: grid; gap: 12px; margin-block-start: 64px; padding-block-start: 24px; border-block-start: 1px solid var(--border);
-}
-@media (min-width: 640px) { .lp .post__nav { grid-template-columns: 1fr 1fr; gap: 32px; } }
-.lp .post__nav a {
-  display: grid; gap: 4px; min-block-size: 44px; padding-block: 8px; color: var(--ink); text-decoration: none;
-}
-.lp .post__nav a:hover .post__nav-title { text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; }
-.lp .post__nav a:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 4px; }
-.lp .post__nav-next { text-align: start; }
-@media (min-width: 640px) { .lp .post__nav-next { text-align: end; grid-column: 2; } }
-.lp .post__nav-title { font: 500 17px / 1.35 var(--font-ui); }

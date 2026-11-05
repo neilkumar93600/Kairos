@@ -71,7 +71,7 @@ export const metricsMinute = pgTable(
  * 02-database 7.6.5 (WP-26): the 24-hour memo of claim-verifier verdicts. No text and no user id: claim_hash is an
  * HMAC under USER_HASH_KEY of the claim, its cited fact ids and texts, the target and the verifier version
  * (services/verify.ts), so a guessed claim cannot be tested against it. 'uncertain' is never cached. Unlogged (a crash
- * empties it, which only costs re-verification); migration 0018 sets that by hand.
+ * empties it, which only costs re-verification); migration 0019 sets that by hand.
  */
 export const verifiedClaims = pgTable(
   "verified_claims",

@@ -1,6 +1,6 @@
 {
-  "id": "ee95ed1e-0dd7-46eb-99af-7b5c1a4f3cf5",
-  "prevId": "29e778f6-aac1-4527-a23d-f35295bc191c",
+  "id": "29e778f6-aac1-4527-a23d-f35295bc191c",
+  "prevId": "941368aa-bede-4a6e-9c69-6199bf919f3f",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4352,7 +4352,7 @@
       "checkConstraints": {
         "email_sends_kind_ck": {
           "name": "email_sends_kind_ck",
-          "value": "\"email_sends\".\"kind\" IN ('digest','autopilot_hourly','autopilot_paused','resend_available','offer_pause_notice','offer_pause_applied','forwarding_code','outcome_report','return_to_draft','contact_message')"
+          "value": "\"email_sends\".\"kind\" IN ('digest','autopilot_hourly','autopilot_paused','resend_available','offer_pause_notice','offer_pause_applied','forwarding_code','outcome_report','return_to_draft','contact_message','newsletter_confirm')"
         },
         "email_sends_status_ck": {
           "name": "email_sends_status_ck",
@@ -4376,7 +4376,7 @@
         },
         "email_sends_user_ck": {
           "name": "email_sends_user_ck",
-          "value": "\"email_sends\".\"user_id\" IS NOT NULL OR \"email_sends\".\"kind\" = 'contact_message'"
+          "value": "\"email_sends\".\"user_id\" IS NOT NULL OR \"email_sends\".\"kind\" IN ('contact_message','newsletter_confirm')"
         }
       },
       "isRLSEnabled": false
@@ -4418,105 +4418,6 @@
         "email_suppressions_reason_ck": {
           "name": "email_suppressions_reason_ck",
           "value": "\"email_suppressions\".\"reason\" IN ('hard_bounce','spam_complaint','manual')"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.forwarding_verifications": {
-      "name": "forwarding_verifications",
-      "schema": "",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "provider": {
-          "name": "provider",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "code": {
-          "name": "code",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "confirm_url": {
-          "name": "confirm_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "received_at": {
-          "name": "received_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "acknowledged_at": {
-          "name": "acknowledged_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "forwarding_verifications_user_id_user_id_fk": {
-          "name": "forwarding_verifications_user_id_user_id_fk",
-          "tableFrom": "forwarding_verifications",
-          "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "forwarding_verifications_user_id_provider_pk": {
-          "name": "forwarding_verifications_user_id_provider_pk",
-          "columns": [
-            "user_id",
-            "provider"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "forwarding_verifications_provider_ck": {
-          "name": "forwarding_verifications_provider_ck",
-          "value": "provider IN ('gmail')"
-        },
-        "forwarding_verifications_payload_ck": {
-          "name": "forwarding_verifications_payload_ck",
-          "value": "code IS NOT NULL OR confirm_url IS NOT NULL"
-        },
-        "forwarding_verifications_code_ck": {
-          "name": "forwarding_verifications_code_ck",
-          "value": "code IS NULL OR code ~ '^[0-9]{6,12}$'"
-        },
-        "forwarding_verifications_url_ck": {
-          "name": "forwarding_verifications_url_ck",
-          "value": "confirm_url IS NULL OR (confirm_url ~ '^https://' AND char_length(confirm_url) <= 2048)"
-        },
-        "forwarding_verifications_expiry_ck": {
-          "name": "forwarding_verifications_expiry_ck",
-          "value": "expires_at > received_at"
         }
       },
       "isRLSEnabled": false
@@ -4566,76 +4467,12 @@
           "name": "text_body",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
-        },
-        "text_body_enc": {
-          "name": "text_body_enc",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "preview_enc": {
-          "name": "preview_enc",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "attachments": {
-          "name": "attachments",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "spam_score": {
-          "name": "spam_score",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "hidden_reason": {
-          "name": "hidden_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "verified_domains": {
-          "name": "verified_domains",
-          "type": "text[]",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::text[]"
+          "notNull": true
         },
         "kind": {
           "name": "kind",
           "type": "email_kind",
           "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "rule_kind": {
-          "name": "rule_kind",
-          "type": "email_kind",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "model_kind": {
-          "name": "model_kind",
-          "type": "email_kind",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "linked_by": {
-          "name": "linked_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "classified_at": {
-          "name": "classified_at",
-          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -4690,54 +4527,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "inbound_emails_unclassified_idx": {
-          "name": "inbound_emails_unclassified_idx",
-          "columns": [
-            {
-              "expression": "received_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"inbound_emails\".\"classified_at\" IS NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "inbound_emails_body_purge_idx": {
-          "name": "inbound_emails_body_purge_idx",
-          "columns": [
-            {
-              "expression": "received_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"inbound_emails\".\"text_body_enc\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "inbound_emails_hidden_idx": {
-          "name": "inbound_emails_hidden_idx",
-          "columns": [
-            {
-              "expression": "received_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"inbound_emails\".\"hidden_reason\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -4779,44 +4568,7 @@
         }
       },
       "policies": {},
-      "checkConstraints": {
-        "inbound_emails_hidden_reason_ck": {
-          "name": "inbound_emails_hidden_reason_ck",
-          "value": "hidden_reason IS NULL OR hidden_reason IN ('forwarding_confirmation','spam')"
-        },
-        "inbound_emails_linked_by_ck": {
-          "name": "inbound_emails_linked_by_ck",
-          "value": "linked_by IS NULL OR linked_by IN ('domain','company_name','none')"
-        },
-        "inbound_emails_one_classifier_ck": {
-          "name": "inbound_emails_one_classifier_ck",
-          "value": "rule_kind IS NULL OR model_kind IS NULL"
-        },
-        "inbound_emails_attachments_ck": {
-          "name": "inbound_emails_attachments_ck",
-          "value": "jsonb_typeof(attachments) = 'array' AND jsonb_array_length(attachments) <= 50"
-        },
-        "inbound_emails_body_preview_pair_ck": {
-          "name": "inbound_emails_body_preview_pair_ck",
-          "value": "(text_body_enc IS NULL) = (preview_enc IS NULL)"
-        },
-        "inbound_emails_body_size_ck": {
-          "name": "inbound_emails_body_size_ck",
-          "value": "octet_length(text_body_enc) <= 16448"
-        },
-        "inbound_emails_preview_size_ck": {
-          "name": "inbound_emails_preview_size_ck",
-          "value": "octet_length(preview_enc) <= 1200"
-        },
-        "inbound_emails_hidden_no_body_ck": {
-          "name": "inbound_emails_hidden_no_body_ck",
-          "value": "hidden_reason IS NULL OR (text_body IS NULL AND text_body_enc IS NULL AND preview_enc IS NULL)"
-        },
-        "inbound_emails_verified_domains_ck": {
-          "name": "inbound_emails_verified_domains_ck",
-          "value": "cardinality(verified_domains) <= 2"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.notifications": {
@@ -6565,6 +6317,221 @@
         "tracker_items_snapshot_ck": {
           "name": "tracker_items_snapshot_ck",
           "value": "job_snapshot IS NULL OR (jsonb_typeof(job_snapshot) = 'object' AND octet_length(job_snapshot::text) <= 65536)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.newsletter_subscribers": {
+      "name": "newsletter_subscribers",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email_hash": {
+          "name": "email_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "confirm_seq": {
+          "name": "confirm_seq",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "confirm_requested_at": {
+          "name": "confirm_requested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "confirm_token_hash": {
+          "name": "confirm_token_hash",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirm_expires_at": {
+          "name": "confirm_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "unsubscribe_token_hash": {
+          "name": "unsubscribe_token_hash",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "unsubscribed_at": {
+          "name": "unsubscribed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "newsletter_subscribers_email_uq": {
+          "name": "newsletter_subscribers_email_uq",
+          "columns": [
+            {
+              "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "newsletter_subscribers_confirm_uq": {
+          "name": "newsletter_subscribers_confirm_uq",
+          "columns": [
+            {
+              "expression": "confirm_token_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"newsletter_subscribers\".\"confirm_token_hash\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "newsletter_subscribers_unsubscribe_uq": {
+          "name": "newsletter_subscribers_unsubscribe_uq",
+          "columns": [
+            {
+              "expression": "unsubscribe_token_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"newsletter_subscribers\".\"unsubscribe_token_hash\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "newsletter_subscribers_email_hash_idx": {
+          "name": "newsletter_subscribers_email_hash_idx",
+          "columns": [
+            {
+              "expression": "email_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"newsletter_subscribers\".\"email_hash\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "newsletter_subscribers_inactive_idx": {
+          "name": "newsletter_subscribers_inactive_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "confirm_requested_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"newsletter_subscribers\".\"status\" <> 'confirmed'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "newsletter_subscribers_email_ck": {
+          "name": "newsletter_subscribers_email_ck",
+          "value": "\"newsletter_subscribers\".\"email\" = lower(btrim(\"newsletter_subscribers\".\"email\")) AND char_length(\"newsletter_subscribers\".\"email\") BETWEEN 3 AND 254 AND position('@' in \"newsletter_subscribers\".\"email\") > 1"
+        },
+        "newsletter_subscribers_email_hash_ck": {
+          "name": "newsletter_subscribers_email_hash_ck",
+          "value": "\"newsletter_subscribers\".\"email_hash\" ~ '^[0-9a-f]{64}$'"
+        },
+        "newsletter_subscribers_source_ck": {
+          "name": "newsletter_subscribers_source_ck",
+          "value": "\"newsletter_subscribers\".\"source\" IN ('popup','blog-index','blog-post','about')"
+        },
+        "newsletter_subscribers_status_ck": {
+          "name": "newsletter_subscribers_status_ck",
+          "value": "\"newsletter_subscribers\".\"status\" IN ('pending','confirmed','unsubscribed')"
+        },
+        "newsletter_subscribers_seq_ck": {
+          "name": "newsletter_subscribers_seq_ck",
+          "value": "\"newsletter_subscribers\".\"confirm_seq\" >= 1"
+        },
+        "newsletter_subscribers_hash_ck": {
+          "name": "newsletter_subscribers_hash_ck",
+          "value": "(\"newsletter_subscribers\".\"confirm_token_hash\" IS NULL OR octet_length(\"newsletter_subscribers\".\"confirm_token_hash\") = 32) AND (\"newsletter_subscribers\".\"unsubscribe_token_hash\" IS NULL OR octet_length(\"newsletter_subscribers\".\"unsubscribe_token_hash\") = 32)"
+        },
+        "newsletter_subscribers_confirm_ck": {
+          "name": "newsletter_subscribers_confirm_ck",
+          "value": "(\"newsletter_subscribers\".\"confirm_token_hash\" IS NULL) = (\"newsletter_subscribers\".\"confirm_expires_at\" IS NULL) AND (\"newsletter_subscribers\".\"confirm_token_hash\" IS NULL OR \"newsletter_subscribers\".\"status\" = 'pending')"
+        },
+        "newsletter_subscribers_state_ck": {
+          "name": "newsletter_subscribers_state_ck",
+          "value": "(\"newsletter_subscribers\".\"status\" <> 'pending' OR (\"newsletter_subscribers\".\"confirmed_at\" IS NULL AND \"newsletter_subscribers\".\"unsubscribed_at\" IS NULL)) AND (\"newsletter_subscribers\".\"status\" <> 'confirmed' OR (\"newsletter_subscribers\".\"confirmed_at\" IS NOT NULL AND \"newsletter_subscribers\".\"unsubscribed_at\" IS NULL)) AND (\"newsletter_subscribers\".\"status\" <> 'unsubscribed' OR \"newsletter_subscribers\".\"unsubscribed_at\" IS NOT NULL)"
         }
       },
       "isRLSEnabled": false

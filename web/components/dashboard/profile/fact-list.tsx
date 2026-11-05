@@ -6,7 +6,7 @@ import { FACT_KINDS, type FactKind } from "@auto-career/shared";
 import { useFacts, useProfileActions, type Fact } from "@/hooks/use-profile";
 import { ApiError } from "@/lib/api";
 import { Button } from "../../shared/button";
-import { EmptyState } from "../../shared/empty-state";
+import { EmptyEm, EmptyState } from "../../shared/empty-state";
 import { ErrorNote } from "../../shared/error-note";
 import { Field, Select, Textarea } from "../../shared/field";
 import { Panel } from "../../shared/panel";
@@ -172,7 +172,7 @@ export function FactList({ emptyAction }: { emptyAction?: ReactNode }) {
             <EmptyState
               flat
               icon={ListChecks}
-              title="No facts yet"
+              title={<>No <EmptyEm>facts</EmptyEm> yet</>}
               body="Paste your resume and Kairos reads it into short facts for you to check. You can also type a fact yourself."
               action={
                 <>

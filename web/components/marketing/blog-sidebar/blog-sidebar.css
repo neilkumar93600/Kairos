@@ -1,0 +1,37 @@
+/* Blog sidebar (spec D15). Prefixed bs-, scoped under .lp. No surface: 14 px text in Deep Ash stays 5:1 on the bare haze. */
+@layer theme, base, components, utilities;
+
+@layer components {
+  .lp .bs-block + .bs-block { margin-block-start: 24px; padding-block-start: 24px; border-block-start: 1px solid var(--border); }
+  .lp .bs-h { margin-block-end: 12px; font: 500 15px / 1.3 var(--font-ui); color: var(--ink); }
+  .lp .bs-lead { margin-block: -8px 12px; }
+  .lp .bs-note { font: 400 15px / 1.4 var(--font-ui); color: var(--body); }
+
+  /* The rail: 1 px Charcoal, 5 px in from the block's edge, pin to pin. A pin sits on its title's first line. */
+  .lp .bs-list { --bs-indent: 24px; --bs-gap: 12px; --bs-line: 20px; display: grid; gap: var(--bs-gap); padding-inline-start: var(--bs-indent); }
+  .lp .bs-row { position: relative; min-block-size: 44px; }
+  .lp .bs-row:not(:last-child)::before {
+    content: ""; position: absolute; inset-inline-start: calc(5px - var(--bs-indent)); inline-size: 1px;
+    inset-block: calc(var(--bs-line) / 2) calc(-1 * (var(--bs-gap) + var(--bs-line) / 2)); background: var(--icon);
+  }
+  .lp .bs-pin { position: absolute; inset-inline-start: calc(0.5px - var(--bs-indent)); inset-block-start: calc(var(--bs-line) / 2 - 5px); }
+  .lp .bs-link {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+    font: 500 16px / var(--bs-line) var(--font-ui); color: var(--ink);
+  }
+  .lp .bs-link::after { content: ""; position: absolute; inset: 0; }  /* the whole row is the target */
+  @media (hover: hover) and (pointer: fine) {
+    .lp .bs-row:hover .bs-link { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+  }
+
+  /* The dark band follows directly on narrow screens, so this block would be a second ask in a row. */
+  @media (max-width: 899.98px) { .lp .bs-block--cta { display: none; } }
+  /* One column, tablet: the two remaining blocks side by side, with a gutter in place of the rule. */
+  @media (min-width: 640px) and (max-width: 899.98px) {
+    .lp .bs { display: grid; grid-template-columns: 1fr 1fr; column-gap: 40px; }
+    .lp .bs-block + .bs-block { margin-block-start: 0; padding-block-start: 0; border-block-start: 0; }
+  }
+  @media (min-width: 900px) and (min-height: 820px) {
+    .lp .bs { position: sticky; inset-block-start: calc(var(--nav-h) + 24px); }
+  }
+}

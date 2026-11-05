@@ -1,39 +1,51 @@
 import type { Metadata } from "next";
-import { FeaturedPost, PostRow } from "@/components/blog/post-card";
+import { PostArchive } from "@/components/blog/post-archive";
+import { CoverPost, LatestRow } from "@/components/blog/post-card";
 import { Entry10Start } from "@/components/landing/entries/entry-10-start";
-import { PageHero } from "@/components/marketing/page-hero";
-import { posts } from "@/lib/blog";
+import { Breadcrumbs } from "@/components/marketing/breadcrumbs/breadcrumbs";
+import { NewsletterForm } from "@/components/marketing/newsletter/newsletter-form";
+import { marketingCopy } from "@/content/marketing-copy";
+import { postSummaries } from "@/lib/blog";
+
+const { blog: copy, breadcrumbs } = marketingCopy;
 
 export const metadata: Metadata = {
-  title: "Blog",
-  description: "How Kairos works, and what we learn about applying to jobs well.",
+  title: copy.meta.title,
+  description: copy.meta.description,
   alternates: { canonical: "/blog" },
 };
 
-// Newest first; ties keep the order in lib/blog.ts.
-const sorted = [...posts].sort((a, b) => b.date.localeCompare(a.date));
-
 export default function BlogPage() {
-  const [latest, ...rest] = sorted;
+  const [cover, ...rest] = postSummaries;
   return (
-    <>
-      <PageHero
-        titleId="blog-title"
-        title="Notes on applying well"
-        lead="How Kairos decides, drafts and sends, written plainly."
-        art={{ src: "/landing/art/step-2-truth-lock.png", alt: "A writing desk by a window, a single sheet laid out on it." }}
-      />
-      <section aria-label="All posts" className="lp-wrap lp-wrap--main blog-list">
-        {latest ? <FeaturedPost post={latest} /> : null}
-        {rest.length ? (
-          <div className="blog-rows glass-panel">
-            {rest.map((p) => (
-              <PostRow key={p.slug} post={p} />
+    <div className="blog-page">
+      <header className="lp-wrap lp-wrap--main blog-head">
+        <Breadcrumbs items={[{ label: breadcrumbs.home, href: "/" }, { label: copy.meta.title }]} />
+        <div className="blog-head__row">
+          <h1 className="blog-head__title" tabIndex={-1}>
+            {copy.hero.title}
+          </h1>
+          <p className="lp-lead blog-head__lead">{copy.hero.lead}</p>
+        </div>
+      </header>
+      <div className="lp-wrap lp-wrap--main blog-top">
+        <CoverPost post={cover} />
+        <section aria-labelledby="blog-latest" className="blog-latest">
+          <h2 id="blog-latest" className="lp-h3">
+            {copy.latest}
+          </h2>
+          <ul className="blog-latest__list">
+            {rest.slice(0, 4).map((post) => (
+              <LatestRow key={post.slug} post={post} />
             ))}
-          </div>
-        ) : null}
-      </section>
+          </ul>
+        </section>
+      </div>
+      <PostArchive posts={postSummaries} />
+      <div className="lp-wrap lp-wrap--main blog-news">
+        <NewsletterForm variant="card" source="blog-index" />
+      </div>
       <Entry10Start />
-    </>
+    </div>
   );
 }

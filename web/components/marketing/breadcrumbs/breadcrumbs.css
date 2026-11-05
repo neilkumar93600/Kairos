@@ -1,0 +1,21 @@
+/* Breadcrumbs (design direction 3.2). Prefixed bc-, scoped under .lp. 15 px, so it may sit directly on the haze. */
+@layer theme, base, components, utilities;
+
+@layer components {
+  .lp .bc { min-inline-size: 0; max-inline-size: 100%; }
+  .lp .bc-list { min-block-size: 44px; min-inline-size: 0; font-family: var(--font-ui); }
+  .lp .bc-link {
+    display: inline-flex; align-items: center; min-block-size: 44px;
+    font-weight: 400; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .lp .bc-link:hover { color: var(--ink); text-decoration-thickness: 2px; }
+  }
+  .lp .bc-item--current { min-inline-size: 0; }
+  .lp .bc-current { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--ink); }
+  /* The valley's footpath and the ATS route's connector: the trail you walked to get here. */
+  .lp .bc-sep {
+    flex: none; inline-size: 16px; block-size: 1px;
+    background: repeating-linear-gradient(90deg, var(--rule) 0 3px, transparent 3px 6px);
+  }
+}

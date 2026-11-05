@@ -1,0 +1,22 @@
+/* /contact pieces company.css does not cover (design direction 4.4). Prefixed ct-, scoped under .lp. company.css stays untouched. */
+@layer theme, base, components, utilities;
+
+@layer components {
+  /* The resting card (2.8): the form frosts the lower edge of the post-box painting. */
+  .lp .ct-rest {
+    --rest: 48px;
+    margin-block-start: calc(-1 * var(--rest));
+    padding-block-start: 0;
+  }
+  @media (min-width: 768px) { .lp .ct-rest { --rest: 72px; } }
+  @media (min-width: 1024px) { .lp .ct-rest { --rest: 88px; } }
+  @media (min-width: 1280px) { .lp .ct-rest { --rest: 96px; } }
+
+  .lp .ct-self { display: inline-flex; align-items: center; min-block-size: 44px; font: 500 15px / 1.25 var(--font-ui); }
+  .lp .ct-stack { display: grid; }
+  .lp .ct-stack > * { grid-area: 1 / 1; min-inline-size: 0; }
+  .lp .ct-stack > form[inert] { visibility: hidden; }
+  .lp .ct-sent { align-self: start; }
+  .lp .ct-sent:focus { outline: none; }
+  html[data-motion="full"] .lp .co-sent__title { animation: lp-sign var(--dur-sign) var(--ease-out) both; }
+}
