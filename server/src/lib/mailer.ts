@@ -21,6 +21,8 @@ export interface Email {
   stream?: Stream;
   /** Postmark Metadata; `k` is the notify ledger key that findSent searches for. Ids and codes only. */
   metadata?: Record<string, string>;
+  /** Where a reply goes (the contact form's alert: the sender). */
+  replyTo?: string;
   /** Extra headers, e.g. List-Unsubscribe on broadcast mail (WP-35). */
   headers?: { Name: string; Value: string }[];
 }
@@ -66,6 +68,7 @@ export async function sendEmail(email: Email): Promise<{ messageId: string | nul
     TextBody: email.text,
     HtmlBody: email.html,
     Tag: email.tag,
+    ReplyTo: email.replyTo,
     MessageStream: streamId(stream),
     TrackOpens: false,
     TrackLinks: Models.LinkTrackingOptions.None,

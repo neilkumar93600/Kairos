@@ -141,6 +141,19 @@ const envSchema = z.object({
   ALERT_EMAIL_TO: z.preprocess(emptyToUndefined, z.string().email().optional()),
   /** Where the public contact form's messages are sent. */
   CONTACT_ALERT_TO: z.string().email().default("hello@kairos.app"),
+  // Unsubscribe, digests and consent (WP-35, owner-actions/WP-35.md).
+  /**
+   * What a new account starts with for the four optional mail kinds (digest, outcome_report, autopilot_summary,
+   * reminders). `opt_out` (the safe default): none until the person turns it on in Settings, which records their
+   * consent. `opt_in`: all on, and each is recorded as consent at sign-up: only after counsel confirms the sign-up form's wording.
+   */
+  MAIL_CONSENT_DEFAULT: z.enum(["opt_out", "opt_in"]).default("opt_out"),
+  /**
+   * The sender's postal address, which CAN-SPAM requires in the footer of every broadcast email. Unset: no digest,
+   * report or summary is sent in production (the digest tick holds back and the send path refuses); in development a
+   * placeholder is printed.
+   */
+  MAIL_POSTAL_ADDRESS: z.preprocess(emptyToUndefined, z.string().min(10).max(300).optional()),
   /**
    * The public api origin for emailed links and the signed-link forms (05-api 5.1); not BETTER_AUTH_URL, which is the
    * web origin. ponytail: optional until the first signed link is mailed (WP-29, WP-35); issuing one fails without it.

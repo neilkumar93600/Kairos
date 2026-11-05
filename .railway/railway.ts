@@ -42,6 +42,8 @@ const SERVER = [
   "USER_HASH_KEY", "DATA_KEKS", "SENTRY_DSN", "OWNER_USER_IDS", "R2_ENDPOINT", "ADMIN_USER_IDS",
   // Outbound mail and signed links (WP-44): the worker mints links and sends; the api verifies them.
   "LINK_SIGNING_KEY", "API_PUBLIC_ORIGIN", "POSTMARK_BROADCAST_TOKEN", "POSTMARK_BROADCAST_STREAM", "ALERT_EMAIL_TO", "CONTACT_ALERT_TO",
+  // Unsubscribe, digests and consent (WP-35).
+  "MAIL_CONSENT_DEFAULT", "MAIL_POSTAL_ADDRESS",
 ];
 const WATCH = ["server/**", "shared/**", "package-lock.json"];
 

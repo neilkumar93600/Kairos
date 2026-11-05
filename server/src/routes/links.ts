@@ -1,6 +1,7 @@
 import express, { Router, type Request, type Response } from "express";
 import { db } from "../db/client";
 import { env } from "../lib/env";
+import { escapeHtml } from "../lib/html";
 import { logger } from "../lib/logger";
 import { consumeActionToken, peekActionToken, verifyLink, type LinkTarget, type StoredPurpose } from "../lib/action-tokens";
 
@@ -27,6 +28,8 @@ export interface LinkAction {
    * resend an application or undo an offer pause; those need the form's own field.
    */
   oneClick?: true;
+  /** The 410 page for this action, when the generic "expired" one would mislead (unsubscribe: "already used" mostly means done). */
+  gone?: LinkPage;
   show(target: LinkTarget, req: Request): Promise<LinkPage | null>;
   act(tx: Tx, target: LinkTarget, req: Request): Promise<LinkPage | null>;
 }
@@ -40,8 +43,7 @@ const PAGE_HEADERS = {
   "content-type": "text/html; charset=utf-8",
 };
 
-const ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
-export const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ESCAPES[c]!);
+export { escapeHtml };
 
 const EXPIRED: LinkPage = { title: "This link has expired", body: "It was already used, or it is too old. Open Kairos to continue." };
 
@@ -82,22 +84,23 @@ const REFUSED = new Error("signed link refused");
  */
 export function signedLinkRouter(action: LinkAction): Router {
   const router = Router({ mergeParams: true });
+  const gone = action.gone ?? EXPIRED;
 
   router.get("/", async (req, res) => {
     const token = tokenOf(req.query.t);
-    if (keyMissing()) return render(res, 410, EXPIRED);
+    if (keyMissing()) return render(res, 410, gone);
     const target = await peekActionToken(db(), token, action.purpose);
     const page = target && (await action.show(target, req));
-    if (!page) return render(res, 410, EXPIRED);
+    if (!page) return render(res, 410, gone);
     render(res, 200, page, token);
   });
 
   // The form posts `t` as a field; only a one-click action also reads it from the query string.
   router.post("/", express.urlencoded({ extended: false, limit: "2kb", parameterLimit: 10 }), async (req, res) => {
     const token = tokenOf(req.body?.t) || (action.oneClick ? tokenOf(req.query.t) : "");
-    if (keyMissing()) return render(res, 410, EXPIRED);
+    if (keyMissing()) return render(res, 410, gone);
     // A forged token never opens a transaction or touches the database.
-    if (!verifyLink(token, action.purpose)) return render(res, 410, EXPIRED);
+    if (!verifyLink(token, action.purpose)) return render(res, 410, gone);
     const page = await db()
       .transaction(async (tx) => {
         const target = await consumeActionToken(tx, token, action.purpose);
@@ -110,7 +113,7 @@ export function signedLinkRouter(action: LinkAction): Router {
         if (err === REFUSED) return null;
         throw err;
       });
-    render(res, page ? 200 : 410, page ?? EXPIRED);
+    render(res, page ? 200 : 410, page ?? gone);
   });
 
   return router;
