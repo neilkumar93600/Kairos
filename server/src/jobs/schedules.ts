@@ -1,5 +1,6 @@
 import type { Job, RepeatOptions } from "bullmq";
 import { processAlerts, processMetricsPrune, processMetricsSample } from "./alerts";
+import { sweepOutbox } from "../durable/outbox";
 import { processBackupCheck } from "./backup-check";
 import { processContactReconcile } from "./contact-alert";
 import { processDigests } from "./digest";
@@ -48,6 +49,8 @@ export const SCHEDULES: Schedule[] = [
   // Cloud sends stuck in submitting settle as unconfirmed (ops-18), and lost cloud-apply jobs come back (applications-40).
   { queue: "maintenance", id: "sweep-submitting", repeat: { every: MINUTE / 2 }, run: processSweepSubmitting },
   { queue: "maintenance", id: "reconcile-apply", repeat: { every: MINUTE }, run: processReconcileApply },
+  // The outbox's jobs to their outcomes: finished, or delivered again, or dead (WP-22). The drain itself is a loop in worker.ts.
+  { queue: "maintenance", id: "outbox-sweep", repeat: { every: MINUTE }, run: sweepOutbox },
   // Drafts whose tailoring job and mail whose classify job Redis lost (platform-v02, messaging-v04).
   { queue: "maintenance", id: "redrive-drafts", repeat: { every: 5 * MINUTE }, run: processRedriveDrafts },
   { queue: "maintenance", id: "redrive-inbox", repeat: { every: 5 * MINUTE }, run: processRedriveInbox },

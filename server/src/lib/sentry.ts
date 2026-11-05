@@ -98,8 +98,12 @@ const SIGNALS = {
   admin_adjustment_row: 1,
   /** Rows in llm_calls_default: a week had no partition, so the daily partitions job has been failing (WP-09). */
   llm_calls_default_rows: 1,
-  /** Cloud sends left in submitting over 10 minutes, settled as unconfirmed: an applier died mid-run (WP-09). */
+  /** Cloud sends left in submitting over 8 minutes, settled as unconfirmed: an applier died mid-run (WP-09). */
   submitting_swept: 1,
+  /** Cloud sends or other money work the outbox gave up on after 5 deliveries; GET /api/admin/outbox lists them (WP-22). Pages. */
+  outbox_dead: 1,
+  /** A row has waited over 5 minutes to reach BullMQ: Redis is down or the drain is stuck, and nothing new is sending (WP-22). */
+  outbox_lag: 1,
   /** Users the bootstrap reconciler finished: their sign-up hook failed (WP-09). */
   signup_repaired: 1,
   /** The money journal's cursor is over 10 minutes behind, or gone: the 2-minute RPO no longer holds (WP-13). */

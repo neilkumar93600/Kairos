@@ -65,7 +65,7 @@ describe.skipIf(!hasTestDb)("reconcilers against Postgres", () => {
       await db.update(schema.applications).set({ updatedAt: sql`now() - make_interval(secs => ${agoMs / 1000})` }).where(eq(schema.applications.id, id));
     }
 
-    it("a claim older than 10 minutes settles as failed and unconfirmed, frees the credit, and is never resent", async () => {
+    it("a claim older than 8 minutes settles as failed and unconfirmed, frees the credit, and is never resent", async () => {
       const { FAILURE_MESSAGES, recordSubmission } = await import("../src/services/submissions");
       const { availableCreditsNow } = await import("../src/services/credits");
       const { processCloudApply } = await import("../src/jobs/cloud-apply");
@@ -87,7 +87,7 @@ describe.skipIf(!hasTestDb)("reconcilers against Postgres", () => {
       expect(await db.select().from(schema.creditLedger).where(eq(schema.creditLedger.reason, "submission"))).toEqual([]);
     });
 
-    it("leaves a claim younger than 10 minutes and every other status alone", async () => {
+    it("leaves a claim younger than 8 minutes and every other status alone", async () => {
       const userId = await seedUser(db, { credits: 5 });
       const running = await approvedCloud(userId);
       await claimed(running, 5 * MINUTE);
@@ -118,6 +118,22 @@ describe.skipIf(!hasTestDb)("reconcilers against Postgres", () => {
 
       await expect(reconcile.processReconcileApply()).resolves.toEqual({ checked: 1, added: 1 });
       expect(redrive).toHaveBeenCalledExactlyOnceWith("cloud-apply", { applicationId: lost }, `apply-${lost}`, true);
+    });
+
+    it("leaves an application whose outbox row is live or dead to the outbox, and nets one whose row finished", async () => {
+      const userId = await seedUser(db, { credits: 5 });
+      const row = async (status: "pending" | "enqueued" | "dead" | "done") => {
+        const id = await approvedCloud(userId, 3 * MINUTE);
+        await db.insert(schema.outbox).values({ queue: "cloud-apply", dedupeKey: `apply-${id}`, payload: { applicationId: id }, status });
+        return id;
+      };
+      await row("pending");
+      await row("enqueued");
+      await row("dead");
+      const finished = await row("done");
+
+      await expect(reconcile.processReconcileApply()).resolves.toEqual({ checked: 1, added: 1 });
+      expect(redrive).toHaveBeenCalledExactlyOnceWith("cloud-apply", { applicationId: finished }, `apply-${finished}`, true);
     });
 
     it("the healed job still goes through the claim, so a doubled job sends once", async () => {

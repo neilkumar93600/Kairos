@@ -108,14 +108,15 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       expect(row?.status).toBe("draft");
     });
 
-    it("the owner approving cloud succeeds and the apply job is queued", async () => {
+    it("the owner approving cloud succeeds and the send is in the outbox", async () => {
       const userId = await signIn(OWNER);
       const id = await draftFor(userId);
 
       const res = await request(app).post("/api/applications/approve").send({ applicationIds: [id], channel: "cloud" });
       expect(res.status).toBe(200);
       expect(res.body.approved).toEqual([id]);
-      expect(enqueue).toHaveBeenCalledWith("cloud-apply", { applicationId: id }, `apply-${id}`);
+      const rows = await tdb.select().from(schema.outbox).where(eq(schema.outbox.dedupeKey, `apply-${id}`));
+      expect(rows).toMatchObject([{ queue: "cloud-apply", payload: { applicationId: id }, status: "pending" }]);
     });
 
     it("the worker refuses a non-owner's already-approved cloud row at claim (plan_lapsed): no browser, marked failed, no credit", async () => {

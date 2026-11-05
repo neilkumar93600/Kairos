@@ -3,6 +3,7 @@ import { getPlan, type PlanId, type SubmissionReport, type SubmitChannel } from 
 import type { Db } from "../db/client";
 import { applications, jobs, subscriptions } from "../db/schema";
 import { baseEnv, type BaseEnv } from "../lib/env";
+import { cloudApplyKey, emitOutbox } from "../durable/outbox";
 import { conflict, forbidden, HttpError, notFound, paymentRequired } from "../lib/errors";
 import { getFlags } from "../lib/flags";
 import { effectivePlan } from "./billing-events";
@@ -60,7 +61,8 @@ export type FailureCode = keyof typeof FAILURE_MESSAGES;
  * Moves ready drafts to approved; the cloud channel only for users cloudAllowed lets through. A draft is ready
  * when tailoring has written resume lines AND answers (the profile fields), so an empty or nameless application
  * can never reach an employer. Credits are checked against the drafts that actually moved; a shortfall throws,
- * which rolls the whole approval back.
+ * which rolls the whole approval back. A cloud send is written to the outbox in the same transaction (WP-22), so an
+ * approval cannot commit without the intent to send it, whatever dies next.
  */
 export async function approveApplications(db: Db, userId: string, ids: string[], channel: SubmitChannel): Promise<string[]> {
   const flags = await getFlags(db);
@@ -97,6 +99,9 @@ export async function approveApplications(db: Db, userId: string, ids: string[],
     if (updated.length > available) {
       throw paymentRequired(`You have ${available} credits left for ${updated.length} applications`, { available, requested: updated.length });
     }
+    if (channel === "cloud") {
+      for (const { id } of updated) await emitOutbox(tx, "cloud-apply", { applicationId: id }, cloudApplyKey(id));
+    }
     return updated.map((u) => u.id);
   });
 }
@@ -115,8 +120,9 @@ export async function claimForCloud(db: Db, applicationId: string): Promise<bool
 }
 
 /**
- * The stuck-submitting sweep (ops-18 interim, until WP-29's leases): a cloud claim older than 10 minutes belongs to an
- * applier that died mid-run (a run is bounded at about 4 minutes, its drain at 3). It settles the way the applier
+ * The stuck-submitting sweep (ops-18 interim, until WP-29's leases): a cloud claim older than 8 minutes belongs to an
+ * applier that died mid-run (a run is bounded at about 4 minutes, its drain at 3). 8, so that a sweep every 30 s has it
+ * terminal inside the 10 minutes the chaos acceptance allows (WP-22). It settles the way the applier
  * settles a click it cannot confirm: failed with the `unconfirmed` sentence, never resent. No ledger row is written:
  * nothing was charged, and in-flight counts only approved and submitting, so the reserved credit is free again. One
  * conditional update, so two workers settle each row once; a late report from a live applier then gets 409.
@@ -125,7 +131,7 @@ export async function sweepStuckSubmitting(db: Db): Promise<string[]> {
   const swept = await db
     .update(applications)
     .set({ status: "failed", failureReason: FAILURE_MESSAGES.unconfirmed, updatedAt: new Date() })
-    .where(and(eq(applications.status, "submitting"), eq(applications.channel, "cloud"), sql`${applications.updatedAt} < now() - interval '10 minutes'`))
+    .where(and(eq(applications.status, "submitting"), eq(applications.channel, "cloud"), sql`${applications.updatedAt} < now() - interval '8 minutes'`))
     .returning({ id: applications.id });
   return swept.map((s) => s.id);
 }
