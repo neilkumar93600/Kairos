@@ -93,7 +93,13 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
   let B: Tenant;
   let rowsOfA: Awaited<ReturnType<typeof rowsOf>>;
   const seen: { as: string | undefined; text: string }[] = [];
-  const stripeSpies: { mock: { calls: unknown[][] } }[] = [];
+  // Kept here, not read from spy.mock.calls: Vitest empties a spy's history between tests, and the check runs after the pass.
+  const stripeCalls: unknown[][] = [];
+  const stripeAnswers = (result: object) =>
+    ((...args: unknown[]) => {
+      stripeCalls.push(args);
+      return Promise.resolve(result);
+    }) as never;
 
   /** User-visible rows tagged with `tag`, and markers in internal columns, for one tenant. */
   async function seedTenant(letter: "A" | "B"): Promise<Tenant> {
@@ -218,12 +224,10 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
     A = await seedTenant("A");
     B = await seedTenant("B");
     const stripeClient = (await import("../src/services/stripe")).stripe();
-    stripeSpies.push(
-      vi.spyOn(stripeClient.customers, "create").mockResolvedValue({ id: "cus_created" } as never),
-      vi.spyOn(stripeClient.subscriptions, "list").mockResolvedValue({ data: [] } as never),
-      vi.spyOn(stripeClient.checkout.sessions, "create").mockResolvedValue({ url: "https://checkout.test/s" } as never),
-      vi.spyOn(stripeClient.billingPortal.sessions, "create").mockResolvedValue({ url: "https://portal.test/p" } as never),
-    );
+    vi.spyOn(stripeClient.customers, "create").mockImplementation(stripeAnswers({ id: "cus_created" }));
+    vi.spyOn(stripeClient.subscriptions, "list").mockImplementation(stripeAnswers({ data: [] }));
+    vi.spyOn(stripeClient.checkout.sessions, "create").mockImplementation(stripeAnswers({ url: "https://checkout.test/s" }));
+    vi.spyOn(stripeClient.billingPortal.sessions, "create").mockImplementation(stripeAnswers({ url: "https://portal.test/p" }));
     app = createApp({ auth: byBearer, corsOrigins: [], healthChecks: {} });
     rowsOfA = await rowsOf(A.userId);
   });
@@ -261,7 +265,7 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
 
   it("B's pass changed none of A's rows, never reached A's Stripe customer, and did serve B's own rows", async () => {
     expect(await rowsOf(A.userId)).toEqual(rowsOfA);
-    const stripeArgs = JSON.stringify(stripeSpies.map((s) => s.mock.calls));
+    const stripeArgs = JSON.stringify(stripeCalls);
     expect(stripeArgs).not.toContain(A.customerId);
     expect(stripeArgs).toContain(B.customerId);
     expect(seen.filter((s) => s.as === B.userId).map((s) => s.text).join("\n")).toContain(B.tag);
@@ -272,7 +276,8 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
     const reads = TENANT_ROUTES.filter((k) => k.startsWith("GET "));
     for (const key of [...reads, ...TENANT_ROUTES.filter((k) => !reads.includes(k))]) {
       const status = (await send(key, A, A.userId)).status;
-      expect(status < 500 || status === 503, key).toBe(true);
+      // Before 0011 a second resume answers 503 resumes_user_uq by design (drop this with 0011); nothing else may be a 5xx.
+      expect(status < 500 || (status === 503 && ["POST /api/resumes", "POST /api/resumes/tailor"].includes(key)), key).toBe(true);
     }
     expect(seen.filter((s) => s.as === A.userId).map((s) => s.text).join("\n")).toContain(A.tag);
     for (const { text } of seen) {

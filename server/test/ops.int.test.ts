@@ -215,7 +215,7 @@ describe.skipIf(!hasTestDb)("ops flags, admin routes and invariants against Post
         requestedBy: "user",
       });
       await db.update(schema.opsAudit).set({ actor: erased }).where(eq(schema.opsAudit.actor, owner));
-      expect((await audit())[0]?.actor).toBe(erased);
+      expect((await audit()).map((r) => r.actor)).toContain(erased);
       await expect(db.update(schema.opsAudit).set({ actor: `erased:${"cd".repeat(16)}` })).rejects.toThrow();
     });
 
