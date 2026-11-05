@@ -28,7 +28,8 @@ export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 /**
  * A rendered email, or `{ skip }` with the email_sends error code when it must not be sent (e.g. `gone`, `empty`).
  * `onSent` runs once Postmark has accepted the message and the ledger says sent: side effects of this email that belong
- * to it alone (the digest marks its reminders sent). A crash between the two repeats them once, never the email.
+ * to it alone (the digest marks its reminders sent). It is skipped when a re-claim finds the message already at Postmark
+ * (`already_sent`, no render) and when it throws; either way the effect is repeated once at worst, never the email.
  */
 export type Rendered = (Omit<Email, "stream" | "metadata" | "tag"> & { onSent?: () => Promise<void> }) | { skip: string };
 /** Builds the email of one entity at send time, from the database, so a redrive needs only the kind and the id. */
@@ -105,6 +106,12 @@ export async function processNotify(job: Pick<Job<JobData["notify"]>, "data">): 
   const { kind, entityId, userId } = job.data;
   const render = RENDERERS[kind];
   if (!render) throw new Error(`no email renderer for ${kind}`);
+  // A settings gap is not the email's fault: fail the job before the claim, so BullMQ's retries run out, not the ledger's
+  // five attempts (which would end the email as lease_exhausted).
+  if (isBroadcastKind(kind)) {
+    const missing = broadcastMissing();
+    if (missing.length) throw new Error(`broadcast mail needs ${missing.join(", ")}`);
+  }
 
   // Claim: a new row, or a stale claim (lease over, attempts left). No row: sent, failed, suppressed or in flight.
   // A user erased since the enqueue fails the foreign key: nothing to send, and nothing to retry.
@@ -134,9 +141,6 @@ export async function processNotify(job: Pick<Job<JobData["notify"]>, "data">): 
       await finish(kind, entityId, "suppressed", { code: refusal });
       return { result: "suppressed", code: refusal };
     }
-    const missing = broadcastMissing();
-    // Not a user's fault and not final: the claim stays, the job fails loudly, the lease and the reconciler retry it.
-    if (missing.length) throw new Error(`broadcast mail needs ${missing.join(", ")}`);
   }
   // A re-claim may follow a send Postmark accepted before the worker died: look for it before sending again. If the
   // search itself fails, the lease alone decides (messaging-43's fallback).

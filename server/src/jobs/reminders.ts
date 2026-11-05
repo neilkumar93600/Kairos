@@ -28,7 +28,8 @@ const candidates = (kind: "no_reply" | "saved_job_ageing") => {
       ? [
           sql`a.submitted_at >= now() - interval '17 days' AND a.submitted_at < now() - interval '14 days'
               AND a.status = 'submitted' AND (a.stage IS NULL OR a.stage = 'applied')
-              AND NOT EXISTS (SELECT 1 FROM application_events e WHERE e.application_id = a.id AND e.kind LIKE 'reply\\_%')`,
+              AND NOT EXISTS (SELECT 1 FROM application_events e WHERE e.application_id = a.id AND e.kind LIKE 'reply\\_%')
+              AND NOT EXISTS (SELECT 1 FROM inbound_emails ie WHERE ie.application_id = a.id)`,
           sql`a.submitted_at + interval '14 days'`,
         ]
       : [
@@ -66,11 +67,4 @@ export async function processReminders(): Promise<{ created: number }> {
   }
   if (created) logger.info({ created }, "reminders created");
   return { created };
-}
-
-/** Daily retention (_db/applications.md 3.5): finished reminders 90 days after they were sent or cancelled. */
-export async function processReminderRetention(): Promise<{ deleted: number }> {
-  const { rowCount } = await db().execute(sql`
-    DELETE FROM reminders WHERE coalesce(sent_at, cancelled_at) < now() - interval '90 days'`);
-  return { deleted: rowCount ?? 0 };
 }

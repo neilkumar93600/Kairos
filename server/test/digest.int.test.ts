@@ -24,6 +24,7 @@ const schema = await import("../src/db/schema");
 const notify = await import("../src/jobs/notify");
 const digest = await import("../src/jobs/digest");
 const reminders = await import("../src/jobs/reminders");
+const retention = await import("../src/jobs/retention");
 const DAY = 86_400_000;
 
 describe.skipIf(!hasTestDb)("saved searches, digests and reminders against Postgres", () => {
@@ -323,7 +324,7 @@ describe.skipIf(!hasTestDb)("saved searches, digests and reminders against Postg
         { userId, kind: "no_reply", applicationId: a, dueAt: new Date(), sentAt: new Date(Date.now() - 91 * DAY), createdAt: new Date(Date.now() - 100 * DAY) },
         { userId, kind: "no_reply", applicationId: b, dueAt: new Date() },
       ]);
-      expect(await reminders.processReminderRetention()).toEqual({ deleted: 1 });
+      expect(await retention.RETENTION_RULES.reminders.run(90)).toBe(1);
       expect(await rows()).toHaveLength(1);
     });
   });

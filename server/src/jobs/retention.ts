@@ -45,6 +45,13 @@ export const RETENTION_RULES = {
       batched(() => sql`update inbound_emails set text_body = '' where id in (
         select id from inbound_emails where text_body <> '' and received_at < ${before(d)} limit ${BATCH})`),
   },
+  /** Finished reminders (WP-35, _db/applications.md 3.5): 90 days after they were sent or cancelled. A few rows a day, no index needed. */
+  reminders: {
+    days: 90,
+    run: (d: number) =>
+      batched(() => sql`delete from reminders where id in (
+        select id from reminders where coalesce(sent_at, cancelled_at) < ${before(d)} limit ${BATCH})`),
+  },
   contact_messages: {
     days: 365,
     run: (d: number) => batched(() => sql`delete from contact_messages where id in (select id from contact_messages where created_at < ${before(d)} limit ${BATCH})`),

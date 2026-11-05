@@ -79,11 +79,10 @@ describe("digest tick", () => {
 
 describe("WP-35 schedules", () => {
   const byId = Object.fromEntries(SCHEDULES.map((s) => [s.id, s]));
-  it("digests run at :25, reminders at :50, the contact alerts every 5 minutes, finished reminders at 04:25", () => {
+  it("digests run at :25, reminders at :50, the contact alerts every 5 minutes", () => {
     expect(byId["digests"]).toMatchObject({ queue: "maintenance", repeat: { pattern: "25 * * * *", tz: "UTC" } });
     expect(byId["reminders"]).toMatchObject({ queue: "maintenance", repeat: { pattern: "50 * * * *", tz: "UTC" } });
     expect(byId["contact-reconcile"]).toMatchObject({ queue: "maintenance", repeat: { every: 5 * 60_000 } });
-    expect(byId["reminders-retention"]).toMatchObject({ queue: "maintenance", repeat: { pattern: "25 4 * * *", tz: "UTC" } });
   });
 
   it("no new cron shares a minute with mail-retention (03:35), orphan-uploads (03:55) or the other hourly ones", () => {

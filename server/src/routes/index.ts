@@ -29,7 +29,9 @@ import { unsubscribeRouter } from "./unsubscribe";
 export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   const router = Router();
   // Signed-link pages (routes/links.ts): the token is the credential, so they sit above the anonymous limiter and behind their own class.
-  router.use("/unsubscribe", routeDeadline, limits.link, unsubscribeRouter);
+  // The per-address limit guards the GET page; a mail client's one-click POST comes from Gmail's or Yahoo's shared addresses,
+  // where a burst would 429 real unsubscribes. A POST costs a signature check first and reaches the database only for a signed token.
+  router.use("/unsubscribe", routeDeadline, (req, res, next) => (req.method === "POST" ? next() : limits.link(req, res, next)), unsubscribeRouter);
   router.use(routeDeadline, limits.anon);
 
   router.use("/contact", limits.contact, contactRouter);

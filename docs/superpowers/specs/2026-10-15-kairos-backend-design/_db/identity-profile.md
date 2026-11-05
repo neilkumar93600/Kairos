@@ -768,6 +768,7 @@ Purpose (F6): named filters over the user's own matches plus a digest frequency.
 | `frequency` | `text` | no | `'daily'` | `off`, `daily`, `weekly` (weekly means Monday 08:00 local time) |
 | `last_digest_at` | `timestamptz` | yes | | Watermark: matches created after this time are "new" for the next digest. Null means "since the search was created" |
 | `next_digest_at` | `timestamptz` | yes | | The next due instant, computed by `next_digest_at(frequency, timezone, after)` (5.1) in a trigger. Null exactly when `frequency = 'off'` |
+| `window_start` | `timestamptz` | yes | | *[Added 2026-11-05, WP-35]* The start of the window the latest claim covers (the previous `last_digest_at`, or `created_at`). The digest renders from `window_start` to `last_digest_at`, so a retry or a redrive of the same email shows the same matches |
 | `created_at`, `updated_at` | `timestamptz` | no | `now()` | |
 
 Primary key `id`. Foreign key `saved_searches_user_id_user_id_fk` to `"user"(id)` `ON DELETE CASCADE`.

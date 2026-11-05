@@ -16,7 +16,11 @@ import { validateBody } from "../middleware/validate";
  */
 export const contactRouter = Router();
 
-/** sha256 of the lower-cased address, topic and message: the dedupe key with received_on (contact_messages_dedupe_uq). */
+/**
+ * sha256 of the lower-cased address, topic and message: the dedupe key with received_on (contact_messages_dedupe_uq).
+ * Unkeyed on purpose (it must work without USER_HASH_KEY), so it is a membership oracle for anyone who holds the table AND
+ * can guess a message; it is deleted with the row. If the plaintext columns are ever scrubbed while rows stay, key it first.
+ */
 const messageHash = (m: ContactMessage) => createHash("sha256").update(`${m.email.toLowerCase()}\n${m.topic}\n${m.message}`).digest();
 
 contactRouter.post("/", validateBody(contactMessageSchema), async (req, res) => {

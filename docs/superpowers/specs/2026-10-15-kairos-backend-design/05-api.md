@@ -335,7 +335,8 @@ Every error from `/api/*` except Better Auth's own routes (4.6) leaves as
 | `invalid_scope` | 422 | `POST /api/resume/suggestions` (an id that is not in the resume) | none | |
 | `unsupported_board` | 422 | `POST /api/jobs/import` | none | |
 | `idempotency_key_reused` | 422 | `workflow-id` routes with a key whose earlier request differed | none | yes |
-| `limit_reached` | 422 | `POST /api/saved-searches` (10), rehearsal sessions per application (2) | `{ limit }` | yes |
+| `limit_reached` | 422 | rehearsal sessions per application (2) | `{ limit }` | yes |
+| `limit_reached` (saved searches) | 409 | `POST /api/saved-searches` (10) *[Amended 2026-11-05, WP-35: 409 with the code catalog's `limit_reached`, as the resume cap above]* | `{ limit }` | yes |
 | `payment_required` | 402 | `POST /api/applications/approve`, resend | `{ available, requested }` | |
 | `rate_limited` | 429 | any rate-limited or metered route; a spent daily AI allowance is `details.reason = "daily_allowance"` with `resetsAt` (never 402) | 6.6 | |
 | `limit_reached` (resume cap) | 409 | `POST /api/resumes` (10 base resumes per profile) *[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 11)]* | `{ limit }` | |
@@ -693,6 +694,8 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `usage.today` | `GET /api/usage/today` | session | | 200 `usageTodayResponseSchema` | | none | new | P1 |
 | `notifications.list` | `GET /api/notifications` | session | `notificationsQuerySchema` | 200 `notificationsResponseSchema` | | none | new | P2 |
 | `notifications.read` | `POST /api/notifications/read` | session | `notificationsReadSchema` | 200 `{ updated }` | | natural | new | P2 |
+| `emailPreferences.get` | `GET /api/email-preferences` | session | | 200 `{ emailPreferences }` | `not_found` | none | new | WP-35 |
+| `emailPreferences.patch` | `PATCH /api/email-preferences` | session | `emailPreferencesPatchSchema` | 200 `{ emailPreferences }` | `invalid_body` | natural | new | WP-35 |
 | `forwarding.status` | `GET /api/forwarding/status` | session | | 200 `forwardingStatusSchema` | | none | new | P6 |
 | `forwarding.confirm` | `POST /api/forwarding/confirm` | session | `forwardingConfirmSchema` | 200 `{ state }` | | natural | new | P6 |
 | `mail.unsubscribe.page` | `GET /api/unsubscribe?t=` | signed-token . link | query `t` | 200 HTML | `link_expired` | none | new | P6 |
@@ -1317,7 +1320,7 @@ The response is the same object as GET. `channel` is derived from the plan (`ext
 
 ### 10.8 Saved searches
 
-`GET /api/saved-searches` returns `{ searches }` (at most 10, `createdAt asc`). `POST` creates one (201, `{ search }`; 422 `limit_reached` `details { limit: 10 }` at the eleventh). `PATCH /:id` merges; `DELETE /:id` is 204 whether or not it existed. Filters are `{ minScore?, roles?, companies?, remoteOnly? }` over the user's own matches and add no scoring (arch B.7.10). Frequency `off` stops the digest email only; the search still filters the web feed if a future screen uses it.
+`GET /api/saved-searches` returns `{ searches }` (at most 10, `createdAt asc`). `POST` creates one (201, `{ search }`; 409 `limit_reached` `details { limit: 10 }` at the eleventh *[Amended 2026-11-05, WP-35: 409, as the code catalog; a duplicate name is 409 `exists`]*). `PATCH /:id` merges; `DELETE /:id` is 204 whether or not it existed. Filters are `{ minScore?, roles?, companies?, remoteOnly? }` over the user's own matches and add no scoring (arch B.7.10). Frequency `off` stops the digest email only; the search still filters the web feed if a future screen uses it.
 
 ### 10.9 Interview rehearsal (P6)
 
@@ -1433,6 +1436,8 @@ Rules (arch B.8.10): limits come only from `shared/src/plans.ts` (`aiDailyAllowa
 **Notifications** (P2): `GET /api/notifications?unread=true&limit&cursor` returns `{ notifications, unread, nextCursor? }`, newest first, default 50; titles are joined at read time (the table stores ids and codes only), so a notification never carries personal text. `POST /api/notifications/read` takes `{ ids: uuid[] }` (1 to 100) or `{ all: true }`, sets `read_at` once and answers `{ updated }`.
 
 **Forwarding** (P6): `GET /api/forwarding/status` returns `{ state, address, lastMailAt, verification }`; `verification` is the Gmail code and confirmation link Kairos received for the user (expires after 3 days) or `null`. `POST /api/forwarding/confirm` with `{ provider }` records "I have set it up" (the only signal Google or Outlook gives) and answers `{ state }`.
+
+**Email preferences** (WP-35): `GET /api/email-preferences` returns `{ emailPreferences: { digest, outcomeReport, autopilotSummary, reminders } }` (true means send); `PATCH` with any non-empty subset answers the same object. They are `profiles.mail_opt_out` (inverted); turning one on records consent and off withdraws it, and the send path reads them at send time. Account mail has no switch.
 
 **Unsubscribe** (P6): non-transactional mail (`digest`, `outcome_report`, `autopilot_summary`) carries `List-Unsubscribe: <API_PUBLIC_ORIGIN/api/unsubscribe?t=...>` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058). `GET /api/unsubscribe?t=` shows what will stop; `POST /api/unsubscribe` takes the token from the form field `t` or, for the one-click form post a mail client sends, from the query string, appends the kind to `profiles.mail_opt_out` and answers a confirmation page. Transactional mail (receipts, resend links, verification codes, billing notices) cannot be opted out. The token is `purpose: "unsubscribe"` in `action_tokens` (valid 90 days, deterministic per user, kind and month). A second click shows "already unsubscribed" and changes nothing, because an unsubscribe is naturally idempotent (`_db/platform.md` section 4.10). The opt-out lives in `profiles.mail_opt_out` (section 24.1).
 
