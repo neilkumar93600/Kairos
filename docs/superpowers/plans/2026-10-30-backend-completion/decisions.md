@@ -24,7 +24,7 @@ Decided by the coordinator under the owner's delegation; the owner may revisit i
   - a money or sending flow whose steps cannot be expressed as a business column plus a re-runnable consumer, for example long fan-outs with per-step memoization;
   - a decision to retire Redis (B.14 P7), which would remove what the outbox drains into.
 - **What it relies on.** BullMQ's `completed` state is the row's completion, read by the sweep every minute. That holds only while nothing but age removes a completed job: an outbox-fed queue keeps them 2 hours with no count (`completedRetention`, `jobs/queues.ts`, pinned by a test). A count would evict finished work, the sweep would read it as lost, and five such reads would mark a finished row dead.
-- **Not yet shown.** The 1,000-approval chaos acceptance has not run: it needs a real Postgres and Redis (`.github/workflows/chaos.yml`, by hand). "Completed means done" and the key `apply-<id>` both assume one send per application, so WP-29's resend must version the key by attempt, or a second attempt is one row and one job with the first.
+- **Not yet shown.** The 1,000-approval chaos acceptance has not run: it needs a real Postgres and Redis (`.github/workflows/chaos.yml`, by hand). WP-29 versioned the key by attempt (`apply-<id>-<n>`, the previous release's `apply-<id>` still honoured), so "completed means done" holds per attempt, and the real no-second-send invariant is `mark_browser_launched` on the attempt row.
 
 ## What scale target replaces '10K-1M requests per millisecond'?
 

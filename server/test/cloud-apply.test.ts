@@ -130,3 +130,37 @@ describe("filler reasons", () => {
     }
   });
 });
+
+describe("a run the sweep gave up on", () => {
+  it("stops before the fill when its attempt is closed, and says nothing reached the employer", async () => {
+    const evaluated: unknown[] = [];
+    const page = {
+      on: () => {},
+      url: () => "https://job-boards.greenhouse.io/x/jobs/1",
+      title: async () => "Apply",
+      $: async () => null,
+      goto: async () => ({ status: () => 200 }),
+      waitForLoadState: async () => {},
+      frames: () => [],
+      evaluate: async (fn: unknown) => (evaluated.push(fn), undefined),
+    };
+    const browser = { newContext: async () => ({ route: async () => {}, on: () => {}, newPage: async () => page, close: async () => {} }) };
+    const phases: string[] = [];
+    const outcome = await fillInBrowser(browser as never, {
+      applicationId: "a",
+      applyUrl: "https://job-boards.greenhouse.io/x/jobs/1",
+      answers: [],
+      resumeLines: [],
+      coverLetter: null,
+      fillerSource: "window.__kairosFill = () => {}",
+      onPhase: async (p) => {
+        phases.push(p);
+        if (p === "filling") throw new Error("attempt closed");
+      },
+    });
+    expect(phases).toEqual(["navigating", "filling"]);
+    expect(outcome).toEqual({ submitted: false, code: "applier_error", detail: "navigation_failed" });
+    // The filler script was injected; __kairosFill, the only thing that clicks, was never called.
+    expect(evaluated).toEqual(["window.__kairosFill = () => {}"]);
+  });
+});

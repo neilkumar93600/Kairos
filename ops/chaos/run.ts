@@ -13,8 +13,8 @@
  * Run it from the repo root. .github/workflows/chaos.yml does exactly that on demand. CHAOS_PG_RESTART_CMD is split on
  * spaces and run without a shell. Optional: CHAOS_APPROVALS (1000), CHAOS_LIMIT_MINUTES (10), CHAOS_APPLIERS (2), CHAOS_MIN_CRASHES (50).
  *
- * Use a disposable database and Redis. The child applier consumes the cloud-apply queue with a scripted browser and writes
- * real ledger rows, so on a database with real work it would mark real applications sent. Staging is fine only as a new
+ * Use a disposable database and Redis. The child applier consumes the cloud-apply queue with a scripted browser and the
+ * child worker settles what it reports into real ledger rows, so on a database with real work it would mark real applications sent. Staging is fine only as a new
  * database and a new Redis in the staging project, never the ones its services use: the harness refuses a database whose
  * name does not end in _chaos, or that already holds applications, or a Redis whose cloud-apply queue has jobs.
  * This does not exercise the Railway half of S-D1 (executor ids, PgBouncer), which ADR-001 Revision 3 leaves unrun.

@@ -761,7 +761,7 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `applications.pdf` | `GET /api/applications/:id/pdf` | session | | 200 `application/pdf` | `not_found`, `not_ready` | none | new | P3 |
 | `applications.events` | `GET /api/applications/:id/events` | session | `pageQuerySchema` | 200 `eventsResponseSchema` | `not_found` | none | new | P2 |
 | `applications.verification` | `GET /api/applications/:id/verification` | session | | 200 `verificationDetailSchema` | `not_found` | none | new | P3 |
-| `applications.resend` | `POST /api/applications/:id/resend` | session-nocache | `resendRequestSchema` | 200 `resendResponseSchema` | `not_found`, `forbidden`, `payment_required`, `not_approvable`, `acknowledgement_required`, `conflict` | workflow-id | new | P2 |
+| `applications.resend` | `POST /api/applications/:id/resend` | session-nocache (built as session-fresh with approve) | `resendRequestSchema` | 200 `resendResponseSchema` | `not_found`, `forbidden`, `payment_required`, `not_approvable`, `acknowledgement_required`, `conflict` | workflow-id | new | P2 |
 | `applications.resendLink.page` | `GET /api/applications/:id/resend-link?t=` | signed-token . link | query `t` | 200 HTML | `link_expired` | none | new | P2 |
 | `applications.resendLink.submit` | `POST /api/applications/:id/resend-link` | signed-token . link | form fields `t`, `acknowledge` | 200 HTML | `link_expired` | workflow-id | new | P2 |
 | `rehearsals.start` | `POST /api/applications/:id/rehearsals` | session . ai_burst | | 201 `rehearsalStartResponseSchema` | `not_found`, `conflict`, `limit_reached`, `ai_unavailable` | none | new | P6 |
@@ -1570,7 +1570,7 @@ RETURNING lease_expires_at;
 | Situation | Result |
 |---|---|
 | Updated one row | 200 `{ claimed: true, leaseExpiresAt }`; event `claimed` is not written (the ledger has no such kind); the credit stays in `in_flight` (both `approved` and `submitting` count). |
-| The row is already `submitting` and this session holds a live claim | 200 with the same `leaseExpiresAt`, unchanged (a repeat claim never extends the lease; the sweeper's 10-minute bound is real). |
+| The row is already `submitting` and this session holds a live claim | *[Amended 2026-11-05, WP-29]* 409 `already_claimed`, `details { leaseExpiresAt }`: two tabs of one extension share a session, so a 200 here would let both send. A client that lost the response releases and claims again. Revision 2 text: 200 with the same `leaseExpiresAt`, unchanged. |
 | Another session holds a live lease or claim, or the row is `submitting` for another session | 409 `already_claimed`, `details { leaseExpiresAt }` (FR-34). |
 | The row is not `approved` for any other reason (withdrawn, submitted, failed) | 409 `conflict`, `details { status }`. |
 | Not the caller's, or does not exist | 404 `not_found`. |

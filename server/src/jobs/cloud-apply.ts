@@ -114,7 +114,7 @@ export interface FillInput {
   resumeLines: ResumeLine[];
   coverLetter: string | null;
   fillerSource: string;
-  /** Writes the phase, and must commit before the page can see the click: a run that cannot record `filling` never fills. */
+  /** Writes the phase, and commits before the page can see the click: a run that cannot record `filling` never fills. Rejects when the attempt is closed. */
   onPhase?: (phase: "navigating" | "filling") => Promise<void>;
 }
 
@@ -314,7 +314,9 @@ async function claimAndApply(applicationId: string, row: AppliedJob): Promise<{ 
         coverLetter: payload.cover_letter,
         fillerSource: fillerSource(),
         onPhase: async (p) => {
-          await markPhase(p);
+          const marked = await firstRow<{ ok: boolean }>(sql`select mark_attempt_phase(${attemptId}, ${p}) as ok`);
+          // The sweep closed this attempt as "nothing was sent": it must stay true. The throw ends the run before the fill.
+          if (!marked?.ok) throw new Error("attempt closed");
           phase = p;
         },
       };

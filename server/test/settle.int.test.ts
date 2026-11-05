@@ -34,6 +34,8 @@ const { recordExtensionReport, settleAttempt } = await import("../src/services/s
 const { approveWithSkips, factsSnapshotHash, resendApplication } = await import("../src/services/submissions");
 const { renderResendAvailable, renderReturnToDraft } = await import("../src/services/submission-mail");
 const { settleAll } = await import("./helpers/settle");
+const { closeQueues } = await import("../src/jobs/queues");
+const { redis } = await import("../src/lib/redis");
 
 const OWNER = "settle-owner";
 const ANSWER = { fieldKey: "first_name", label: "First name", value: "Test", source: "profile" as const };
@@ -63,6 +65,8 @@ describe.skipIf(!hasTestDb)("WP-29 settlement against Postgres", () => {
     enqueue.mockClear();
   });
   afterAll(async () => {
+    await closeQueues();
+    await redis().quit();
     await closeDb();
     await closeTestDbs();
   });
@@ -282,6 +286,16 @@ describe.skipIf(!hasTestDb)("WP-29 settlement against Postgres", () => {
       expect((await attemptOf(attemptId)).phase).toBe("filling");
       await phase(attemptId, "reported");
       expect((await attemptOf(attemptId)).phase).toBe("filling");
+    });
+
+    it("the mark tells a run its attempt is closed, so a run the sweep gave up on never fills", async () => {
+      const u = await user();
+      const { attemptId } = await claimed(u);
+      const mark = async () => (await db.execute<{ ok: boolean }>(sql`select mark_attempt_phase(${attemptId}, 'filling') as ok`)).rows[0]!.ok;
+      expect(await mark()).toBe(true);
+      await age(attemptId, 91);
+      await db.update(schema.submissionAttempts).set({ state: "failed", failureCode: "applier_error" }).where(eq(schema.submissionAttempts.id, attemptId));
+      expect(await mark()).toBe(false);
     });
 
     it("one open attempt per application", async () => {
@@ -859,12 +873,14 @@ describe.skipIf(!hasTestDb)("WP-29 settlement against Postgres", () => {
       expect(full.body).toEqual({ applicationId: null, reason: "too_many_pending" });
     });
 
-    it("a scored match sorts above an unscored one under NULLS LAST", async () => {
+    it("the feed sorts under NULLS LAST, and an unscored match never tops it (matching-v14)", async () => {
       const u = await user();
-      await match(u);
+      const scored = await match(u);
+      const unscored = await match(u);
+      await db.update(schema.matches).set({ score: null }).where(eq(schema.matches.id, unscored.id));
       const res = await request(app).get("/api/matches").set(as(u));
       expect(res.status).toBe(200);
-      expect(res.body.matches).toHaveLength(1);
+      expect(res.body.matches.map((m: { id: string }) => m.id)).toEqual([scored.id]);
     });
   });
 });

@@ -16,6 +16,7 @@
 --      and clears settled_at, so settlement records it: a submission the employer received is always recorded (RL-1).
 --      5.7 drops it, which leaves the user told "unconfirmed" about a send we know reached the employer.
 --   5. A failed result after the apply POST was seen is stored as `timeout` (08-submission-settlement 13, item 4).
+--   6. mark_attempt_phase returns whether the attempt is still open, and the run stops on false (see the function).
 
 -- The read before the claim. No answers, lines or letter; nothing at all once the row is not a pending cloud send.
 CREATE FUNCTION applier_job(p_application_id uuid)
@@ -76,14 +77,18 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
 $$;--> statement-breakpoint
 
 -- Moves the phase forward and renews the heartbeat; a repeat of the same phase is the heartbeat. 'reported' is
--- record_attempt_result's. submit_seen_at is set by submission_attempts_guard.
-CREATE FUNCTION mark_attempt_phase(p_attempt_id uuid, p_phase text) RETURNS void
+-- record_attempt_result's. submit_seen_at is set by submission_attempts_guard. False once the attempt is closed: a run the
+-- sweep gave up on (closed "nothing was sent", so resendable) must not go on to click, so it stops on this answer.
+CREATE FUNCTION mark_attempt_phase(p_attempt_id uuid, p_phase text) RETURNS boolean
 LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
-  UPDATE submission_attempts SET phase = p_phase, heartbeat_at = now()
-   WHERE id = p_attempt_id AND state = 'open' AND channel = 'cloud'
-     AND p_phase IN ('claimed','navigating','filling','submit_seen')
-     AND array_position(ARRAY['claimed','navigating','filling','submit_seen','reported'], p_phase)
-      >= array_position(ARRAY['claimed','navigating','filling','submit_seen','reported'], phase);
+  WITH u AS (
+    UPDATE submission_attempts SET phase = p_phase, heartbeat_at = now()
+     WHERE id = p_attempt_id AND state = 'open' AND channel = 'cloud'
+       AND p_phase IN ('claimed','navigating','filling','submit_seen')
+       AND array_position(ARRAY['claimed','navigating','filling','submit_seen','reported'], p_phase)
+        >= array_position(ARRAY['claimed','navigating','filling','submit_seen','reported'], phase)
+    RETURNING 1)
+  SELECT EXISTS (SELECT 1 FROM u);
 $$;--> statement-breakpoint
 
 -- The run's result, on the attempt row only: settlement (worker) moves the application and writes the ledger. The evidence
