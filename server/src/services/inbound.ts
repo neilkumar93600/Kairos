@@ -102,11 +102,17 @@ export async function storeInboundEmail(mail: PostmarkInbound, keyLookup?: KeyLo
   }
 
   const spam = spamScore(mail.Headers);
-  const confirmation = await parseGmailForwardingConfirmation(
-    { from: mail.From, subject: mail.Subject, textBody: mail.TextBody, rawEmail: mail.RawEmail },
+  const parsed = await parseGmailForwardingConfirmation(
+    { from: mail.From, subject: mail.Subject, textBody: mail.TextBody, rawEmail: mail.RawEmail, recipient: recipient! },
     keyLookup,
   );
-  const hidden = confirmation ? "forwarding_confirmation" : spam !== null && spam >= SPAM_HIDE ? "spam" : null;
+  const forged = parsed === "forged";
+  const confirmation = forged ? null : parsed;
+  if (forged) {
+    count("inbound.dropped", 1, mail.RawEmail ? "forged_confirmation" : "unverifiable_confirmation");
+    logger.warn({ rawEmail: Boolean(mail.RawEmail) }, "mail claiming Google's forwarding sender has no valid DKIM signature; hidden");
+  }
+  const hidden = confirmation ? "forwarding_confirmation" : forged || (spam !== null && spam >= SPAM_HIDE) ? "spam" : null;
   const id = randomUUID();
   const now = new Date();
   const body = capBody(mail.TextBody);
@@ -121,7 +127,8 @@ export async function storeInboundEmail(mail: PostmarkInbound, keyLookup?: KeyLo
         userId,
         providerMessageId: mail.MessageID,
         sender: mail.From.slice(0, 320),
-        subject: mail.Subject.slice(0, 500),
+        // A confirmation's subject carries the code, which must not outlive forwarding_verifications' 3 days.
+        subject: confirmation ? "Gmail Forwarding Confirmation" : mail.Subject.slice(0, 500),
         ...(hidden ? { textBody: null, textBodyEnc: null, previewEnc: null } : { textBody: plaintext ? body : null, ...encryptBody(id, body) }),
         attachments,
         spamScore: spam,
