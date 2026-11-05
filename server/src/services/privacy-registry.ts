@@ -87,6 +87,8 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
   { table: "employments", column: "user_id", erase: "cascade", export: { omit: ["import_key"] } },
   { table: "saved_answers", column: "user_id", erase: "cascade", export: ALL },
   { table: "matches", column: "user_id", erase: "cascade", export: ALL },
+  // WP-23: the host and path of a link the user pasted that Kairos cannot read; never the query string.
+  { table: "board_requests", column: "user_id", erase: "cascade", export: ALL },
   // WP-42's columns (resume_snapshot, questions, verification, resume_line_entries, resume_file_key) go with the row;
   // resume_file_key's object sits under the user's R2 prefix, which the worker empties. questions is nulled by the scrub.
   { table: "applications", column: "user_id", erase: "cascade", export: { omit: ["lease_session_id"] } },

@@ -67,9 +67,11 @@ matchesRouter.post("/:id/queue", async (req, res) => {
   const [match] = await db().select().from(matches).where(and(eq(matches.id, id), eq(matches.userId, me.id)));
   if (!match) throw notFound("Match");
 
+  // gate_override is a restriction, not a permission: it records that the user went past a failed gate, and all it does
+  // is forbid Autopilot from approving the application (applications_autopilot_ck).
   const [created] = await db()
     .insert(applications)
-    .values({ userId: me.id, jobId: match.jobId, matchId: match.id })
+    .values({ userId: me.id, jobId: match.jobId, matchId: match.id, gateOverride: !match.passedFilters })
     .onConflictDoNothing({ target: [applications.userId, applications.jobId] })
     .returning({ id: applications.id });
   await db().transaction(async (tx) => {

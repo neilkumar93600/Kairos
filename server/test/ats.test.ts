@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { ashby, normalizeAshby } from "../src/services/ats/ashby";
 import { greenhouse, normalizeGreenhouse } from "../src/services/ats/greenhouse";
 import { lever, normalizeLever } from "../src/services/ats/lever";
-import { BoardNotFoundError } from "../src/services/ats/types";
+import { BoardNotFoundError, type Fetcher } from "../src/services/ats/types";
+import { normalizePosting } from "../src/services/normalize-posting";
+import { MiB, type SafeFetchOptions } from "../src/services/safe-fetch";
 
 const LEVER_ID = "0f6c1a3e-2b4d-4c5e-8f9a-1b2c3d4e5f60";
 const ASHBY_ID = "9f8e7d6c-5b4a-4321-8fed-cba987654321";
@@ -47,6 +49,19 @@ describe("ATS normalizers", () => {
     expect(normalizeAshby(board, "acme")[0]?.applyUrl).toBe(`https://jobs.ashbyhq.com/acme/${ASHBY_ID}/application`);
   });
 
+  // Golden fixture, Security round 1: a posting Postgres would refuse, end to end through the normalizer and normalizePosting.
+  it("a board carrying NUL and control characters normalizes to rows Postgres accepts", () => {
+    const [job] = normalizeGreenhouse(fixture("greenhouse-control-chars"), "acme");
+    const row = normalizePosting(job!);
+    expect(row).toMatchObject({ externalId: "4012399", title: "Software Engineer", titleLc: "software engineer", location: "Remote", locationLc: "remote", department: "Engineering" });
+    expect(row.descriptionText).toBe("Build things.\nShip them.");
+    for (const text of [row.title, row.location, row.department, row.descriptionText, JSON.stringify(row.raw)]) {
+      expect(text).not.toContain("\u0000");
+      expect(text).not.toContain("\\u0000");
+    }
+    expect(row.raw).toMatchObject({ id: 4012399, location: { name: "Remote" } });
+  });
+
   it("drops a posting whose token or id would not survive job-url validation", () => {
     const lever1 = fixture("lever")[0];
     expect(normalizeLever([{ ...lever1, id: "../../other" }], "acme")).toEqual([]);
@@ -57,21 +72,54 @@ describe("ATS normalizers", () => {
     expect(normalizeAshby(board, "acme")).toEqual([]);
   });
 
-  it("gives every board request a 15 s abort signal", async () => {
-    const signals: (AbortSignal | null | undefined)[] = [];
-    const fake = async (_url: string, init?: RequestInit) => {
-      signals.push(init?.signal);
-      return new Response("not found", { status: 404 });
+  // safeFetchJson (CISO shouldFix): every adapter call names exactly its own API host, a byte cap and a timeout.
+  it("sends every board request through the safe fetch with the exact host, a byte cap and a timeout", async () => {
+    const seen: { url: string; opts: SafeFetchOptions }[] = [];
+    const fetcher: Fetcher = async (url, opts) => {
+      seen.push({ url, opts });
+      return { status: 404 };
     };
-    await greenhouse.fetchPosting("acme", "1", fake);
-    await lever.fetchPosting("acme", "1", fake);
-    await ashby.fetchPosting("acme", "1", fake);
-    expect(signals).toHaveLength(3);
-    for (const s of signals) expect(s).toBeInstanceOf(AbortSignal);
+    await greenhouse.fetchPosting("acme", "1", { fetcher });
+    await lever.fetchPosting("acme", "1", { fetcher });
+    await lever.fetchPosting("acme", "1", { fetcher, region: "eu" });
+    await ashby.fetchPosting("acme", "1", { fetcher });
+    await greenhouse.fetchBoard("acme", { fetcher }).catch(() => undefined);
+    expect(seen.map((s) => [new URL(s.url).host, s.opts.allowedHosts])).toEqual([
+      ["boards-api.greenhouse.io", ["boards-api.greenhouse.io"]],
+      ["api.lever.co", ["api.lever.co"]],
+      ["api.eu.lever.co", ["api.eu.lever.co"]],
+      ["api.ashbyhq.com", ["api.ashbyhq.com"]],
+      ["boards-api.greenhouse.io", ["boards-api.greenhouse.io"]],
+    ]);
+    for (const s of seen) {
+      expect(s.opts.maxBytes).toBeGreaterThanOrEqual(2 * MiB);
+      expect(s.opts.maxBytes).toBeLessThanOrEqual(24 * MiB);
+      expect(s.opts.timeoutMs).toBeGreaterThan(0);
+    }
+    expect(seen[4]!.opts.maxBytes).toBe(24 * MiB); // a content=true Greenhouse board
   });
 
-  it("raises BoardNotFoundError on a 404 board", async () => {
-    const fake = async () => new Response("not found", { status: 404 });
-    await expect(greenhouse.fetchBoard("gone", fake)).rejects.toBeInstanceOf(BoardNotFoundError);
+  it("raises BoardNotFoundError on a 404 board, and answers not_modified on a 304 with the stored ETag sent", async () => {
+    await expect(greenhouse.fetchBoard("gone", { fetcher: async () => ({ status: 404 }) })).rejects.toBeInstanceOf(BoardNotFoundError);
+    let etag: string | null | undefined;
+    const notModified: Fetcher = async (_u, o) => {
+      etag = o.etag;
+      return { status: 304 };
+    };
+    expect(await lever.fetchBoard("acme", { etag: 'W/"1"', fetcher: notModified })).toEqual({ kind: "not_modified" });
+    expect(etag).toBe('W/"1"');
+  });
+
+  it("returns the listing with the response ETag", async () => {
+    const fetcher: Fetcher = async () => ({ status: 200, body: fixture("greenhouse"), etag: 'W/"2"' });
+    const r = await greenhouse.fetchBoard("acme", { fetcher });
+    expect(r.kind === "listing" && r.postings.length === 1 && r.etag).toBe('W/"2"');
+  });
+
+  // matching-28: an EU Lever board is read from api.eu.lever.co and its apply links point at jobs.eu.lever.co.
+  it("polls Lever EU boards on the EU host and builds EU apply links", async () => {
+    const fetcher: Fetcher = async () => ({ status: 200, body: fixture("lever"), etag: null });
+    const r = await lever.fetchBoard("acme", { fetcher, region: "eu" });
+    expect(r.kind === "listing" && r.postings[0]!.applyUrl).toBe(`https://jobs.eu.lever.co/acme/${LEVER_ID}/apply`);
   });
 });

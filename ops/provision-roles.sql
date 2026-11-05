@@ -209,6 +209,9 @@ GRANT SELECT, INSERT, UPDATE ON metrics_minute TO kairos_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON metrics_minute TO kairos_worker;
 GRANT SELECT ON ops_flags TO kairos_applier;
 GRANT SELECT ON metrics_minute TO kairos_metrics;
+-- WP-23: the review queue of unreadable pasted links (02-database 4.2: api S/I/U, worker S/D for retention).
+GRANT SELECT, INSERT, UPDATE ON board_requests TO kairos_api;
+GRANT SELECT, DELETE ON board_requests TO kairos_worker;
 -- WP-42: the lifecycle tables (_db/applications.md 2.3, 02-database 7.7). No runtime role updates or deletes
 -- application_events (its trigger stops the owner too) or deletes submission_attempts. The worker holds INSERT and
 -- UPDATE of the link and stage columns on tracker_items, not 7.7's SELECT: recordEvent creates or links an

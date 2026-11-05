@@ -52,6 +52,7 @@ export async function seedEverything(db: Db, email: string, mark = MARK) {
     .values({ companyId: co!.id, externalId: randomUUID(), title: "Engineer", descriptionText: "Build", applyUrl: "https://job-boards.greenhouse.io/x/jobs/1" })
     .returning();
   await db.insert(schema.matches).values({ userId: id, jobId: job!.id, passedFilters: true, score: 80, reasons: [mark] });
+  await db.insert(schema.boardRequests).values({ userId: id, host: "careers.example.com", path: `/${mark}` });
   const [app] = await db
     .insert(schema.applications)
     .values({

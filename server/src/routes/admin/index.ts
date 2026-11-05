@@ -2,13 +2,13 @@ import { Router } from "express";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../../db/client";
-import { companies, metricsMinute, opsAudit, opsFlags } from "../../db/schema";
+import { boardRequests, companies, metricsMinute, opsAudit, opsFlags } from "../../db/schema";
 import { env } from "../../lib/env";
 import { HttpError, notFound } from "../../lib/errors";
 import { getFlags, schemaFor, setFlag } from "../../lib/flags";
 import { AGENTS } from "../../agents/registry";
 import { SLOS, sloWindow } from "../../lib/slo";
-import { keysetBefore, pageParams, slicePage } from "../../lib/pagination";
+import { keysetBefore, pageParams, slicePage, tsKey } from "../../lib/pagination";
 import { parseParam, validateBody } from "../../middleware/validate";
 import { currentUser } from "../../middleware/require-auth";
 
@@ -109,7 +109,8 @@ async function setActive(id: string, active: boolean, actor: string) {
     if (!before) throw notFound("Company");
     if (before.active === active) return { ...before, changed: false };
     // companies_active_reason_ck: an active company has no reason, an inactive one has a code; the owner's stop is "owner".
-    await tx.update(companies).set({ active, inactiveReason: active ? null : "owner" }).where(eq(companies.id, id));
+    // Activation forgets the ETag: close-only polls stored it, and a 304 would keep the first real poll from reading the board.
+    await tx.update(companies).set({ active, inactiveReason: active ? null : "owner", ...(active ? { etag: null, nextPollAt: new Date(), emptyStreak: 0, consecutiveErrors: 0 } : {}) }).where(eq(companies.id, id));
     await tx.insert(opsAudit).values({
       actor,
       action: active ? "company_activate" : "company_deactivate",
@@ -127,4 +128,25 @@ adminRouter.post("/companies/:id/activate", async (req, res) => {
 
 adminRouter.post("/companies/:id/deactivate", async (req, res) => {
   res.json(await setActive(parseParam(companyId, req.params.id), false, currentUser(req).id));
+});
+
+/** The queue of pasted links Kairos cannot read (F7), most recent first. Host and path only; the user is not shown. Paged by cursor. */
+adminRouter.get("/board-requests", async (req, res) => {
+  const { limit, after } = pageParams(req.query, 200, "admin-board-requests", ["ts"]);
+  const rows = await db()
+    .select({
+      id: boardRequests.id,
+      host: boardRequests.host,
+      path: boardRequests.path,
+      detectedAts: boardRequests.detectedAts,
+      timesSeen: boardRequests.timesSeen,
+      lastSeenAt: boardRequests.lastSeenAt,
+      cursorTs: tsKey(boardRequests.lastSeenAt),
+    })
+    .from(boardRequests)
+    .where(and(eq(boardRequests.status, "open"), after && keysetBefore([boardRequests.lastSeenAt], ["timestamptz"], boardRequests.id, after)))
+    .orderBy(desc(boardRequests.lastSeenAt), desc(boardRequests.id))
+    .limit(limit + 1);
+  const page = slicePage(rows, limit, "admin-board-requests", (r) => [r.cursorTs], (r) => r.id);
+  res.json({ boardRequests: page.rows.map(({ cursorTs: _, ...row }) => row), nextCursor: page.nextCursor });
 });

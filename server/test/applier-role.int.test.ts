@@ -167,6 +167,8 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       companies: ["SIU", "SIUD", "S"],
       jobs: ["SIU", "SIUD", "S"],
       matches: ["SIU", "SIUD", "S"],
+      // WP-23: a user's unreadable link; the worker only reads and expires it.
+      board_requests: ["SIU", "SD", ""],
       applications: ["SIUD", "SIUD", "cols"],
       subscriptions: ["SIU", "SIU", "cols"],
       credit_ledger: ["SI", "SI", "S"],

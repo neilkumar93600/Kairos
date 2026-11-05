@@ -162,6 +162,20 @@
       "when": 1793873923779,
       "tag": "0022_unsubscribe_digests",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793874263600,
+      "tag": "0023_wp23_board_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793874266420,
+      "tag": "0024_wp23_import_backfill",
+      "breakpoints": true
     }
   ]
 }

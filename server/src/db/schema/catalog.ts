@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { bigint, boolean, check, index, integer, jsonb, pgTable, smallint, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { user } from "./auth";
 import { atsProvider } from "./enums";
 
 /** Employers we poll. boardToken is the slug in the public board URL. */
@@ -128,5 +129,42 @@ export const jobs = pgTable(
       "jobs_card_ck",
       sql`card IS NULL OR (jsonb_typeof(card) = 'object' AND octet_length(card::text) <= 16384 AND card_version IS NOT NULL AND card_content_hash IS NOT NULL)`,
     ),
+  ],
+);
+
+/**
+ * board_requests (F7, database-58, matching-83; 02-database 7.2.6): a pasted link Kairos cannot read, kept as host and
+ * path only (never the query string) for the owner's review queue (GET /api/admin/board-requests). Never fetched.
+ * gen_random_uuid() rather than uuidv7() (R-6): the databases are Postgres 17.
+ */
+export const boardRequests = pgTable(
+  "board_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    host: text("host").notNull(),
+    path: text("path").notNull(),
+    /** "greenhouse" for an employer page carrying ?gh_jid=, else null. */
+    detectedAts: text("detected_ats"),
+    timesSeen: integer("times_seen").notNull().default(1),
+    status: text("status").$type<"open" | "added" | "rejected">().notNull().default("open"),
+    companyId: uuid("company_id").references(() => companies.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("board_requests_user_target_uq").on(t.userId, t.host, t.path),
+    index("board_requests_open_idx").on(t.host, t.path).where(sql`${t.status} = 'open'`),
+    index("board_requests_company_idx").on(t.companyId).where(sql`${t.companyId} IS NOT NULL`),
+    check("board_requests_host_ck", sql`host ~ '^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$' AND host !~ '^[0-9.]+$'`),
+    check("board_requests_path_ck", sql`path ~ '^/[A-Za-z0-9._~%/+=@:,-]{0,199}$'`),
+    check("board_requests_ats_ck", sql`detected_ats IS NULL OR detected_ats ~ '^[a-z0-9_-]{1,40}$'`),
+    check("board_requests_status_ck", sql`status IN ('open','added','rejected')`),
+    check("board_requests_resolved_ck", sql`(status = 'open') = (resolved_at IS NULL)`),
+    check("board_requests_company_ck", sql`status = 'added' OR company_id IS NULL`),
+    check("board_requests_times_ck", sql`times_seen >= 1`),
   ],
 );

@@ -111,26 +111,47 @@ export function simhash(description: string): bigint {
 
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
+/**
+ * Text as Postgres takes it: one NUL fails the whole chunk of an upsert, so one posting would stop its board updating for
+ * good. Line endings become newlines (so words stay apart), then the other C0 controls go; tab and newline stay.
+ */
+export function cleanText(text: string): string {
+  return text.replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b-\u001f]/g, "");
+}
+
+/** The raw payload for jsonb, which refuses NUL and a lone surrogate in any string or key. The rest of it stays verbatim. */
+export function cleanRaw(value: unknown): unknown {
+  const str = (t: string) => t.replace(/\u0000/g, "").replace(/\p{Surrogate}/gu, "\ufffd");
+  if (typeof value === "string") return str(value);
+  if (Array.isArray(value)) return value.map(cleanRaw);
+  if (value && typeof value === "object" && !(value instanceof Date)) {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [str(k), cleanRaw(v)]));
+  }
+  return value;
+}
+
 export function normalizePosting(job: NormalizedJob): NormalizedPosting {
-  const title = job.title.replace(/\s+/g, " ").trim();
-  const descriptionText = job.descriptionText.slice(0, DESCRIPTION_MAX_CHARS);
+  const title = cleanText(job.title).replace(/\s+/g, " ").trim();
+  const descriptionText = cleanText(job.descriptionText).slice(0, DESCRIPTION_MAX_CHARS);
+  const location = job.location === null ? null : cleanText(job.location);
+  const department = job.department === null ? null : cleanText(job.department);
   const titleLc = title.toLowerCase();
-  const locationLc = (job.location ?? "").toLowerCase();
+  const locationLc = (location ?? "").toLowerCase();
   const sponsorshipHint: SponsorshipHint | null = NO_SPONSORSHIP.test(descriptionText)
     ? "no_sponsorship"
     : SPONSORS.test(descriptionText)
       ? "sponsors"
       : null;
   const fields = {
-    externalId: job.externalId,
+    externalId: cleanText(job.externalId),
     title,
     titleLc,
     titleNorm: titleNorm(titleLc),
-    location: job.location,
+    location,
     locationLc,
     locationNorm: locationNorm(locationLc),
     remote: job.remote,
-    department: job.department,
+    department,
     descriptionText,
     applyUrl: job.applyUrl,
     postedAt: job.postedAt,
@@ -143,7 +164,7 @@ export function normalizePosting(job: NormalizedJob): NormalizedPosting {
   };
   return {
     ...fields,
-    raw: job.raw,
+    raw: cleanRaw(job.raw),
     hintsVersion: HINTS_VERSION,
     contentHash: sha256(JSON.stringify(fields)),
     descriptionHash: sha256(normalizeForHash(descriptionText)),

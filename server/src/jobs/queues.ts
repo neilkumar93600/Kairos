@@ -19,8 +19,8 @@ export const QUEUES = {
 
 export interface JobData {
   "poll-boards": { companyId: string } | { schedule: true };
-  /** userIds and attempt are set on the delayed follow-up for pairs a retryable model failure skipped. */
-  "score-matches": { jobId: string; userIds?: string[]; attempt?: number };
+  /** userIds and attempt are set on the delayed follow-up for pairs a retryable model failure skipped. backfillUserId: one user's capped backfill. */
+  "score-matches": { jobId: string; userIds?: string[]; attempt?: number } | { backfillUserId: string };
   /** Drains one chunk of the user's scoring lane (jobs/score-matches.ts). */
   "score-user": { userId: string };
   "tailor-application": { applicationId: string };

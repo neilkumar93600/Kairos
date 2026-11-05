@@ -84,6 +84,26 @@ describe("normalizePosting", () => {
     expect(normalizePosting(job()).sponsorshipHint).toBeNull();
   });
 
+  // Security round 1: one NUL fails the whole chunk of an upsert, so one posting would stop its board updating for good.
+  it("takes out what Postgres refuses, in every text field and in raw, and keeps tab and newline", () => {
+    const n = normalizePosting(
+      job({
+        externalId: "44\u000011",
+        title: "Senior\u0000 Backend\u0007 Engineer",
+        location: "New\u0000 York",
+        department: "Eng\u001fineering",
+        descriptionText: "Build\u0000 APIs.\r\nShip\tthem.\rDaily.\u000b",
+        raw: { "ke\u0000y": "va\u0000lue", nested: [{ text: "a\u0000b", lone: "x\ud800y" }], n: 4411, ok: "tab\tand\nnewline", none: null },
+      }),
+    );
+    expect(n).toMatchObject({ externalId: "4411", title: "Senior Backend Engineer", titleLc: "senior backend engineer", location: "New York", locationLc: "new york", department: "Engineering" });
+    expect(n.descriptionText).toBe("Build APIs.\nShip\tthem.\nDaily.");
+    expect(n.raw).toEqual({ key: "value", nested: [{ text: "ab", lone: "x\ufffdy" }], n: 4411, ok: "tab\tand\nnewline", none: null });
+    // The same posting without the bytes hashes the same, so a clean relisting is not a change.
+    const clean = normalizePosting(job({ externalId: "4411", title: "Senior Backend Engineer", location: "New York", department: "Engineering", descriptionText: "Build APIs.\nShip\tthem.\nDaily." }));
+    expect(n.contentHash).toBe(clean.contentHash);
+  });
+
   it("cuts a description to 60,000 characters", () => {
     expect(normalizePosting(job({ descriptionText: "x".repeat(70_000) })).descriptionText).toHaveLength(60_000);
   });
