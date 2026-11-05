@@ -20,3 +20,23 @@ describe("classifyByRules", () => {
     expect(classifyByRules("Newsletter", "Our product update")).toBeNull();
   });
 });
+
+describe("stripQuoted", () => {
+  it("drops quoted lines, a reply header and what follows it, and a signature", () => {
+    expect(stripQuoted("Thanks\n> an interview\n> soon")).toBe("Thanks");
+    expect(stripQuoted("Thanks\n\nOn Mon, Jan 5, 2026 at 10:00 AM Sam <sam@a.co> wrote:\nmore")).toBe("Thanks");
+    expect(stripQuoted("Thanks\n\nOn Mon, Jan 5, 2026 at 10:00 AM Sam <\nsam@a.co> wrote:\nmore")).toBe("Thanks");
+    expect(stripQuoted("Thanks\n-----Original Message-----\nFrom: Sam")).toBe("Thanks");
+    expect(stripQuoted("Thanks\n-- \nSam")).toBe("Thanks");
+  });
+
+  it("keeps a forwarded block: in a manual forward it is the employer's mail", () => {
+    const body = "fyi\n---------- Forwarded message ---------\nFrom: Acme <jobs@acme.com>\n\nWe would like to interview you.";
+    expect(stripQuoted(body)).toBe(body);
+  });
+
+  it("normalizes CRLF and leaves ordinary text alone", () => {
+    expect(stripQuoted("a\r\nb\r\n")).toBe("a\nb");
+    expect(stripQuoted("On Monday we wrote back.\nSee you then.")).toBe("On Monday we wrote back.\nSee you then.");
+  });
+});
