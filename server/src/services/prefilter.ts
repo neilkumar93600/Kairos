@@ -49,6 +49,12 @@ const JUNIOR_ONLY = onlyLevels(["intern", "entry"]);
 const SENIOR_ONLY = onlyLevels(["senior", "lead"]);
 const SPONSORSHIP_NEEDS = ["needs_sponsorship_now", "needs_sponsorship_later", "opt_stem_opt"];
 
+/**
+ * A row that does not count as having the pair: an import stored while the scorer could not run. Both directions select
+ * it, and the scorer fills it in (jobs/score-matches.ts), so "could not score then" is never "never scored".
+ */
+const NO_SCORED_MATCH = sql`not (m.status = 'new' and m.score is null and m.source = 'manual_url')`;
+
 export interface JobForPrefilter {
   id: string;
   companyId: string;
@@ -116,7 +122,7 @@ export async function usersForJob(
        ${NO_SPONSORSHIP.test(job.descriptionText) ? sql`and coalesce(p.preferences->>'workAuthorization', '') not in (${sql.join(SPONSORSHIP_NEEDS.map((v) => sql`${v}`), sql`, `)})` : sql``}
        and recent.n < (p.preferences->>'maxApplicationsPerCompanyPer30Days')::int
        -- WP-34: AND NOT EXISTS (one match per user per family) replaces this per-job check.
-       and not exists (select 1 from matches m where m.user_id = p.user_id and m.job_id = ${job.id}::uuid)
+       and not exists (select 1 from matches m where m.user_id = p.user_id and m.job_id = ${job.id}::uuid and ${NO_SCORED_MATCH})
      order by p.user_id
      limit ${opts.limit}::int`);
   return rows.rows.map((r) => ({ userId: r.user_id, preferences: r.preferences, recent: Number(r.recent) }));
@@ -178,13 +184,6 @@ export interface JobCandidate {
  * ponytail: newest first, not ts_rank: jobs has no search_tsv yet (WP-34's recall stage).
  */
 export async function jobsForUser(database: Db, userId: string, f: UserPrefilter, opts: { visibleDays: number; limit: number }): Promise<JobCandidate[]> {
-  const stale = sql`j.hints_version <> ${HINTS_VERSION}::smallint`;
-  const roles = f.anyRoleMatchesAll
-    ? sql``
-    : sql`and (${stale} or ${or(f.roleWordPatterns.map((words) => sql`(${sql.join(words.map((w) => sql`j.title_lc like ${w}`), sql` and `)})`))})`;
-  const locations = f.noLocations
-    ? sql``
-    : sql`and (${stale} ${f.remoteOk ? sql`or j.remote` : sql``} ${f.locationPatterns.length ? sql`or ${or(f.locationPatterns.map((l) => sql`j.location_lc like ${l}`))}` : sql``})`;
   const rows = await database.execute<{
     id: string;
     company_id: string;
@@ -194,7 +193,33 @@ export async function jobsForUser(database: Db, userId: string, f: UserPrefilter
     remote: boolean;
     description_text: string;
     salary_max_usd: number | null;
-  }>(sql`
+  }>(jobsForUserQuery(userId, f, opts));
+  return rows.rows.map((r) => ({
+    id: r.id,
+    companyId: r.company_id,
+    companyName: r.company_name,
+    title: r.title,
+    location: r.location,
+    remote: r.remote,
+    descriptionText: r.description_text,
+    salaryMaxUsd: r.salary_max_usd,
+  }));
+}
+
+/**
+ * The statement alone, so a test can EXPLAIN it. hints_version only goes up, so stale is `<`, which
+ * jobs_hints_stale_idx serves: with `<>` the OR around each LIKE cannot be a BitmapOr with the trigram indexes, and the
+ * planner walks the whole visible window instead.
+ */
+export function jobsForUserQuery(userId: string, f: UserPrefilter, opts: { visibleDays: number; limit: number }): SQL {
+  const stale = sql`j.hints_version < ${HINTS_VERSION}::smallint`;
+  const roles = f.anyRoleMatchesAll
+    ? sql``
+    : sql`and (${stale} or ${or(f.roleWordPatterns.map((words) => sql`(${sql.join(words.map((w) => sql`j.title_lc like ${w}`), sql` and `)})`))})`;
+  const locations = f.noLocations
+    ? sql``
+    : sql`and (${stale} ${f.remoteOk ? sql`or j.remote` : sql``} ${f.locationPatterns.length ? sql`or ${or(f.locationPatterns.map((l) => sql`j.location_lc like ${l}`))}` : sql``})`;
+  return sql`
     select j.id, j.company_id, c.name as company_name, j.title, j.location, j.remote, j.description_text, j.salary_max_usd
       from jobs j
       join companies c on c.id = j.company_id
@@ -209,17 +234,7 @@ export async function jobsForUser(database: Db, userId: string, f: UserPrefilter
        ${f.needsSponsorship ? sql`and (${stale} or j.sponsorship_hint is distinct from 'no_sponsorship')` : sql``}
        ${f.cappedCompanyIds.length ? sql`and j.company_id not in (${sql.join(f.cappedCompanyIds.map((id) => sql`${id}::uuid`), sql`, `)})` : sql``}
        -- WP-34: AND NOT EXISTS (one match per user per family) replaces this per-job check.
-       and not exists (select 1 from matches m where m.user_id = ${userId} and m.job_id = j.id)
+       and not exists (select 1 from matches m where m.user_id = ${userId} and m.job_id = j.id and ${NO_SCORED_MATCH})
      order by j.visible_at desc, j.id
-     limit ${opts.limit}::int`);
-  return rows.rows.map((r) => ({
-    id: r.id,
-    companyId: r.company_id,
-    companyName: r.company_name,
-    title: r.title,
-    location: r.location,
-    remote: r.remote,
-    descriptionText: r.description_text,
-    salaryMaxUsd: r.salary_max_usd,
-  }));
+     limit ${opts.limit}::int`;
 }

@@ -5,6 +5,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { DEFAULT_PREFERENCES, type ApplicationAnswer, type ResumeInput, type ResumeLine } from "@auto-career/shared";
 import type { Db } from "../src/db/client";
 import type { SessionUser } from "../src/lib/auth";
+import { userDailyUsage } from "../src/db/schema/platform";
+import { AgentError } from "../src/llm/errors";
 import { SafeFetchError } from "../src/services/safe-fetch";
 import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from "./helpers/test-db";
 
@@ -20,6 +22,8 @@ delete process.env.ANTHROPIC_API_KEY;
 
 const tailorResume = vi.hoisted(() => vi.fn());
 vi.mock("../src/services/tailor", async (orig) => ({ ...(await orig<typeof import("../src/services/tailor")>()), tailorResume }));
+const scoreFit = vi.hoisted(() => vi.fn());
+vi.mock("../src/services/fit", async (orig) => ({ ...(await orig<typeof import("../src/services/fit")>()), scoreFit }));
 const fetchPostingFromBoard = vi.hoisted(() => vi.fn());
 vi.mock("../src/services/job-import", async (orig) => ({ ...(await orig<typeof import("../src/services/job-import")>()), fetchPostingFromBoard }));
 
@@ -452,6 +456,56 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       expect(queued.status).toBe(201);
       const [a] = await tdb.select().from(schema.applications).where(eq(schema.applications.userId, me.id));
       expect(a!.gateOverride).toBe(true);
+    });
+
+    // Contract round 1: refused call, then re-import, then scored and in the feed.
+    it("an import the gateway refused is scored by the next import, and reaches the feed", async () => {
+      await tdb.update(schema.profiles).set({ preferences: prefs as never }).where(eq(schema.profiles.userId, me.id));
+      await fact("Build APIs", true);
+      fetchPostingFromBoard.mockResolvedValue(posting);
+      scoreFit.mockRejectedValueOnce(new AgentError("llm_paused", "all model calls are paused", false));
+
+      const first = await importIt();
+      expect(first.status).toBe(200);
+      expect(first.body.fit).toEqual({ passed: true, reasons: [] });
+      const [stored] = await tdb.select().from(schema.matches).where(eq(schema.matches.userId, me.id));
+      expect(stored).toMatchObject({ status: "new", score: null, id: first.body.matchId });
+      const empty = await request(app).get("/api/matches");
+      expect(empty.status).toBe(200);
+      expect(empty.body.matches).toEqual([]);
+      // The refused call took no slot.
+      const usage = await tdb.select().from(userDailyUsage).where(eq(userDailyUsage.userId, me.id));
+      expect(usage.reduce((n, u) => n + u.scored, 0)).toBe(0);
+
+      scoreFit.mockResolvedValueOnce({ score: 90, reasons: ["Strong match"], promptVersion: 3 });
+      const second = await importIt();
+      expect(second.status).toBe(200);
+      expect(second.body).toMatchObject({ matchId: stored!.id, fit: { passed: true, reasons: [] } });
+      const [after] = await tdb.select().from(schema.matches).where(eq(schema.matches.userId, me.id));
+      expect(after).toMatchObject({ status: "new", score: 90, reasons: ["Strong match"], scorerVersion: "fit-scorer@v3", source: "manual_url", selection: "import" });
+      expect(after!.prerankScore).not.toBeNull();
+      const feed = await request(app).get("/api/matches");
+      expect(feed.status).toBe(200);
+      expect(feed.body.matches.map((m: { id: string }) => m.id)).toEqual([stored!.id]);
+      expect(scoreFit).toHaveBeenCalledTimes(2);
+
+      // Scored now: a third import pays nothing.
+      await importIt();
+      expect(scoreFit).toHaveBeenCalledTimes(2);
+    });
+
+    it("a re-import under the bar stores below_bar, out of the feed", async () => {
+      await tdb.update(schema.profiles).set({ preferences: prefs as never }).where(eq(schema.profiles.userId, me.id));
+      await fact("Build APIs", true);
+      fetchPostingFromBoard.mockResolvedValue(posting);
+      scoreFit.mockRejectedValueOnce(new AgentError("llm_paused", "all model calls are paused", false));
+      await importIt();
+      scoreFit.mockResolvedValueOnce({ score: 60, reasons: ["Thin"] });
+      const second = await importIt();
+      expect(second.status).toBe(200);
+      expect(second.body).toMatchObject({ matchId: null, fit: { passed: false } });
+      const [after] = await tdb.select().from(schema.matches).where(eq(schema.matches.userId, me.id));
+      expect(after).toMatchObject({ status: "below_bar", score: 60 });
     });
 
     it("keeps an import when the scorer cannot run, unscored and out of the feed", async () => {

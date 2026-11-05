@@ -203,10 +203,11 @@ describe.skipIf(!hasTestDb)("scoring controls against Postgres", () => {
 
     it("a score under the bar is kept as below_bar, and the pair is not paid for again", async () => {
       const id = await candidate();
-      scoreFit.mockImplementation(async () => ({ score: 60, reasons: ["Thin"] }));
+      // promptVersion: what a prompt_pin or a canary ran, not the spec's constant.
+      scoreFit.mockImplementation((async () => ({ score: 60, reasons: ["Thin"], promptVersion: 7 })) as never);
       const jobId = await job(0);
       expect(await run(jobId)).toMatchObject({ stored: 0 });
-      expect(await matchOf(id, jobId)).toMatchObject({ status: "below_bar", score: 60, passedFilters: true, source: "pipeline", selection: "ranked", scorerVersion: "fit-scorer@v1" });
+      expect(await matchOf(id, jobId)).toMatchObject({ status: "below_bar", score: 60, passedFilters: true, source: "pipeline", selection: "ranked", scorerVersion: "fit-scorer@v7" });
       expect((await matchOf(id, jobId))!.prerankScore).toBeGreaterThanOrEqual(scoring.F1_FLOOR_COLD_START);
       expect((await matchOf(id, jobId))!.scoredAt).toBeInstanceOf(Date);
       expect(scoreFit).toHaveBeenCalledTimes(1);
@@ -214,11 +215,37 @@ describe.skipIf(!hasTestDb)("scoring controls against Postgres", () => {
       expect(scoreFit).toHaveBeenCalledTimes(1);
     });
 
-    it("at or over the bar is new", async () => {
+    it("at or over the bar is new; the legacy client reports no scorer version", async () => {
       const id = await candidate();
       const jobId = await job(0);
       expect(await run(jobId)).toMatchObject({ stored: 1 });
-      expect(await matchOf(id, jobId)).toMatchObject({ status: "new", score: 90 });
+      expect(await matchOf(id, jobId)).toMatchObject({ status: "new", score: 90, scorerVersion: null });
+    });
+
+    // Contract round 1: an import the scorer could not run for is filled in, and stays an import.
+    it("a fan-out scores a pair whose only row is an unscored import, in place", async () => {
+      const id = await candidate();
+      const jobId = await job(0);
+      await db.insert(schema.matches).values({ userId: id, jobId, passedFilters: true, status: "new", source: "manual_url", selection: "import" });
+      expect(await run(jobId)).toMatchObject({ stored: 1 });
+      expect(await matchOf(id, jobId)).toMatchObject({ status: "new", score: 90, source: "manual_url", selection: "import" });
+      expect(scoreFit).toHaveBeenCalledTimes(1);
+      expect((await matchOf(id, jobId))!.scoredAt).toBeInstanceOf(Date);
+    });
+
+    it("fills in an unscored import under the bar as below_bar, and never touches a row the user decided", async () => {
+      const id = await candidate();
+      const under = await job(0);
+      await db.insert(schema.matches).values({ userId: id, jobId: under, passedFilters: true, status: "new", source: "manual_url", selection: "import" });
+      scoreFit.mockImplementation(async () => ({ score: 60, reasons: ["Thin"] }));
+      await run(under);
+      expect(await matchOf(id, under)).toMatchObject({ status: "below_bar", score: 60 });
+      const queued = await job(1);
+      await db.insert(schema.matches).values({ userId: id, jobId: queued, passedFilters: true, status: "queued", source: "manual_url", selection: "import" });
+      scoreFit.mockClear();
+      await run(queued);
+      expect(scoreFit).not.toHaveBeenCalled();
+      expect(await matchOf(id, queued)).toMatchObject({ status: "queued", score: null });
     });
 
     it("the floor is 35 with a full profile and 20 with a thin one: the far job costs the first no call", async () => {

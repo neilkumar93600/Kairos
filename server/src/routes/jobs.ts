@@ -1,5 +1,5 @@
 import { Router, type Response } from "express";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { importJobSchema, type PlanId, type ResumeInput } from "@auto-career/shared";
 import { db } from "../db/client";
@@ -72,17 +72,33 @@ const importIo = (plan: PlanId, signal: AbortSignal | undefined): ImportIo => ({
     const [m] = await db().select({ id: matches.id, status: matches.status, score: matches.score }).from(matches).where(and(eq(matches.userId, userId), eq(matches.jobId, jobId)));
     return m ?? null;
   },
-  async ensureMatch({ userId, jobId, passed, reasons, status, score }) {
+  async ensureMatch({ userId, jobId, passed, reasons, status, score, scored }) {
     const [created] = await db()
       .insert(matches)
-      .values({ userId, jobId, passedFilters: passed, reasons, status, score, source: "manual_url", selection: "import", ...(score === null ? {} : { scoredAt: new Date() }) })
+      .values({
+        userId,
+        jobId,
+        passedFilters: passed,
+        reasons,
+        status,
+        score,
+        source: "manual_url",
+        selection: "import",
+        ...(scored ? { scoredAt: new Date(), scorerVersion: scored.scorerVersion, prerankScore: scored.prerankScore } : {}),
+      })
       .onConflictDoNothing({ target: [matches.userId, matches.jobId] })
       .returning({ id: matches.id });
     if (created) return created.id;
     const [existing] = await db().select({ id: matches.id }).from(matches).where(and(eq(matches.userId, userId), eq(matches.jobId, jobId)));
     return existing!.id;
   },
-  scorePair: (userId, jobId, job, companyName) => scoreImported(userId, plan, jobId, { ...job, companyName }, signal),
+  async applyScore(matchId, scored, status) {
+    await db()
+      .update(matches)
+      .set({ status, score: scored.score, reasons: scored.reasons, scorerVersion: scored.scorerVersion, prerankScore: scored.prerankScore, scoredAt: new Date() })
+      .where(and(eq(matches.id, matchId), isNull(matches.score)));
+  },
+  scorePair: (userId, jobId, job, companyName, prefs) => scoreImported(userId, plan, jobId, { ...job, companyName }, prefs, signal),
   fanOut: (jobId) => enqueue("score-matches", { jobId }, `score-${jobId}`),
   async boardForHost(host) {
     const found = await db()

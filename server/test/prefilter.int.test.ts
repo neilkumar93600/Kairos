@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { Preferences } from "@auto-career/shared";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Db } from "../src/db/client";
 import * as schema from "../src/db/schema";
 import { userDailyUsage } from "../src/db/schema/platform";
 import { passesHardFilters } from "../src/services/fit";
-import { jobsForUser, toUserPrefilter, usersForJob, type JobForPrefilter } from "../src/services/prefilter";
+import { HINTS_VERSION } from "../src/services/normalize-posting";
+import { jobsForUser, jobsForUserQuery, toUserPrefilter, usersForJob, type JobForPrefilter } from "../src/services/prefilter";
 import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb } from "./helpers/test-db";
 
 /**
@@ -143,6 +144,44 @@ describe.skipIf(!hasTestDb)("the SQL prefilter against Postgres", () => {
       after = page.at(-1)!.userId;
     }
     expect(seen).toEqual([...ids].sort());
+  });
+
+  // Contract round 1: an import stored while the scorer could not run still counts as not scored.
+  it("selects a pair whose only row is an unscored import, and no other row", async () => {
+    const id = await eligible();
+    const [c] = await db.insert(schema.companies).values({ name: "Acme", ats: "greenhouse", boardToken: randomUUID() }).returning();
+    const [row] = await db.insert(schema.jobs).values({ companyId: c!.id, externalId: "1", title: "Software Engineer", descriptionText: "x", applyUrl: "https://job-boards.greenhouse.io/x/jobs/1" }).returning();
+    const j = { ...job(), id: row!.id, companyId: c!.id };
+    await db.insert(schema.matches).values({ userId: id, jobId: row!.id, passedFilters: true, status: "new", source: "manual_url", selection: "import" });
+    expect((await usersForJob(db, j, { limit: 10 })).map((u) => u.userId)).toEqual([id]);
+    expect(await jobsForUser(db, id, toUserPrefilter(PREFS, new Map()), { visibleDays: 30, limit: 10 })).toMatchObject([{ id: row!.id }]);
+    for (const set of [{ score: 80 }, { status: "queued" as const }, { status: "skipped" as const }]) {
+      await db.update(schema.matches).set({ score: null, status: "new", ...set }).where(eq(schema.matches.userId, id));
+      expect(await usersForJob(db, j, { limit: 10 })).toEqual([]);
+      expect(await jobsForUser(db, id, toUserPrefilter(PREFS, new Map()), { visibleDays: 30, limit: 10 })).toEqual([]);
+    }
+  });
+
+  // DB round 1: `hints_version <> v` made the OR around each LIKE unindexable, and this walked the whole visible window.
+  it("a backfill on 100,000 open jobs reads the trigram index, not the window", { timeout: 180_000 }, async () => {
+    const [c] = await db.insert(schema.companies).values({ name: "Acme", ats: "greenhouse", boardToken: randomUUID() }).returning();
+    // One title in 2,000 fits; hints are current, as normalizePosting writes them.
+    await db.execute(sql`
+      insert into jobs (company_id, external_id, title, title_lc, location, location_lc, description_text, apply_url, hints_version, visible_at)
+      select ${c!.id}::uuid, g::text,
+             case when g % 2000 = 0 then 'Software Engineer ' else 'Plumber ' end || g,
+             case when g % 2000 = 0 then 'software engineer ' else 'plumber ' end || g,
+             'Austin', 'austin', 'x', 'https://job-boards.greenhouse.io/x/jobs/1', ${HINTS_VERSION}::smallint,
+             now() - make_interval(mins => g % 40000)
+        from generate_series(1, 100000) g`);
+    await db.execute(sql`vacuum analyze jobs`);
+    const user = await seedUser(db);
+    const plan = await db.execute<{ "QUERY PLAN": string }>(
+      sql`explain ${jobsForUserQuery(user, toUserPrefilter(PREFS, new Map()), { visibleDays: 30, limit: 400 })}`,
+    );
+    const text = plan.rows.map((r) => r["QUERY PLAN"]).join("\n");
+    expect(text).toMatch(/jobs_title_lc_trgm_idx/);
+    expect(await jobsForUser(db, user, toUserPrefilter(PREFS, new Map()), { visibleDays: 30, limit: 400 })).toHaveLength(50);
   });
 
   describe("jobsForUser, a backfill's direction", () => {

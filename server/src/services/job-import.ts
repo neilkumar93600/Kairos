@@ -13,6 +13,14 @@ export interface ImportResult {
   fit: { passed: boolean; reasons: string[] };
 }
 
+/** One scorer call's result, as a match stores it. */
+export interface ScoredPair {
+  score: number;
+  reasons: string[];
+  scorerVersion: string | null;
+  prerankScore: number | null;
+}
+
 export interface ExistingMatch {
   id: string;
   status: string;
@@ -30,9 +38,11 @@ export interface ImportIo {
   recentApplicationsToCompany(userId: string, companyId: string): Promise<number>;
   findMatch(userId: string, jobId: string): Promise<ExistingMatch | null>;
   /** Insert-or-get on (userId, jobId). Writes the row as given only when none exists. */
-  ensureMatch(m: { userId: string; jobId: string; passed: boolean; reasons: string[]; status: "new" | "below_bar"; score: number | null }): Promise<string>;
+  ensureMatch(m: { userId: string; jobId: string; passed: boolean; reasons: string[]; status: "new" | "below_bar"; score: number | null; scored?: ScoredPair }): Promise<string>;
+  /** Fills in a match stored unscored; touches only a row whose score is still null. */
+  applyScore(matchId: string, scored: ScoredPair, status: "new" | "below_bar"): Promise<void>;
   /** One scorer call for the pair, or null when it cannot run: see scoreImported. */
-  scorePair(userId: string, jobId: string, job: NormalizedJob, companyName: string): Promise<{ score: number; reasons: string[] } | null>;
+  scorePair(userId: string, jobId: string, job: NormalizedJob, companyName: string, prefs: Preferences): Promise<ScoredPair | null>;
   /** A new posting of an active company reaches the other users the way a polled one does. */
   fanOut(jobId: string): Promise<void>;
   /** The Greenhouse board an employer's host belongs to, when a company names that host. */
@@ -91,9 +101,10 @@ async function resolveLink(userId: string, url: string, io: ImportIo): Promise<P
  *
  * A gate failure is stored below_bar with passed_filters false, and costs no model call. A pass takes one synchronous
  * scorer call and one dailyScoringCap unit: at or over the user's bar it is "new" (in the feed), under it below_bar. When
- * the scorer cannot run (no preferences, no confirmed fact, cap reached, model down) the match is "new" with no score:
- * the feed shows only scored matches, so it waits there, and the user can still tailor. A second import of the same
- * posting reads the stored match and pays nothing. Below-bar rows stay queueable: "Tailor anyway" queues them by id.
+ * the scorer cannot run (no preferences, no confirmed fact, cap reached, model down) the match is "new" with no score,
+ * out of the feed, and the user can still tailor. It does not stay that way: the next import of the posting scores it
+ * here, and a backfill or a fan-out selects it too (services/prefilter.ts). A second import of a scored posting reads the
+ * stored match and pays nothing. Below-bar rows stay queueable: "Tailor anyway" queues them by id.
  */
 export async function importJob(userId: string, url: string, io: ImportIo): Promise<ImportResult> {
   const parsed = await resolveLink(userId, url, io);
@@ -128,6 +139,16 @@ export async function importJob(userId: string, url: string, io: ImportIo): Prom
   const bar = prefs.fitThreshold;
 
   if (existing) {
+    if (existing.score === null && existing.status === "new" && gate.pass) {
+      const scored = await io.scorePair(userId, job.id, posting, company.name, prefs);
+      if (scored) {
+        const over = scored.score >= bar;
+        await io.applyScore(existing.id, scored, over ? "new" : "below_bar");
+        return over
+          ? { jobId: job.id, matchId: existing.id, fit: { passed: true, reasons: [] } }
+          : { jobId: job.id, matchId: null, fit: { passed: false, reasons: [belowBarReason(scored.score, bar)] } };
+      }
+    }
     const under = existing.score !== null && existing.score < bar;
     const reasons = gate.pass ? (under ? [belowBarReason(existing.score!, bar)] : []) : gate.reasons;
     return { jobId: job.id, matchId: matchIdOf(existing), fit: { passed: gate.pass && !under, reasons } };
@@ -137,12 +158,12 @@ export async function importJob(userId: string, url: string, io: ImportIo): Prom
     return { jobId: job.id, matchId: null, fit: { passed: false, reasons: gate.reasons } };
   }
 
-  const scored = await io.scorePair(userId, job.id, posting, company.name);
+  const scored = await io.scorePair(userId, job.id, posting, company.name, prefs);
   if (scored && scored.score < bar) {
-    await io.ensureMatch({ userId, jobId: job.id, passed: true, reasons: scored.reasons, status: "below_bar", score: scored.score });
+    await io.ensureMatch({ userId, jobId: job.id, passed: true, reasons: scored.reasons, status: "below_bar", score: scored.score, scored });
     return { jobId: job.id, matchId: null, fit: { passed: false, reasons: [belowBarReason(scored.score, bar)] } };
   }
-  const matchId = await io.ensureMatch({ userId, jobId: job.id, passed: true, reasons: scored?.reasons ?? [], status: "new", score: scored?.score ?? null });
+  const matchId = await io.ensureMatch({ userId, jobId: job.id, passed: true, reasons: scored?.reasons ?? [], status: "new", score: scored?.score ?? null, ...(scored ? { scored } : {}) });
   return { jobId: job.id, matchId, fit: { passed: true, reasons: [] } };
 }
 

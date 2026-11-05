@@ -24,6 +24,8 @@ const posting: NormalizedJob = {
 const prefs = { ...DEFAULT_PREFERENCES, roles: ["Software Engineer"], workAuthorization: "citizen" } as unknown as Preferences;
 const URL_OK = "https://boards.greenhouse.io/acme/jobs/4012345";
 
+const scoredAt = (score: number, reasons: string[] = ["Thin"]) => ({ score, reasons, scorerVersion: "fit-scorer@v2", prerankScore: 40 });
+
 function io(over: Partial<ImportIo> = {}) {
   const calls: string[] = [];
   const stored: Parameters<ImportIo["ensureMatch"]>[0][] = [];
@@ -53,9 +55,12 @@ function io(over: Partial<ImportIo> = {}) {
       stored.push(m);
       return "m1";
     },
+    async applyScore(_id, scored, status) {
+      calls.push(`apply ${status} ${scored.score}`);
+    },
     async scorePair() {
       calls.push("score");
-      return { score: 90, reasons: ["Strong match"] };
+      return scoredAt(90, ["Strong match"]);
     },
     async fanOut() {
       calls.push("fan-out");
@@ -133,11 +138,11 @@ describe("importJob", () => {
     const r = await importJob("u1", URL_OK, fake);
     expect(r).toEqual({ jobId: "j1", matchId: "m1", fit: { passed: true, reasons: [] } });
     expect(calls).toEqual(["fetch greenhouse/acme/4012345", "company Acme", "score", "match new"]);
-    expect(stored[0]).toMatchObject({ passed: true, status: "new", score: 90 });
+    expect(stored[0]).toMatchObject({ passed: true, status: "new", score: 90, scored: { scorerVersion: "fit-scorer@v2", prerankScore: 40 } });
   });
 
   it("stores a score under the bar as below_bar, with no match id, and tells the user why", async () => {
-    const { fake, stored } = io({ scorePair: async () => ({ score: 60, reasons: ["Thin"] }) });
+    const { fake, stored } = io({ scorePair: async () => scoredAt(60) });
     const r = await importJob("u1", URL_OK, fake);
     expect(r).toEqual({ jobId: "j1", matchId: null, fit: { passed: false, reasons: [belowBarReason(60, prefs.fitThreshold)] } });
     expect(stored[0]).toMatchObject({ passed: true, status: "below_bar", score: 60, reasons: ["Thin"] });
@@ -166,6 +171,34 @@ describe("importJob", () => {
     expect(calls.filter((c) => c.startsWith("match"))).toEqual([]);
     const again = io({ findMatch: async () => ({ id: "m9", status: "new", score: 90 }) });
     expect(await importJob("u1", URL_OK, again.fake)).toEqual({ jobId: "j1", matchId: "m9", fit: { passed: true, reasons: [] } });
+  });
+
+  // Contract round 1: "could not score then" must not become "never scored".
+  it("re-importing a match stored unscored scores it, and applies the bar", async () => {
+    const unscored = { id: "m9", status: "new", score: null };
+    const over = io({ findMatch: async () => unscored });
+    expect(await importJob("u1", URL_OK, over.fake)).toEqual({ jobId: "j1", matchId: "m9", fit: { passed: true, reasons: [] } });
+    expect(over.calls).toContain("apply new 90");
+    expect(over.calls.filter((c) => c.startsWith("match"))).toEqual([]);
+
+    const under = io({ findMatch: async () => unscored, scorePair: async () => scoredAt(60) });
+    expect(await importJob("u1", URL_OK, under.fake)).toEqual({ jobId: "j1", matchId: null, fit: { passed: false, reasons: [belowBarReason(60, prefs.fitThreshold)] } });
+    expect(under.calls).toContain("apply below_bar 60");
+  });
+
+  it("leaves it unscored when the scorer still cannot run, or the gate now fails, or the user queued it", async () => {
+    const unscored = { id: "m9", status: "new", score: null };
+    const down = io({ findMatch: async () => unscored, scorePair: async () => null });
+    expect(await importJob("u1", URL_OK, down.fake)).toEqual({ jobId: "j1", matchId: "m9", fit: { passed: true, reasons: [] } });
+    expect(down.calls.some((c) => c.startsWith("apply"))).toBe(false);
+
+    const gated = io({ findMatch: async () => unscored, loadPreferences: async () => ({ ...prefs, excludedKeywords: ["things"] }) });
+    await importJob("u1", URL_OK, gated.fake);
+    expect(gated.calls).not.toContain("score");
+
+    const queued = io({ findMatch: async () => ({ id: "m9", status: "queued", score: null }) });
+    expect(await importJob("u1", URL_OK, queued.fake)).toMatchObject({ matchId: null, fit: { passed: true } });
+    expect(queued.calls).not.toContain("score");
   });
 
   it("passes with a nudge, and no model call, when the user has no preferences", async () => {

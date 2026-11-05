@@ -1,5 +1,5 @@
 import type { Job } from "bullmq";
-import { and, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { getPlan, type PlanId, type Preferences } from "@auto-career/shared";
 import { fitScorer } from "../agents/fit-scorer/spec";
 import type { AgentCallContext } from "../agents/types";
@@ -15,6 +15,7 @@ import { refundable } from "../services/allowance";
 import { PAID_STATUSES } from "../services/billing-events";
 import { passesHardFilters, scoreFit, type FitJob } from "../services/fit";
 import { computeJobFit } from "../services/job-fit";
+import type { ScoredPair } from "../services/job-import";
 import { dailyScoringCap, jobsForUser, toUserPrefilter, usersForJob } from "../services/prefilter";
 import { enqueue, QUEUES, redisLane, type JobData, type Lane } from "./queues";
 
@@ -32,7 +33,8 @@ export const COLD_START_FACTS = 8;
 /** Backfill: how far back it looks, and the most postings one run reads (04-matching 5.4: min(4 x K, 400)). */
 const BACKFILL_WINDOW_DAYS = 30;
 const BACKFILL_MAX_RECALL = 400;
-const SCORER_VERSION = `${fitScorer.id}@v${fitScorer.promptVersion}`;
+/** matches.scorer_version: the prompt that ran; null on the legacy client, which has no versioned prompt. */
+const scorerVersion = (promptVersion: number | undefined): string | null => (promptVersion === undefined ? null : `${fitScorer.id}@v${promptVersion}`);
 
 let lane: Lane | undefined;
 const scoreLane = () => (lane ??= redisLane(QUEUES.scoreUser));
@@ -91,7 +93,8 @@ type ConfirmedFact = { id: string; kind: string; text: string; confirmed: boolea
 
 const CONFIRMED_FACT = { id: facts.id, kind: facts.kind, text: facts.text, confirmed: facts.confirmed };
 const confirmedFacts = (userId: string): Promise<ConfirmedFact[]> =>
-  db().select(CONFIRMED_FACT).from(facts).where(and(eq(facts.userId, userId), eq(facts.confirmed, true))).limit(80);
+  // Stable order: the same 80 each run, so the summary, the score and the F1 floor do not move between runs.
+  db().select(CONFIRMED_FACT).from(facts).where(and(eq(facts.userId, userId), eq(facts.confirmed, true))).orderBy(asc(facts.createdAt), asc(facts.id)).limit(80);
 const summaryOf = (rows: ConfirmedFact[]) => rows.map((f) => `- (${f.kind}) ${f.text}`).join("\n");
 
 /** F1 in pre-rank mode (04-matching 7.1): no resume text, so a confirmed fact's keyword counts. Never shown, never sent to a model. */
@@ -199,6 +202,9 @@ export async function processScoreUser(job: Job<JobData["score-user"]>) {
   return runChunk(scoreLane(), job.data.userId, (members) => scoreChunk(job.data.userId, members));
 }
 
+/** An import stored while the scorer could not run: services/prefilter.ts selects these too. */
+const UNSCORED_IMPORT = sql`(${matches.status} = 'new' and ${matches.score} is null and ${matches.source} = 'manual_url')`;
+
 const planOf = (c: { plan: PlanId | null; status: string | null }): PlanId => (c.plan && PAID_STATUSES.includes(c.status ?? "") ? c.plan : "free");
 
 async function scoreChunk(userId: string, members: string[]): Promise<{ stored: number; belowBar: number; retrying: number }> {
@@ -220,8 +226,11 @@ async function scoreChunk(userId: string, members: string[]): Promise<{ stored: 
     .from(jobs)
     .innerJoin(companies, eq(companies.id, jobs.companyId))
     .where(inArray(jobs.id, ids));
-  // A posting can be in the lane twice, from a fan-out and a backfill: the pair is paid for once.
-  const scored = new Set((await db().select({ jobId: matches.jobId }).from(matches).where(and(eq(matches.userId, userId), inArray(matches.jobId, ids)))).map((m) => m.jobId));
+  // A posting can be in the lane twice, from a fan-out and a backfill: the pair is paid for once. An import stored while
+  // the scorer could not run has no score yet, so it is still to pay for.
+  const scored = new Set(
+    (await db().select({ jobId: matches.jobId }).from(matches).where(and(eq(matches.userId, userId), inArray(matches.jobId, ids), sql`not ${UNSCORED_IMPORT}`))).map((m) => m.jobId),
+  );
 
   for (const { jobId, attempt, selection } of pairs) {
     const row = postings.find((p) => p.job.id === jobId);
@@ -232,10 +241,12 @@ async function scoreChunk(userId: string, members: string[]): Promise<{ stored: 
     try {
       const fit = await scoreFit(fitJob(row), summary, gatewayCtx({ userId, plan, jobId }));
       const status = fit.score >= prefs.fitThreshold ? ("new" as const) : ("below_bar" as const);
+      const result = { score: fit.score, reasons: fit.reasons, status, prerankScore: prerank, scorerVersion: scorerVersion(fit.promptVersion), scoredAt: new Date() };
       await db()
         .insert(matches)
-        .values({ userId, jobId, passedFilters: true, score: fit.score, reasons: fit.reasons, status, selection, prerankScore: prerank, scorerVersion: SCORER_VERSION, scoredAt: new Date() })
-        .onConflictDoNothing();
+        .values({ userId, jobId, passedFilters: true, selection, ...result })
+        // Only an unscored import is filled in, and it stays an import; any other row was scored or decided already.
+        .onConflictDoUpdate({ target: [matches.userId, matches.jobId], set: result, setWhere: UNSCORED_IMPORT });
       scored.add(jobId);
       if (status === "new") out.stored += 1;
       else out.belowBar += 1;
@@ -255,14 +266,22 @@ async function scoreChunk(userId: string, members: string[]): Promise<{ stored: 
 
 /**
  * The import flow's scorer step (matching-85, 86): one synchronous call for one pasted posting, one dailyScoringCap unit.
- * Null when it cannot run (paused, no confirmed fact, cap reached, the model failed): the import still succeeds, unscored.
+ * A user is waiting, so it runs in the interactive workspace and budget (agents/03-fit-scorer 2), not batch with its
+ * limiter wait. Null when it cannot run (paused, no confirmed fact, cap reached, the model failed): the import still
+ * succeeds, unscored, and the next import of the posting or the next backfill scores it.
  */
-export async function scoreImported(userId: string, plan: PlanId, jobId: string, job: FitJob, signal?: AgentCallContext["signal"]): Promise<{ score: number; reasons: string[] } | null> {
+export async function scoreImported(userId: string, plan: PlanId, jobId: string, job: FitJob, prefs: Preferences, signal?: AgentCallContext["signal"]): Promise<ScoredPair | null> {
   if (await scoringPaused()) return null;
   const rows = await confirmedFacts(userId);
   if (rows.length === 0 || !(await reserveScoring(userId, plan))) return null;
   try {
-    return await scoreFit(job, summaryOf(rows), gatewayCtx({ userId, plan, jobId, ...(signal ? { signal } : {}) }));
+    const fit = await scoreFit(job, summaryOf(rows), gatewayCtx({ userId, plan, jobId, workspace: "interactive", budgetClass: "interactive", ...(signal ? { signal } : {}) }));
+    return {
+      score: fit.score,
+      reasons: fit.reasons,
+      scorerVersion: scorerVersion(fit.promptVersion),
+      prerankScore: prerankScore({ id: jobId, title: job.title, companyName: job.companyName, descriptionText: job.descriptionText }, rows, prefs),
+    };
   } catch (err) {
     if (refundable(err)) await releaseScoring(userId);
     logger.warn({ err, userHash: logUserHash(userId), jobId }, "import scoring failed");
