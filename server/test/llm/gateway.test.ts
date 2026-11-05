@@ -529,6 +529,31 @@ describe("pins, canaries and shadows (03-agent-runtime 4.5, 14.2; WP-26)", () =>
     expect(recorded[at === 0 ? 1 : 0]).toBe(user);
   });
 
+  it("a spent agent envelope stops a shadow on an interactive agent, and not the production call a user waits on", async () => {
+    const store = memorySpendStore();
+    store.values.agents.set("fit-scorer", fitScorer.dailyEnvelopeUsd);
+    const fake = fakeAnthropic(okFit());
+    const refused = new Promise<void>((resolve) => {
+      configureGateway({
+        client: () => fake,
+        budget: new Budget(store),
+        writeRow: async (r) => {
+          rows.push(r);
+          if (r.callKind === "shadow") setTimeout(resolve, 0);
+          return "x";
+        },
+        now: () => Date.now(),
+        sleep: async () => {},
+        flags: flagsWith({ promptShadow: { "fit-scorer": { version: 2, percent: 5 } } }),
+      });
+    });
+    const user = Array.from({ length: 2_000 }, (_, i) => `user-${i}`).find((u) => rolloutBucket("fit-scorer", { userId: u })! < 5)!;
+    await expect(runAgent({ ...v2, workspace: "interactive" as const }, fitInput, { userId: user })).resolves.toMatchObject({ promptVersion: 1 });
+    await refused;
+    expect(fake.requests).toHaveLength(1);
+    expect(rows.find((r) => r.callKind === "shadow")).toMatchObject({ status: "budget_stopped", promptVersion: 2 });
+  });
+
   it("no shadow outside its share, and a failing shadow never touches production", async () => {
     const fake = setup(flagsWith({ promptShadow: { "fit-scorer": { version: 2, percent: 5 } } }));
     const outside = Array.from({ length: 200 }, (_, i) => `user-${i}`).find((u) => rolloutBucket("fit-scorer", { userId: u })! >= 5)!;

@@ -232,7 +232,7 @@ async function runUncached<I, O>(spec: AgentSpec<I, O>, input: I, ctx: AgentCall
     // Budget check before every send (9.3); a refusal writes a budget_stopped row. The tier-up
     // model is judged against the tier-up cap, not the primary cap (2.6).
     const estUsd = estimateCallUsd(inputTokensEstimate, maxTokens, modelNow);
-    const decision = await d.budget.checkBudget(spec, { usd: estUsd, model: modelNow }, ctx, maxCostPerCallUsd);
+    const decision = await d.budget.checkBudget(spec, { usd: estUsd, model: modelNow }, ctx, maxCostPerCallUsd, callKind);
     if (!decision.ok) {
       await record({
         model: modelNow,
