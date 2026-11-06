@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_PREFERENCES } from "@auto-career/shared";
 import { eq, sql } from "drizzle-orm";
 import { chromium } from "playwright-core";
 import request from "supertest";
@@ -37,6 +38,7 @@ const { stripe } = await import("../src/services/stripe");
 const { processCloudApply } = await import("../src/jobs/cloud-apply");
 const { closeBrowser } = await import("../src/jobs/browser-pool");
 const { FAILURE_MESSAGES } = await import("../src/services/submissions");
+const { settleAll } = await import("./helpers/settle");
 const { processClassifyEmail } = await import("../src/jobs/classify-email");
 const { processPollBoards } = await import("../src/jobs/poll-boards");
 const { atsAdapters } = await import("../src/services/ats");
@@ -86,7 +88,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       .values({
         userId,
         jobId: job!.id,
-        resumeLines: [{ id: "l1", section: "Experience", text: "Built billing", factIds: ["f1"] }],
+        resumeLines: [{ id: "l1", section: "Experience", text: "Built billing", factIds: [] }],
         answers: [{ fieldKey: "first_name", label: "First name", value: "Test", source: "profile" }],
       })
       .returning();
@@ -107,14 +109,15 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       expect(row?.status).toBe("draft");
     });
 
-    it("the owner approving cloud succeeds and the apply job is queued", async () => {
+    it("the owner approving cloud succeeds and the send is in the outbox", async () => {
       const userId = await signIn(OWNER);
       const id = await draftFor(userId);
 
       const res = await request(app).post("/api/applications/approve").send({ applicationIds: [id], channel: "cloud" });
       expect(res.status).toBe(200);
       expect(res.body.approved).toEqual([id]);
-      expect(enqueue).toHaveBeenCalledWith("cloud-apply", { applicationId: id }, `apply-${id}`);
+      const rows = await tdb.select().from(schema.outbox).where(eq(schema.outbox.dedupeKey, `apply-${id}-1`));
+      expect(rows).toMatchObject([{ queue: "cloud-apply", payload: { applicationId: id, attemptNo: 1 }, status: "pending" }]);
     });
 
     it("the worker refuses a non-owner's already-approved cloud row at claim (plan_lapsed): no browser, marked failed, no credit", async () => {
@@ -124,6 +127,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       const launch = vi.spyOn(chromium, "launch").mockRejectedValue(new Error("browser must not start"));
 
       const result = await processCloudApply({ data: { applicationId: id } } as never);
+      await settleAll(tdb);
 
       expect(result).toEqual({ submitted: false });
       expect(launch).not.toHaveBeenCalled();
@@ -141,6 +145,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       vi.spyOn(chromium, "launch").mockRejectedValue(new Error("browser stub at /opt/secret/path"));
 
       await processCloudApply({ data: { applicationId: id } } as never);
+      await settleAll(tdb);
 
       // Past the gate: the launch fails, which is recorded as a catalog reason, never the exception text.
       const [row] = await tdb.select().from(schema.applications).where(eq(schema.applications.id, id));
@@ -177,6 +182,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       const fill = fakeBrowser({ frames: ["https://www.google.com/recaptcha/api2/bframe?k=key"] });
 
       await expect(processCloudApply({ data: { applicationId: id } } as never)).resolves.toEqual({ submitted: false });
+      await settleAll(tdb);
 
       expect(fill).not.toHaveBeenCalled();
       const row = await rowOf(id);
@@ -190,6 +196,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       fakeBrowser({ fill: async () => Promise.reject(new Error("page.evaluate: Execution context was destroyed at https://evil.example/?token=abc")) });
 
       await processCloudApply({ data: { applicationId: id } } as never);
+      await settleAll(tdb);
 
       const row = await rowOf(id);
       expect(row.status).toBe("failed");
@@ -209,6 +216,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       });
 
       await expect(processCloudApply({ data: { applicationId: id } } as never)).resolves.toEqual({ submitted: true });
+      await settleAll(tdb);
 
       const row = await rowOf(id);
       expect(row.status).toBe("submitted");
@@ -223,6 +231,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       const launch = vi.spyOn(chromium, "launch");
 
       await processCloudApply({ data: { applicationId: id } } as never);
+      await settleAll(tdb);
 
       expect(launch).not.toHaveBeenCalled();
       expect((await rowOf(id)).failureReason).toBe(FAILURE_MESSAGES.posting_closed);
@@ -244,6 +253,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       const fill = fakeBrowser({});
 
       await processCloudApply({ data: { applicationId: id } } as never);
+      await settleAll(tdb);
 
       expect(fill).not.toHaveBeenCalled();
       expect((await rowOf(id)).failureReason).toBe(FAILURE_MESSAGES.applier_error);
@@ -302,9 +312,9 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
         .send({ MessageID: "wide", From: "hr@acme.com", To: `u-${userId}@replies.test`, Subject: "Hello", TextBody: "\u00e9\u{1F600}".repeat(20_000) });
       expect(res.body).toEqual({ stored: true });
       const [row] = await tdb.select().from(schema.inboundEmails).where(eq(schema.inboundEmails.providerMessageId, "wide"));
-      expect(Buffer.byteLength(row!.textBody)).toBeLessThanOrEqual(16_384);
+      expect(Buffer.byteLength(row!.textBody!)).toBeLessThanOrEqual(16_384);
       expect(row!.textBody).not.toContain("\uFFFD");
-      expect(row!.textBody.length).toBeGreaterThan(1000);
+      expect(row!.textBody!.length).toBeGreaterThan(1000);
     });
 
     it("the inbox query selects a 280-character slice in SQL, never the full body", () => {
@@ -337,7 +347,8 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       raw: {},
     };
 
-    it("creates the company inactive; polling it fetches nothing and enqueues no score-matches", async () => {
+    // WP-23 turned "never polled" into close-only: the board is read to close the stored job, and still inserts nothing.
+    it("creates the company inactive; polling it stores no posting and enqueues no score-matches", async () => {
       await signIn();
       fetchPostingFromBoard.mockResolvedValue(posting);
       const res = await request(app).post("/api/jobs/import").send({ url: "https://boards.greenhouse.io/newco/jobs/4012345" });
@@ -346,11 +357,48 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       expect(company!.active).toBe(false);
 
       enqueue.mockClear();
-      const fetchBoard = vi.spyOn(atsAdapters.greenhouse, "fetchBoard");
-      expect(await processPollBoards({ data: { companyId: company!.id } } as never)).toEqual({ added: 0, closed: 0 });
-      expect(await processPollBoards({ data: { schedule: true } } as never)).toEqual({ scheduled: 0 });
-      expect(fetchBoard).not.toHaveBeenCalled();
+      const other = { ...posting, externalId: "999", applyUrl: "https://job-boards.greenhouse.io/embed/job_app?for=newco&token=999" };
+      const fetchBoard = vi.spyOn(atsAdapters.greenhouse, "fetchBoard").mockResolvedValue({ kind: "listing", postings: [posting, other], etag: null });
+      expect(await processPollBoards({ data: { companyId: company!.id } } as never)).toEqual({ outcome: "listing", added: 0, closed: 0 });
+      expect(fetchBoard).toHaveBeenCalledTimes(1);
+      expect(await tdb.select().from(schema.jobs).where(eq(schema.jobs.companyId, company!.id))).toHaveLength(1);
       expect(enqueue).not.toHaveBeenCalled();
+      fetchBoard.mockRestore();
+    });
+
+    // Contract round 1: whichever route confirms the first fact asks for a backfill; a second save in a minute is not dropped.
+    const backfills = () => enqueue.mock.calls.filter((c) => (c as unknown[])[0] === "score-matches").map((c) => (c as unknown[])[2] as string);
+
+    it("asks for a backfill on the first confirmed fact from POST /facts, and only the first", async () => {
+      const userId = await signIn();
+      enqueue.mockClear();
+      const unconfirmed = await request(app).post("/api/profile/facts").send({ kind: "skill", text: "Rust services", confirmed: false });
+      expect(unconfirmed.status).toBe(201);
+      expect(backfills()).toEqual([]);
+      const first = await request(app).post("/api/profile/facts").send({ kind: "skill", text: "TypeScript APIs" });
+      expect(first.status).toBe(201);
+      expect(backfills()).toHaveLength(1);
+      expect(backfills()[0]).toContain(`backfill-${userId}-facts-`);
+      expect((await request(app).post("/api/profile/facts").send({ kind: "skill", text: "Go services" })).status).toBe(201);
+      expect(backfills()).toHaveLength(1);
+    });
+
+    it("asks for a backfill when PATCH confirms the first fact", async () => {
+      await signIn();
+      const made = await request(app).post("/api/profile/facts").send({ kind: "skill", text: "Rust services", confirmed: false });
+      expect(made.status).toBe(201);
+      enqueue.mockClear();
+      expect((await request(app).patch(`/api/profile/facts/${made.body.fact.id}`).send({ confirmed: true })).status).toBe(200);
+      expect(backfills()).toHaveLength(1);
+    });
+
+    it("gives two different preference saves in one minute two job ids", async () => {
+      await signIn();
+      enqueue.mockClear();
+      const prefs = { ...DEFAULT_PREFERENCES, workAuthorization: "citizen_or_pr" };
+      expect((await request(app).put("/api/profile/preferences").send({ ...prefs, roles: ["Engineer"] })).status).toBe(200);
+      expect((await request(app).put("/api/profile/preferences").send({ ...prefs, roles: ["Designer"] })).status).toBe(200);
+      expect(new Set(backfills()).size).toBe(2);
     });
 
     it("importing a posting from an already-curated (active) company leaves it active", async () => {

@@ -6,14 +6,17 @@ import { vi } from "vitest";
  * browser whose one page shows `frames` (each visible) and whose filler call returns `fill()`. Real page behaviour
  * is covered by cloud-apply.browser.test.ts. Returns the fill spy. Call closeBrowser() (jobs/browser-pool.ts) after each test.
  */
-export function fakeBrowser(opts: { frames?: string[]; fill?: () => Promise<unknown> } = {}) {
+export function fakeBrowser(opts: { frames?: string[]; fill?: () => Promise<unknown>; goto?: () => Promise<void> } = {}) {
   const fill = vi.fn(opts.fill ?? (async () => ({})));
   const page = {
     on: () => {},
     url: () => "https://job-boards.greenhouse.io/x/jobs/1",
     title: async () => "Apply",
     $: async () => null,
-    goto: async () => ({ status: () => 200 }),
+    goto: async () => {
+      await opts.goto?.();
+      return { status: () => 200 };
+    },
     waitForLoadState: async () => {},
     frames: () => (opts.frames ?? []).map((u) => ({ url: () => u, frameElement: async () => ({ evaluate: async () => true }) })),
     evaluate: async (fn: unknown) => (typeof fn === "string" ? undefined : fill()),

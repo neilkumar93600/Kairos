@@ -92,7 +92,7 @@ export async function scoreFit(
   job: FitJob,
   profileSummary: string,
   callCtx?: AgentCallContext,
-): Promise<z.infer<typeof fitScoreSchema>> {
+): Promise<z.infer<typeof fitScoreSchema> & { promptVersion?: number }> {
   if (!callCtx && gatewayEnabled()) callCtx = serviceCtx({});
   if (callCtx) {
     // The gateway path (LLM_GATEWAY=anthropic): the hard filters above are the caller's gate, so
@@ -106,7 +106,8 @@ export async function scoreFit(
       descriptionText: job.descriptionText.slice(0, 20_000),
     };
     const out = await runAgent(fitScorer, { profileSummary: profileSummary.slice(0, 6_000), job: clipped }, callCtx);
-    return { score: out.data.score, reasons: out.data.reasons };
+    // The version that ran: a prompt_pin or a canary can differ from the spec's. The legacy client has none to report.
+    return { score: out.data.score, reasons: out.data.reasons, promptVersion: out.promptVersion };
   }
   const posting = `${job.title} at ${job.companyName}\nLocation: ${job.location ?? "unspecified"}${job.remote ? " (remote)" : ""}\n\n${job.descriptionText}`;
   return chatJson({

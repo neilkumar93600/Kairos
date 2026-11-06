@@ -1,0 +1,30 @@
+{
+  "caseId": "resume-writer-0192",
+  "promptVersion": 2,
+  "promptSha256": "606e076c399bb43ebf29377c97f98508070772ea210ba8e73e00287d15d07db0",
+  "inputHash": "087b77c3e919a08bd2886a9a72d186ce35f9cfbb97ae76e244aae446448170c4",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": "l1",
+            "action": "rewrite",
+            "after": "Raised task completion by 18%",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f2"
+            ],
+            "needsFact": null,
+            "tag": "be_concise",
+            "priority": "high",
+            "appendYears": false
+          }
+        ]
+      }
+    }
+  ]
+}

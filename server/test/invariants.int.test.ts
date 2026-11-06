@@ -28,7 +28,7 @@ const PREFS: Preferences = {
   maxApplicationsPerCompanyPer30Days: 2,
 };
 const ANSWER = { fieldKey: "first_name", label: "First name", value: "Test", source: "profile" as const };
-const LINE = { id: "l1", section: "Experience", text: "Built the billing service", factIds: ["f1"] };
+const LINE = { id: "l1", section: "Experience", text: "Built the billing service", factIds: [] };
 
 describe.skipIf(!hasTestDb)("P0 invariants against Postgres", () => {
   let db: Db;
@@ -73,12 +73,12 @@ describe.skipIf(!hasTestDb)("P0 invariants against Postgres", () => {
   }
 
   it("charges once when the same submission is reported eight times at once", async () => {
-    const { recordSubmission } = await import("../src/services/submissions");
+    const { recordExtensionReport } = await import("../src/services/settle");
     const userId = await seedUser(db, { credits: 5 });
     const appId = await application(userId, await job(await company("Acme"), "a"), "approved", "extension");
     const report = { applicationId: appId, outcome: "submitted" as const, filledFields: [], submittedAt: new Date().toISOString() };
 
-    const results = await Promise.allSettled(Array.from({ length: 8 }, () => recordSubmission(db, userId, report, "extension")));
+    const results = await Promise.allSettled(Array.from({ length: 8 }, () => recordExtensionReport(db, userId, "s1", report)));
     expect(results.every((r) => r.status === "fulfilled")).toBe(true);
     const charges = await db
       .select()
@@ -98,20 +98,20 @@ describe.skipIf(!hasTestDb)("P0 invariants against Postgres", () => {
     const ledgerFor = (userId: string) => db.select().from(schema.creditLedger).where(eq(schema.creditLedger.userId, userId));
 
     it("extension report: no ledger row, the in-flight credit is freed, and a late 'submitted' cannot charge it", async () => {
-      const { recordSubmission } = await import("../src/services/submissions");
+      const { recordExtensionReport } = await import("../src/services/settle");
       const { availableCreditsNow } = await import("../src/services/credits");
       const userId = await seedUser(db, { credits: 5 });
       const appId = await application(userId, await job(await company("Acme"), "a"), "approved", "extension");
       const rowsBefore = (await ledgerFor(userId)).length;
       await expect(availableCreditsNow(db, userId)).resolves.toBe(4); // the approved application holds one credit
 
-      await recordSubmission(db, userId, failedReport(appId), "extension");
+      await recordExtensionReport(db, userId, "s1", failedReport(appId));
       expect(await ledgerFor(userId)).toHaveLength(rowsBefore);
       await expect(availableCreditsNow(db, userId)).resolves.toBe(5);
 
       // The employer page can still be submitted by hand later; the product must not bill for what it marked failed.
       const late = { ...failedReport(appId), outcome: "submitted" as const };
-      await expect(recordSubmission(db, userId, late, "extension")).rejects.toMatchObject({ status: 409 });
+      await expect(recordExtensionReport(db, userId, "s1", late)).rejects.toMatchObject({ status: 409 });
       expect(await ledgerFor(userId)).toHaveLength(rowsBefore);
     });
 
@@ -122,6 +122,7 @@ describe.skipIf(!hasTestDb)("P0 invariants against Postgres", () => {
       const rowsBefore = (await ledgerFor(userId)).length;
 
       await processCloudApply({ data: { applicationId: appId } } as Parameters<typeof processCloudApply>[0]);
+      await (await import("./helpers/settle")).settleAll(db);
 
       const [row] = await db.select().from(schema.applications).where(eq(schema.applications.id, appId));
       expect(row?.status).toBe("failed");

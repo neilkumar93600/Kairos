@@ -1,4 +1,4 @@
-import { defineRailway, github, postgres, preserve, project, redis, service, type VariableValue } from "railway/iac";
+import { bucket, defineRailway, github, postgres, preserve, project, redis, service, type VariableValue } from "railway/iac";
 
 /*
  * Kairos on Railway (WP-15; 06-infrastructure 1.1 to 1.8): project `kairos`, two environments.
@@ -39,9 +39,13 @@ const r2 = (...buckets: string[]) => buckets.flatMap((b) => [`R2_BUCKET_${b}`, `
 const SERVER = [
   "BETTER_AUTH_SECRET", "BETTER_AUTH_URL", "WEB_ORIGIN", "INBOUND_WEBHOOK_SECRET", "INBOUND_EMAIL_DOMAIN", "EMAIL_FROM",
   "POSTMARK_SERVER_TOKEN", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICES", "ANTHROPIC_KEY_INTERACTIVE",
-  "USER_HASH_KEY", "DATA_KEKS", "SENTRY_DSN", "OWNER_USER_IDS", "R2_ENDPOINT", "ADMIN_USER_IDS",
+  "ANTHROPIC_API_KEY", "USER_HASH_KEY", "DATA_KEKS", "SENTRY_DSN", "OWNER_USER_IDS", "R2_ENDPOINT", "ADMIN_USER_IDS",
   // Outbound mail and signed links (WP-44): the worker mints links and sends; the api verifies them.
   "LINK_SIGNING_KEY", "API_PUBLIC_ORIGIN", "POSTMARK_BROADCAST_TOKEN", "POSTMARK_BROADCAST_STREAM", "ALERT_EMAIL_TO", "CONTACT_ALERT_TO",
+  // Unsubscribe, digests and consent (WP-35).
+  "MAIL_CONSENT_DEFAULT", "MAIL_POSTAL_ADDRESS",
+  // Inbound mail (WP-24): the api writes by it and the worker's backfill refuses to empty text_body while it is on.
+  "INBOUND_PLAINTEXT_DUAL_WRITE",
 ];
 const WATCH = ["server/**", "shared/**", "package-lock.json"];
 
@@ -90,7 +94,7 @@ export default defineRailway((ctx) => {
     {
       LLM_GATEWAY: "anthropic",
       // DATABASE_UNPOOLED_URL is the migrator's direct URL: only the service that migrates holds it.
-      ...byHand("DATABASE_URL", "DATABASE_UNPOOLED_URL", ...SERVER, "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "KAIROS_EDGE_SECRET", ...r2("UPLOADS", "RENDERS", "SNAPSHOTS", "TOMBSTONES"), "POSTMARK_EVENTS_SECRET"),
+      ...byHand("DATABASE_URL", "DATABASE_UNPOOLED_URL", ...SERVER, "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "KAIROS_EDGE_SECRET", ...r2("UPLOADS", "RENDERS", "SNAPSHOTS", "TOMBSTONES"), "POSTMARK_INBOUND_PATH_SECRET", "POSTMARK_INBOUND_PATH_SECRET_PREVIOUS", "POSTMARK_INBOUND_BASIC_USER", "POSTMARK_INBOUND_BASIC_PASSWORD", "POSTMARK_INBOUND_BASIC_PASSWORD_PREVIOUS", "POSTMARK_EVENTS_SECRET"),
     },
     "node dist/migrate.js",
   );
@@ -122,5 +126,9 @@ export default defineRailway((ctx) => {
     },
   });
 
-  return project("kairos", { resources: [db, cache, api, worker, applier, pgbackup] });
+  // Object storage on Railway's S3-compatible buckets (server/src/lib/storage.ts), one per BUCKETS entry. Listed here
+  // because a whole-project apply deletes what the file leaves out. Credentials are set by hand as R2_* variables.
+  const buckets = ["uploads", "renders", "snapshots", "backups", "tombstones"].map((name) => bucket(name, { region: "iad" }));
+
+  return project("kairos", { resources: [db, cache, ...buckets, api, worker, applier, pgbackup] });
 });

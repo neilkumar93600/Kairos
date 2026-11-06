@@ -1,15 +1,18 @@
 import { Router, type Response } from "express";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { importJobSchema, type ResumeInput } from "@auto-career/shared";
+import { importJobSchema, type PlanId, type ResumeInput } from "@auto-career/shared";
 import { db } from "../db/client";
-import { applications, companies, jobs, matches, profiles } from "../db/schema";
-import { HttpError } from "../lib/errors";
+import { applications, boardRequests, companies, jobs, matches, profiles } from "../db/schema";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
 import type { SessionUser } from "../lib/auth";
 import { computeJobFit } from "../services/job-fit";
 import { fetchPostingFromBoard, importJob, jobUpsertValues, type ImportIo } from "../services/job-import";
+import { enqueue } from "../jobs/queues";
+import { scoreImported } from "../jobs/score-matches";
+import { logger } from "../lib/logger";
+import { cleanText } from "../services/normalize-posting";
 import { renderResumeText } from "../services/resume-doc";
 import { metered } from "../services/allowance";
 import { planFor } from "../services/submissions";
@@ -22,20 +25,28 @@ import { aliasFallback, copyFor, createCopy, toDetail } from "../services/resume
 /** Pasted-link job import. Mounted at /api/jobs. */
 export const jobsRouter = Router();
 
-const dbIo: ImportIo = {
+async function loadPreferences(userId: string) {
+  const [p] = await db().select({ preferences: profiles.preferences }).from(profiles).where(eq(profiles.userId, userId));
+  return p?.preferences ?? null;
+}
+
+/** One user's open queue entries; the 51st unreadable link is refused like any other, and queues nothing. */
+const MAX_OPEN_BOARD_REQUESTS = 50;
+
+const importIo = (plan: PlanId, signal: AbortSignal | undefined): ImportIo => ({
   fetchPosting: fetchPostingFromBoard,
-  async upsertCompany(ats, boardToken, name) {
-    // active: false. A pasted board is user-controlled input: polling it would insert its whole posting list and
-    // score every posting for every user (denial of wallet). Only the owner activates a company.
-    // ponytail: an unpolled board never learns that this posting closed; add a close-only poll (CISO mustFix 3) when imports matter.
+  async upsertCompany(ats, boardToken, name, region = "us") {
+    // active: false. A pasted board is user-controlled input: polling it to insert would store its whole posting list and
+    // score every posting for every user (denial of wallet). It is polled only to close stored jobs (jobs/poll-boards.ts),
+    // until the owner activates it.
     const [created] = await db()
       .insert(companies)
-      .values({ ats, boardToken, name, active: false, inactiveReason: "import_pending", discoveredBy: "import" })
+      .values({ ats, boardToken, name: cleanText(name), apiRegion: region, active: false, inactiveReason: "import_pending", discoveredBy: "import" })
       .onConflictDoNothing({ target: [companies.ats, companies.boardToken] })
-      .returning({ id: companies.id, name: companies.name });
+      .returning({ id: companies.id, name: companies.name, active: companies.active });
     if (created) return created;
     const [existing] = await db()
-      .select({ id: companies.id, name: companies.name })
+      .select({ id: companies.id, name: companies.name, active: companies.active })
       .from(companies)
       .where(and(eq(companies.ats, ats), eq(companies.boardToken, boardToken)));
     return existing!;
@@ -46,13 +57,10 @@ const dbIo: ImportIo = {
       .insert(jobs)
       .values(v.insert)
       .onConflictDoUpdate({ target: [jobs.companyId, jobs.externalId], set: v.update })
-      .returning({ id: jobs.id });
+      .returning({ id: jobs.id, inserted: sql<boolean>`(xmax = 0)` });
     return row!;
   },
-  async loadPreferences(userId) {
-    const [p] = await db().select({ preferences: profiles.preferences }).from(profiles).where(eq(profiles.userId, userId));
-    return p?.preferences ?? null;
-  },
+  loadPreferences,
   async recentApplicationsToCompany(userId, companyId) {
     const [r] = await db()
       .select({ n: sql<number>`count(*)::int` })
@@ -61,28 +69,75 @@ const dbIo: ImportIo = {
       .where(and(eq(applications.userId, userId), eq(jobs.companyId, companyId), gte(applications.createdAt, sql`now() - interval '30 days'`)));
     return r?.n ?? 0;
   },
-  async ensureMatch({ userId, jobId, passed, reasons }) {
+  async findMatch(userId, jobId) {
+    const [m] = await db().select({ id: matches.id, status: matches.status, score: matches.score }).from(matches).where(and(eq(matches.userId, userId), eq(matches.jobId, jobId)));
+    return m ?? null;
+  },
+  async ensureMatch({ userId, jobId, passed, reasons, status, score, scored }) {
     const [created] = await db()
       .insert(matches)
-      .values({ userId, jobId, passedFilters: passed, reasons, status: passed ? "new" : "skipped", source: "manual_url", selection: "import" })
+      .values({
+        userId,
+        jobId,
+        passedFilters: passed,
+        reasons,
+        status,
+        score,
+        source: "manual_url",
+        selection: "import",
+        ...(scored ? { scoredAt: new Date(), scorerVersion: scored.scorerVersion, prerankScore: scored.prerankScore } : {}),
+      })
       .onConflictDoNothing({ target: [matches.userId, matches.jobId] })
       .returning({ id: matches.id });
     if (created) return created.id;
     const [existing] = await db().select({ id: matches.id }).from(matches).where(and(eq(matches.userId, userId), eq(matches.jobId, jobId)));
     return existing!.id;
   },
-};
+  async applyScore(matchId, scored, status) {
+    await db()
+      .update(matches)
+      .set({ status, score: scored.score, reasons: scored.reasons, scorerVersion: scored.scorerVersion, prerankScore: scored.prerankScore, scoredAt: new Date() })
+      .where(and(eq(matches.id, matchId), isNull(matches.score)));
+  },
+  scorePair: (userId, jobId, job, companyName, prefs) => scoreImported(userId, plan, jobId, { ...job, companyName }, prefs, signal),
+  fanOut: (jobId) => enqueue("score-matches", { jobId }, `score-${jobId}`),
+  async boardForHost(host) {
+    const found = await db()
+      .select({ boardToken: companies.boardToken })
+      .from(companies)
+      .where(and(eq(companies.ats, "greenhouse"), sql`${companies.domains} @> array[${host}]::text[]`))
+      .limit(2);
+    // Two boards on one domain: which one the posting is on is a guess, and a guess can read the wrong company's posting.
+    return found.length === 1 ? found[0]!.boardToken : null;
+  },
+  async recordBoardRequest(userId, link) {
+    // Bounded per user: a refused import gives its allowance unit back, so nothing else caps these rows.
+    await db()
+      .execute(
+        sql`insert into board_requests (user_id, host, path, detected_ats)
+             select ${userId}, ${link.host}, ${link.path}, ${link.detectedAts}
+              where (select count(*) from board_requests where user_id = ${userId} and status = 'open') < ${MAX_OPEN_BOARD_REQUESTS}
+             on conflict (user_id, host, path) do update set times_seen = board_requests.times_seen + 1, last_seen_at = now()`,
+      )
+      // The user's answer is the 422 either way; losing a queue row must not turn it into a 500.
+      .catch((err: unknown) => logger.warn({ err }, "board request not recorded"));
+  },
+});
 
 /** Metered by the jobImports allowance (CISO mustFix 3): each import fetches a third-party board and stores a posting. */
-jobsRouter.post("/import", writerLimiter, validateBody(importJobSchema), async (req, res) => {
-  const me = currentUser(req);
+/** A pasted link for this user: the import route's, and POST /api/tracker's { url }. */
+export async function importForUser(me: SessionUser, res: Response, url: string) {
   const plan = await planFor(db(), me.id);
-  res.json(await metered(res, { userId: me.id, plan, feature: "jobImports" }, () => importJob(me.id, req.body.url, dbIo)));
+  return metered(res, { userId: me.id, plan, feature: "jobImports" }, () => importJob(me.id, url, importIo(plan, res.locals.deadline)));
+}
+
+jobsRouter.post("/import", writerLimiter, validateBody(importJobSchema), async (req, res) => {
+  res.json(await importForUser(currentUser(req), res, req.body.url));
 });
 
 /** The deterministic F1 fit of one visible job against a resume (the default base unless given) and confirmed facts. */
 async function fitFor(user: SessionUser, jobId: string, resume?: ResumeInput) {
-  const [job, factRows, preferences] = await Promise.all([visibleJob(user.id, jobId), userFacts(user.id), dbIo.loadPreferences(user.id)]);
+  const [job, factRows, preferences] = await Promise.all([visibleJob(user.id, jobId), userFacts(user.id), loadPreferences(user.id)]);
   const doc = resume ?? (await loadResume(user, factRows));
   const fit = computeJobFit({
     job: { id: jobId, title: job.title, companyName: job.company, descriptionText: job.descriptionText },

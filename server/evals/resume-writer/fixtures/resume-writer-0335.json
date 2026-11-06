@@ -1,0 +1,30 @@
+{
+  "caseId": "resume-writer-0335",
+  "promptVersion": 2,
+  "promptSha256": "606e076c399bb43ebf29377c97f98508070772ea210ba8e73e00287d15d07db0",
+  "inputHash": "1b3383244aa16decb04a3124698bc4f3ea2171863c8b868d3c0d247bc272967a",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": "l1",
+            "action": "rewrite",
+            "after": "Lowered incident response time by 25%",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f2"
+            ],
+            "needsFact": null,
+            "tag": "fix_spelling",
+            "priority": "low",
+            "appendYears": false
+          }
+        ]
+      }
+    }
+  ]
+}

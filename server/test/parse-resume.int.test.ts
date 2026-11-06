@@ -15,6 +15,7 @@ if (hasTestDb) process.env.DATABASE_URL = testDbUrl("parse");
 process.env.DATA_KEKS = `v1:${Buffer.from([...Array(32).keys()]).toString("base64")}`;
 const chatJson = vi.hoisted(() => vi.fn());
 vi.mock("../src/services/llm", () => ({ chatJson }));
+const { AgentError } = await import("../src/llm/errors");
 
 const { closeDb } = await import("../src/db/client");
 const schema = await import("../src/db/schema");
@@ -120,6 +121,15 @@ describe.skipIf(!hasTestDb)("processParseResume", () => {
     await tdb.update(schema.resumeImports).set({ parseStatus: "pending" }).where(eq(schema.resumeImports.id, importId));
     await run();
     expect(await step()).toBe("done");
+  });
+
+  it("a kill switch holds the import without costing an attempt, however long the pause; the next run parses it", async () => {
+    chatJson.mockRejectedValue(new AgentError("llm_paused", "all model calls are paused", true));
+    for (let i = 0; i < 5; i++) expect(await run()).toEqual({ deferred: true });
+    expect(await importRow()).toMatchObject({ parseStatus: "pending", parseAttempts: 0 });
+    chatJson.mockResolvedValue({ facts: [{ kind: "skill", text: "TypeScript", sourceSpan: "TypeScript" }] });
+    expect(await run()).toEqual({ facts: 1, duplicates: 0 });
+    expect(await importRow()).toMatchObject({ parseStatus: "parsed", parseAttempts: 1 });
   });
 
   it("fails the import after its third attempt and skips a legacy job", async () => {

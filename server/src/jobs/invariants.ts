@@ -11,8 +11,9 @@ import { signal } from "../lib/sentry";
  * `freezes` (I-4 and LEDGER-1, the money checks of workers/15-ops-monitors 3.6) set approvals_frozen (an ops_audit row,
  * actor system:invariants); the rest page and leave approvals open, because a user's own action can trip them (unconfirming
  * a cited fact, a late confirmation). Only the owner lifts a freeze, through /api/admin/flags.
- * Not checkable yet, because their tables arrive with WP-42/WP-29/WP-26: I-1 dual submission and I-2 possible
- * duplicates (submission_attempts), I-5 (application_events), I-7 (verification_results).
+ * Not checkable yet, because their tables arrive with WP-42/WP-26: I-2 possible duplicates, I-5 (application_events),
+ * I-7 (verification_results).
+ * M-1 (user_match_state) and M-2 (ghost verdicts) wait for those tables, WP-34.
  * ponytail: I-8 compares f.id::text, which skips the primary-key index (a nightly scan, fine at beta size). Full scans elsewhere too; chunk by user_id range when applications passes ~1M rows.
  * ponytail: freezes without a report-only mode; ops-40's soak period would add an INVARIANTS_REPORT_ONLY env.
  */
@@ -46,11 +47,30 @@ export const HOURLY: Check[] = [
        where l.reason = 'submission' and a.status not in ('submitted','refunded') and a.updated_at < now() - interval '1 minute'`),
   },
   {
+    id: "I-1",
+    freezes: false,
+    // Pages, and does not freeze as the spec's A-SUB-2 has it: one user's own extension can report twice, and a freeze stops everyone.
+    what: "more than one submitted attempt on one application: the employer may hold two applications",
+    query: count(sql`select application_id from submission_attempts where state = 'submitted' group by application_id having count(*) > 1`),
+  },
+  {
     id: "I-6",
     freezes: false,
-    what: "an application in submitting for over 30 minutes (the 10-minute sweep did not settle it)",
+    what: "an application in submitting for over 30 minutes (the 8-minute sweep did not settle it)",
     query: count(sql`select id from applications where status = 'submitting' and updated_at < now() - interval '30 minutes'`),
   },
+  {
+    id: "M-3",
+    freezes: false,
+    what: "over 100 pasted postings wait on a close-only board poll more than an hour overdue (02-database 8.5)",
+    // From the few pending companies into jobs_company_open_idx: never a scan of jobs.
+    query: count(sql`select 1 from companies c join jobs j on j.company_id = c.id
+       where c.inactive_reason = 'import_pending' and c.next_poll_at < now() - interval '1 hour'
+         and j.closed_at is null and j.source = 'manual_url'
+      having count(*) > 100`),
+  },
+  // Hourly on purpose: outbox_dead fires once when a row dies, and this keeps asking until an operator has looked.
+  { id: "OX-2", freezes: false, what: "a dead outbox row: money or sending work waits on an operator (GET /api/admin/outbox)", query: count(sql`select id from outbox where status = 'dead'`) },
   { id: "BL-2", freezes: false, what: "a negative credit balance", query: count(sql`select user_id from credit_ledger group by user_id having sum(delta) < 0`) },
   {
     id: "LEDGER-1",
@@ -61,6 +81,19 @@ export const HOURLY: Check[] = [
 ];
 
 export const NIGHTLY: Check[] = [
+  {
+    id: "OX-1",
+    freezes: false,
+    // Stricter than the PII shapes below: a space, an @ or a nested object in any value fails, so free text cannot pass as an id.
+    what: "an outbox payload value that is not id-shaped, or a user id: outbox rows carry row ids, never personal text (WP-22)",
+    query: count(sql`select o.id from outbox o cross join lateral jsonb_each_text(o.payload) kv where kv.value !~ '^[A-Za-z0-9._-]{1,128}$' or kv.key = 'userId'`),
+  },
+  {
+    id: "M-4",
+    freezes: false,
+    what: "a pipeline match with no score, or one that failed the gate: the pipeline scores only what passed it (02-database 8.5)",
+    query: count(sql`select id from matches where source = 'pipeline' and (score is null or not passed_filters)`),
+  },
   {
     id: "I-8",
     freezes: false,
@@ -105,6 +138,10 @@ const PII_COLUMNS = [
   ["ops_audit", "target"],
   ["ops_audit", "before"],
   ["ops_audit", "after"],
+  ["outbox", "payload"],
+  ["submission_attempts", "evidence"],
+  ["outbox", "dedupe_key"],
+  ["outbox", "last_error"],
 ] as const;
 
 const hasPii = (table: string, column: string) =>

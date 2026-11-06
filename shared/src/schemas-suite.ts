@@ -325,12 +325,14 @@ export const insightsSchema = z
     medianDaysToFirstReply: z.number().min(0).nullable(),
     /** True when sent is below the minimum sample: show counts, never percentages. */
     lowSample: z.boolean(),
+    /** Cards created in the range, not archived, by their stage now. */
     funnel: z.array(z.object({ stage: z.enum(TRACKER_STAGES), count: z.number().int().min(0) })),
     byResume: z.array(z.object({ resumeId: id, name: z.string(), sent: z.number().int().min(0), replies: z.number().int().min(0), replyRate: rateOrNull })),
   })
   .superRefine((v, ctx) => {
     if (v.lowSample !== v.sent < INSIGHTS_MIN_SAMPLE) ctx.addIssue({ code: "custom", message: "lowSample must equal sent < 5", path: ["lowSample"] });
     if (v.lowSample && (v.replyRate !== null || v.interviewRate !== null)) ctx.addIssue({ code: "custom", message: "Below the minimum sample only counts are shown", path: ["replyRate"] });
+    if (v.lowSample && v.medianDaysToFirstReply !== null) ctx.addIssue({ code: "custom", message: "Below the minimum sample only counts are shown", path: ["medianDaysToFirstReply"] });
     for (const [i, g] of v.byResume.entries()) {
       if (g.sent < INSIGHTS_MIN_SAMPLE && g.replyRate !== null) ctx.addIssue({ code: "custom", message: "Below the minimum sample only counts are shown", path: ["byResume", i, "replyRate"] });
     }
@@ -443,7 +445,7 @@ export const RESUME_SUITE_ROUTES: readonly SuiteRoute[] = [
   { id: "restoreRevision", method: "POST", path: "/resumes/:id/revisions/:revId/restore", response: resumeResponseSchema, status: 200, errors: [NOT_FOUND, E(409, "read_only")] },
   { id: "exportResume", method: "GET", path: "/resumes/:id/export", query: exportQuerySchema, response: "file", status: 200, errors: [NOT_FOUND, E(503, "service_unavailable")] },
   { id: "tailorResume", method: "POST", path: "/resumes/tailor", request: tailorRequestSchema, response: tailorResponseSchema, status: 200, errors: [NOT_FOUND, E(409, "exists"), ALLOWANCE] },
-  { id: "suggestResume", method: "POST", path: "/resumes/suggestions", request: resumeSuggestionRequestSchema, response: suggestResumesResponseSchema, status: 200, errors: [NOT_FOUND, ALLOWANCE, E(422, "invalid_scope")] },
+  { id: "suggestResume", method: "POST", path: "/resumes/suggestions", request: resumeSuggestionRequestSchema, response: suggestResumesResponseSchema, status: 200, errors: [NOT_FOUND, ALLOWANCE, E(422, "invalid_scope"), E(409, "read_only"), E(503, "ai_unavailable")] },
   { id: "listTemplates", method: "GET", path: "/templates", response: listTemplatesResponseSchema, status: 200, errors: [] },
   { id: "createImport", method: "POST", path: "/profile/imports", request: createImportRequestSchema, response: createImportResponseSchema, status: 202, errors: [E(413, "payload_too_large"), E(415, "unsupported_type"), E(422, "no_text_layer"), E(429, "rate_limited")] },
   { id: "getImport", method: "GET", path: "/profile/imports/:id", response: importDetailSchema, status: 200, errors: [NOT_FOUND] },

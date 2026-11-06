@@ -32,6 +32,7 @@ const { closeDb, db } = await import("../src/db/client");
 const schema = await import("../src/db/schema");
 const { processCloudApply } = await import("../src/jobs/cloud-apply");
 const { closeBrowser } = await import("../src/jobs/browser-pool");
+const { settleAll } = await import("./helpers/settle");
 
 describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
   let admin: Db;
@@ -85,14 +86,38 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
     "update credit_ledger set delta = 100",
     "delete from credit_ledger",
     "select llm_calls_drop_old_partitions(0)",
+    "select * from outbox",
+    "update outbox set status = 'done'",
+    // WP-29: the definer functions replaced the interim grants. No table read or write of a send, and no ledger.
+    "select * from applications",
+    "select answers from applications",
+    "update applications set status = 'submitted'",
+    "update applications set submitted_at = now()",
+    "select apply_url from jobs",
+    "select * from submission_attempts",
+    "update submission_attempts set state = 'submitted'",
+    "insert into credit_ledger (user_id, delta, reason) values ('x', -1, 'submission')",
+    "select id from credit_ledger",
   ])("refuses: %s", async (query) => {
     await expect(asApplier(query)).rejects.toMatchObject({ code: "42501" });
   });
 
   it("reads the granted columns", async () => {
-    await expect(asApplier("select id, apply_url, closed_at from jobs limit 1")).resolves.toBeDefined();
     await expect(asApplier("select user_id, plan, status, past_due_since from subscriptions limit 1")).resolves.toBeDefined();
-    await expect(asApplier("select id from credit_ledger limit 1")).resolves.toBeDefined();
+    await expect(asApplier("select * from applier_job(gen_random_uuid())")).resolves.toBeDefined();
+    await expect(asApplier("select claim_cloud_attempt(gen_random_uuid(), 1, 'w')")).resolves.toBeDefined();
+    await expect(asApplier("select * from get_applier_payload(gen_random_uuid(), 'w')")).resolves.toBeDefined();
+    await expect(asApplier("select mark_browser_launched(gen_random_uuid(), 'w')")).resolves.toBeDefined();
+    await expect(asApplier("select mark_attempt_phase(gen_random_uuid(), 'filling')")).resolves.toBeDefined();
+    await expect(asApplier("select record_attempt_result(gen_random_uuid(), 'failed', 'applier_error', '{}')")).resolves.toBeDefined();
+  });
+
+  it("no other runtime role may call the applier's functions, and the function refuses an ambiguity it may not report", async () => {
+    for (const role of ["kairos_api", "kairos_worker", "kairos_readonly", "kairos_metrics"]) {
+      await expect(asRole(role, "select claim_cloud_attempt(gen_random_uuid(), 1, 'w')")).rejects.toMatchObject({ code: "42501" });
+      await expect(asRole(role, "select record_attempt_result(gen_random_uuid(), 'submitted', null, '{}')")).rejects.toMatchObject({ code: "42501" });
+    }
+    await expect(asApplier("select record_attempt_result(gen_random_uuid(), 'failed', 'no_report', '{}')")).rejects.toMatchObject({ code: "22023" });
   });
 
   async function approvedCloudRow(plan: "pro" | "starter") {
@@ -121,7 +146,7 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
   const charges = async (userId: string) =>
     (await admin.select().from(schema.creditLedger).where(eq(schema.creditLedger.userId, userId))).filter((l) => l.reason === "submission");
 
-  it("runs the applier's whole path as kairos_applier: read, claim, plan check, submit, one ledger debit", async () => {
+  it("runs the applier's whole path as kairos_applier: read, claim, plan check, submit; settlement alone writes the debit", async () => {
     const { rows: [who] } = await db().execute<{ name: string }>(sql`select current_user as name`);
     expect(who?.name).toBe("kairos_applier");
     const { userId, id } = await approvedCloudRow("pro");
@@ -129,6 +154,9 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
 
     await expect(processCloudApply({ data: { applicationId: id } } as never)).resolves.toEqual({ submitted: true });
 
+    expect((await statusOf(id)).status).toBe("submitting");
+    expect(await charges(userId)).toHaveLength(0);
+    await settleAll(admin);
     expect((await statusOf(id)).status).toBe("submitted");
     expect(await charges(userId)).toHaveLength(1);
   });
@@ -137,11 +165,13 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
     const challenged = await approvedCloudRow("pro");
     fakeBrowser({ frames: ["https://www.google.com/recaptcha/api2/bframe?k=key"] });
     await processCloudApply({ data: { applicationId: challenged.id } } as never);
+    await settleAll(admin);
     expect((await statusOf(challenged.id)).status).toBe("failed");
     expect(await charges(challenged.userId)).toHaveLength(0);
 
     const lapsed = await approvedCloudRow("starter");
     await processCloudApply({ data: { applicationId: lapsed.id } } as never);
+    await settleAll(admin);
     expect((await statusOf(lapsed.id)).status).toBe("failed");
     expect(await charges(lapsed.userId)).toHaveLength(0);
   });
@@ -167,6 +197,8 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       companies: ["SIU", "SIUD", "S"],
       jobs: ["SIU", "SIUD", "S"],
       matches: ["SIU", "SIUD", "S"],
+      // WP-23: a user's unreadable link; the worker only reads and expires it.
+      board_requests: ["SIU", "SD", ""],
       applications: ["SIUD", "SIUD", "cols"],
       subscriptions: ["SIU", "SIU", "cols"],
       credit_ledger: ["SI", "SI", "S"],
@@ -189,12 +221,29 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       ops_flags: ["SIU", "SIU", ""],
       feature_flags: ["S", "S", ""],
       ops_audit: ["SI", "SI", ""],
+      // WP-22: the applier holds nothing here (the refusal list above), and the readonly role reads nothing.
+      outbox: ["SIU", "SUD", ""],
       metrics_minute: ["SIU", "SIUD", ""],
-      tracker_items: ["SIUD", "SI", ""],
+      // WP-21: the worker's select is column-limited, without the private text (asserted by query below).
+      tracker_items: ["SIUD", "I", ""],
+      tracker_projector_state: ["", "SIU", ""],
+      contacts: ["SIUD", "cols", ""],
+      contact_jobs: ["SIUD", "", ""],
+      interviews: ["SIUD", "cols", ""],
+      interview_contacts: ["SIUD", "", ""],
       application_events: ["SI", "SI", "S"],
       submission_attempts: ["SIU", "SIU", "cols"],
+      // WP-35: the api owns saved searches; the worker claims them and inserts the default one (no delete); reminders are the worker's alone;
+      // the opt-outs outlive the account (the api writes and deletes them, the worker only reads).
+      saved_searches: ["SIUD", "SIU", ""],
+      reminders: ["", "SIUD", ""],
+      mail_opt_outs: ["SID", "S", ""],
+      // WP-24: the api stores and acknowledges a Gmail code; the worker reads it for the email and deletes it.
+      forwarding_verifications: ["SIU", "SD", ""],
       // WP-50: the worker renders the confirm email and runs retention; it never takes a sign-up.
       newsletter_subscribers: ["SIUD", "SUD", ""],
+      // WP-26: both processes run the verifier; only the worker's retention deletes. Hashes and verdicts, nothing to read.
+      verified_claims: ["SIU", "SIUD", ""],
     };
     const ROLES = ["kairos_api", "kairos_worker", "kairos_readonly"] as const;
     const PRIVS = { S: "SELECT", I: "INSERT", U: "UPDATE", D: "DELETE" } as const;
@@ -246,6 +295,10 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       ["kairos_api", "update ops_audit set target = target where false", false],
       ["kairos_worker", "update ops_audit set target = target where false", false],
       ["kairos_metrics", "select name, value from metrics_minute limit 1", true],
+      // WP-24: the undo of a mail-set stage detaches a reply; the api can touch nothing else of it.
+      ["kairos_api", "update inbound_emails set application_id = null, linked_by = 'none' where false", true],
+      ["kairos_api", "update inbound_emails set kind = null where false", false],
+      ["kairos_api", "update inbound_emails set verified_domains = '{}' where false", false],
       ["kairos_api", "update credit_ledger set delta = 100", false],
       ["kairos_api", "delete from credit_ledger", false],
       ["kairos_worker", "update credit_ledger set note = 'x'", false],
@@ -262,11 +315,23 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       ["kairos_readonly", "select verification from applications limit 1", false],
       ["kairos_worker", "update tracker_items set stage = 'applied', updated_at = now() where false", true],
       ["kairos_worker", "update tracker_items set notes = 'x' where false", false],
+      ["kairos_worker", "select id, stage, user_moved_at from tracker_items limit 1", true],
+      ["kairos_worker", "select notes from tracker_items limit 1", false],
+      ["kairos_worker", "select salary_text from tracker_items limit 1", false],
+      ["kairos_worker", "select job_snapshot from tracker_items limit 1", false],
+      ["kairos_worker", "select user_id from contacts limit 1", true],
+      ["kairos_worker", "select notes from contacts limit 1", false],
+      ["kairos_worker", "select name from contacts limit 1", false],
+      ["kairos_worker", "select notes from interviews limit 1", false],
+      ["kairos_readonly", "select notes from tracker_items limit 1", false],
+      ["kairos_readonly", "select id from contacts limit 1", false],
       ["kairos_readonly", "select id, state, failure_code from submission_attempts limit 1", true],
       ["kairos_readonly", "select evidence from submission_attempts limit 1", false],
       ["kairos_api", "update application_events set kind = 'sent'", false],
       ["kairos_worker", "delete from submission_attempts", false],
       ["kairos_applier", "select notes from tracker_items limit 1", false],
+      ["kairos_api", "select applier_job(gen_random_uuid())", false],
+      ["kairos_worker", "select mark_browser_launched(gen_random_uuid(), 'w')", false],
     ] as const)("%s: %s -> allowed %s", async (role, query, allowed) => {
       if (allowed) await expect(asRole(role, query)).resolves.toBeDefined();
       else await expect(asRole(role, query)).rejects.toMatchObject({ code: expect.stringMatching(/^(42501|25006)$/) });

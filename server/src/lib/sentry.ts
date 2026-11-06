@@ -98,8 +98,16 @@ const SIGNALS = {
   admin_adjustment_row: 1,
   /** Rows in llm_calls_default: a week had no partition, so the daily partitions job has been failing (WP-09). */
   llm_calls_default_rows: 1,
-  /** Cloud sends left in submitting over 10 minutes, settled as unconfirmed: an applier died mid-run (WP-09). */
+  /** Attempts the lease sweeper closed by phase: an applier died mid-run, or an explicit extension claim expired (WP-29). */
   submitting_swept: 1,
+  /** A submitted attempt on an application that moved past it: the employer may hold two applications (A-SUB-2, WP-29). Pages. */
+  submission_dual_detected: 1,
+  /** A duplicate report, a lease conflict or a report after a terminal state (A-SUB-5, WP-29). Email. */
+  submission_report_anomaly: 1,
+  /** Cloud sends or other money work the outbox gave up on after 5 deliveries; GET /api/admin/outbox lists them (WP-22). Pages. */
+  outbox_dead: 1,
+  /** A row has waited over 5 minutes to reach BullMQ: Redis is down or the drain is stuck, and nothing new is sending (WP-22). */
+  outbox_lag: 1,
   /** Users the bootstrap reconciler finished: their sign-up hook failed (WP-09). */
   signup_repaired: 1,
   /** The money journal's cursor is over 10 minutes behind, or gone: the 2-minute RPO no longer holds (WP-13). */
@@ -116,6 +124,10 @@ const SIGNALS = {
   resume_parse_failed: 5,
   /** ops_flags could not be read: the kill switches are running on their last answer or the env alone (WP-27). */
   flags_unreadable: 1,
+  /** safeFetchJson refused a board request: the hosts are fixed in code and the database, so this is a bug or an attack. */
+  board_fetch_refused: 1,
+  /** A job board answered 429 (or 403 on two boards): that host rests for 15 to 120 minutes. */
+  board_host_backoff: 1,
   /** A money or approval invariant failed (jobs/invariants.ts): approvals_frozen was set (WP-27). Pages. */
   invariant_breach: 1,
   /** A fast SLO burn: 14.4x over 1 hour (WP-27). */
@@ -130,6 +142,8 @@ const SIGNALS = {
   llm_envelope_100: 1,
   /** Tier-up (escalation) calls passed their share cap today (WP-27). */
   llm_escalation_cap: 1,
+  /** Verifier escalations passed 10% of today's verifier calls; at 15% claims are dropped as unverified (WP-26). */
+  verifier_escalation_high: 1,
   /** Model spend per submission today is over the ceiling (WP-27). */
   cost_per_submission: 1,
   /** A queue's oldest waiting job is older than its lag bar (WP-27). */

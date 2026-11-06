@@ -20,7 +20,8 @@
   "resume-writer": {
     "active": 1,
     "versions": {
-      "1": "93689092284ef700de6e68175b3f6f6d9206733237a658b41a2664bae6c34066"
+      "1": "93689092284ef700de6e68175b3f6f6d9206733237a658b41a2664bae6c34066",
+      "2": "606e076c399bb43ebf29377c97f98508070772ea210ba8e73e00287d15d07db0"
     }
   },
   "answer-drafter": {
@@ -33,6 +34,18 @@
     "active": 1,
     "versions": {
       "1": "0f7d34505f4b1b33213da00fbd4be820bfa017916c78ddf376fcfbcb39013f7e"
+    }
+  },
+  "claim-verifier": {
+    "active": 1,
+    "versions": {
+      "1": "640f29b20b7bf9f0a332e68bb0c05bf43748b6f734db2869f7c829800d9a2127"
+    }
+  },
+  "claim-verifier-escalation": {
+    "active": 1,
+    "versions": {
+      "1": "f536c5e39d3e24a1a04a86d732423b0f492a930636ee437fc02964237520761c"
     }
   }
 }

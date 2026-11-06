@@ -19,15 +19,16 @@ export const QUEUES = {
 
 export interface JobData {
   "poll-boards": { companyId: string } | { schedule: true };
-  /** userIds and attempt are set on the delayed follow-up for pairs a retryable model failure skipped. */
-  "score-matches": { jobId: string; userIds?: string[]; attempt?: number };
+  /** userIds and attempt are set on the delayed follow-up for pairs a retryable model failure skipped. backfillUserId: one user's capped backfill. */
+  "score-matches": { jobId: string; userIds?: string[]; attempt?: number } | { backfillUserId: string };
   /** Drains one chunk of the user's scoring lane (jobs/score-matches.ts). */
   "score-user": { userId: string };
   "tailor-application": { applicationId: string };
   /** One import (WP-17). `resumeProfileId` is the shape queued before WP-17; such a job is skipped (backfill-sources). */
   "parse-resume": { importId: string } | { resumeProfileId: string };
   "classify-email": { inboundEmailId: string };
-  "cloud-apply": { applicationId: string };
+  /** attemptNo is absent on a job of the previous release (WP-29): it then runs the application's current attempt. */
+  "cloud-apply": { applicationId: string; attemptNo?: number };
   "cost-rollup": { schedule: true };
   "ledger-watch": { schedule: true };
   /** The job name picks the task (jobs/schedules.ts). */
@@ -37,6 +38,23 @@ export interface JobData {
 }
 
 export type QueueName = keyof JobData;
+
+/**
+ * The queues the outbox feeds (durable/outbox.ts). emitOutbox takes only these, and resume needs a refusal check for each,
+ * so adding one here is what puts a queue on the seam, and the compiler asks for the rest.
+ */
+export const OUTBOX_QUEUES = ["cloud-apply"] as const;
+export type OutboxQueue = (typeof OUTBOX_QUEUES)[number];
+
+/**
+ * How long a completed job stays in Redis. An outbox-fed job's completed state IS its row's completion (the sweep reads it
+ * every minute), so nothing but age may remove it: a count evicts finished work once the queue completes that many more,
+ * the sweep then reads it as lost, and five such reads would mark a finished row dead. Nothing reads a completed job later
+ * than the sweep; the drain and reconcile-apply replace a finished job of the same id. Every other queue keeps the count,
+ * and its 24 hours of job-id dedupe.
+ */
+export const completedRetention = (name: QueueName): { age: number; count?: number } =>
+  (OUTBOX_QUEUES as readonly QueueName[]).includes(name) ? { age: 2 * 3600 } : { age: 24 * 3600, count: 5000 };
 
 export interface QueueConfig {
   /** Jobs one worker process runs at once; QUEUE_CONCURRENCY overrides it per environment (the applier: APPLIER_CONCURRENCY). */
@@ -114,7 +132,7 @@ export function queue<N extends QueueName>(name: N): Queue<JobData[N]> {
       defaultJobOptions: {
         attempts: c.attempts,
         backoff: { type: "exponential", delay: c.backoffMs },
-        removeOnComplete: { age: 24 * 3600, count: 5000 },
+        removeOnComplete: completedRetention(name),
         removeOnFail: { age: 7 * 24 * 3600 },
       },
     });

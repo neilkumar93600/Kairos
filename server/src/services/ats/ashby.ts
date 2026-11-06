@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { parseJobUrl } from "../job-url";
+import { MiB } from "../safe-fetch";
 import { BoardNotFoundError, getJson, htmlToText, looksRemote, type AtsAdapter, type NormalizedJob } from "./types";
+
+const HOST = "api.ashbyhq.com";
 
 const ashbyJob = z.object({
   id: z.string(),
@@ -68,16 +71,18 @@ export function normalizeAshby(body: unknown, board: string): NormalizedJob[] {
 /** Public posting API: GET api.ashbyhq.com/posting-api/job-board/{name}, no key needed. */
 export const ashby: AtsAdapter = {
   provider: "ashby",
-  async fetchBoard(boardToken, fetchImpl = fetch) {
-    const url = `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(boardToken)}?includeCompensation=true`;
-    const { status, body } = await getJson(url, fetchImpl);
-    if (status === 404) throw new BoardNotFoundError("ashby", boardToken);
-    return normalizeAshby(body, boardToken);
+  async fetchBoard(boardToken, req = {}) {
+    const url = `https://${HOST}/posting-api/job-board/${encodeURIComponent(boardToken)}?includeCompensation=true`;
+    const res = await getJson(url, { host: HOST, maxBytes: 12 * MiB, etag: req.etag, fetcher: req.fetcher });
+    if (res.status === 404) throw new BoardNotFoundError("ashby", boardToken);
+    if (res.status === 304) return { kind: "not_modified" };
+    return { kind: "listing", postings: normalizeAshby(res.body, boardToken), etag: res.etag };
   },
   // ponytail: Ashby's public API has no single-posting endpoint, so this reads the whole board and picks one; fine until a board holds thousands of postings.
-  async fetchPosting(boardToken, postingId, fetchImpl = fetch) {
+  async fetchPosting(boardToken, postingId, req = {}) {
     try {
-      return (await ashby.fetchBoard(boardToken, fetchImpl)).find((j) => j.externalId === postingId) ?? null;
+      const board = await ashby.fetchBoard(boardToken, { fetcher: req.fetcher });
+      return board.kind === "listing" ? (board.postings.find((j) => j.externalId === postingId) ?? null) : null;
     } catch (err) {
       if (err instanceof BoardNotFoundError) return null;
       throw err;
