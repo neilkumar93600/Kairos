@@ -873,7 +873,7 @@ const uuid = z.uuid();
 export const DRAFT_STATES = ["pending", "ready", "failed", "needs_facts", "stale", "expired"] as const;
 export const SKIP_REASONS = [
   "not_ready", "verification_pending", "facts_changed", "required_answers_missing", "cover_letter_required",
-  "company_cap", "paused", "cloud_unavailable_for_ats", "free_grant_used", "posting_closed",
+  "company_cap", "paused", "cloud_unavailable_for_ats", "free_grant_used", "posting_closed", "card_closed",
   "autopilot_off", "below_autopilot_threshold", "manual_import", "gate_override", "sensitive_answer_source",
   "ghost_risk", "injection_suspect", "stale_posting", "autopilot_daily_cap", "no_credits",
 ] as const;
@@ -1246,7 +1246,7 @@ sequenceDiagram
 
 1. Request validation is the frozen `approveApplicationsSchema` (1 to 50 uuids, `channel` of `extension` or `cloud`); duplicate ids are removed before the workflow id is computed.
 2. The plan gate for the cloud channel runs first inside `approveCore`, as today: 403 `forbidden` "The cloud applier is on Pro and Max" (AC-8).
-3. Success is `200 { approved: string[] }`. The additive `skipped: { id, reason }[]` is present only when at least one of the caller's own drafts was skipped for a reason (`SkipReason`, section 9.4); ids that are not the caller's, or not drafts, are skipped silently exactly as today, so a plain success is byte-identical to the skeleton's `{ approved }`. A draft with no tailored lines, which the skeleton left silently untouched, is now reported as `not_ready`.
+3. Success is `200 { approved: string[] }`. The additive `skipped: { id, reason }[]` is present only when at least one of the caller's own drafts was skipped for a reason (`SkipReason`, section 9.4); ids that are not the caller's, or not drafts, are skipped silently exactly as today, so a plain success is byte-identical to the skeleton's `{ approved }`. A draft with no tailored lines, which the skeleton left silently untouched, is now reported as `not_ready`. A draft whose tracker card is Closed is skipped as `card_closed` until the user reopens the card (WP-21, PRD 9.1); `POST /api/applications/:id/resend` answers 409 `not_approvable` with the same reason.
 4. Credits: if `balance - in_flight` is below the number of rows that would be approved, nothing changes and the route answers 402 `payment_required`, message `You have {available} credits left for {requested} applications` (the wording the web shows [code: `send-controls.tsx`]), `details { available, requested }`. `requested` counts approvable rows, not ids the checks would have skipped, so a partly ineligible batch fails less often than in the skeleton.
 5. The workflow enqueues `applyCloud` for each cloud id after the approval transaction commits. If the 5-second wait expires the route answers 503 `service_unavailable` with `Retry-After: 2`; the workflow completes in the background and a retry within the same bucket, or with the same `Idempotency-Key`, returns its outcome (section 7).
 6. A response is returned only after the approval transaction has committed, so the web's `invalidateQueries` that follows reads the new state.

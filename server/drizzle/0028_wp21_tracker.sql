@@ -1,7 +1,8 @@
 -- WP-21: the job tracker (PRD 9, 12). Generated; hand edits: this header and the last statement, the same-owner trigger on interviews.
 -- Expand-only: new tables, a nullable column, and a new default on tracker_items.position that an old api never sets by hand, so it
--- runs unchanged. tracker_projector_state's row is created by the job. Grants are in ops/provision-roles.sql, which must run again:
--- until then the new routes and the projector fail on permission, and nothing else changes.
+-- runs unchanged. tracker_projector_state's row is created by the job. The migrator's default privileges give the api and the worker
+-- full rights on the new tables, so the routes and the projector work at once; ops/provision-roles.sql narrows them when it runs again.
+-- Until then the worker can read contacts, interviews and the private columns, and cannot write user_moved_at.
 CREATE TABLE "contact_jobs" (
 	"contact_id" uuid NOT NULL,
 	"tracker_item_id" uuid NOT NULL,

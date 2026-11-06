@@ -112,7 +112,7 @@ describe("response schemas", () => {
   });
 
   it("insights show counts, not percentages, below the minimum sample", () => {
-    const small = { range: "30d", sent: 3, replies: 1, interviews: 0, offers: 0, replyRate: 0.33, interviewRate: null, medianDaysToFirstReply: 2, lowSample: true, funnel: [], byResume: [] };
+    const small = { range: "30d", sent: 3, replies: 1, interviews: 0, offers: 0, replyRate: 0.33, interviewRate: null, medianDaysToFirstReply: null, lowSample: true, funnel: [], byResume: [] };
     expect(insightsSchema.safeParse(small).success).toBe(false);
     expect(insightsSchema.safeParse({ ...small, replyRate: null }).success).toBe(true);
   });

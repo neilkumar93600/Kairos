@@ -31,6 +31,10 @@ export const jobSnapshotSql = (jobId: SQL) => sql`(SELECT jsonb_build_object('ti
  * application has one; a job the user saved first is linked, never duplicated), all in one statement. An item found
  * by application_id wins, so an item whose job_id was nulled by a purged posting is reused, not re-inserted. Returns
  * false when the dedupe key was already used, or when the application or item is not the user's.
+ *
+ * `at` is the insert's own time, not the transaction's start: a producer that waited on the application's row lock is dated after
+ * the move that held it, which is what the tracker's floor compares (jobs/tracker-projector.ts, PATCH /api/tracker/:id). This is the
+ * only writer of the table but migration 0011's backfill.
  */
 export async function recordEvent(conn: Db | Tx, e: EventInput): Promise<boolean> {
   const item = e.applicationId
@@ -51,9 +55,9 @@ export async function recordEvent(conn: Db | Tx, e: EventInput): Promise<boolean
     : sql`item AS (SELECT id FROM tracker_items WHERE id = ${e.trackerItemId} AND user_id = ${e.userId})`;
   const { rows } = await conn.execute(sql`
     WITH ${item}
-    INSERT INTO application_events (tracker_item_id, application_id, user_id, kind, actor, payload, dedupe_key)
+    INSERT INTO application_events (tracker_item_id, application_id, user_id, kind, actor, payload, dedupe_key, at)
     SELECT item.id, ${e.applicationId ?? null}::uuid, ${e.userId}, ${e.kind}, ${e.actor}, ${JSON.stringify(e.payload ?? {})}::jsonb,
-           ${e.dedupeKey ?? null}
+           ${e.dedupeKey ?? null}, clock_timestamp()
       FROM item
     ON CONFLICT (tracker_item_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
     RETURNING id`);
@@ -105,7 +109,7 @@ export function toApiEvent(row: typeof applicationEvents.$inferSelect): Applicat
   };
 }
 
-/** One page of an item's timeline, in the shared shape. Rows of one transaction tie on `at`; the id carries their order. */
+/** One page of an item's timeline, in the shared shape. `at` can tie; the id then carries the order. */
 export async function eventPage(trackerItemId: string, page: { limit: number; after?: After }, list: string, order: "asc" | "desc") {
   const e = applicationEvents;
   const dir = order === "asc" ? asc : desc;

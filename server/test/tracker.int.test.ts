@@ -20,6 +20,7 @@ const schema = await import("../src/db/schema");
 const { processTrackerProjector } = await import("../src/jobs/tracker-projector");
 const { recordEvent } = await import("../src/services/events");
 const { encodeCursor } = await import("../src/lib/pagination");
+const { approveWithSkips, resendApplication } = await import("../src/services/submissions");
 
 const SECRET = "zqprivatemarker";
 
@@ -206,6 +207,96 @@ describe.skipIf(!hasTestDb)("job tracker against Postgres", () => {
       expect(await itemOf(id)).toMatchObject({ stage: "closed", closedReason: "withdrawn" });
     });
 
+    it("an event that commits late applies, though a newer one was projected first (the window, not the cursor)", async () => {
+      const late = await seedApp("submitted");
+      await event(late, "sent");
+      const other = await seedApp("submitted");
+      await event(other, "sent");
+      await processTrackerProjector();
+
+      let release!: () => void;
+      const hold = new Promise<void>((r) => (release = r));
+      let inserted!: () => void;
+      const done = new Promise<void>((r) => (inserted = r));
+      const open = db.transaction(async (tx) => {
+        await recordEvent(tx as never, { userId, applicationId: late, kind: "reply_interview", actor: "system", payload: { stageChanged: true } });
+        inserted();
+        await hold;
+      });
+      await done;
+      // A higher id commits first, and the cursor passes the open transaction's id.
+      await event(other, "reply_interview", { stageChanged: true });
+      await processTrackerProjector();
+      expect((await itemOf(other)).stage).toBe("interviewing");
+      expect((await itemOf(late)).stage).toBe("applied");
+      const [state] = await db.select().from(schema.trackerProjectorState);
+      const [lateRow] = await db.select({ id: schema.applicationEvents.id }).from(schema.applicationEvents).where(eq(schema.applicationEvents.kind, "reply_interview"));
+      expect(state!.lastEventId).toBe(lateRow!.id);
+
+      release();
+      await open;
+      await processTrackerProjector();
+      expect((await itemOf(late)).stage).toBe("interviewing");
+    });
+
+    it("a user's move between the projector's read and its write wins", async () => {
+      const id = await seedApp("submitted");
+      await event(id, "sent");
+      await event(id, "reply_interview", { stageChanged: true });
+      const item = await itemOf(id);
+      expect(item.stage).toBe("applied");
+
+      let release!: () => void;
+      const hold = new Promise<void>((r) => (release = r));
+      let moved!: () => void;
+      const done = new Promise<void>((r) => (moved = r));
+      const user = db.transaction(async (tx) => {
+        await tx.update(schema.trackerItems).set({ stage: "saved", stageSetBy: "user", userMovedAt: sql`clock_timestamp()` }).where(eq(schema.trackerItems.id, item.id));
+        moved();
+        await hold;
+      });
+      await done;
+      // The projector reads the committed "applied", then blocks on the row the user holds.
+      const pass = processTrackerProjector();
+      await vi.waitFor(
+        async () => {
+          const { rows } = await db.execute<{ n: number }>(sql`select count(*)::int as n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`);
+          expect(rows[0]!.n).toBeGreaterThan(0);
+        },
+        { timeout: 5000, interval: 25 },
+      );
+      release();
+      await user;
+      expect(await pass).toEqual({ moved: 0 });
+      expect((await itemOf(id)).stage).toBe("saved");
+      await processTrackerProjector();
+      expect((await itemOf(id)).stage).toBe("saved");
+    });
+
+    it("a producer that started before the user's move but wrote after it is not stale", async () => {
+      const id = await seedApp("submitted");
+      await event(id, "sent");
+      await processTrackerProjector();
+      const item = await itemOf(id);
+
+      let go!: () => void;
+      const wait = new Promise<void>((r) => (go = r));
+      let started!: () => void;
+      const begun = new Promise<void>((r) => (started = r));
+      const producer = db.transaction(async (tx) => {
+        await tx.execute(sql`select 1`); // now() is fixed from here
+        started();
+        await wait;
+        await recordEvent(tx as never, { userId, applicationId: id, kind: "reply_interview", actor: "system", payload: { stageChanged: true } });
+      });
+      await begun;
+      expect((await patch(item.id, { stage: "saved" })).status).toBe(200);
+      go();
+      await producer;
+      await processTrackerProjector();
+      expect((await itemOf(id)).stage).toBe("interviewing");
+    });
+
     it("the cursor advances, and a pass with nothing new moves nothing", async () => {
       const id = await seedApp("draft");
       await event(id, "drafted");
@@ -229,6 +320,61 @@ describe.skipIf(!hasTestDb)("job tracker against Postgres", () => {
       const res = await get(`/api/tracker/${(await itemOf(unsure)).id}`);
       expect(res.status).toBe(200);
       expect(res.body.item.sendFailedRefunded).toBe(false);
+    });
+  });
+
+  describe("the badge after an uncertain attempt", () => {
+    it("a plain failure on top of an unconfirmed attempt does not say a credit came back", async () => {
+      const id = await seedApp("failed", undefined, "challenge");
+      await event(id, "failed", { code: "challenge" });
+      const item = await itemOf(id);
+      expect((await get(`/api/tracker/${item.id}`)).body.item.sendFailedRefunded).toBe(true);
+      await db.insert(schema.submissionAttempts).values({ applicationId: id, userId, attemptNo: 1, channel: "extension", ats: "greenhouse", phase: "reported", state: "needs_check", failureCode: "unconfirmed", finishedAt: new Date() });
+      const res = await get(`/api/tracker/${item.id}`);
+      expect(res.status).toBe(200);
+      expect(res.body.item.sendFailedRefunded).toBe(false);
+    });
+  });
+
+  describe("a Closed card stops a send (PRD 9.1)", () => {
+    const lines = [{ id: "l1", section: "Experience", text: "Built billing", factIds: [] }];
+    const answers = [{ fieldKey: "why", label: "Why us?", value: "Because", source: "saved_answer" as const }];
+    const pro = () => db.update(schema.subscriptions).set({ plan: "pro", interval: "month", status: "active" }).where(eq(schema.subscriptions.userId, userId));
+    const statusOf = async (id: string) => (await db.select({ status: schema.applications.status }).from(schema.applications).where(eq(schema.applications.id, id)))[0]!.status;
+
+    it("approve skips it with a reason until the card is reopened", async () => {
+      await pro();
+      await db.insert(schema.creditLedger).values({ userId, delta: 5, reason: "free_grant" });
+      const id = await seedApp("draft");
+      await db.update(schema.applications).set({ resumeLines: lines, answers }).where(eq(schema.applications.id, id));
+      await event(id, "drafted");
+      const item = await itemOf(id);
+      expect((await patch(item.id, { stage: "closed", closedReason: "not_pursuing" })).status).toBe(200);
+
+      const refused = await approveWithSkips(db, userId, [id], "extension");
+      expect(refused).toEqual({ approved: [], skipped: [{ id, reason: "card_closed" }] });
+      expect(await statusOf(id)).toBe("draft");
+
+      expect((await patch(item.id, { stage: "saved" })).status).toBe(200);
+      const done = await approveWithSkips(db, userId, [id], "extension");
+      expect(done.approved.map((a) => a.id)).toEqual([id]);
+      expect(await statusOf(id)).toBe("approved");
+    });
+
+    it("resend refuses it, with the reason and words to show", async () => {
+      await pro();
+      await db.insert(schema.creditLedger).values({ userId, delta: 5, reason: "free_grant" });
+      const id = await seedApp("failed", undefined, "challenge");
+      await db.update(schema.applications).set({ resumeLines: lines, answers }).where(eq(schema.applications.id, id));
+      await event(id, "failed", { code: "challenge" });
+      const item = await itemOf(id);
+      expect((await patch(item.id, { stage: "closed", closedReason: "not_pursuing" })).status).toBe(200);
+
+      await expect(resendApplication(db, userId, id, "extension", false)).rejects.toMatchObject({ status: 409, code: "not_approvable", details: { reason: "card_closed" } });
+      expect(await statusOf(id)).toBe("failed");
+
+      expect((await patch(item.id, { stage: "drafting" })).status).toBe(200);
+      await expect(resendApplication(db, userId, id, "extension", false)).resolves.toMatchObject({ status: "approved" });
     });
   });
 
@@ -335,7 +481,6 @@ describe.skipIf(!hasTestDb)("job tracker against Postgres", () => {
     it("is the item's timeline oldest first, shows what a reply did, and pages on the bigint id", async () => {
       const id = await seedApp("submitted");
       await db.transaction(async (tx) => {
-        // One transaction: every row shares now(), so only the id carries their order.
         await recordEvent(tx as never, { userId, applicationId: id, kind: "drafted", actor: "system" });
         await recordEvent(tx as never, { userId, applicationId: id, kind: "approved", actor: "user" });
         await recordEvent(tx as never, { userId, applicationId: id, kind: "sent", actor: "system" });

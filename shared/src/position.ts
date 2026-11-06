@@ -19,6 +19,8 @@ function midpoint(a: string, b: string | null): string {
 /**
  * A key that sorts after `before` and before `after` (null: the column's start or end). Two neighbours that tie, or that no key
  * fits between, give a key just after `before`.
+ * A key from here never ends in 0, so a gap above and below it always remains. A leading zero can be generated ("0V", below "1") and
+ * is safe; only a key of all zeros would have nothing below it, and that is never generated.
  * ponytail: never rebalances; a key grows a character about every six drops into one gap, and the server refuses over 64. Add a
  * rebalance when someone reaches that.
  */

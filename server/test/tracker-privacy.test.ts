@@ -4,11 +4,12 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
- * Rule 12 (PRD 5; llm-agents-73): tracker notes, salary text, the contacts and the interviews never reach a model. This is the
- * boundary "lint": eslint.config.mjs is protected, so it runs as a test in every build. It walks every source file a model call
- * can read from, starting at each file that names runAgent or chatJson and at every agent and gateway module, follows the relative
- * imports, and fails if any of that code names the private tables or columns. What a prompt builder cannot name it cannot send;
- * ops/provision-roles.sql backs it up in the database, where the worker role cannot select those columns at all.
+ * Rule 12 (PRD 5; llm-agents-73), the static half. eslint.config.mjs is protected, so this boundary check runs as a test. It walks the
+ * source from each file that names runAgent or chatJson and from every agent and gateway module, follows relative imports only, and fails
+ * if that code names the private tables or columns. What it proves: no prompt-side module reads them by name. What it cannot see: the
+ * private text arriving as a plain string from a caller outside the walk, an import by a package alias, or a table named in a way the
+ * pattern misses. So it is not the proof by itself: tracker-prompts.int.test.ts plants a marker and drives the api's model paths, and
+ * ops/provision-roles.sql keeps the worker role from selecting those columns (the api role still can).
  */
 const SRC = fileURLToPath(new URL("../src/", import.meta.url));
 

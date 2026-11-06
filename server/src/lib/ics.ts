@@ -1,4 +1,4 @@
-/** RFC 5545 3.3.11 TEXT: backslash, semicolon, comma and line breaks escaped; other control characters cannot appear in a value. */
+/** RFC 5545 3.3.11 TEXT: backslash, semicolon, comma and line breaks escaped; other control characters and Unicode line separators cannot appear in a value. */
 export function icsText(s: string): string {
   return (
     s
@@ -6,7 +6,7 @@ export function icsText(s: string): string {
       .replace(/;/g, "\\;")
       .replace(/,/g, "\\,")
       .replace(/\r\n|\r|\n/g, "\\n")
-      .replace(/[\u0000-\u001f\u007f]/g, " ")
+      .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")
   );
 }
 
@@ -37,6 +37,7 @@ export interface IcsInterview {
   durationMinutes: number;
   location: string | null;
   notes: string;
+  updatedAt: Date;
 }
 
 /**
@@ -53,8 +54,9 @@ export function interviewIcs(iv: IcsInterview, title: string, company: string, n
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
     "BEGIN:VEVENT",
-    `UID:${iv.id}@kairos`,
+    `UID:${iv.id}@kairos.app`,
     `DTSTAMP:${stamp(now)}`,
+    `LAST-MODIFIED:${stamp(iv.updatedAt)}`,
     `DTSTART:${stamp(iv.startsAt)}`,
     `DTEND:${stamp(end)}`,
     `SUMMARY:${icsText(`Interview: ${title} at ${company}`)}`,

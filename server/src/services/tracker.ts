@@ -1,5 +1,6 @@
 import { INSIGHTS_MIN_SAMPLE, TRACKER_STAGES, insightsSchema, type InsightRange, type Insights, type TrackerStage } from "@auto-career/shared";
 import { HttpError } from "../lib/errors";
+import { AMBIGUOUS, type FailureCode } from "./submissions";
 
 const lock = (reason: "approve_in_review_queue" | "withdraw_first" | "pipeline_stage", message: string) => new HttpError(409, "stage_owned_by_pipeline", message, { reason });
 
@@ -18,6 +19,15 @@ export function checkMove(from: TrackerStage, to: TrackerStage, status: string |
   if (to === "applied" && status !== "submitted") throw lock("approve_in_review_queue", "Approve it in the Review queue to send it");
   if (to === "drafting" && status !== "draft" && status !== "failed") throw lock("pipeline_stage", "Drafting is set when Kairos drafts an application.");
   if (to === "closed" && (status === "approved" || status === "submitting")) throw lock("withdraw_first", "It's approved to send. Withdraw it in the Review queue first");
+}
+
+/**
+ * "Send failed, credit refunded" only for a failure we can call one. Not for an ambiguous code or none, where the mail may have gone,
+ * and not after any earlier attempt that rests as needs_check: attempt 1 unconfirmed, attempt 2 a plain failure, and attempt 1 may
+ * still have reached the employer.
+ */
+export function sendFailed(status: string | null, code: string | null, uncertainAttempt: boolean): boolean {
+  return status === "failed" && code !== null && !AMBIGUOUS.has(code as FailureCode) && !uncertainAttempt;
 }
 
 /** One sent application, as the insights query reads it. */

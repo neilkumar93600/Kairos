@@ -16,15 +16,15 @@ import {
   type TrackerStage,
 } from "@auto-career/shared";
 import { db } from "../db/client";
-import { applications, companies, contactJobs, contacts, jobs, matches, resumes, trackerItems, type ApplicationFailureCode } from "../db/schema";
+import { applications, companies, contactJobs, contacts, jobs, matches, resumes, trackerItems } from "../db/schema";
 import { asActor } from "../lib/actor";
 import { forbidden, HttpError, notFound } from "../lib/errors";
 import { pageParams, slicePage } from "../lib/pagination";
 import { currentUser } from "../middleware/require-auth";
 import { validateBody } from "../middleware/validate";
 import { eventPage, jobSnapshotSql, recordEvent } from "../services/events";
-import { AMBIGUOUS, planFor, type FailureCode } from "../services/submissions";
-import { checkMove, summarizeInsights, type SentRow } from "../services/tracker";
+import { planFor } from "../services/submissions";
+import { checkMove, sendFailed, summarizeInsights, type SentRow } from "../services/tracker";
 import { importForUser } from "./jobs";
 import { writerLimiter } from "./resume";
 
@@ -78,6 +78,8 @@ const cardColumns = {
   url: sql<string | null>`coalesce(${t.url}, ${jobs.applyUrl}, ${snapshot("url")})`,
   applicationStatus: applications.status,
   failureCode: applications.failureCode,
+  // Only a failed row asks: submission_attempts_app_attempt_uq finds its few attempts, and other cards cost nothing.
+  uncertainAttempt: sql<boolean>`CASE WHEN ${applications.status} = 'failed' THEN EXISTS (SELECT 1 FROM submission_attempts s WHERE s.application_id = ${t.applicationId} AND s.state = 'needs_check') ELSE false END`,
   matchScore: matches.score,
   resumeId: resumes.id,
   resumeName: resumes.name,
@@ -98,9 +100,6 @@ const cardQuery = (userId: string) =>
 
 type CardRow = Awaited<ReturnType<typeof cardQuery>>[number];
 
-/** A failure is never charged, so the badge is true for a known failure. One we cannot call a failure (`unconfirmed`) must not say so. */
-const sendFailed = (status: string | null, code: ApplicationFailureCode | null) => status === "failed" && code !== null && !AMBIGUOUS.has(code as FailureCode);
-
 function toCard(r: CardRow): TrackerItem {
   return {
     id: r.id,
@@ -119,7 +118,7 @@ function toCard(r: CardRow): TrackerItem {
     matchScore: r.matchScore === null ? null : Math.round(Number(r.matchScore)),
     resumeId: r.resumeId,
     resumeName: r.resumeName,
-    sendFailedRefunded: sendFailed(r.applicationStatus, r.failureCode),
+    sendFailedRefunded: sendFailed(r.applicationStatus, r.failureCode, r.uncertainAttempt),
     lastActivityAt: iso(r.lastActivityKey),
     nextInterviewAt: r.nextInterview ? iso(r.nextInterview) : null,
     // Private text is the detail's (rule 12; WP-16 hand-off item 10).
@@ -279,13 +278,12 @@ trackerRouter.patch("/:id", validateBody(patchTrackerItemRequestSchema), async (
     if (!link) throw notFound("Tracker item");
     // The application first, shared, so an approve in flight finishes before the rule reads its status, and one that follows waits for
     // this card. Then the item, NO KEY: an event insert's foreign key takes KEY SHARE on the item while it holds the application.
-    let status: string | null = null;
-    if (body.stage && link.applicationId) {
-      const [app] = await tx.select({ status: applications.status }).from(applications).where(eq(applications.id, link.applicationId)).for("share");
-      status = app?.status ?? null;
-    }
+    const statusOf = async (applicationId: string) => (await tx.select({ status: applications.status }).from(applications).where(eq(applications.id, applicationId)).for("share"))[0]?.status ?? null;
+    let status = body.stage && link.applicationId ? await statusOf(link.applicationId) : null;
     const [item] = await tx.select({ stage: t.stage, closedReason: t.closedReason, notes: t.notes, applicationId: t.applicationId }).from(t).where(owned).for("no key update");
     if (!item) throw notFound("Tracker item");
+    // A draft linked the card between the two reads. Whoever linked it has committed, so this lock waits for nobody holding the item.
+    if (body.stage && item.applicationId && item.applicationId !== link.applicationId) status = await statusOf(item.applicationId);
 
     const target = item.applicationId ? { applicationId: item.applicationId } : { trackerItemId: id };
     const moved = body.stage !== undefined && body.stage !== item.stage;
@@ -297,7 +295,10 @@ trackerRouter.patch("/:id", validateBody(patchTrackerItemRequestSchema), async (
       .set({
         stage,
         closedReason,
-        ...(moved ? { stageSetBy: "user" as const, userMovedAt: sql`now()` } : {}),
+        // The floor is dated here, under the locks, as recordEvent dates an event: a producer that waited on this move lands after it,
+        // and one that committed before it lands below it (rule 11). A tracking-only card has no application to lock, and its only
+        // automatic event is a draft linking it, which is forward of any stage it could lose to.
+        ...(moved ? { stageSetBy: "user" as const, userMovedAt: sql`clock_timestamp()` } : {}),
         ...(body.position !== undefined ? { position: body.position } : {}),
         ...(body.notes !== undefined ? { notes: body.notes } : {}),
         ...(body.salaryText !== undefined ? { salaryText: body.salaryText } : {}),

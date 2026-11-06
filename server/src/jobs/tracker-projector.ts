@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { TrackerStage } from "@auto-career/shared";
 import { db } from "../db/client";
 import { trackerItems, trackerProjectorState } from "../db/schema";
+import { logger } from "../lib/logger";
 import { count } from "../lib/metrics";
 
 type ClosedReason = "rejected" | "withdrawn" | "not_pursuing" | "posting_closed" | null;
@@ -65,45 +66,58 @@ export function applyEvent(s: ItemState, e: ProjectedEvent): ItemState {
   return { ...s, stage: t.to, closedReason: t.reason, stageSetBy: "system" };
 }
 
-/** Rows a pass reads past the cursor, and how far behind the cursor it reads again. */
-const BATCH = 500;
-const OVERLAP = 1000;
-const MAX_BATCHES = 20;
+const BATCH = 1000;
+const MAX_BATCHES = 30;
 const KINDS = new Set(["drafted", "sent", "withdrawn", "reply_interview", "reply_assessment", "reply_offer", "reply_rejection", "stage_changed"]);
 const UTC_TEXT = `'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'`;
 
 /**
  * Stage moves from application_events, read by id; no producer changed. An identity id is taken before its transaction commits, so a
- * cursor alone would step over an event that commits late. Each pass therefore reads the last OVERLAP ids again; applyEvent is
- * idempotent on a replay and the floor keeps a replay from undoing a later user move.
- * ponytail: a transaction that stays open while 1000 newer events commit loses its move; settlement and classification hold theirs
- * for milliseconds. Widen OVERLAP if events ever pass tens a second. The card lags the event by up to a minute.
+ * cursor alone would step over an event that commits late. Each pass therefore starts behind the cursor, at the newest event older than
+ * five minutes, and reads forward; applyEvent is idempotent on a replay and the floor keeps a replay from undoing a later user move.
+ * `at` is the insert's time (recordEvent), so an event can be missed only by a transaction that stays open five minutes past its insert,
+ * which the role timeouts rule out (statement 120 s, idle in transaction 30 s). Finding the start is a backward walk of the primary key
+ * that stops at the first old row, so it costs the window's rows and needs no index on `at`.
+ * ponytail: over MAX_BATCHES * BATCH events in five minutes (100 a second) a pass never reaches the newest ones. It warns; raise the cap
+ * then. The card lags the event by up to a minute.
  */
 export async function processTrackerProjector(): Promise<{ moved: number }> {
   let moved = 0;
+  let after: number | null = null;
   for (let i = 0; i < MAX_BATCHES; i++) {
-    const batch = await projectBatch();
+    const batch: { moved: number; last: number | null } = await projectBatch(after);
     moved += batch.moved;
-    if (!batch.more) break;
+    if (batch.last === null) {
+      count("tracker.projected", moved);
+      return { moved };
+    }
+    after = batch.last;
   }
+  logger.warn({ maxBatches: MAX_BATCHES }, "tracker projector stopped at its batch cap");
   count("tracker.projected", moved);
   return { moved };
 }
 
-async function projectBatch(): Promise<{ moved: number; more: boolean }> {
+/** One page after `page`, or from the window's start on a pass's first page. `last`: where to go on, null when this was the end. */
+async function projectBatch(page: number | null): Promise<{ moved: number; last: number | null }> {
   return db().transaction(async (tx) => {
     await tx.insert(trackerProjectorState).values({ id: 1 }).onConflictDoNothing();
     // SKIP LOCKED: a slow pass and the next tick never both project.
     const [state] = await tx.select().from(trackerProjectorState).where(eq(trackerProjectorState.id, 1)).for("update", { skipLocked: true });
-    if (!state) return { moved: 0, more: false };
+    if (!state) return { moved: 0, last: null };
 
+    let from = page;
+    if (from === null) {
+      const { rows: old } = await tx.execute<{ id: string }>(sql`SELECT id FROM application_events WHERE at < now() - interval '5 minutes' ORDER BY id DESC LIMIT 1`);
+      from = Math.min(state.lastEventId, Number(old[0]?.id ?? 0));
+    }
     const { rows } = await tx.execute<{ id: string; tracker_item_id: string; kind: string; actor: string; payload: Record<string, unknown>; at_text: string }>(sql`
       SELECT id, tracker_item_id, kind, actor, payload, to_char(at at time zone 'UTC', ${sql.raw(UTC_TEXT)}) AS at_text
         FROM application_events
-       WHERE id > ${Math.max(0, state.lastEventId - OVERLAP)}
+       WHERE id > ${from}
        ORDER BY id
-       LIMIT ${BATCH + OVERLAP}`);
-    if (!rows.length) return { moved: 0, more: false };
+       LIMIT ${BATCH}`);
+    if (!rows.length) return { moved: 0, last: null };
 
     const relevant = rows.filter((r) => KINDS.has(r.kind));
     const ids = [...new Set(relevant.map((r) => r.tracker_item_id))];
@@ -150,6 +164,6 @@ async function projectBatch(): Promise<{ moved: number; more: boolean }> {
       .update(trackerProjectorState)
       .set({ lastEventId: Math.max(last, state.lastEventId), updatedAt: sql`now()` })
       .where(eq(trackerProjectorState.id, 1));
-    return { moved, more: rows.length === BATCH + OVERLAP };
+    return { moved, last: rows.length === BATCH ? last : null };
   });
 }

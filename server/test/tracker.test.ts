@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { INSIGHTS_MIN_SAMPLE, type TrackerStage } from "@auto-career/shared";
+import { INSIGHTS_MIN_SAMPLE, insightsSchema, type TrackerStage } from "@auto-career/shared";
 import { applyEvent, type ItemState, type ProjectedEvent } from "../src/jobs/tracker-projector";
 import { foldLine, icsText, interviewIcs } from "../src/lib/ics";
 import { encodeCursor, pageParams } from "../src/lib/pagination";
-import { checkMove, summarizeInsights, type SentRow } from "../src/services/tracker";
+import { FAILURE_CODES } from "../src/db/schema";
+import { checkMove, sendFailed, summarizeInsights, type SentRow } from "../src/services/tracker";
 
 const reason = (from: TrackerStage, to: TrackerStage, status: string | null) => {
   try {
@@ -149,8 +150,32 @@ describe("summarizeInsights (PRD 9.6)", () => {
   });
 });
 
+describe("sendFailed: the badge says a credit came back only for a failure we can call one", () => {
+  const ambiguous = new Set(["unconfirmed", "timeout", "no_report"]);
+  it.each([...FAILURE_CODES])("%s", (code) => {
+    expect(sendFailed("failed", code, false)).toBe(!ambiguous.has(code));
+    expect(sendFailed("failed", code, true)).toBe(false);
+    expect(sendFailed("submitted", code, false)).toBe(false);
+  });
+
+  it("no code, on a row the previous release failed, is unknown", () => {
+    expect(sendFailed("failed", null, false)).toBe(false);
+  });
+});
+
+describe("the median below and at the minimum sample", () => {
+  const rows = (n: number) => sent(n, { firstReplyDays: 3 });
+
+  it("exactly 5 sent shows it; 4 does not, and the contract refuses a median at 4", () => {
+    expect(summarizeInsights("all", rows(5), {})).toMatchObject({ lowSample: false, medianDaysToFirstReply: 3 });
+    const small = summarizeInsights("all", rows(4), {});
+    expect(small.medianDaysToFirstReply).toBeNull();
+    expect(insightsSchema.safeParse({ ...small, medianDaysToFirstReply: 3 }).success).toBe(false);
+  });
+});
+
 describe(".ics (RFC 5545)", () => {
-  const iv = { id: "i1", startsAt: new Date("2026-11-03T15:00:00.000Z"), durationMinutes: 90, location: "Call, then; dial-in", notes: "Line one\nLine two" };
+  const iv = { id: "i1", startsAt: new Date("2026-11-03T15:00:00.000Z"), durationMinutes: 90, location: "Call, then; dial-in", notes: "Line one\nLine two", updatedAt: new Date("2026-10-30T09:00:00.000Z") };
   const unfold = (ics: string) => ics.replace(/\r\n /g, "");
 
   it("writes explicit UTC times and escaped text", () => {
@@ -159,13 +184,15 @@ describe(".ics (RFC 5545)", () => {
     expect(lines).toContain("DTSTART:20261103T150000Z");
     expect(lines).toContain("DTEND:20261103T163000Z");
     expect(lines).toContain("DTSTAMP:20261101T000000Z");
+    expect(lines).toContain("LAST-MODIFIED:20261030T090000Z");
+    expect(lines).toContain("UID:i1@kairos.app");
     expect(lines).toContain("SUMMARY:Interview: Engineer at Acme\\, Inc");
     expect(lines).toContain("LOCATION:Call\\, then\\; dial-in");
     expect(lines).toContain("DESCRIPTION:Line one\\nLine two");
     expect(lines.at(-1)).toBe("");
   });
 
-  it.each(["x\r\nATTENDEE:mailto:evil@example.com", "x\nBEGIN:VALARM", "x\rEND:VEVENT", "x\u0085\u000bDTSTART:19700101T000000Z"])("user text cannot start a property: %j", (text) => {
+  it.each(["x\r\nATTENDEE:mailto:evil@example.com", "x\nBEGIN:VALARM", "x\rEND:VEVENT", "x\u0085\u000bDTSTART:19700101T000000Z", "x\u2028DTSTART:19700101T000000Z", "x\u2029DTSTART:19700101T000000Z"])("user text cannot start a property: %j", (text) => {
     const ics = unfold(interviewIcs({ ...iv, location: text, notes: text }, text, text));
     const props = ics.split("\r\n").map((l) => l.split(/[:;]/)[0]);
     expect(props).not.toContain("ATTENDEE");
