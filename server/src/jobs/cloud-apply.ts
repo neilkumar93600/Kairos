@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { sql } from "drizzle-orm";
 import type { Browser, Frame, Page } from "playwright-core";
 import { submissionReportSchema, type ApplicationAnswer, type ResumeLine, type SubmissionReport } from "@auto-career/shared";
-// The filler's own selector (07-cloud-applier 3.2). Only the applier bundles this module, and its image builds the extension.
+// The filler's own selector (07-cloud-applier 3.2). server/Dockerfile copies these files for its build too, since build.mjs bundles every entry.
 import { detectAdapter } from "../../../extension/src/ats";
 import { db } from "../db/client";
 import { applierEnv } from "../lib/env";

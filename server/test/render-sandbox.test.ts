@@ -179,6 +179,10 @@ describe("the pins", () => {
     }
   });
 
+  it("the api-worker image's build has the filler's selectors, because build.mjs bundles the applier there too", () => {
+    expect(repo("server/Dockerfile")).toContain("COPY extension/src/ats extension/src/ats");
+  });
+
   it("the applier image holds no Typst: it attaches, the worker renders", () => {
     expect(repo("server/Dockerfile.applier")).not.toMatch(/typst/i);
   });
