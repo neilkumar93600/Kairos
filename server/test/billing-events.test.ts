@@ -7,15 +7,23 @@ import {
   cancelBillingForDeletedUser,
   couponIdsOf,
   effectivePlan,
+  buildEventExtract,
+  classifyError,
+  BillingAnomaly,
   fetchStripeState,
+  invoiceExtract,
   invoiceGrant,
   processStripeEvent,
+  stripeEventPayload,
   subscriptionRow,
+  type StoredEvent,
   type StripeEventDeps,
   type StripeFetchDeps,
 } from "../src/services/billing-events";
 import { planFor } from "../src/services/submissions";
 import { creditsPerInvoice } from "../src/services/stripe";
+import { rolloverExpiry } from "../src/services/credits";
+import { priceMismatches, redriveDue } from "../src/jobs/billing-reconcile";
 
 // env() is read lazily; this runs before the first read.
 vi.hoisted(() => {
@@ -50,17 +58,23 @@ function invoice(prices: string[], opts: InvoiceOpts = {}): Stripe.Invoice {
 }
 
 function event(type: string, object: unknown): Stripe.Event {
-  return { id: "evt_1", type, data: { object } } as unknown as Stripe.Event;
+  return { id: "evt_1", type, created: 1_800_000_000, data: { object } } as unknown as Stripe.Event;
 }
+
+/** The event as processing sees it: through the same extract the route stores. */
+function stored(type: string, object: unknown): StoredEvent {
+  const e = event(type, object);
+  return { id: e.id, type, created: new Date(e.created * 1000), payload: buildEventExtract(e).payload };
+}
+const inv = (prices: string[], opts: InvoiceOpts = {}) => invoiceExtract(invoice(prices, opts));
 
 function deps(overrides: Partial<StripeEventDeps> = {}): StripeEventDeps {
   return {
-    recordEvent: vi.fn(async () => true),
     userExists: vi.fn(async () => true),
     userForCustomer: vi.fn(async () => null),
     customerErased: vi.fn(async () => false),
-    saveSubscription: vi.fn(async () => undefined),
-    grantCredits: vi.fn(async () => undefined),
+    saveSubscription: vi.fn(async () => "saved" as const),
+    grantCredits: vi.fn(async () => "applied" as const),
     ...overrides,
   };
 }
@@ -89,36 +103,43 @@ describe("subscriptionRow", () => {
     expect(row.values.status).toBe("canceled");
   });
 
-  it("throws on a price missing from STRIPE_PRICES, so the event is retried instead of lost", () => {
+  it("throws on a price missing from STRIPE_PRICES, so the event goes dead for an operator instead of being lost", () => {
     expect(() => subscriptionRow(sub("active", { price: "price_retired" }), "u1")).toThrow(/anomaly_unmapped_price/);
   });
 });
 
 describe("invoiceGrant", () => {
+  const starter = { delta: 1000, stripeInvoiceId: "in_1", plan: "starter", interval: "month" };
+
   it("grants from the first line with a known price", () => {
-    expect(invoiceGrant(invoice(["price_unknown", "price_starter_month"]))).toEqual({ delta: 1000, stripeInvoiceId: "in_1" });
+    expect(invoiceGrant(inv(["price_unknown", "price_starter_month"]))).toEqual(starter);
   });
 
   it("grants nothing for a $0 invoice (a 100% promotion code or a trial)", () => {
-    expect(invoiceGrant(invoice(["price_starter_month"], { amountPaid: 0 }))).toBeNull();
+    expect(invoiceGrant(inv(["price_starter_month"], { amountPaid: 0 }))).toEqual({ outcome: "zero_amount" });
   });
 
   it("grants a $0 invoice only when one of its coupons is in STRIPE_GRANT_COUPONS", () => {
-    const free = invoice(["price_starter_month"], { amountPaid: 0 });
-    expect(invoiceGrant(free, free.lines.data, ["BETA100"])).toEqual({ delta: 1000, stripeInvoiceId: "in_1" });
-    expect(invoiceGrant(free, free.lines.data, ["OTHER100"])).toBeNull();
+    const free = inv(["price_starter_month"], { amountPaid: 0 });
+    expect(invoiceGrant(free, free.lines, ["BETA100"])).toEqual(starter);
+    expect(invoiceGrant(free, free.lines, ["OTHER100"])).toEqual({ outcome: "zero_amount" });
   });
 
   it("throws when no regular line has a known price, so a paid invoice is never silently dropped", () => {
-    expect(() => invoiceGrant(invoice(["price_retired"]))).toThrow(/anomaly_unmapped_price/);
+    expect(() => invoiceGrant(inv(["price_retired"]))).toThrow(/anomaly_unmapped_price/);
   });
 
   it("decides from the full line list when the event's inline lines were truncated", () => {
-    const truncated = invoice([], { hasMore: true });
-    expect(invoiceGrant(truncated, [line("price_pro_week")] as unknown as Stripe.InvoiceLineItem[])).toEqual({
+    expect(invoiceGrant(inv([], { hasMore: true }), [{ priceId: "price_pro_week", proration: false }])).toEqual({
       delta: creditsPerInvoice("pro", "week"),
       stripeInvoiceId: "in_1",
+      plan: "pro",
+      interval: "week",
     });
+  });
+
+  it("a missing amount never counts as paid", () => {
+    expect(invoiceExtract({ ...invoice(["price_pro_week"]), amount_paid: undefined } as unknown as Stripe.Invoice).amountPaid).toBe(0);
   });
 });
 
@@ -131,113 +152,216 @@ describe("couponIdsOf", () => {
   });
 });
 
-describe("fetchStripeState (Stripe calls made before the transaction)", () => {
+describe("rolloverExpiry (billing-37, T-BE-1, T-8)", () => {
+  it.each([
+    [0 + 1000, 0, 1000, 0],
+    [2000, 0, 1000, 0], // exactly at the cap
+    [2001, 0, 1000, 1], // one over
+    [3500, 20, 1000, 1480], // the worked example of _db/billing.md 4.2
+    [2050, 50, 1000, 0], // what approved applications hold never expires
+    [3000, 2500, 234, 32], // weekly, in flight above the cap
+    [40, 100, 1000, 0], // a balance below its reservations
+  ])("balance %i, in flight %i, grant %i expires %i", (balance, inFlight, grant, expiry) => {
+    expect(rolloverExpiry(balance, inFlight, grant)).toBe(expiry);
+  });
+});
+
+describe("buildEventExtract (T-BE-5): the stored form holds ids and integers, never what a raw event carries", () => {
+  const MARKERS = { name: "MARKERNAME Doe", customer_name: "MARKERNAME", customer_email: "marker@example.com", customer_address: { line1: "1 MARKER Street" }, billing_details: { email: "marker@example.com" }, description: "MARKER" };
+
+  it.each([
+    ["customer.subscription.updated", { ...MARKERS, ...sub("active") }],
+    ["customer.subscription.deleted", { ...MARKERS, ...sub("canceled") }],
+    ["invoice.paid", { ...MARKERS, ...invoice(["price_pro_week"]) }],
+    ["invoice.payment_failed", { ...MARKERS, ...invoice([]) }],
+    ["charge.refunded", { ...MARKERS, id: "ch_1", amount: 1900, customer: "cus_1" }],
+    ["charge.dispute.created", { ...MARKERS, id: "dp_1", amount: 1900, charge: "ch_1" }],
+  ])("%s", (type, object) => {
+    const { payload } = buildEventExtract(event(type, object));
+    expect(payload).not.toBeNull();
+    expect(stripeEventPayload.safeParse(payload).success).toBe(true);
+    expect(JSON.stringify(payload)).not.toMatch(/marker/i);
+    expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThanOrEqual(4096);
+  });
+
+  it("stores nothing of a type it does not handle, and keeps the row's ids", () => {
+    expect(buildEventExtract(event("customer.updated", { ...MARKERS, id: "cus_1" }))).toEqual({ objectId: "cus_1", customerId: null, payload: null });
+  });
+
+  it("a metadata user id that is not id-shaped cannot reach the row: the payload is null, and the handled type goes dead", () => {
+    expect(buildEventExtract(event("invoice.paid", invoice(["price_pro_week"], { userId: "ann@example.com" }))).payload).toBeNull();
+  });
+
+  it("the worst invoice stays under the row's 4 KB: lines are cut at 20 and flagged, and the rest are fetched", () => {
+    const long = invoice(Array.from({ length: 200 }, (_, i) => `price_${"x".repeat(60)}${i}`), { id: `in_${"y".repeat(120)}`, userId: "u".repeat(128) });
+    const { payload } = buildEventExtract(event("invoice.paid", long));
+    expect(payload).toMatchObject({ kind: "invoice", linesTruncated: true });
+    expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThanOrEqual(4096);
+  });
+});
+
+describe("classifyError (billing-17, T-BE-6)", () => {
+  it.each([
+    [new BillingAnomaly("anomaly_no_user", "x"), true, "anomaly_no_user"],
+    [new BillingAnomaly("anomaly_unmapped_price", "x"), true, "anomaly_unmapped_price"],
+    [{ type: "StripeInvalidRequestError", code: "resource_missing" }, true, "stripe_resource_missing"],
+    [{ type: "StripeInvalidRequestError" }, true, "stripe_invalid_request"],
+    [{ type: "StripeIdempotencyError" }, true, "stripe_idempotency"],
+    [{ type: "StripeAuthenticationError" }, false, "stripe_auth"],
+    [{ type: "StripePermissionError" }, false, "stripe_permission"],
+    [{ type: "StripeRateLimitError" }, false, "stripe_rate_limited"],
+    [{ type: "StripeConnectionError" }, false, "stripe_connection"],
+    [{ type: "StripeAPIError" }, false, "stripe_5xx"],
+    [{ code: "40001" }, false, "db_serialization"],
+    [{ cause: { code: "40P01" } }, false, "db_deadlock"],
+    [{ code: "55P03" }, false, "db_lock_timeout"],
+    [{ code: "08006" }, false, "db_unavailable"],
+    [{ code: "57P01" }, false, "db_unavailable"],
+    [{ cause: { code: "23505", constraint: "subscriptions_stripe_customer_id_unique" } }, true, "customer_conflict"],
+    [{ code: "23505", constraint: "something_else" }, false, "unexpected"],
+    [new Error("anything"), false, "unexpected"],
+  ])("%j", (err, permanent, code) => {
+    expect(classifyError(err)).toMatchObject({ permanent, code });
+  });
+});
+
+describe("the retry rounds", () => {
+  const received = new Date("2026-11-01T00:00:00Z");
+  it("reopens at once the first time, then 12 hours further on from receipt each time", () => {
+    expect(redriveDue(received, 0, received.getTime())).toBe(true);
+    expect(redriveDue(received, 1, received.getTime() + 12 * 3600_000 - 1)).toBe(false);
+    expect(redriveDue(received, 1, received.getTime() + 12 * 3600_000)).toBe(true);
+    expect(redriveDue(received, 5, received.getTime() + 59 * 3600_000)).toBe(false);
+    expect(redriveDue(received, 5, received.getTime() + 60 * 3600_000)).toBe(true);
+  });
+});
+
+describe("priceMismatches (billing-56, T-BE-17)", () => {
+  const right = (cents: number, interval = "month", count = 1) => ({ unit_amount: cents, currency: "usd", recurring: { interval, interval_count: count } }) as unknown as Stripe.Price;
+  it("is empty when each price equals plans.ts", async () => {
+    const prices = { "starter:week": "p1", "starter:month": "p2", "starter:quarter": "p3" };
+    const read = async (id: string) => ({ p1: right(600, "week"), p2: right(1900), p3: right(4500, "month", 3) })[id]!;
+    await expect(priceMismatches(prices, read)).resolves.toEqual([]);
+  });
+  it("names an amount, a currency, a period or a price Stripe does not have", async () => {
+    const prices = { "pro:week": "amount", "pro:month": "currency", "pro:quarter": "period", "max:week": "gone" };
+    const read = async (id: string) => ({ amount: right(1, "week"), currency: { ...right(3900), currency: "inr" } as Stripe.Price, period: right(9500), gone: null })[id] ?? null;
+    await expect(priceMismatches(prices, read)).resolves.toEqual(["pro:week", "pro:month", "pro:quarter", "max:week"]);
+  });
+  it("names a key that is not a plan and an interval", async () => {
+    await expect(priceMismatches({ "gold:month": "p" }, async () => right(1))).resolves.toEqual(["gold:month"]);
+  });
+});
+
+describe("fetchStripeState (the Stripe calls of one event, inside its customer's lock)", () => {
   it("refetches the subscription of a subscription event", async () => {
     const f = fetchDeps();
-    const state = await fetchStripeState(event("customer.subscription.updated", sub("active")), f);
+    const state = await fetchStripeState(stored("customer.subscription.updated", sub("active")), f);
     expect(f.retrieveSubscription).toHaveBeenCalledWith("sub_1");
     expect(state.subscription?.id).toBe("sub_1");
   });
 
   it("refetches the subscription of a failed payment, and nothing for an invoice without one", async () => {
     const f = fetchDeps();
-    expect((await fetchStripeState(event("invoice.payment_failed", invoice([], { subscription: "sub_9" })), f)).subscription?.id).toBe("sub_9");
-    expect(await fetchStripeState(event("invoice.payment_failed", invoice([], { subscription: null })), f)).toEqual({});
+    expect((await fetchStripeState(stored("invoice.payment_failed", invoice([], { subscription: "sub_9" })), f)).subscription?.id).toBe("sub_9");
+    expect(await fetchStripeState(stored("invoice.payment_failed", invoice([], { subscription: null })), f)).toEqual({});
     expect(f.retrieveSubscription).toHaveBeenCalledTimes(1);
   });
 
   it("fetches all lines only for a truncated invoice, and coupons only for a $0 invoice", async () => {
     const f = fetchDeps({ invoiceCouponIds: vi.fn(async () => ["BETA100"]) });
-    expect(await fetchStripeState(event("invoice.paid", invoice(["price_starter_month"])), f)).toEqual({});
+    expect(await fetchStripeState(stored("invoice.paid", invoice(["price_starter_month"])), f)).toEqual({});
     expect(f.listInvoiceLines).not.toHaveBeenCalled();
     expect(f.invoiceCouponIds).not.toHaveBeenCalled();
 
-    expect(await fetchStripeState(event("invoice.paid", invoice([], { hasMore: true, amountPaid: 0 })), f)).toEqual({ lines: [], couponIds: ["BETA100"] });
+    expect(await fetchStripeState(stored("invoice.paid", invoice([], { hasMore: true, amountPaid: 0 })), f)).toEqual({ lines: [], couponIds: ["BETA100"] });
     expect(f.listInvoiceLines).toHaveBeenCalledWith("in_1");
     expect(f.invoiceCouponIds).toHaveBeenCalledWith("in_1");
   });
 
   it("fetches nothing for refunds, disputes and other types", async () => {
     const f = fetchDeps();
-    for (const type of ["charge.refunded", "charge.dispute.created", "charge.succeeded"]) expect(await fetchStripeState(event(type, {}), f)).toEqual({});
+    const charge = { id: "ch_1", amount: 1900 };
+    for (const type of ["charge.refunded", "charge.dispute.created", "charge.succeeded"]) expect(await fetchStripeState(stored(type, charge), f)).toEqual({});
     expect(f.retrieveSubscription).not.toHaveBeenCalled();
   });
 });
 
 describe("processStripeEvent", () => {
-  it("skips handlers for a duplicate event", async () => {
-    const d = deps({ recordEvent: vi.fn(async () => false) });
-    await expect(processStripeEvent(event("invoice.paid", invoice(["price_starter_month"])), {}, d)).resolves.toBe("duplicate");
-    expect(d.grantCredits).not.toHaveBeenCalled();
-    expect(d.saveSubscription).not.toHaveBeenCalled();
-  });
+  const starterGrant = (userId: string) => ({ userId, delta: 1000, stripeInvoiceId: "in_1", plan: "starter", interval: "month" });
 
   it("saves the fetched subscription, not the payload", async () => {
     const d = deps();
-    await expect(processStripeEvent(event("customer.subscription.updated", sub("active")), { subscription: sub("canceled") }, d)).resolves.toBe("processed");
+    await expect(processStripeEvent(stored("customer.subscription.updated", sub("active")), { subscription: sub("canceled") }, d)).resolves.toMatchObject({ status: "processed", outcome: "subscription_synced", userId: "u1" });
     const saved = vi.mocked(d.saveSubscription).mock.calls[0]?.[0];
     expect(saved?.values.plan).toBe("free");
     expect(saved?.values.status).toBe("canceled");
+    expect(vi.mocked(d.saveSubscription).mock.calls[0]?.[1]).toEqual(new Date(1_800_000_000_000));
+  });
+
+  it("reports what the save's guard said", async () => {
+    const d = deps({ saveSubscription: vi.fn(async () => "stale" as const) });
+    await expect(processStripeEvent(stored("customer.subscription.updated", sub("active")), { subscription: sub("active") }, d)).resolves.toMatchObject({ status: "ignored", outcome: "subscription_stale" });
   });
 
   it("rejects when a handler fails", async () => {
     const d = deps({ grantCredits: vi.fn(async () => Promise.reject(new Error("db blip"))) });
-    await expect(processStripeEvent(event("invoice.paid", invoice(["price_starter_month"])), {}, d)).rejects.toThrow("db blip");
+    await expect(processStripeEvent(stored("invoice.paid", invoice(["price_starter_month"])), {}, d)).rejects.toThrow("db blip");
   });
 
   it("ignores unrelated event types", async () => {
     const d = deps();
-    await expect(processStripeEvent(event("charge.succeeded", {}), {}, d)).resolves.toBe("ignored");
-    expect(d.recordEvent).toHaveBeenCalledWith("evt_1", "charge.succeeded");
+    await expect(processStripeEvent(stored("charge.succeeded", {}), {}, d)).resolves.toMatchObject({ status: "ignored", outcome: "unhandled_type" });
     expect(d.saveSubscription).not.toHaveBeenCalled();
     expect(d.grantCredits).not.toHaveBeenCalled();
   });
 
-  it("grants a paid invoice to the user in its metadata", async () => {
+  it("grants a paid invoice to the user in its metadata, and says when the grant already existed", async () => {
     const d = deps();
-    await expect(processStripeEvent(event("invoice.paid", invoice(["price_starter_month"])), {}, d)).resolves.toBe("processed");
-    expect(d.grantCredits).toHaveBeenCalledWith({ userId: "u1", delta: 1000, stripeInvoiceId: "in_1" });
+    await expect(processStripeEvent(stored("invoice.paid", invoice(["price_starter_month"])), {}, d)).resolves.toMatchObject({ status: "processed", outcome: "grant_applied", userId: "u1" });
+    expect(d.grantCredits).toHaveBeenCalledWith(starterGrant("u1"));
+    const again = deps({ grantCredits: vi.fn(async () => "duplicate" as const) });
+    await expect(processStripeEvent(stored("invoice.paid", invoice(["price_starter_month"])), {}, again)).resolves.toMatchObject({ status: "processed", outcome: "grant_duplicate" });
   });
 
   it("records a $0 invoice as ignored and grants nothing", async () => {
     const d = deps();
-    await expect(processStripeEvent(event("invoice.paid", invoice(["price_starter_month"], { amountPaid: 0 })), {}, d)).resolves.toBe("ignored");
-    expect(d.recordEvent).toHaveBeenCalled();
+    await expect(processStripeEvent(stored("invoice.paid", invoice(["price_starter_month"], { amountPaid: 0 })), {}, d)).resolves.toMatchObject({ status: "ignored", outcome: "zero_amount" });
     expect(d.grantCredits).not.toHaveBeenCalled();
   });
 
   it("grants a $0 invoice whose prefetched coupon is allowlisted", async () => {
     const d = deps();
     const free = invoice(["price_starter_month"], { amountPaid: 0 });
-    await expect(processStripeEvent(event("invoice.paid", free), { couponIds: ["BETA100"] }, d)).resolves.toBe("processed");
-    expect(d.grantCredits).toHaveBeenCalledWith({ userId: "u1", delta: 1000, stripeInvoiceId: "in_1" });
+    await expect(processStripeEvent(stored("invoice.paid", free), { couponIds: ["BETA100"] }, d)).resolves.toMatchObject({ status: "processed" });
+    expect(d.grantCredits).toHaveBeenCalledWith(starterGrant("u1"));
   });
 
-  it("throws on an unknown price, for invoices and subscriptions, so the transaction rolls back and Stripe retries", async () => {
-    await expect(processStripeEvent(event("invoice.paid", invoice(["price_retired"])), {}, deps())).rejects.toThrow(/anomaly_unmapped_price/);
+  it("throws an anomaly on an unknown price, for invoices and subscriptions, so an operator looks instead of the grant being lost", async () => {
+    await expect(processStripeEvent(stored("invoice.paid", invoice(["price_retired"])), {}, deps())).rejects.toBeInstanceOf(BillingAnomaly);
     const s = sub("active", { price: "price_retired" });
-    await expect(processStripeEvent(event("customer.subscription.updated", s), { subscription: s }, deps())).rejects.toThrow(/anomaly_unmapped_price/);
+    await expect(processStripeEvent(stored("customer.subscription.updated", s), { subscription: s }, deps())).rejects.toThrow(/anomaly_unmapped_price/);
   });
 
   it("falls back to the user who owns the Stripe customer when the metadata has no userId", async () => {
     const d = deps({ userForCustomer: vi.fn(async () => "u7") });
-    await processStripeEvent(event("invoice.paid", invoice(["price_starter_month"], { userId: null })), {}, d);
+    await processStripeEvent(stored("invoice.paid", invoice(["price_starter_month"], { userId: null })), {}, d);
     expect(d.userForCustomer).toHaveBeenCalledWith("cus_1");
-    expect(d.grantCredits).toHaveBeenCalledWith({ userId: "u7", delta: 1000, stripeInvoiceId: "in_1" });
+    expect(d.grantCredits).toHaveBeenCalledWith(starterGrant("u7"));
 
     const s = sub("active", { userId: "" });
-    await processStripeEvent(event("customer.subscription.updated", s), { subscription: s }, d);
+    await processStripeEvent(stored("customer.subscription.updated", s), { subscription: s }, d);
     expect(vi.mocked(d.saveSubscription).mock.calls[0]?.[0].userId).toBe("u7");
   });
 
-  it("throws when no user matches, so the event is retried while someone looks", async () => {
-    await expect(processStripeEvent(event("invoice.paid", invoice(["price_starter_month"], { userId: null })), {}, deps())).rejects.toThrow(/anomaly_no_user/);
+  it("throws when no user matches, so the event waits for someone to look", async () => {
+    await expect(processStripeEvent(stored("invoice.paid", invoice(["price_starter_month"], { userId: null })), {}, deps())).rejects.toThrow(/anomaly_no_user/);
   });
 
   it("ignores events for an erased user: no grant, no write, no retry loop", async () => {
     const d = deps({ userExists: vi.fn(async () => false) });
-    await expect(processStripeEvent(event("invoice.paid", invoice(["price_starter_month"])), {}, d)).resolves.toBe("ignored");
-    await expect(processStripeEvent(event("customer.subscription.deleted", sub("canceled")), { subscription: sub("canceled") }, d)).resolves.toBe("ignored");
+    await expect(processStripeEvent(stored("invoice.paid", invoice(["price_starter_month"])), {}, d)).resolves.toMatchObject({ status: "ignored", outcome: "user_deleted" });
+    await expect(processStripeEvent(stored("customer.subscription.deleted", sub("canceled")), { subscription: sub("canceled") }, d)).resolves.toMatchObject({ outcome: "user_deleted" });
     expect(d.grantCredits).not.toHaveBeenCalled();
     expect(d.saveSubscription).not.toHaveBeenCalled();
   });
@@ -245,23 +369,23 @@ describe("processStripeEvent", () => {
   it("ignores a subscription event without metadata for a customer an erasure deleted (WP-25, billing-50)", async () => {
     const d = deps({ customerErased: vi.fn(async (c: string) => c === "cus_1") });
     const s = sub("canceled", { userId: "" });
-    await expect(processStripeEvent(event("customer.subscription.deleted", s), { subscription: s }, d)).resolves.toBe("ignored");
+    await expect(processStripeEvent(stored("customer.subscription.deleted", s), { subscription: s }, d)).resolves.toMatchObject({ outcome: "user_deleted" });
     expect(d.saveSubscription).not.toHaveBeenCalled();
   });
 
   it("syncs a failed payment from the refetched subscription", async () => {
     const d = deps();
-    await expect(processStripeEvent(event("invoice.payment_failed", invoice([])), { subscription: sub("past_due") }, d)).resolves.toBe("processed");
+    await expect(processStripeEvent(stored("invoice.payment_failed", invoice([])), { subscription: sub("past_due") }, d)).resolves.toMatchObject({ status: "processed" });
     expect(vi.mocked(d.saveSubscription).mock.calls[0]?.[0].values).toMatchObject({ status: "past_due", plan: "pro" });
-    await expect(processStripeEvent(event("invoice.payment_failed", invoice([], { subscription: null })), {}, d)).resolves.toBe("ignored");
+    await expect(processStripeEvent(stored("invoice.payment_failed", invoice([], { subscription: null })), {}, d)).resolves.toMatchObject({ status: "ignored" });
   });
 
   it("refunds and disputes alert only: an error log for the operator, no credit or plan change", async () => {
     const alert = vi.spyOn(logger, "error").mockImplementation(() => undefined);
     const d = deps();
     const charge = { id: "ch_1", amount: 1900, amount_refunded: 1900, customer: "cus_1", invoice: "in_1" };
-    await expect(processStripeEvent(event("charge.refunded", charge), {}, d)).resolves.toBe("processed");
-    await expect(processStripeEvent(event("charge.dispute.created", { id: "dp_1", amount: 1900, charge: "ch_1", reason: "fraudulent" }), {}, d)).resolves.toBe("processed");
+    await expect(processStripeEvent(stored("charge.refunded", charge), {}, d)).resolves.toMatchObject({ status: "processed", outcome: "alert_only" });
+    await expect(processStripeEvent(stored("charge.dispute.created", { id: "dp_1", amount: 1900, charge: "ch_1", reason: "fraudulent" }), {}, d)).resolves.toMatchObject({ status: "processed" });
     expect(alert).toHaveBeenCalledTimes(2);
     expect(alert.mock.calls[0]?.[0]).toMatchObject({ type: "charge.refunded", objectId: "ch_1", amount: 1900 });
     expect(d.grantCredits).not.toHaveBeenCalled();
@@ -288,7 +412,7 @@ describe("planFor", () => {
   });
 });
 
-// Shared vectors with the SQL effective_plan() of _db/billing.md 3.1 (T-9) when that function lands.
+// The same vectors run against the SQL effective_plan() in credit-balances.int.test.ts (T-9).
 describe("effectivePlan", () => {
   const now = new Date("2026-11-10T00:00:00Z");
   const daysAgo = (d: number) => new Date(now.getTime() - d * 86_400_000);
@@ -351,27 +475,19 @@ describe("cancelBillingForDeletedUser", () => {
 });
 
 describe("invoiceGrant with plan changes", () => {
+  const line = (price: string, proration: boolean) => ({
+    pricing: { price_details: { price } },
+    parent: { subscription_item_details: { proration } },
+  });
+  const inv2 = (id: string, lines: unknown[], amountPaid: number) =>
+    invoiceExtract({ id, amount_paid: amountPaid, lines: { data: lines, has_more: false }, parent: { subscription_details: { metadata: { userId: "u1" } } } } as unknown as Stripe.Invoice);
+
   it("skips proration lines when choosing the plan", () => {
-    const line = (price: string, proration: boolean) => ({
-      pricing: { price_details: { price } },
-      parent: { subscription_item_details: { proration } },
-    });
-    const upgraded = {
-      id: "in_2",
-      amount_paid: 2100,
-      lines: { data: [line("price_starter_month", true), line("price_pro_week", true), line("price_pro_week", false)] },
-      parent: { subscription_details: { metadata: { userId: "u1" } } },
-    } as unknown as Stripe.Invoice;
-    expect(invoiceGrant(upgraded)).toEqual({ delta: creditsPerInvoice("pro", "week"), stripeInvoiceId: "in_2" });
+    const upgraded = inv2("in_2", [line("price_starter_month", true), line("price_pro_week", true), line("price_pro_week", false)], 2100);
+    expect(invoiceGrant(upgraded)).toMatchObject({ delta: creditsPerInvoice("pro", "week"), stripeInvoiceId: "in_2" });
   });
 
   it("grants nothing for an invoice made only of prorations", () => {
-    const onlyProrations = {
-      id: "in_3",
-      amount_paid: 900,
-      lines: { data: [{ pricing: { price_details: { price: "price_pro_week" } }, parent: { subscription_item_details: { proration: true } } }] },
-      parent: { subscription_details: { metadata: { userId: "u1" } } },
-    } as unknown as Stripe.Invoice;
-    expect(invoiceGrant(onlyProrations)).toBeNull();
+    expect(invoiceGrant(inv2("in_3", [line("price_pro_week", true)], 900))).toEqual({ outcome: "proration_only" });
   });
 });

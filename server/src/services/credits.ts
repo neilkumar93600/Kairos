@@ -43,6 +43,10 @@ export async function readCredits(db: Db | Tx, userId: string): Promise<{ balanc
   return { balance, inFlight, available: availableCredits(balance, inFlight) };
 }
 
+export async function availableCreditsNow(db: Db | Tx, userId: string): Promise<number> {
+  return (await readCredits(db, userId)).available;
+}
+
 /**
  * Charges one credit for a successful submission. Idempotent: the partial unique index on
  * (application_id, reason) turns a duplicate report into a no-op. Failed submissions are never charged. The caller holds
