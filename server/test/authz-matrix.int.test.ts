@@ -79,6 +79,9 @@ const MISSING: TenantIds = {
   revisionId: randomUUID(),
   importId: randomUUID(),
   savedSearchId: randomUUID(),
+  trackerItemId: randomUUID(),
+  contactId: randomUUID(),
+  interviewId: randomUUID(),
 };
 
 /** "Bearer <userId>" signs in as that seeded user; anything else is signed out. A bearer request skips originGuard. */
@@ -168,6 +171,10 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
     const source = `Led the ${tag} platform team for two years and shipped the billing service.`;
     await tdb.insert(schema.resumeImports).values({ id: importId, userId, resumeProfileId: resumeProfile!.id, sourceKind: "text", sourceTextEnc: encrypt(source, sourceAad(importId)), sourceHash: sourceHash(source), parseStatus: "parsed", parsedAt: new Date() });
     await tdb.update(schema.facts).set({ resumeProfileId: resumeProfile!.id, importId }).where(eq(schema.facts.id, fact!.id));
+    const [trackerItem] = await tdb.insert(schema.trackerItems).values({ userId, jobId: job!.id, applicationId: application!.id, stage: "drafting", notes: `${MARKER} notes`, salaryText: `${MARKER} pay` }).returning();
+    const [contact] = await tdb.insert(schema.contacts).values({ userId, name: `${tag} recruiter`, notes: `${MARKER} contact` }).returning();
+    await tdb.insert(schema.contactJobs).values({ contactId: contact!.id, trackerItemId: trackerItem!.id });
+    const [interview] = await tdb.insert(schema.interviews).values({ userId, trackerItemId: trackerItem!.id, startsAt: new Date(Date.now() + 86_400_000), timeZone: "UTC", durationMinutes: 30, kind: "video", notes: `${MARKER} interview` }).returning();
     const [savedSearch] = await tdb.insert(schema.savedSearches).values({ userId, name: `${tag} jobs`, filters: { roles: [`${tag} Engineer`] } }).returning();
     await tdb.insert(schema.inboundEmails).values({
       userId,
@@ -181,7 +188,7 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
     await tdb.insert(schema.session).values({ id: randomUUID(), token: `${MARKER}-${letter}`, userId, expiresAt: new Date(Date.now() + 86_400_000) });
     const fileKey = `snapshots/${userId}/cv.pdf`;
     await r2.storage.put(fileKey, `%PDF-1.7 ${tag}`, "application/pdf");
-    return { userId, tag, customerId, applicationId: application!.id, factId: fact!.id, answerId: answer!.id, matchId: match!.id, jobId: job!.id, fileKey, resumeId: resume!.id, revisionId: revision!.id, importId, savedSearchId: savedSearch!.id };
+    return { userId, tag, customerId, applicationId: application!.id, factId: fact!.id, answerId: answer!.id, matchId: match!.id, jobId: job!.id, fileKey, resumeId: resume!.id, revisionId: revision!.id, importId, savedSearchId: savedSearch!.id, trackerItemId: trackerItem!.id, contactId: contact!.id, interviewId: interview!.id };
   }
 
   /** Every row a user owns, each table's rows as sorted JSON, so two reads compare whatever order Postgres returns. */

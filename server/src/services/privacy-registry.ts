@@ -95,6 +95,11 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
   // WP-42. application_events_immutable lets only the cascade from "user" or tracker_items delete a row.
   { table: "tracker_items", column: "user_id", erase: "cascade", export: ALL },
   { table: "application_events", column: "user_id", erase: "cascade", export: ALL },
+  // WP-21: the user's own reference, third-party data included (PRD 9.4): hard deleted, exported, gone with the account.
+  { table: "contacts", column: "user_id", erase: "cascade", export: ALL },
+  { table: "contact_jobs", column: "contact_id", parent: "contacts", erase: "cascade", export: ALL },
+  { table: "interviews", column: "user_id", erase: "cascade", export: ALL },
+  { table: "interview_contacts", column: "interview_id", parent: "interviews", erase: "cascade", export: ALL },
   { table: "submission_attempts", column: "user_id", erase: "cascade", export: { omit: ["session_id", "worker_identity"] } },
   // WP-24. Body and preview are stored encrypted (AAD inbound_emails:<id>:text_body and :preview); the export decrypts
   // them and keeps the legacy plaintext column until WP-46 drops it.

@@ -125,10 +125,14 @@ const importIo = (plan: PlanId, signal: AbortSignal | undefined): ImportIo => ({
 });
 
 /** Metered by the jobImports allowance (CISO mustFix 3): each import fetches a third-party board and stores a posting. */
-jobsRouter.post("/import", writerLimiter, validateBody(importJobSchema), async (req, res) => {
-  const me = currentUser(req);
+/** A pasted link for this user: the import route's, and POST /api/tracker's { url }. */
+export async function importForUser(me: SessionUser, res: Response, url: string) {
   const plan = await planFor(db(), me.id);
-  res.json(await metered(res, { userId: me.id, plan, feature: "jobImports" }, () => importJob(me.id, req.body.url, importIo(plan, res.locals.deadline))));
+  return metered(res, { userId: me.id, plan, feature: "jobImports" }, () => importJob(me.id, url, importIo(plan, res.locals.deadline)));
+}
+
+jobsRouter.post("/import", writerLimiter, validateBody(importJobSchema), async (req, res) => {
+  res.json(await importForUser(currentUser(req), res, req.body.url));
 });
 
 /** The deterministic F1 fit of one visible job against a resume (the default base unless given) and confirmed facts. */

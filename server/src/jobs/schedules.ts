@@ -12,6 +12,7 @@ import { processJournalReconcile, processMoneyJournal } from "./money-journal";
 import { processMailRetention, processNotifyReconcile } from "./notify";
 import { processPartitions } from "./partitions";
 import { processReminders } from "./reminders";
+import { processTrackerProjector } from "./tracker-projector";
 import type { QueueName } from "./queues";
 import {
   processAuthSweep,
@@ -93,6 +94,8 @@ export const SCHEDULES: Schedule[] = [
   { queue: "maintenance", id: "digests", repeat: { pattern: "25 * * * *", tz: "UTC" }, run: processDigests },
   { queue: "maintenance", id: "reminders", repeat: { pattern: "50 * * * *", tz: "UTC" }, run: processReminders },
   { queue: "maintenance", id: "contact-reconcile", repeat: { every: 5 * MINUTE }, run: processContactReconcile },
+  // Automatic tracker stages from application_events (WP-21, PRD 9.1).
+  { queue: "maintenance", id: "tracker-projector", repeat: { every: MINUTE }, run: processTrackerProjector },
 ];
 
 /** The maintenance queue's processor: the scheduler id is the job name. */
