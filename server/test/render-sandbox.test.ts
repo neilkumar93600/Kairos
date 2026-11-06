@@ -3,8 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import classic from "../templates/classic.typ";
-import { formAdapters } from "../../extension/src/ats";
-import { fetchPdf, RESUME_INPUTS } from "../src/jobs/cloud-apply";
+import { fetchPdf } from "../src/jobs/cloud-apply";
 import { compileTypst, exportFilename, RENDER_LIMITS, RenderError, renderHash, textLayerHasLines, TYPST_VERSION, typstData } from "../src/services/render";
 import { resumePlainText } from "../src/services/resume-doc";
 import { GOLDENS } from "./helpers/golden-resumes";
@@ -182,10 +181,6 @@ describe("the pins", () => {
 
   it("the applier image holds no Typst: it attaches, the worker renders", () => {
     expect(repo("server/Dockerfile.applier")).not.toMatch(/typst/i);
-  });
-
-  it("the applier's resume inputs are the filler's", () => {
-    expect(Object.fromEntries(formAdapters.map((a) => [a.provider, a.resumeInputSelector]))).toEqual(RESUME_INPUTS);
   });
 });
 

@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { sql } from "drizzle-orm";
 import type { Browser, Frame, Page } from "playwright-core";
 import { submissionReportSchema, type ApplicationAnswer, type ResumeLine, type SubmissionReport } from "@auto-career/shared";
+// The filler's own selector (07-cloud-applier 3.2). Only the applier bundles this module, and its image builds the extension.
+import { detectAdapter } from "../../../extension/src/ats";
 import { db } from "../db/client";
 import { applierEnv } from "../lib/env";
 import { getFlags } from "../lib/flags";
@@ -33,13 +35,6 @@ export const APPLY_HOSTS = new Map([
 
 /** The filler clicks submit and waits up to 20 s for the confirmation; this bounds the whole call. */
 const FILL_DEADLINE_MS = 120_000;
-
-/** The filler's own resume inputs per ATS (extension/src/ats, not imported: the worker image has no extension source). A test holds them equal. */
-export const RESUME_INPUTS: Record<string, string> = {
-  greenhouse: 'input[type=file][id*="resume" i], input[type=file][name*="resume" i]',
-  lever: 'input[type=file][name="resume"]',
-  ashby: 'input[type=file][id*="resume" i], input[type=file][name*="resume" i]',
-};
 
 /** https, no credentials or port, host on the allowlist. Checked before goto and on every top-level navigation. */
 export function isAllowedApplyUrl(raw: string): boolean {
@@ -201,7 +196,8 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
 
     await page.evaluate(input.fillerSource);
     // Before the mark of `filling`: an attach that fails, or a required input with no file, can still say nothing was sent.
-    const fileInput = await page.$(RESUME_INPUTS[atsOfApplyUrl(input.applyUrl) ?? ""] ?? "input[type=file][name=resume]");
+    const selector = detectAdapter(new URL(input.applyUrl))?.resumeInputSelector;
+    const fileInput = selector ? await page.$(selector) : null;
     let attached = false;
     if (fileInput && input.resumePdf) {
       await fileInput.setInputFiles({ name: input.resumePdf.name, mimeType: "application/pdf", buffer: input.resumePdf.buffer }, { timeout: 15_000 });
