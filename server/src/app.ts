@@ -37,7 +37,7 @@ const CORS_ALLOWED = ["content-type", "authorization", "idempotency-key", "if-ma
 const CORS_EXPOSED = ["x-request-id", "retry-after", "etag", "ratelimit", "ratelimit-policy", "kairos-allowance", "kairos-contract", "idempotent-replayed"];
 
 /** Date of the newest additive API change (05-api 2.1, "Kairos-Contract"); informational. Bump it with a shape addition. */
-export const CONTRACT_DATE = "2026-11-05";
+export const CONTRACT_DATE = "2026-11-06";
 
 const AUTH_BODY_MAX_BYTES = 64 * 1024;
 

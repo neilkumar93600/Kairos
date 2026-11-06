@@ -38,6 +38,7 @@ const { stripe } = await import("../src/services/stripe");
 const { processCloudApply } = await import("../src/jobs/cloud-apply");
 const { closeBrowser } = await import("../src/jobs/browser-pool");
 const { FAILURE_MESSAGES } = await import("../src/services/submissions");
+const { settleAll } = await import("./helpers/settle");
 const { processClassifyEmail } = await import("../src/jobs/classify-email");
 const { processPollBoards } = await import("../src/jobs/poll-boards");
 const { atsAdapters } = await import("../src/services/ats");
@@ -87,7 +88,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       .values({
         userId,
         jobId: job!.id,
-        resumeLines: [{ id: "l1", section: "Experience", text: "Built billing", factIds: ["f1"] }],
+        resumeLines: [{ id: "l1", section: "Experience", text: "Built billing", factIds: [] }],
         answers: [{ fieldKey: "first_name", label: "First name", value: "Test", source: "profile" }],
       })
       .returning();
@@ -115,8 +116,8 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       const res = await request(app).post("/api/applications/approve").send({ applicationIds: [id], channel: "cloud" });
       expect(res.status).toBe(200);
       expect(res.body.approved).toEqual([id]);
-      const rows = await tdb.select().from(schema.outbox).where(eq(schema.outbox.dedupeKey, `apply-${id}`));
-      expect(rows).toMatchObject([{ queue: "cloud-apply", payload: { applicationId: id }, status: "pending" }]);
+      const rows = await tdb.select().from(schema.outbox).where(eq(schema.outbox.dedupeKey, `apply-${id}-1`));
+      expect(rows).toMatchObject([{ queue: "cloud-apply", payload: { applicationId: id, attemptNo: 1 }, status: "pending" }]);
     });
 
     it("the worker refuses a non-owner's already-approved cloud row at claim (plan_lapsed): no browser, marked failed, no credit", async () => {
@@ -126,6 +127,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       const launch = vi.spyOn(chromium, "launch").mockRejectedValue(new Error("browser must not start"));
 
       const result = await processCloudApply({ data: { applicationId: id } } as never);
+      await settleAll(tdb);
 
       expect(result).toEqual({ submitted: false });
       expect(launch).not.toHaveBeenCalled();
@@ -143,6 +145,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       vi.spyOn(chromium, "launch").mockRejectedValue(new Error("browser stub at /opt/secret/path"));
 
       await processCloudApply({ data: { applicationId: id } } as never);
+      await settleAll(tdb);
 
       // Past the gate: the launch fails, which is recorded as a catalog reason, never the exception text.
       const [row] = await tdb.select().from(schema.applications).where(eq(schema.applications.id, id));
@@ -179,6 +182,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       const fill = fakeBrowser({ frames: ["https://www.google.com/recaptcha/api2/bframe?k=key"] });
 
       await expect(processCloudApply({ data: { applicationId: id } } as never)).resolves.toEqual({ submitted: false });
+      await settleAll(tdb);
 
       expect(fill).not.toHaveBeenCalled();
       const row = await rowOf(id);
@@ -192,6 +196,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       fakeBrowser({ fill: async () => Promise.reject(new Error("page.evaluate: Execution context was destroyed at https://evil.example/?token=abc")) });
 
       await processCloudApply({ data: { applicationId: id } } as never);
+      await settleAll(tdb);
 
       const row = await rowOf(id);
       expect(row.status).toBe("failed");
@@ -211,6 +216,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       });
 
       await expect(processCloudApply({ data: { applicationId: id } } as never)).resolves.toEqual({ submitted: true });
+      await settleAll(tdb);
 
       const row = await rowOf(id);
       expect(row.status).toBe("submitted");
@@ -225,6 +231,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       const launch = vi.spyOn(chromium, "launch");
 
       await processCloudApply({ data: { applicationId: id } } as never);
+      await settleAll(tdb);
 
       expect(launch).not.toHaveBeenCalled();
       expect((await rowOf(id)).failureReason).toBe(FAILURE_MESSAGES.posting_closed);
@@ -246,6 +253,7 @@ describe.skipIf(!hasTestDb)("WP-00 containment against Postgres", () => {
       const fill = fakeBrowser({});
 
       await processCloudApply({ data: { applicationId: id } } as never);
+      await settleAll(tdb);
 
       expect(fill).not.toHaveBeenCalled();
       expect((await rowOf(id)).failureReason).toBe(FAILURE_MESSAGES.applier_error);

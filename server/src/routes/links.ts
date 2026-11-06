@@ -77,6 +77,13 @@ const keyMissing = () => {
 };
 const REFUSED = new Error("signed link refused");
 
+/** Thrown by `act`: the action cannot run now and the page says why. Rolls the link's use back too, so it still works after the user acts on the page. */
+export class LinkRefusal extends Error {
+  constructor(public readonly page: LinkPage) {
+    super("signed link action refused");
+  }
+}
+
 /**
  * A reusable link is not used up, so a valid token's POST would otherwise cost a transaction, about five statements and a
  * profile row lock on every call, unmetered, for the token's 90 days. They are counted per token instead of per address,
@@ -135,6 +142,7 @@ export function signedLinkRouter(action: LinkAction): Router {
       })
       .catch((err: unknown) => {
         if (err === REFUSED) return null;
+        if (err instanceof LinkRefusal) return err.page;
         throw err;
       });
     render(res, page ? 200 : 410, page ?? gonePage());

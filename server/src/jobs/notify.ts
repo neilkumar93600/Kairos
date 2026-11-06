@@ -11,6 +11,7 @@ import { addressHash, findSent, mailErrorCode, metadataKey, sendEmail, type Emai
 import { signal } from "../lib/sentry";
 import { renderForwardingCode } from "../services/forwarding";
 import { renderNewsletterConfirm } from "../services/newsletter";
+import { renderResendAvailable, renderReturnToDraft } from "../services/submission-mail";
 import { enqueue, redrive, type JobData } from "./queues";
 
 /**
@@ -41,6 +42,8 @@ export type Renderer = (entityId: string, userId: string | null) => Promise<Rend
 export const RENDERERS: Partial<Record<EmailKind, Renderer>> = {
   forwarding_code: renderForwardingCode,
   newsletter_confirm: renderNewsletterConfirm,
+  resend_available: renderResendAvailable,
+  return_to_draft: renderReturnToDraft,
 };
 
 /**

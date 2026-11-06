@@ -34,7 +34,7 @@ const entries = Object.entries(MATRIX).filter((e): e is [string, TenantEntry] =>
 describe("session-fresh matrix", () => {
   it("flags approve, checkout, portal and every admin route", () => {
     const flagged = entries.filter(([, e]) => e.fresh).map(([k]) => k);
-    expect(flagged.filter((k) => !k.includes("/api/admin/")).sort()).toEqual(["POST /api/applications/approve", "POST /api/billing/checkout", "POST /api/billing/portal"]);
+    expect(flagged.filter((k) => !k.includes("/api/admin/")).sort()).toEqual(["POST /api/applications/:id/resend", "POST /api/applications/approve", "POST /api/billing/checkout", "POST /api/billing/portal"]);
     expect(entries.filter(([k]) => k.includes("/api/admin/")).every(([, e]) => e.fresh)).toBe(true);
   });
 
@@ -54,6 +54,6 @@ describe("session-fresh matrix", () => {
     calls.length = 0;
     const res = await request(app)[method.toLowerCase() as "post"](path).set("authorization", "Bearer x").send(body);
     expect(res.body?.error?.code).not.toBe("reauth_required");
-    expect(calls[0]).toBe(false);
+    expect(calls[0]).toBe(entry.nocache === true);
   });
 });

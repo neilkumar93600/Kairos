@@ -37,6 +37,8 @@ export interface TenantEntry {
   request: (ids: TenantIds) => { path: string; body?: object };
   foreign?: number;
   why?: string;
+  /** Read uncached with no age limit (05-api session-nocache), like the extension's claim. */
+  nocache?: true;
   /** A session-fresh route (05-api 5.2): test/fresh-matrix.test.ts holds this flag against how routes/index.ts mounts it. */
   fresh?: true;
 }
@@ -59,6 +61,8 @@ export const MATRIX: Record<string, MatrixEntry> = {
   },
   "POST /api/webhooks/postmark-events": { public: "Postmark delivery events: the token is the credential; it only adds or lifts address-hash suppressions" },
   "POST /api/contact": { public: "the public contact form: stores a message and reads nothing back" },
+  "GET /api/applications/:id/resend-link": { public: "the signed token is the credential; GET only reads, and shows what a POST would do" },
+  "POST /api/applications/:id/resend-link": { public: "the signed token is the credential; single use, it re-approves one failed application of the token's own user" },
   "GET /api/unsubscribe": { public: "the signed token is the credential; GET only reads, and shows what a POST would stop" },
   "POST /api/unsubscribe": { public: "the signed token is the credential; it turns off one optional mail kind for the token's own user" },
   "POST /api/newsletter": { public: "the public newsletter form: the same 202 for every address, reads nothing back" },
@@ -114,6 +118,7 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "POST /api/applications/:id/drafts": { request: (t) => ({ path: `/api/applications/${t.applicationId}/drafts`, body: { kind: "cover_letter" } }) },
   "POST /api/applications/:id/stage/clear": { request: (t) => ({ path: `/api/applications/${t.applicationId}/stage/clear` }) },
   "POST /api/applications/:id/withdraw": { request: (t) => ({ path: `/api/applications/${t.applicationId}/withdraw` }) },
+  "POST /api/applications/:id/resend": { fresh: true, request: (t) => ({ path: `/api/applications/${t.applicationId}/resend`, body: { channel: "extension", acknowledgeUnconfirmed: true } }) },
 
   "GET /api/credits": own("/api/credits"),
   "GET /api/inbox": own("/api/inbox"),
@@ -123,6 +128,8 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "POST /api/billing/portal": { ...own("/api/billing/portal"), fresh: true },
 
   "GET /api/extension/queue": own("/api/extension/queue"),
+  "POST /api/extension/claim": { nocache: true, request: (t) => ({ path: "/api/extension/claim", body: { applicationId: t.applicationId } }) },
+  "POST /api/extension/release": { request: (t) => ({ path: "/api/extension/release", body: { applicationId: t.applicationId } }) },
   "POST /api/extension/report": {
     request: (t) => ({
       path: "/api/extension/report",

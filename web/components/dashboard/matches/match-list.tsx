@@ -11,6 +11,7 @@ import { Skeleton } from "../../shared/skeleton";
 import { FilterBar, FilterEmpty, FilterMenu, useClearFilters, useUrlParam } from "../applications/filter-chips";
 import { GateArt } from "../queue/empty-art";
 import { apiMessage, inlineLink } from "../queue/send-controls";
+import { queueRefusal } from "@/lib/queue-outcome";
 import { JobUrlImport } from "./job-url-import";
 import { boardLabel, MatchCard, SET_ASIDE } from "./match-card";
 
@@ -32,7 +33,7 @@ export function MatchList() {
 function Matches() {
   const { data, isLoading, error, refetch } = useMatches();
   const { queue, skip } = useMatchActions();
-  const [notice, setNotice] = useState<{ kind: "queue" | "skip"; match: Match } | null>(null);
+  const [notice, setNotice] = useState<{ kind: "queue" | "skip"; match: Match; refusal?: string | null } | null>(null);
   const boards = BOARDS.filter((b) => data?.some((m) => m.company.ats === b));
   const works = WORK.filter((w) => data?.some((m) => workOf(m) === w.value));
   const [board, setBoard] = useUrlParam("board", boards);
@@ -73,7 +74,7 @@ function Matches() {
             ? apiMessage(skip.error, "Could not skip this match. Try again.")
             : null
       }
-      onQueue={() => queue.mutate(m.id, { onSuccess: () => setNotice({ kind: "queue", match: m }) })}
+      onQueue={() => queue.mutate(m.id, { onSuccess: (result) => setNotice({ kind: "queue", match: m, refusal: queueRefusal(result, m.company.name) }) })}
       onSkip={() => skip.mutate(m.id, { onSuccess: () => setNotice({ kind: "skip", match: m }) })}
     />
   );
@@ -82,7 +83,9 @@ function Matches() {
     <div className="flex flex-col gap-6">
       <JobUrlImport />
       <p role="status" className={notice ? "glass-panel rounded-card px-5 py-3 text-sm text-ink" : "sr-only"}>
-        {notice?.kind === "queue" ? (
+        {notice?.refusal ? (
+          notice.refusal
+        ) : notice?.kind === "queue" ? (
           <>
             Preparing a draft for {notice.match.job.title} at {notice.match.company.name}. It appears in your{" "}
             <Link href="/queue" className={inlineLink}>

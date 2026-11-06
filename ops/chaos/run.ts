@@ -1,7 +1,8 @@
 /**
- * The process-kill chaos harness (WP-22 acceptance): scripted approvals through the real seam while processes are killed
- * with SIGKILL and Postgres restarts once. It passes when every application is terminal within 10 minutes of its approval,
- * with zero duplicate attempts and zero double charges.
+ * The process-kill chaos harness (WP-22 and WP-29 acceptance): scripted approvals through the real seam while processes are
+ * killed with SIGKILL and Postgres restarts once. It passes when every application is terminal within 10 minutes of its
+ * approval, with zero duplicate attempts and zero double charges, zero charges for a run that never finished, and at least
+ * CHAOS_MIN_CRASHES (50) kills of an applier holding a live attempt, across both the navigating and the filling phase.
  *
  * STATUS: this has never run. It needs a real Postgres and Redis, and the machine it was written on has neither.
  *
@@ -10,10 +11,11 @@
  *   npx tsx ops/chaos/run.ts
  *
  * Run it from the repo root. .github/workflows/chaos.yml does exactly that on demand. CHAOS_PG_RESTART_CMD is split on
- * spaces and run without a shell. Optional: CHAOS_APPROVALS (1000), CHAOS_LIMIT_MINUTES (10), CHAOS_APPLIERS (2).
+ * spaces and run without a shell. Optional: CHAOS_APPROVALS (1000), CHAOS_LIMIT_MINUTES (10), CHAOS_APPLIERS (4), CHAOS_MIN_CRASHES (50). A verdict of too few
+ * crashes means the queue drained first, which says nothing about the sends: raise CHAOS_APPROVALS.
  *
- * Use a disposable database and Redis. The child applier consumes the cloud-apply queue with a scripted browser and writes
- * real ledger rows, so on a database with real work it would mark real applications sent. Staging is fine only as a new
+ * Use a disposable database and Redis. The child applier consumes the cloud-apply queue with a scripted browser and the
+ * child worker settles what it reports into real ledger rows, so on a database with real work it would mark real applications sent. Staging is fine only as a new
  * database and a new Redis in the staging project, never the ones its services use: the harness refuses a database whose
  * name does not end in _chaos, or that already holds applications, or a Redis whose cloud-apply queue has jobs.
  * This does not exercise the Railway half of S-D1 (executor ids, PgBouncer), which ADR-001 Revision 3 leaves unrun.
@@ -30,6 +32,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Redis } from "ioredis";
 import pg from "pg";
 import { readMigrations, runMigrations } from "../../server/src/db/migrator";
+import { QUEUE_CONFIG } from "../../server/src/jobs/queues";
 import * as schema from "../../server/src/db/schema";
 import { envFor } from "../../server/src/lib/env";
 import { verdict } from "./verdict";
@@ -44,7 +47,8 @@ const REDIS_URL = need("CHAOS_REDIS_URL");
 const PG_RESTART = need("CHAOS_PG_RESTART_CMD").split(" ").filter(Boolean);
 const APPROVALS = Number(process.env.CHAOS_APPROVALS ?? 1000);
 const LIMIT_MS = Number(process.env.CHAOS_LIMIT_MINUTES ?? 10) * 60_000;
-const APPLIERS = Number(process.env.CHAOS_APPLIERS ?? 2);
+const APPLIERS = Number(process.env.CHAOS_APPLIERS ?? 4);
+const MIN_CRASHES = Number(process.env.CHAOS_MIN_CRASHES ?? 50);
 /** Past the limit, so a late application is measured and reported rather than cut off. */
 const GIVE_UP_MS = LIMIT_MS + 5 * 60_000;
 const PER_USER = 20;
@@ -103,7 +107,7 @@ async function seed(): Promise<void> {
       jobs.slice(0, Math.min(PER_USER, APPROVALS - made)).map((j) => ({
         userId,
         jobId: j.id,
-        resumeLines: [{ id: "l1", section: "Experience", text: "Ran chaos", factIds: ["f1"] }],
+        resumeLines: [{ id: "l1", section: "Experience", text: "Ran chaos", factIds: [] }],
         answers: [{ fieldKey: "first_name", label: "First name", value: "Chaos", source: "profile" as const }],
       })),
     );
@@ -112,9 +116,11 @@ async function seed(): Promise<void> {
 
 const workdir = mkdtempSync(join(tmpdir(), "kairos-chaos-"));
 const clickLog = join(workdir, "clicks.log");
+const finishedLog = join(workdir, "finished.log");
 const filler = join(workdir, "filler.js");
 writeFileSync(filler, "window.__kairosFill = async () => ({});");
 writeFileSync(clickLog, "");
+writeFileSync(finishedLog, "");
 
 // What test/setup-env.ts gives the same code, plus the cloud channel open to Pro.
 const childEnv = {
@@ -125,6 +131,7 @@ const childEnv = {
   REDIS_URL,
   CLOUD_APPLIER_OPEN: "1",
   CHAOS_CLICK_LOG: clickLog,
+  CHAOS_FINISHED_LOG: finishedLog,
   FILLER_SCRIPT_PATH: filler,
   BETTER_AUTH_SECRET: "chaos-secret-chaos-secret-chaos-secret-1",
   BETTER_AUTH_URL: "http://localhost:3000",
@@ -139,11 +146,16 @@ envFor("worker", childEnv);
 envFor("applier", childEnv);
 
 const children = new Map<string, ChildProcess>();
+/** Each process's identity, new on every start: submission_attempts.worker_identity names the one holding an attempt. */
+const identities = new Map<string, string>();
+let started = 0;
 let stopping = false;
 
 /** Starts one role; when it exits for any reason but the end of the run it comes back a second later, as a platform restarts it. */
 function start(name: string, role: string): void {
-  const child = spawn(process.execPath, ["--import", "tsx", fileURLToPath(new URL("./child.ts", import.meta.url)), role], { env: childEnv, stdio: ["ignore", "inherit", "inherit"] });
+  const identity = `${name}-${(started += 1)}`;
+  identities.set(name, identity);
+  const child = spawn(process.execPath, ["--import", "tsx", fileURLToPath(new URL("./child.ts", import.meta.url)), role], { env: { ...childEnv, RAILWAY_REPLICA_ID: identity }, stdio: ["ignore", "inherit", "inherit"] });
   children.set(name, child);
   child.on("exit", (code) => {
     children.delete(name);
@@ -179,18 +191,33 @@ async function main(): Promise<void> {
   start("worker", "worker");
   for (let i = 0; i < APPLIERS; i++) start(`applier-${i}`, "applier");
 
-  const started = Date.now();
-  const restartAt = started + between(30_000, 120_000);
+  const startedAt = Date.now();
+  const restartAt = startedAt + between(30_000, 120_000);
   let kills = 0;
   let pgRestarts = 0;
+  let crashes = 0;
+  const crashesByPhase: Record<string, number> = {};
 
   for (;;) {
-    await pause(between(5_000, 20_000));
+    // Fast enough that the crash count is met before the queue drains; the verdict fails a run where it was not.
+    await pause(between(2_000, 4_000));
+    // Attempts really running now: an orphan's heartbeat stops, and each process has its own identity.
+    const live = await retrying(() =>
+      db
+        .select({ worker: schema.submissionAttempts.workerIdentity, phase: schema.submissionAttempts.phase })
+        .from(schema.submissionAttempts)
+        .where(sql`${schema.submissionAttempts.state} = 'open' and ${schema.submissionAttempts.channel} = 'cloud' and ${schema.submissionAttempts.heartbeatAt} > now() - interval '30 seconds'`),
+    );
     const names = [...children.keys()];
-    const victim = names[between(0, names.length)];
+    const holding = names.filter((n) => live.some((a) => a.worker === identities.get(n)));
+    const victim = holding.length && Math.random() < 0.8 ? holding[between(0, holding.length)] : names[between(0, names.length)];
+    const held = live.filter((a) => a.worker === identities.get(victim ?? ""));
     if (victim && children.get(victim)?.kill("SIGKILL")) {
       kills += 1;
-      console.log(`chaos: killed ${victim} (${kills})`);
+      // A crash counts only when this process held a live attempt, under the phases it held.
+      if (held.length) crashes += 1;
+      for (const { phase } of held) crashesByPhase[phase] = (crashesByPhase[phase] ?? 0) + 1;
+      console.log(`chaos: killed ${victim} (${kills}), holding ${held.length} attempts; ${crashes} crashes in flight`);
     }
     if (!pgRestarts && Date.now() >= restartAt) {
       console.log("chaos: restarting Postgres");
@@ -199,12 +226,13 @@ async function main(): Promise<void> {
     }
     const apps = await statuses();
     const open = apps.filter((a) => !["submitted", "failed"].includes(a.status)).length;
-    console.log(`chaos: ${open} of ${apps.length} not terminal, ${Math.round((Date.now() - started) / 1000)} s in`);
-    if ((open === 0 && pgRestarts > 0) || Date.now() - started > GIVE_UP_MS) break;
+    console.log(`chaos: ${open} of ${apps.length} not terminal, ${Math.round((Date.now() - startedAt) / 1000)} s in`);
+    if ((open === 0 && pgRestarts > 0) || Date.now() - startedAt > GIVE_UP_MS) break;
   }
 
-  // The sweep needs a tick after the last job to finish its row. No more kills from here.
-  const settle = Date.now() + 3 * 60_000;
+  // A killed job holds its lock until the lock runs out, then the stall check re-delivers it and the sweep visits its row a
+  // minute later: lockDuration plus three minutes for those to finish its row. No more kills from here.
+  const settle = Date.now() + QUEUE_CONFIG["cloud-apply"].lockDurationMs + 3 * 60_000;
   while ((await outboxCounts()).live > 0 && Date.now() < settle) await pause(5_000);
 
   stopping = true;
@@ -214,9 +242,11 @@ async function main(): Promise<void> {
   const charges = await retrying(() => db.select({ id: schema.creditLedger.applicationId }).from(schema.creditLedger).where(sql`${schema.creditLedger.reason} = 'submission'`));
   const clicks = readFileSync(clickLog, "utf8").split("\n").filter(Boolean);
   const outbox = await outboxCounts();
-  const result = verdict({ approvals: APPROVALS, limitMs: LIMIT_MS, apps, clicks, charges: charges.map((c) => c.id!), outbox, kills, pgRestarts });
+  // Written by the scripted browser, not by anything settlement reads, so a bug that closes a dead run as submitted shows here.
+  const finished = readFileSync(finishedLog, "utf8").split("\n").filter(Boolean);
+  const result = verdict({ approvals: APPROVALS, limitMs: LIMIT_MS, apps, clicks, charges: charges.map((c) => c.id!), finished, outbox, kills, pgRestarts, crashes, crashesByPhase, minCrashes: MIN_CRASHES });
   const slowestSettleS = Math.round(Math.max(0, ...apps.map((a) => a.settleMs ?? 0)) / 1000);
-  console.log(JSON.stringify({ ...result, approvals: APPROVALS, kills, pgRestarts, clicks: clicks.length, charges: charges.length, outbox, slowestSettleS }, null, 2));
+  console.log(JSON.stringify({ ...result, approvals: APPROVALS, kills, pgRestarts, clicks: clicks.length, charges: charges.length, finished: finished.length, crashes, crashesByPhase, outbox, slowestSettleS }, null, 2));
   await pool.end();
   process.exit(result.pass ? 0 : 1);
 }

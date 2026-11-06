@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { challengeKind, codeForFillerReason, fillInBrowser, isAllowedApplyUrl, isInternalTarget } from "../src/jobs/cloud-apply";
+import { challengeKind, codeForFillerReason, fillInBrowser, isAllowedApplyUrl, isInternalTarget, retryWhileHealable } from "../src/jobs/cloud-apply";
 import { cloudOpenTo, FAILURE_MESSAGES } from "../src/services/submissions";
 
 /** WP-04 applier containment, the parts that need neither Postgres nor a browser. */
@@ -25,9 +25,10 @@ describe("cloud gate", () => {
 
 describe("failure catalog", () => {
   it("every message fits failure_reason, says no credit was used, and never invites a blind resend of an unconfirmed send", () => {
-    for (const message of Object.values(FAILURE_MESSAGES)) {
+    for (const [code, message] of Object.entries(FAILURE_MESSAGES)) {
       expect(message.length).toBeLessThanOrEqual(500);
-      expect(message).toMatch(/no credit was used/i);
+      // no_report is B.6.6's sentence, verbatim.
+      if (code !== "no_report") expect(message).toMatch(/no credit was used/i);
     }
     expect(FAILURE_MESSAGES.unconfirmed).toMatch(/check your email/i);
   });
@@ -127,5 +128,62 @@ describe("filler reasons", () => {
     for (const prefix of ["Required fields left empty", "Unsupported application page", "Submit button not found", "No confirmation"]) {
       expect(filler).toContain(prefix);
     }
+  });
+});
+
+describe("a run the sweep gave up on", () => {
+  it("stops before the fill when its attempt is closed, and says nothing reached the employer", async () => {
+    const evaluated: unknown[] = [];
+    const page = {
+      on: () => {},
+      url: () => "https://job-boards.greenhouse.io/x/jobs/1",
+      title: async () => "Apply",
+      $: async () => null,
+      goto: async () => ({ status: () => 200 }),
+      waitForLoadState: async () => {},
+      frames: () => [],
+      evaluate: async (fn: unknown) => (evaluated.push(fn), undefined),
+    };
+    const browser = { newContext: async () => ({ route: async () => {}, on: () => {}, newPage: async () => page, close: async () => {} }) };
+    const phases: string[] = [];
+    const outcome = await fillInBrowser(browser as never, {
+      applicationId: "a",
+      applyUrl: "https://job-boards.greenhouse.io/x/jobs/1",
+      answers: [],
+      resumeLines: [],
+      coverLetter: null,
+      fillerSource: "window.__kairosFill = () => {}",
+      onPhase: async (p) => {
+        phases.push(p);
+        if (p === "filling") throw new Error("attempt closed");
+      },
+    });
+    expect(phases).toEqual(["navigating", "filling"]);
+    expect(outcome).toEqual({ submitted: false, code: "applier_error", detail: "navigation_failed" });
+    // The filler script was injected; __kairosFill, the only thing that clicks, was never called.
+    expect(evaluated).toEqual(["window.__kairosFill = () => {}"]);
+  });
+});
+
+describe("the result write", () => {
+  const sleep = async () => {};
+  it("waits out a dropped connection, up to its tries", async () => {
+    let calls = 0;
+    await retryWhileHealable(async () => {
+      if (++calls < 3) throw Object.assign(new Error("terminating connection"), { code: "57P01" });
+    }, sleep);
+    expect(calls).toBe(3);
+    await expect(retryWhileHealable(async () => Promise.reject(new Error("down")), sleep, 2)).rejects.toThrow("down");
+  });
+
+  it("does not retry what will never heal: a refused value, directly or as drizzle's cause", async () => {
+    let calls = 0;
+    const refuse = (e: Error) => async () => {
+      calls += 1;
+      throw e;
+    };
+    await expect(retryWhileHealable(refuse(Object.assign(new Error("check"), { code: "23514" })), sleep)).rejects.toThrow("check");
+    await expect(retryWhileHealable(refuse(Object.assign(new Error("wrapped"), { cause: { code: "22023" } })), sleep)).rejects.toThrow("wrapped");
+    expect(calls).toBe(2);
   });
 });

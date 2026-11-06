@@ -1,7 +1,7 @@
 import { Router } from "express";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
-import { APPLICATION_STATUSES, approveApplicationsSchema, draftRequestSchema, getPlan, updateApplicationSchema } from "@auto-career/shared";
+import { APPLICATION_STATUSES, approveApplicationsSchema, draftRequestSchema, getPlan, resendRequestSchema, updateApplicationSchema } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, companies, facts, inboundEmails, jobs, savedAnswers, type ApplicationStage } from "../db/schema";
 import { asActor } from "../lib/actor";
@@ -13,7 +13,7 @@ import { parseParam, validateBody } from "../middleware/validate";
 import { recordEvent } from "../services/events";
 import { draftAnswer, draftCoverLetter } from "../services/draft-writer";
 import { classifySensitive, isProfileQuestion } from "../services/sensitive";
-import { approveApplications, planFor } from "../services/submissions";
+import { approveWithSkips, planFor, resendApplication, withdrawApplication } from "../services/submissions";
 import { metered } from "../services/allowance";
 import { topFacts } from "../services/job-fit";
 import { gatewayCtx } from "../llm/wire";
@@ -91,7 +91,7 @@ applicationsRouter.patch("/:id", validateBody(updateApplicationSchema), async (r
       .from(applications)
       .innerJoin(jobs, eq(jobs.id, applications.jobId))
       .innerJoin(companies, eq(companies.id, jobs.companyId))
-      .where(and(eq(applications.id, id), eq(applications.userId, me.id), eq(applications.status, "draft")));
+      .where(and(eq(applications.id, id), eq(applications.userId, me.id), eq(applications.status, "draft"), ne(applications.draftState, "expired")));
     if (!current) throw notFound("Draft application");
     // Confirmed only: a note the writer made citable stays unconfirmed until the user confirms it, and must not reach a draft.
     const confirmed = await db()
@@ -123,6 +123,12 @@ applicationsRouter.patch("/:id", validateBody(updateApplicationSchema), async (r
     }
   }
 
+  // A failed send whose required question had no answer can have its answers fixed before the resend, and nothing else (Q-4, X7).
+  const answersOnly = !resumeLines && body.coverLetter === undefined;
+  const editable = or(
+    and(eq(applications.status, "draft"), ne(applications.draftState, "expired")),
+    answersOnly ? and(eq(applications.status, "failed"), eq(applications.failureCode, "required_missing")) : undefined,
+  );
   const [updated] = await db()
     .update(applications)
     .set({
@@ -131,7 +137,7 @@ applicationsRouter.patch("/:id", validateBody(updateApplicationSchema), async (r
       ...(body.coverLetter !== undefined ? { coverLetter: body.coverLetter } : {}),
       updatedAt: new Date(),
     })
-    .where(and(eq(applications.id, id), eq(applications.userId, me.id), eq(applications.status, "draft")))
+    .where(and(eq(applications.id, id), eq(applications.userId, me.id), editable))
     .returning(APPLICATION_COLUMNS);
   if (!updated) throw notFound("Draft application");
   res.json({ application: updated });
@@ -140,7 +146,16 @@ applicationsRouter.patch("/:id", validateBody(updateApplicationSchema), async (r
 applicationsRouter.post("/approve", validateBody(approveApplicationsSchema), async (req, res) => {
   const me = currentUser(req);
   const { applicationIds, channel } = req.body as z.infer<typeof approveApplicationsSchema>;
-  res.json({ approved: await approveApplications(db(), me.id, applicationIds, channel) });
+  const { approved, skipped } = await approveWithSkips(db(), me.id, applicationIds, channel);
+  // `skipped` is additive and absent when empty, so a plain success stays byte-identical to the frozen `{ approved }`.
+  res.json({ approved: approved.map((a) => a.id), ...(skipped.length ? { skipped } : {}) });
+});
+
+/** Sends a failed application again under a new attempt (05-api 10.4). Money: session-fresh like approve. */
+applicationsRouter.post("/:id/resend", validateBody(resendRequestSchema), async (req, res) => {
+  const id = parseParam(z.uuid(), req.params.id);
+  const { channel, acknowledgeUnconfirmed } = req.body as z.infer<typeof resendRequestSchema>;
+  res.json(await resendApplication(db(), currentUser(req).id, id, channel, acknowledgeUnconfirmed));
 });
 
 /** Drafts one answer or the cover letter from confirmed facts. Saves nothing: the user accepts it through PATCH. */
@@ -238,12 +253,6 @@ applicationsRouter.post("/:id/stage/clear", async (req, res) => {
 });
 
 applicationsRouter.post("/:id/withdraw", async (req, res) => {
-  const id = parseParam(z.uuid(), req.params.id);
-  const [updated] = await db()
-    .update(applications)
-    .set({ status: "withdrawn", updatedAt: new Date() })
-    .where(and(eq(applications.id, id), eq(applications.userId, currentUser(req).id), inArray(applications.status, ["draft", "approved"])))
-    .returning({ id: applications.id });
-  if (!updated) throw notFound("Withdrawable application");
+  await withdrawApplication(db(), currentUser(req).id, parseParam(z.uuid(), req.params.id));
   res.json({ ok: true });
 });

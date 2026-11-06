@@ -11,10 +11,12 @@
 // WP-17's resume library and imports: exists { resumeId }, limit_reached { limit }, truth_lock { lineIds, reasons? },
 // unsupported_type and unreadable { reason } (the file gate's reason code), payload_too_large { limitBytes }.
 // approvals_frozen, cloud_paused, extension_only and unknown_flag are WP-27's (ops flags); listed here because this file is the catalog.
-// resume_refused { reason: not_dead | past_browser_step | not_approved | no_application | no_refusal_check } is WP-22's (POST /api/admin/outbox/:id/resume).
+// resume_refused { reason: not_dead | past_browser_step | not_approved | stale_attempt | no_application | no_refusal_check } is WP-22's (POST /api/admin/outbox/:id/resume).
 export const ERROR_CATALOG: Record<string, readonly number[]> = {
+  acknowledgement_required: [409],
   ai_refused: [422],
   ai_unavailable: [503],
+  already_claimed: [409],
   already_subscribed: [409],
   approvals_frozen: [503],
   bad_request: [400],
@@ -37,6 +39,7 @@ export const ERROR_CATALOG: Record<string, readonly number[]> = {
   last_base: [409],
   limit_reached: [409],
   no_text_layer: [422],
+  not_approvable: [409],
   not_base: [409],
   not_found: [404],
   origin_not_allowed: [403],

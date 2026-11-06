@@ -22,6 +22,7 @@ const REDACT_PATHS = [
   "res.headers.location",
   'req.headers["stripe-signature"]',
   "*.password",
+  "*.evidence",
   "*.otp",
   "*.token",
   // Free text from a resume, an email, an application or a prompt. pino's `*` covers one level, so these catch

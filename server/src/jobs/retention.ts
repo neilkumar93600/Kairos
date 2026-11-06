@@ -38,6 +38,12 @@ async function batched(statement: () => ReturnType<typeof sql>): Promise<number>
 const before = (days: number) => sql`now() - make_interval(days => ${days}::int)`;
 
 export const RETENTION_RULES = {
+  /** An attempt's evidence and session id, 90 days after settlement (08 section 10). The row itself stays with the application. */
+  attempt_evidence: {
+    days: 90,
+    run: (d: number) => batched(() => sql`update submission_attempts set evidence = null, session_id = null where id in (
+      select id from submission_attempts where settled_at < ${before(d)} and (evidence is not null or session_id is not null) limit ${BATCH})`),
+  },
   /** Third-party reply bodies and previews (and the legacy plaintext); the metadata stays with the account. */
   inbound_body: {
     days: 180,
