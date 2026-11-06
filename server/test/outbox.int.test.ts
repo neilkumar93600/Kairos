@@ -142,7 +142,7 @@ describe.skipIf(!hasTestDb)("the outbox against Postgres and Redis", () => {
       await expect(drainOutbox()).resolves.toBe(1);
       expect((await rowOf(key)).status).toBe("enqueued");
       const job = await q().getJob(key);
-      expect(job?.data).toEqual({ applicationId: id });
+      expect(job?.data).toEqual({ applicationId: id, attemptNo: 1 });
       expect(job?.opts.removeOnComplete).toEqual({ age: 2 * 3600 }); // the sweep reads it: no count may evict it
 
       await expect(drainOutbox()).resolves.toBe(0);

@@ -21,7 +21,7 @@ import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from ".
  */
 if (hasTestDb) process.env.DATABASE_URL = testDbUrl("settle");
 process.env.OWNER_USER_IDS = "settle-owner";
-process.env.LINK_SIGNING_KEY = `v1:${Buffer.alloc(32, 7).toString("base64")}`;
+process.env.LINK_SIGNING_KEY = `v1:${Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 23 + 5) % 256)).toString("base64")}`;
 process.env.API_PUBLIC_ORIGIN = "https://api.test.local";
 process.env.FILLER_SCRIPT_PATH = join(tmpdir(), "kairos-settle-filler.js");
 writeFileSync(process.env.FILLER_SCRIPT_PATH, "window.__kairosFill = async () => ({});");
@@ -984,7 +984,7 @@ describe.skipIf(!hasTestDb)("WP-29 settlement against Postgres", () => {
 
     it("after 14 days an unsent approval returns to draft, frees the credit, clears the snapshot and is mailed once per attempt", async () => {
       const { availableCreditsNow } = await import("../src/services/credits");
-      const u = await user(undefined, 2);
+      const u = await user(undefined, 3);
       const old = await aged(u, 15);
       const young = await aged(u, 13);
       const heldLately = await aged(u, 15, { leaseSessionId: "s1", leaseExpiresAt: new Date(Date.now() - 3_600_000) });
@@ -992,7 +992,7 @@ describe.skipIf(!hasTestDb)("WP-29 settlement against Postgres", () => {
       expect(await appOf(old)).toMatchObject({ status: "draft", channel: null, approvedAt: null, approvedBy: null, attemptNo: 1, resumeSnapshot: null, leaseSessionId: null });
       expect((await appOf(young)).status).toBe("approved");
       expect((await appOf(heldLately)).status).toBe("approved");
-      expect(await availableCreditsNow(db, u)).toBe(0);
+      expect(await availableCreditsNow(db, u)).toBe(1); // 3 granted, 2 still reserved: old's reservation is free
       expect(enqueue).toHaveBeenCalledWith("notify", { kind: "return_to_draft", entityId: `${old}:1`, userId: u }, expect.any(String), undefined, undefined);
       expect(await renderReturnToDraft(`${old}:1`, u)).toMatchObject({ subject: expect.stringContaining("back in your drafts") });
 
