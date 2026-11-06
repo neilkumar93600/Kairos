@@ -66,7 +66,7 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
     expect(jobs.find((j) => j.id === saved)).toMatchObject({ descriptionText: "", raw: null });
     // A second run changes nothing.
     expect(await retention.processRetention()).toEqual({
-      inbound_body: 0, inbound_hidden: 0, reminders: 0, forwarding_codes: 0, forwarding_stale: 0, contact_messages: 0, newsletter_inactive: 0, matches_below_bar: 0, board_requests: 0, jobs_closed: 0, verified_claims: 0,
+      inbound_body: 0, inbound_hidden: 0, reminders: 0, forwarding_codes: 0, forwarding_stale: 0, contact_messages: 0, newsletter_inactive: 0, matches_below_bar: 0, board_requests: 0, jobs_closed: 0, verified_claims: 0, outbox_done: 0, outbox_dead: 0,
     });
   });
 
