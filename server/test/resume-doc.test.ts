@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resumeInputSchema, type ResumeInput } from "@auto-career/shared";
-import { defaultResume, profileContactFrom, renderResumeText, truthLockViolations, type ProfileFact } from "../src/services/resume-doc";
+import { defaultResume, profileContactFrom, resumePlainText, truthLockViolations, type ProfileFact } from "../src/services/resume-doc";
 
 describe("profileContactFrom", () => {
   const contact = (over: Partial<ResumeInput["contact"]> = {}): ResumeInput["contact"] => ({
@@ -108,9 +108,9 @@ describe("truthLockViolations", () => {
   });
 });
 
-describe("renderResumeText", () => {
+describe("resumePlainText", () => {
   it("prints visible sections and entries in order, without hidden ones", () => {
-    const text = renderResumeText(sample);
+    const text = resumePlainText(sample);
     expect(text).toBe("Experience\nEngineer at Initech | Austin | 2021 to 2023\n- Built a dashboard\n- Ran k8s");
     expect(text).not.toContain("Hooli");
     expect(text).not.toContain("TypeScript");

@@ -148,6 +148,7 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "POST /api/resumes/suggestions": { request: (t) => ({ path: "/api/resumes/suggestions", body: { scope: "resume", resumeId: t.resumeId } }) },
   "POST /api/resumes/tailor": { request: (t) => ({ path: "/api/resumes/tailor", body: { jobId: t.jobId } }) },
   "GET /api/resumes/:id": { request: (t) => ({ path: `/api/resumes/${t.resumeId}` }) },
+  "GET /api/resumes/:id/export": { request: (t) => ({ path: `/api/resumes/${t.resumeId}/export?format=txt` }) },
   "PUT /api/resumes/:id": { request: (t) => ({ path: `/api/resumes/${t.resumeId}`, body: { name: "Base resume", density: "comfortable", contact: { name: "Test User", email: "user@test.local", phone: "", location: "", links: [] }, sections: [] } }) },
   "PATCH /api/resumes/:id": { request: (t) => ({ path: `/api/resumes/${t.resumeId}`, body: { name: "Renamed" } }) },
   "DELETE /api/resumes/:id": { request: (t) => ({ path: `/api/resumes/${t.resumeId}` }) },

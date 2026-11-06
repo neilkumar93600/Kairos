@@ -13,7 +13,7 @@ import { enqueue } from "../jobs/queues";
 import { scoreImported } from "../jobs/score-matches";
 import { logger } from "../lib/logger";
 import { cleanText } from "../services/normalize-posting";
-import { renderResumeText } from "../services/resume-doc";
+import { resumePlainText } from "../services/resume-doc";
 import { metered } from "../services/allowance";
 import { planFor } from "../services/submissions";
 import { gatewayCtx } from "../llm/wire";
@@ -138,7 +138,7 @@ async function fitFor(user: SessionUser, jobId: string, resume?: ResumeInput) {
   const fit = computeJobFit({
     job: { id: jobId, title: job.title, companyName: job.company, descriptionText: job.descriptionText },
     facts: factRows,
-    resumeText: renderResumeText(doc),
+    resumeText: resumePlainText(doc),
     preferences: preferences ? { roles: preferences.roles, seniority: preferences.seniority } : null,
   });
   return { job, factRows, fit };

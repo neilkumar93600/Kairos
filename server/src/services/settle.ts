@@ -117,6 +117,25 @@ async function closeOnApplyPage(tx: Tx, jobId: string): Promise<void> {
     .catch((err: unknown) => logger.error({ err, jobId }, "posting_closed could not close the job"));
 }
 
+/**
+ * A snapshot that could not be rendered for an extension send (02-database 7.3.1): the extension never saw the item, so it
+ * has no attempt to close. Failed, no ledger row, resendable. A cloud send records its own attempt in the applier.
+ */
+export async function failExtensionRender(db: Db, applicationId: string, attemptNo: number): Promise<void> {
+  const [seen] = await db.select({ userId: applications.userId }).from(applications).where(eq(applications.id, applicationId));
+  if (!seen) return;
+  const entity = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${seen.userId}))`);
+    const [app] = await tx
+      .select()
+      .from(applications)
+      .where(and(eq(applications.id, applicationId), eq(applications.status, "approved"), eq(applications.channel, "extension"), eq(applications.attemptNo, attemptNo)))
+      .for("update");
+    return app ? recordFailed(tx, app, "render_failed", "system") : null;
+  });
+  notify(entity, seen.userId);
+}
+
 const notify = (entityId: string | null, userId: string) => {
   if (entityId) enqueueNotify("resend_available", entityId, userId).catch((err: unknown) => logger.warn({ err, entityId }, "resend notice not enqueued; notify-reconcile will"));
 };

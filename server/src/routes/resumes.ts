@@ -1,9 +1,12 @@
 import { Router } from "express";
+import { pipeline } from "node:stream/promises";
 import {
   createResumeRequestSchema,
   createRevisionRequestSchema,
+  exportQuerySchema,
   listResumesQuerySchema,
   patchResumeRequestSchema,
+  resumeInputSchema,
   resumeSuggestionRequestSchema,
   tailorRequestSchema,
   updateResumeRequestSchema,
@@ -12,13 +15,19 @@ import {
   type ResumeSuggestionRequest,
 } from "@auto-career/shared";
 import { db } from "../db/client";
+import { renderAndWait } from "../jobs/queues";
 import { HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
+import { storage, userKey, type StoredFile } from "../lib/storage";
 import { gatewayCtx } from "../llm/wire";
 import { pageParams } from "../lib/pagination";
 import { currentUser } from "../middleware/require-auth";
+import { aiLimiter } from "../middleware/rate-limit";
 import { validateBody } from "../middleware/validate";
+import { exportFilename, renderHash } from "../services/render";
 import * as library from "../services/resume-library";
 import { metered } from "../services/allowance";
+import { resumePlainText } from "../services/resume-doc";
 import { freeQuestion, suggestEdits } from "../services/resume-writer";
 import { planFor } from "../services/submissions";
 import { tailorForJob } from "./jobs";
@@ -102,6 +111,62 @@ resumesRouter.post("/tailor", writerLimiter, validateBody(tailorRequestSchema), 
 
 resumesRouter.get("/:id", async (req, res) => {
   res.json({ resume: await library.toDetail(await library.ownResume(currentUser(req).id, param(req.params.id))) });
+});
+
+/** Under the route's 30 s deadline. Exports wait behind sends (priority), so a busy worker answers 503 and the web prints instead. */
+const EXPORT_WAIT_MS = 25_000;
+// A render is real CPU on the worker: a per-user cap in its own bucket.
+const exportLimiter = aiLimiter("resume_export", 20);
+
+/**
+ * The cached file of a document, or the worker renders it (PRD 7.4, CISO mustFix 8: no Typst in this process). Any failure
+ * is the 503 the web turns into the browser print.
+ */
+async function exportPdf(userId: string, resumeId: string, document: unknown, deadline: AbortSignal | undefined): Promise<StoredFile> {
+  const doc = resumeInputSchema.parse(document);
+  const cached = await storage().get(userKey("renders", userId, `${renderHash(doc)}.pdf`));
+  if (cached) return cached;
+  const { key } = await renderAndWait({ kind: "export", userId, resumeId }, EXPORT_WAIT_MS, { priority: 1, ...(deadline ? { signal: deadline } : {}) });
+  const file = key ? await storage().get(key) : null;
+  if (!file) throw new Error("render_file_missing");
+  return file;
+}
+
+/**
+ * GET /api/resumes/:id/export?format=pdf|txt (resume-82, 84). The caller's own resume, with one 404 for a missing and a
+ * foreign id. The name is safe ASCII built from the document, and the file leaves as a no-store attachment under a sandbox CSP.
+ * ponytail: docx answers 503 until WP-39 builds it, which the contract already lists and the web already handles.
+ */
+resumesRouter.get("/:id/export", exportLimiter, async (req, res) => {
+  const me = currentUser(req);
+  const row = await library.ownResume(me.id, param(req.params.id));
+  const query = exportQuerySchema.safeParse(req.query);
+  if (!query.success) throw new HttpError(400, "invalid_param", "format must be pdf, docx or txt", query.error.issues);
+  const { format } = query.data;
+  const unavailable = (reason: string) => {
+    res.set("retry-after", "5");
+    return new HttpError(503, "service_unavailable", "This file cannot be made right now. Try again, or print from the browser.", { reason, retryAfterSec: 5 });
+  };
+  if (format === "docx") throw unavailable("format_unavailable");
+  const name = (ext: "pdf" | "txt") => exportFilename((row.document as { contact?: { name?: string } }).contact?.name ?? "", ext, row.targetRoles[0]);
+  res.set({ "cache-control": "no-store", "content-security-policy": "default-src 'none'; sandbox" });
+  if (format === "txt") {
+    const doc = resumeInputSchema.safeParse(row.document);
+    if (!doc.success) throw unavailable("render_failed");
+    res.set({ "content-type": "text/plain; charset=utf-8", "content-disposition": `attachment; filename="${name("txt")}"` }).send(resumePlainText(doc.data));
+    return;
+  }
+  const file = await exportPdf(me.id, row.id, row.document, res.locals.deadline).catch((err: unknown) => {
+    logger.warn({ resumeId: row.id, reason: (err as Error).message }, "resume export failed");
+    throw unavailable("render_failed");
+  });
+  res.set({ "content-type": "application/pdf", "content-disposition": `attachment; filename="${name("pdf")}"` });
+  if (file.contentLength !== undefined) res.set("content-length", String(file.contentLength));
+  // Headers are out by now, so a failure mid-stream can only cut the connection.
+  await pipeline(file.body, res).catch((err: unknown) => {
+    logger.warn({ err }, "resume export ended early");
+    res.destroy();
+  });
 });
 
 resumesRouter.put("/:id", validateBody(updateResumeRequestSchema), async (req, res) => {

@@ -3,10 +3,13 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getPlan, type PlanId, type SubmitChannel } from "@auto-career/shared";
 import type { Db } from "../db/client";
 import { applications, companies, facts, jobs, profiles, resumes, submissionAttempts, subscriptions, type ApplicationFailureCode } from "../db/schema";
-import { baseEnv, type BaseEnv } from "../lib/env";
+import { baseEnv, env, type BaseEnv } from "../lib/env";
 import { cloudApplyKey, emitOutbox } from "../durable/outbox";
 import { forbidden, HttpError, notFound, paymentRequired } from "../lib/errors";
 import { getFlags } from "../lib/flags";
+import { logger } from "../lib/logger";
+import { PRESIGN_MAX_SEC, storage } from "../lib/storage";
+import { enqueue } from "../jobs/queues";
 import { effectivePlan } from "./billing-events";
 import { availableCreditsNow } from "./credits";
 import { recordEvent } from "./events";
@@ -392,11 +395,26 @@ export async function releaseForExtension(db: Db, userId: string, sessionId: str
  * viewing the queue cannot strand an application.
  */
 export async function leaseExtensionQueue(db: Db, userId: string, sessionId: string) {
-  const { rows } = await db.execute<{ application_id: string; apply_url: string; title: string; answers: unknown; resume_lines: unknown; cover_letter: string | null; approved_at: string }>(sql`
+  // With the snapshot PDF on (WP-19): an item with a document waits for its file (arch B.5, 02-database 7.3.1), and this poll
+  // asks for it. BullMQ drops a repeat of the id. A legacy row has no document and goes as it did.
+  const withPdf = env().EXTENSION_RESUME_PDF;
+  const hasDocument = sql`jsonb_typeof(resume_snapshot->'document') = 'object'`;
+  if (withPdf) {
+    const { rows: waiting } = await db.execute<{ id: string; attempt_no: number }>(sql`
+      SELECT id, attempt_no FROM applications
+       WHERE user_id = ${userId} AND status = 'approved' AND channel = 'extension' AND resume_file_key IS NULL AND ${hasDocument} LIMIT 20`);
+    await Promise.all(
+      waiting.map((a) =>
+        enqueue("render", { kind: "snapshot", applicationId: a.id, attemptNo: a.attempt_no }, `render-${a.id}-${a.attempt_no}`).catch((err: unknown) => logger.warn({ err, applicationId: a.id }, "snapshot render not queued; the next poll asks again")),
+      ),
+    );
+  }
+  const { rows } = await db.execute<{ application_id: string; apply_url: string; title: string; answers: unknown; resume_lines: unknown; cover_letter: string | null; approved_at: string; resume_file_key: string | null }>(sql`
     WITH picked AS (
       SELECT id FROM applications
        WHERE user_id = ${userId} AND status = 'approved' AND channel = 'extension'
          AND (lease_session_id IS NULL OR lease_expires_at < now() OR lease_session_id = ${sessionId})
+         AND (${!withPdf} OR resume_file_key IS NOT NULL OR NOT coalesce(${hasDocument}, false))
        ORDER BY approved_at, id
        LIMIT 20
        FOR UPDATE SKIP LOCKED)
@@ -404,8 +422,20 @@ export async function leaseExtensionQueue(db: Db, userId: string, sessionId: str
        SET lease_session_id = ${sessionId}, lease_expires_at = now() + interval '10 minutes'
       FROM picked, jobs j
      WHERE a.id = picked.id AND j.id = a.job_id
-    RETURNING a.id AS application_id, j.apply_url, j.title, a.answers, a.resume_lines, a.cover_letter, a.approved_at::text AS approved_at`);
-  return rows
-    .sort((x, y) => x.approved_at.localeCompare(y.approved_at) || x.application_id.localeCompare(y.application_id))
-    .map((r) => ({ applicationId: r.application_id, applyUrl: r.apply_url, title: r.title, answers: r.answers, resumeLines: r.resume_lines, coverLetter: r.cover_letter }));
+    RETURNING a.id AS application_id, j.apply_url, j.title, a.answers, a.resume_lines, a.cover_letter, a.approved_at::text AS approved_at, a.resume_file_key`);
+  rows.sort((x, y) => x.approved_at.localeCompare(y.approved_at) || x.application_id.localeCompare(y.application_id));
+  return Promise.all(
+    rows.map(async (r) => ({
+      applicationId: r.application_id,
+      applyUrl: r.apply_url,
+      title: r.title,
+      answers: r.answers,
+      resumeLines: r.resume_lines,
+      coverLetter: r.cover_letter,
+      // Present only with a rendered file (05-api 13.4). Signed locally, so this adds no request. ponytail: 5 minutes, and the frozen
+      // panel keeps its queue in memory: a send from a panel opened longer ago than that goes without the file. The 24-hour
+      // API-origin link of 05-api 13.5 is the fix once a client is seen doing this.
+      ...(withPdf && r.resume_file_key ? { resumePdfUrl: await storage().presignGet(r.resume_file_key, PRESIGN_MAX_SEC) } : {}),
+    })),
+  );
 }
