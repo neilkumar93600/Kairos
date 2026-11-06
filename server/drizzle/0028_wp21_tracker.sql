@@ -1,3 +1,7 @@
+-- WP-21: the job tracker (PRD 9, 12). Generated; hand edits: this header and the last statement, the same-owner trigger on interviews.
+-- Expand-only: new tables, a nullable column, and a new default on tracker_items.position that an old api never sets by hand, so it
+-- runs unchanged. tracker_projector_state's row is created by the job. Grants are in ops/provision-roles.sql, which must run again:
+-- until then the new routes and the projector fail on permission, and nothing else changes.
 CREATE TABLE "contact_jobs" (
 	"contact_id" uuid NOT NULL,
 	"tracker_item_id" uuid NOT NULL,
@@ -65,4 +69,7 @@ CREATE INDEX "contact_jobs_item_idx" ON "contact_jobs" USING btree ("tracker_ite
 CREATE INDEX "contacts_user_idx" ON "contacts" USING btree ("user_id","created_at","id");--> statement-breakpoint
 CREATE INDEX "interview_contacts_contact_idx" ON "interview_contacts" USING btree ("contact_id");--> statement-breakpoint
 CREATE INDEX "interviews_user_starts_idx" ON "interviews" USING btree ("user_id","starts_at","id");--> statement-breakpoint
-CREATE INDEX "interviews_item_starts_idx" ON "interviews" USING btree ("tracker_item_id","starts_at");
+CREATE INDEX "interviews_item_starts_idx" ON "interviews" USING btree ("tracker_item_id","starts_at");--> statement-breakpoint
+-- Same-owner reference (assert_same_owner, 0007), as tracker_items and application_events have.
+CREATE TRIGGER interviews_owner_item BEFORE INSERT OR UPDATE OF user_id, tracker_item_id ON interviews
+  FOR EACH ROW EXECUTE FUNCTION assert_same_owner('tracker_items', 'tracker_item_id');
