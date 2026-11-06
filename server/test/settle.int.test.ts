@@ -21,7 +21,7 @@ import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from ".
  */
 if (hasTestDb) process.env.DATABASE_URL = testDbUrl("settle");
 process.env.OWNER_USER_IDS = "settle-owner";
-process.env.LINK_SIGNING_KEY = `v1:${Buffer.alloc(32, 7).toString("base64")}`;
+process.env.LINK_SIGNING_KEY = `v1:${Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 23 + 5) % 256)).toString("base64")}`;
 process.env.API_PUBLIC_ORIGIN = "https://api.test.local";
 process.env.FILLER_SCRIPT_PATH = join(tmpdir(), "kairos-settle-filler.js");
 writeFileSync(process.env.FILLER_SCRIPT_PATH, "window.__kairosFill = async () => ({});");
