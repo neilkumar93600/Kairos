@@ -54,7 +54,7 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
     ]);
 
     expect(await retention.processRetention()).toEqual({
-      inbound_body: 1, inbound_hidden: 0, reminders: 0, forwarding_codes: 0, forwarding_stale: 0, contact_messages: 1, newsletter_inactive: 0, matches_below_bar: 0, board_requests: 0, jobs_closed: 4, verified_claims: 1,
+      inbound_body: 1, inbound_hidden: 0, reminders: 0, forwarding_codes: 0, forwarding_stale: 0, contact_messages: 1, newsletter_inactive: 0, matches_below_bar: 0, board_requests: 0, jobs_closed: 4, verified_claims: 1, outbox_done: 0, outbox_dead: 0,
     });
     expect((await db.select().from(schema.verifiedClaims)).map((r) => r.verdict)).toEqual(["unsupported"]);
     expect((await db.select().from(schema.inboundEmails)).map((r) => r.textBody)).toEqual(expect.arrayContaining([null, "new"]));

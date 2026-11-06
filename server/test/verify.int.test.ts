@@ -54,7 +54,7 @@ describe.skipIf(!hasTestDb)("the claim verifier against Postgres (WP-26)", () =>
   const item = (text = SECRET_TEXT) => ({ key: "k", kind: "resume_line" as const, text, factIds: ["fact-a"] });
   const opts = { path: "tailor" as const, target: null, ctx: {}, escalate: true };
   const today = () => new Date().toISOString().slice(0, 10);
-  const seedCalls = (agentId: string, calls: number) => db.insert(llmCostDaily).values({ day: today(), agentId, workspace: "interactive", plan: "pro", model: "claude-haiku-5-5", isBatch: false, calls, costUsd: "0" });
+  const seedCalls = (agentId: string, calls: number) => db.insert(llmCostDaily).values({ day: today(), agentId, workspace: "interactive", plan: "pro", model: "claude-haiku-5-5", isBatch: false, calls, callsOk: calls, costUsd: "0" });
 
   beforeAll(async () => {
     db = await testDb("verify");

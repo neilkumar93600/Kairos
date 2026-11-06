@@ -208,6 +208,8 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       forwarding_verifications: ["SIU", "SD", ""],
       // WP-50: the worker renders the confirm email and runs retention; it never takes a sign-up.
       newsletter_subscribers: ["SIUD", "SUD", ""],
+      // WP-26: both processes run the verifier; only the worker's retention deletes. Hashes and verdicts, nothing to read.
+      verified_claims: ["SIU", "SIUD", ""],
     };
     const ROLES = ["kairos_api", "kairos_worker", "kairos_readonly"] as const;
     const PRIVS = { S: "SELECT", I: "INSERT", U: "UPDATE", D: "DELETE" } as const;

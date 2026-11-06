@@ -139,7 +139,7 @@ describe.skipIf(!hasTestDb)("ops flags, admin routes and invariants against Post
       const second = await request(app).get(`/api/admin/board-requests?limit=1&cursor=${encodeURIComponent(first.body.nextCursor)}`).set(as(owner));
       expect(second.status).toBe(200);
       expect(second.body.boardRequests).toMatchObject([{ host: "a.example" }]);
-      expect(second.body.nextCursor).toBeNull();
+      expect(second.body).not.toHaveProperty("nextCursor"); // the last page has none (lib/pagination.ts slicePage)
     });
 
     it("activates an imported company, writes the audit row, and is a no-op the second time", async () => {
