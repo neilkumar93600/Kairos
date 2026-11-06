@@ -54,6 +54,7 @@ export const ERROR_CATALOG: Record<string, readonly number[]> = {
   resume_refused: [409],
   route_not_found: [404],
   service_unavailable: [503],
+  stage_owned_by_pipeline: [409],
   storage_unavailable: [503],
   timeout: [503],
   truth_lock: [422],

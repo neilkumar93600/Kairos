@@ -4,7 +4,7 @@ import { keysetBefore, slicePage, tsKey, type After } from "../lib/pagination";
 import type { PlanId, ResumeDetail, ResumeInput, ResumeLevel, ResumeSummary } from "@auto-career/shared";
 import { MAX_BASE_RESUMES_PER_PROFILE } from "@auto-career/shared";
 import { db, type Db } from "../db/client";
-import { applications, companies, employments, facts, jobs, matches, profiles, resumeImports, resumeProfiles, resumeRevisions, resumes, user } from "../db/schema";
+import { applications, companies, employments, facts, jobs, matches, profiles, resumeImports, resumeProfiles, resumeRevisions, resumes, trackerItems, user } from "../db/schema";
 import type { SessionUser } from "../lib/auth";
 import { HttpError, notFound } from "../lib/errors";
 import { YEARS_SUFFIX } from "../agents/resume-writer/checks";
@@ -104,6 +104,7 @@ export async function listSummaries(
       company: companies.name,
       matchScore: matches.score,
       appStatus: applications.status,
+      stage: trackerItems.stage,
     })
     .from(resumes)
     .leftJoin(resumeProfiles, eq(resumeProfiles.id, resumes.resumeProfileId))
@@ -112,6 +113,7 @@ export async function listSummaries(
     .leftJoin(companies, eq(companies.id, jobs.companyId))
     .leftJoin(matches, and(eq(matches.jobId, resumes.jobId), eq(matches.userId, userId)))
     .leftJoin(applications, eq(applications.id, resumes.applicationId))
+    .leftJoin(trackerItems, and(eq(trackerItems.userId, userId), eq(trackerItems.jobId, resumes.jobId)))
     .where(
       and(
         eq(resumes.userId, userId),
@@ -138,8 +140,7 @@ export async function listSummaries(
     jobId: r.jobId,
     jobTitle: x.jobTitle,
     company: x.company,
-    // ponytail: tracker stages arrive with tracker_items (WP-21); until then null.
-    stage: null,
+    stage: x.stage,
     matchScore: x.matchScore === null ? null : Math.round(Number(x.matchScore)),
     // ponytail: the Resume check, level-aware included, runs in the browser (PRD 6.6, 8.1) and needs its print measure;
     // the server stores no score (WP-31 decision), and a second scorer here would disagree with the workspace's.
