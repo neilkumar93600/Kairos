@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { challengeKind, codeForFillerReason, fillInBrowser, isAllowedApplyUrl, isInternalTarget } from "../src/jobs/cloud-apply";
+import { challengeKind, codeForFillerReason, fillInBrowser, isAllowedApplyUrl, isInternalTarget, retryWhileHealable } from "../src/jobs/cloud-apply";
 import { cloudOpenTo, FAILURE_MESSAGES } from "../src/services/submissions";
 
 /** WP-04 applier containment, the parts that need neither Postgres nor a browser. */
@@ -162,5 +162,28 @@ describe("a run the sweep gave up on", () => {
     expect(outcome).toEqual({ submitted: false, code: "applier_error", detail: "navigation_failed" });
     // The filler script was injected; __kairosFill, the only thing that clicks, was never called.
     expect(evaluated).toEqual(["window.__kairosFill = () => {}"]);
+  });
+});
+
+describe("the result write", () => {
+  const sleep = async () => {};
+  it("waits out a dropped connection, up to its tries", async () => {
+    let calls = 0;
+    await retryWhileHealable(async () => {
+      if (++calls < 3) throw Object.assign(new Error("terminating connection"), { code: "57P01" });
+    }, sleep);
+    expect(calls).toBe(3);
+    await expect(retryWhileHealable(async () => Promise.reject(new Error("down")), sleep, 2)).rejects.toThrow("down");
+  });
+
+  it("does not retry what will never heal: a refused value, directly or as drizzle's cause", async () => {
+    let calls = 0;
+    const refuse = (e: Error) => async () => {
+      calls += 1;
+      throw e;
+    };
+    await expect(retryWhileHealable(refuse(Object.assign(new Error("check"), { code: "23514" })), sleep)).rejects.toThrow("check");
+    await expect(retryWhileHealable(refuse(Object.assign(new Error("wrapped"), { cause: { code: "22023" } })), sleep)).rejects.toThrow("wrapped");
+    expect(calls).toBe(2);
   });
 });

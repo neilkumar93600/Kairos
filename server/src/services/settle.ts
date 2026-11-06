@@ -158,7 +158,17 @@ export async function settleAttempt(db: Db, attemptId: string): Promise<SettleRe
       }
     } else if (app.status === "submitting" && isCurrent) {
       if (attempt.failureCode !== decision.code) logger.error({ attemptId, code: attempt.failureCode }, "settle_failed_after_submit_seen");
-      entity = await recordFailed(tx, app, decision.code, "system");
+      // An earlier attempt of this application is known to have arrived, so this one's failure changes nothing for the employer:
+      // forward recovery, one charge, and no free resend of something they already hold.
+      const [sent] = await tx
+        .select({ id: submissionAttempts.id, evidence: submissionAttempts.evidence, channel: submissionAttempts.channel })
+        .from(submissionAttempts)
+        .where(and(eq(submissionAttempts.applicationId, app.id), eq(submissionAttempts.state, "submitted")))
+        .limit(1);
+      if (sent) {
+        charged = await recordSubmitted(tx, app, sent.id, { ...cloudReceipt(sent.evidence, app.answers), channel: sent.channel }, "system");
+        result = "submitted";
+      } else entity = await recordFailed(tx, app, decision.code, "system");
     } else {
       // An extension report already recorded it, or the previous release's sweep did. The application stays as it is.
       logger.warn({ attemptId, applicationId: app.id, status: app.status }, "settle_app_moved_on");
@@ -319,7 +329,8 @@ export async function closeStaleAttempts(db: Db): Promise<number> {
     const rows = await db
       .update(submissionAttempts)
       .set({ state, failureCode: code })
-      .where(and(eq(submissionAttempts.id, a.id), eq(submissionAttempts.state, "open"), sql`(${submissionAttempts.heartbeatAt} < now() - interval '90 seconds' OR ${submissionAttempts.startedAt} < now() - interval '8 minutes')`))
+      // The phase too: a run that moved on since the read above may have clicked, so this close must not apply the old phase's reading.
+      .where(and(eq(submissionAttempts.id, a.id), eq(submissionAttempts.state, "open"), eq(submissionAttempts.phase, a.phase), sql`(${submissionAttempts.heartbeatAt} < now() - interval '90 seconds' OR ${submissionAttempts.startedAt} < now() - interval '8 minutes')`))
       .returning({ id: submissionAttempts.id });
     closed += rows.length;
   }

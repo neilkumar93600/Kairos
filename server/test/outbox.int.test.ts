@@ -266,7 +266,7 @@ describe.skipIf(!hasTestDb)("the outbox against Postgres and Redis", () => {
       // The claim and the launch mark committed, then the process died mid-browser.
       const claim = await db.execute<{ id: string }>(sql`select claim_cloud_attempt(${id}, 1, 'dead') as id`);
       const attemptId = claim.rows[0]!.id;
-      await db.execute(sql`select mark_browser_launched(${attemptId})`);
+      await db.execute(sql`select mark_browser_launched(${attemptId}, 'dead')`);
       await db.execute(sql`select mark_attempt_phase(${attemptId}, 'filling')`);
       await (await q().getJob(key))!.remove();
       await due(key);
@@ -470,6 +470,25 @@ describe.skipIf(!hasTestDb)("the outbox against Postgres and Redis", () => {
       const res = await resume(row.id);
       expect(res.status).toBe(409);
       expect(res.body.error.details).toEqual({ reason: "past_browser_step" });
+    });
+
+    it("is scoped to the row's attempt: an earlier attempt's row refuses, and an earlier attempt's browser does not refuse the current one", async () => {
+      const id = await draft(member, "approved");
+      await db.update(schema.applications).set({ attemptNo: 2 }).where(eq(schema.applications.id, id));
+      await db.insert(schema.submissionAttempts).values({
+        applicationId: id, userId: member, attemptNo: 1, channel: "cloud", ats: "greenhouse", state: "failed", failureCode: "applier_error",
+        browserLaunchedAt: new Date(), finishedAt: new Date(), settledAt: new Date(),
+      });
+      const dead = async (attemptNo: number) => {
+        const key = cloudApplyKey(id, attemptNo);
+        await db.insert(schema.outbox).values({ queue: "cloud-apply", dedupeKey: key, payload: { applicationId: id, attemptNo }, status: "dead", attempts: MAX_ATTEMPTS });
+        return rowOf(key);
+      };
+      const old = await resume((await dead(1)).id);
+      expect(old.status).toBe(409);
+      expect(old.body.error.details).toEqual({ reason: "stale_attempt" });
+      const current = await resume((await dead(2)).id);
+      expect(current.status).toBe(200);
     });
 
     it("refuses an application that is already settled, and a row that is not dead", async () => {

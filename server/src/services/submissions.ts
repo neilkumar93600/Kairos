@@ -108,7 +108,7 @@ export interface ApproveResult {
 }
 
 /** The gates in front of the transaction: the kill switches, the cloud plan gate and the extension_only boards. */
-async function approvalGates(db: Db, userId: string, ids: string[], channel: SubmitChannel): Promise<void> {
+export async function approvalGates(db: Db, userId: string, ids: string[], channel: SubmitChannel): Promise<void> {
   const flags = await getFlags(db);
   // A money invariant broke (jobs/invariants.ts) or the owner froze approvals: nothing new is approved until it is lifted.
   // An api replica that cannot read ops_flags cannot know a freeze is on: it refuses rather than charge blind.
@@ -274,6 +274,9 @@ export async function resendCore(tx: Tx, userId: string, id: string, channel: Su
   if (channel === "cloud" && EXTENSION_ONLY_RESEND.has(code)) throw new HttpError(409, "not_approvable", "This one can only be resent from the extension.", { reason: "cloud_unavailable_for_ats" });
   const [open] = await tx.select({ id: submissionAttempts.id }).from(submissionAttempts).where(and(eq(submissionAttempts.applicationId, id), eq(submissionAttempts.state, "open")));
   if (open) throw new HttpError(409, "conflict", "A send of this application is still open. Try again in a few minutes.", { status: app.status });
+  // A report says the employer already has it (a submitted report answered 409 keeps its evidence here): an operator decides, not a resend.
+  const [sent] = await tx.select({ id: submissionAttempts.id }).from(submissionAttempts).where(and(eq(submissionAttempts.applicationId, id), eq(submissionAttempts.state, "submitted")));
+  if (sent) throw new HttpError(409, "not_approvable", "A report says this application already reached the employer, so it cannot be sent again.", { reason: "already_sent" });
 
   const { approved, skipped } = await approveCore(tx, userId, [id], channel, true);
   const done = approved[0];
@@ -403,6 +406,6 @@ export async function leaseExtensionQueue(db: Db, userId: string, sessionId: str
      WHERE a.id = picked.id AND j.id = a.job_id
     RETURNING a.id AS application_id, j.apply_url, j.title, a.answers, a.resume_lines, a.cover_letter, a.approved_at::text AS approved_at`);
   return rows
-    .sort((x, y) => (x.approved_at < y.approved_at ? -1 : 1))
+    .sort((x, y) => x.approved_at.localeCompare(y.approved_at) || x.application_id.localeCompare(y.application_id))
     .map((r) => ({ applicationId: r.application_id, applyUrl: r.apply_url, title: r.title, answers: r.answers, resumeLines: r.resume_lines, coverLetter: r.cover_letter }));
 }

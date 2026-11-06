@@ -106,8 +106,8 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
     await expect(asApplier("select user_id, plan, status, past_due_since from subscriptions limit 1")).resolves.toBeDefined();
     await expect(asApplier("select * from applier_job(gen_random_uuid())")).resolves.toBeDefined();
     await expect(asApplier("select claim_cloud_attempt(gen_random_uuid(), 1, 'w')")).resolves.toBeDefined();
-    await expect(asApplier("select * from get_applier_payload(gen_random_uuid())")).resolves.toBeDefined();
-    await expect(asApplier("select mark_browser_launched(gen_random_uuid())")).resolves.toBeDefined();
+    await expect(asApplier("select * from get_applier_payload(gen_random_uuid(), 'w')")).resolves.toBeDefined();
+    await expect(asApplier("select mark_browser_launched(gen_random_uuid(), 'w')")).resolves.toBeDefined();
     await expect(asApplier("select mark_attempt_phase(gen_random_uuid(), 'filling')")).resolves.toBeDefined();
     await expect(asApplier("select record_attempt_result(gen_random_uuid(), 'failed', 'applier_error', '{}')")).resolves.toBeDefined();
   });
@@ -313,7 +313,7 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       ["kairos_worker", "delete from submission_attempts", false],
       ["kairos_applier", "select notes from tracker_items limit 1", false],
       ["kairos_api", "select applier_job(gen_random_uuid())", false],
-      ["kairos_worker", "select mark_browser_launched(gen_random_uuid())", false],
+      ["kairos_worker", "select mark_browser_launched(gen_random_uuid(), 'w')", false],
     ] as const)("%s: %s -> allowed %s", async (role, query, allowed) => {
       if (allowed) await expect(asRole(role, query)).resolves.toBeDefined();
       else await expect(asRole(role, query)).rejects.toMatchObject({ code: expect.stringMatching(/^(42501|25006)$/) });

@@ -307,7 +307,7 @@ Every error from `/api/*` except Better Auth's own routes (4.6) leaves as
 |---|---|---|---|---|
 | `unauthorized` | 401 | every `session` route | none | |
 | `email_unverified` | 403 | every `session` route | none | |
-| `resume_refused` | 409 | `POST /api/admin/outbox/:id/resume`: the row is not dead, or a cloud apply may be past the browser step (WP-22) | `{ reason: "not_dead" \| "past_browser_step" \| "not_approved" \| "no_application" \| "no_refusal_check" }` | |
+| `resume_refused` | 409 | `POST /api/admin/outbox/:id/resume`: the row is not dead, or a cloud apply may be past the browser step (WP-22), or the row is of an earlier attempt, `stale_attempt` (WP-29) | `{ reason: "stale_attempt" \| "not_dead" \| "past_browser_step" \| "not_approved" \| "no_application" \| "no_refusal_check" }` | |
 | `forbidden` | 403 | plan gates (`cloud applier is on Pro and Max`, `cover letters`, resume profile limit), Autopilot unavailable, admin | `{ reason?: string }` | |
 | `reauth_required` | 403 | `session-fresh` routes | `{ maxAgeSec }` | yes |
 | `origin_not_allowed` | 403 | `originGuard` | `{ origin: string \| null }` | yes |
@@ -1575,7 +1575,7 @@ RETURNING lease_expires_at;
 | The row is not `approved` for any other reason (withdrawn, submitted, failed) | 409 `conflict`, `details { status }`. |
 | Not the caller's, or does not exist | 404 `not_found`. |
 
-**Release** (`session`, success 200 `{ released: boolean }`): sets a `submitting` row held by this session back to `approved` and clears the lease, or clears this session's visibility lease on an `approved` row. Any other state, including a lease held by another session, is a no-op that answers `{ released: false }`; an application that is not the caller's is 404. An expired explicit claim is not released by the client: `leaseSweeper` (every minute) fails it with `failure_code = 'no_report'`, message "No report from the extension within 10 minutes. Check for the employer's confirmation email before you resend.", and no charge [arch B.6.6].
+**Release** (`session`, success 200 `{ released: boolean }`; *[Amended 2026-11-06, WP-29]* a released claim's closed attempt keeps its number, so the application moves to `attempt_no + 1`): sets a `submitting` row held by this session back to `approved` and clears the lease, or clears this session's visibility lease on an `approved` row. Any other state, including a lease held by another session, is a no-op that answers `{ released: false }`; an application that is not the caller's is 404. An expired explicit claim is not released by the client: `leaseSweeper` (every minute) fails it with `failure_code = 'no_report'`, message "No report from the extension within 10 minutes. Check for the employer's confirmation email before you resend.", and no charge [arch B.6.6].
 
 ### 13.4 `POST /api/extension/report`
 
@@ -2148,11 +2148,11 @@ Per-user rollout flags live in `feature_flags` (`flags.forUser(userId, name)`); 
 | `MATCHING_V2` | `feature_flags` | `usage.today` (the `matching` field), `matches.list` (the `ghost` field) | Skeleton matching and no optional fields | v2 matching and the optional fields |
 | `CLOUD_APPLY_V2` | `feature_flags` | `applications.approve` and `applications.resend` for the `cloud` channel | The BullMQ `cloud-apply` queue | `applyCloud` with the attempt protocol |
 | `AUTOPILOT` | `feature_flags` | `autopilot.get`, `autopilot.put` | `GET` returns `enabled: false, dailySendCap: 0`; `PUT` answers 403 `forbidden` "Autopilot is not available to your account yet" | The routes work within the plan cap |
-| `approvals_frozen` | `ops_flags` | `applications.approve`, `applications.resend`, Autopilot | n/a | Approvals skip with `paused` (200 with `skipped`, or 409 `not_approvable` on single-row routes) |
+| `approvals_frozen` | `ops_flags` | `applications.approve`, `applications.resend`, the signed resend link, Autopilot | n/a | *[Amended 2026-11-06, WP-29, to the code]* Approve and resend answer 503 `approvals_frozen`, and so does a replica that cannot read the flags; the signed link shows a "paused" page and stays usable. Revision 2 text: approvals skip with `paused`. |
 | `autopilot_frozen` | `ops_flags` | `autopilot.put` (turning on) | n/a | 403 `forbidden`, message "Autopilot is paused for everyone while we check something" |
 | `llm_paused`, `agent_disabled:<agent>`, `llm_shed_level` | `ops_flags` | `resume.suggestions`, `jobs.tailor`, `jobs.import`, `jobs.fit` (card creation), `applications.drafts`, `rehearsals.*` | n/a | 503 `ai_unavailable` with `Retry-After`; allowances refunded |
 | `pause_drafting` | `ops_flags` | `matches.queue`, `applications.prepare` | n/a | The draft is created and stays `pending`; preparation starts when the flag clears |
-| `extension_only:<ats>` | `ops_flags` | `applications.approve`, `applications.resend` | n/a | Cloud approvals for that ATS skip with `cloud_unavailable_for_ats` |
+| `extension_only:<ats>` | `ops_flags` | `applications.approve`, `applications.resend` | n/a | *[Amended 2026-11-06, WP-29, to the code]* A cloud approval or resend for that ATS answers 409 `extension_only`. Revision 2 text: skips with `cloud_unavailable_for_ats`. |
 
 The two webhook cut-overs (Stripe store-then-process, Postmark path secret) are deploy-level: one code path is live at a time, and the old inline Stripe path is deleted after 7 days of clean daily reconciliation.
 

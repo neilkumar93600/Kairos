@@ -37,6 +37,8 @@ export interface TenantEntry {
   request: (ids: TenantIds) => { path: string; body?: object };
   foreign?: number;
   why?: string;
+  /** Read uncached with no age limit (05-api session-nocache), like the extension's claim. */
+  nocache?: true;
   /** A session-fresh route (05-api 5.2): test/fresh-matrix.test.ts holds this flag against how routes/index.ts mounts it. */
   fresh?: true;
 }
@@ -126,7 +128,7 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "POST /api/billing/portal": { ...own("/api/billing/portal"), fresh: true },
 
   "GET /api/extension/queue": own("/api/extension/queue"),
-  "POST /api/extension/claim": { request: (t) => ({ path: "/api/extension/claim", body: { applicationId: t.applicationId } }) },
+  "POST /api/extension/claim": { nocache: true, request: (t) => ({ path: "/api/extension/claim", body: { applicationId: t.applicationId } }) },
   "POST /api/extension/release": { request: (t) => ({ path: "/api/extension/release", body: { applicationId: t.applicationId } }) },
   "POST /api/extension/report": {
     request: (t) => ({

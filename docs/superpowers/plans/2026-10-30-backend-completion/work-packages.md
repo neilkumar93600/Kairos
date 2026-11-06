@@ -574,7 +574,7 @@ autopilot_settings with consent_version and a fresh session. Match hand-offs fro
 - Spec refs: database-55,108; platform-65 (contract step); messaging-v10 (drop); critic gap 8
 - Needs owner: no
 
-Contract releases after soak: drop the resume source_text and inbound text_body plaintext columns once the encrypted columns have been read-verified for 14 days; FK RESTRICT for jobs.company_id and applications.job_id; SET NOT NULL on backfilled columns; drop the superseded indexes. Each change ships behind the '-- kairos:contract' header with a restore rehearsal on a staging dump. Files: db/schema/* contract migrations.
+Contract releases after soak: drop the resume source_text and inbound text_body plaintext columns once the encrypted columns have been read-verified for 14 days; FK RESTRICT for jobs.company_id and applications.job_id; SET NOT NULL on backfilled columns; drop the superseded indexes; add `applications (updated_at) WHERE status = 'draft'` for draft expiry (WP-29). Each change ships behind the '-- kairos:contract' header with a restore rehearsal on a staging dump. Files: db/schema/* contract migrations.
 
 **Acceptance:** No plaintext copy of resume source or reply bodies exists in the database. Restore rehearsal T-DB-4 passes on a staging dump before each release.
 

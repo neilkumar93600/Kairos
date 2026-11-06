@@ -5,7 +5,7 @@ import { applications, companies, jobs } from "../db/schema";
 import { env } from "../lib/env";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
-import { AMBIGUOUS, FAILURE_MESSAGES, resendCore } from "../services/submissions";
+import { AMBIGUOUS, approvalGates, FAILURE_MESSAGES, resendCore } from "../services/submissions";
 import { LinkRefusal, type LinkAction, type LinkPage } from "./links";
 
 /**
@@ -45,11 +45,13 @@ export const resendLinkAction: LinkAction = {
     if (!row || row.status !== "failed") return null;
     try {
       // The button is the acknowledgement: the page in front of it said what it means for an ambiguous code.
+      await approvalGates(db(), target.userId, [target.entityId], "extension");
       await resendCore(tx, target.userId, target.entityId, "extension", true);
       return { title: "Queued", body: "Open the Kairos extension to send it." };
     } catch (err) {
       if (!(err instanceof HttpError)) throw err;
       logger.info({ applicationId: target.entityId, code: err.code }, "resend link refused");
+      if (err.status === 503) throw new LinkRefusal({ title: "Approvals are paused", body: "We are checking an issue, so nothing new can be approved right now. Your application is safe, and this link will still work later." });
       if (err.status === 402) throw new LinkRefusal({ title: "Not enough credits", body: `You have no credits left for this. Add some at ${env().WEB_ORIGIN}/billing, then use this link again.` });
       throw new LinkRefusal({ title: "This application cannot be sent again", body: "Open Kairos to see where it stands." });
     }

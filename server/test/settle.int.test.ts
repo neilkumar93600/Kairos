@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import { DEFAULT_PREFERENCES } from "@auto-career/shared";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../src/db/client";
 import type { AuthGateway, SessionUser } from "../src/lib/auth";
 import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from "./helpers/test-db";
@@ -20,9 +23,13 @@ if (hasTestDb) process.env.DATABASE_URL = testDbUrl("settle");
 process.env.OWNER_USER_IDS = "settle-owner";
 process.env.LINK_SIGNING_KEY = `v1:${Buffer.alloc(32, 7).toString("base64")}`;
 process.env.API_PUBLIC_ORIGIN = "https://api.test.local";
+process.env.FILLER_SCRIPT_PATH = join(tmpdir(), "kairos-settle-filler.js");
+writeFileSync(process.env.FILLER_SCRIPT_PATH, "window.__kairosFill = async () => ({});");
 
 const enqueue = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("../src/jobs/queues", async (orig) => ({ ...(await orig<typeof import("../src/jobs/queues")>()), enqueue }));
+const signal = vi.hoisted(() => vi.fn());
+vi.mock("../src/lib/sentry", async (orig) => ({ ...(await orig<typeof import("../src/lib/sentry")>()), signal }));
 
 const { createApp } = await import("../src/app");
 const { closeDb, db: appDb } = await import("../src/db/client");
@@ -36,6 +43,10 @@ const { renderResendAvailable, renderReturnToDraft } = await import("../src/serv
 const { settleAll } = await import("./helpers/settle");
 const { closeQueues } = await import("../src/jobs/queues");
 const { redis } = await import("../src/lib/redis");
+const { setFlag, resetFlagCache } = await import("../src/lib/flags");
+const { processCloudApply } = await import("../src/jobs/cloud-apply");
+const { applierPool, closeBrowser } = await import("../src/jobs/browser-pool");
+const { fakeBrowser } = await import("./helpers/fake-browser");
 
 const OWNER = "settle-owner";
 const ANSWER = { fieldKey: "first_name", label: "First name", value: "Test", source: "profile" as const };
@@ -62,7 +73,13 @@ describe.skipIf(!hasTestDb)("WP-29 settlement against Postgres", () => {
   });
   beforeEach(async () => {
     await resetDb(db);
+    resetFlagCache();
     enqueue.mockClear();
+    signal.mockClear();
+  });
+  afterEach(async () => {
+    await closeBrowser();
+    vi.restoreAllMocks();
   });
   afterAll(async () => {
     await closeQueues();
@@ -191,6 +208,7 @@ describe.skipIf(!hasTestDb)("WP-29 settlement against Postgres", () => {
       await expect(result(attemptId, "failed", "no_report")).rejects.toThrow();
       await expect(result(attemptId, "needs_check", "unconfirmed")).rejects.toThrow();
       await expect(result(attemptId, "submitted", "challenge")).rejects.toThrow();
+      await expect(result(attemptId, "submitted", null, { note: "a key a run does not write" })).rejects.toThrow(); // the allowlist (S3)
       expect((await attemptOf(attemptId)).state).toBe("open");
     });
 
@@ -351,6 +369,57 @@ describe.skipIf(!hasTestDb)("WP-29 settlement against Postgres", () => {
       await settleAll(db);
       expect((await appOf(id)).status).toBe("submitted");
       expect(await charges(id)).toHaveLength(1);
+    });
+
+    /** Attempt 1 closed ambiguous, resent on the cloud as attempt 2, and attempt 2 claimed. */
+    async function resentAndClaimed(u: string) {
+      const { id, attemptId } = await unconfirmed(u);
+      await resendApplication(db, u, id, "cloud", true);
+      const { rows } = await db.execute<{ id: string }>(sql`select claim_cloud_attempt(${id}, 2, 'w') as id`);
+      return { id, first: attemptId, second: rows[0]!.id };
+    }
+
+    it("a late result on an attempt the application has moved past changes nothing, charges nothing and pages (isCurrent, the dual branch)", async () => {
+      const u = await user(OWNER);
+      const { id, first, second } = await resentAndClaimed(u);
+      await result(first, "submitted", null, { filledFieldKeys: ["first_name"] });
+      await expect(settleAttempt(db, first)).resolves.toEqual({ result: "submitted", charged: false });
+      expect(signal).toHaveBeenCalledWith("submission_dual_detected");
+      expect(await appOf(id)).toMatchObject({ status: "submitting", currentAttemptId: second });
+      expect(await charges(id)).toEqual([]);
+      expect((await attemptOf(first)).settledAt).not.toBeNull();
+    });
+
+    it("a known submission never ends resendable: the later attempt's failure moves forward, one charge (P8)", async () => {
+      const u = await user(OWNER);
+      const { id, first, second } = await resentAndClaimed(u);
+      await result(first, "submitted", null, { filledFieldKeys: ["first_name"], confirmationText: "Thanks" });
+      await settleAttempt(db, first);
+      await result(second, "failed", "applier_error");
+      await settleAll(db);
+      const a = await appOf(id);
+      expect(a).toMatchObject({ status: "submitted", failureCode: null, currentAttemptId: first, stage: "applied" });
+      expect(a.receipt).toMatchObject({ channel: "cloud", confirmationText: "Thanks" });
+      expect(await charges(id)).toHaveLength(1);
+      expect((await attemptOf(second)).failureCode).toBe("applier_error");
+    });
+
+    it("a both-submitted pair charges once", async () => {
+      const u = await user(OWNER);
+      const { id, first, second } = await resentAndClaimed(u);
+      await result(first, "submitted", null);
+      await result(second, "submitted", null);
+      await settleAll(db);
+      expect((await appOf(id)).status).toBe("submitted");
+      expect(await charges(id)).toHaveLength(1);
+      expect(signal).toHaveBeenCalledWith("submission_dual_detected");
+    });
+
+    it("a report that the employer has it refuses a resend: an operator decides", async () => {
+      const u = await user();
+      const id = await draft(u, { status: "failed", channel: "extension", approvedAt: new Date(), attemptNo: 1, failureCode: "extension_reported", failureReason: "x" });
+      await expect(recordExtensionReport(db, u, "s1", { applicationId: id, outcome: "submitted", filledFields: [], submittedAt: new Date().toISOString() })).rejects.toMatchObject({ status: 409 });
+      await expect(resendApplication(db, u, id, "extension", false)).rejects.toMatchObject({ code: "not_approvable", details: { reason: "already_sent" } });
     });
 
     it("a non-ambiguous attempt is final: a late submitted result from the applier does nothing", async () => {
@@ -748,6 +817,44 @@ describe.skipIf(!hasTestDb)("WP-29 settlement against Postgres", () => {
       expect(await renderResendAvailable(`${id}:1`, u)).toEqual({ skip: "moved_on" });
     });
 
+    it("during a freeze the link refuses, nothing moves and it still works after (K1)", async () => {
+      const u = await user();
+      const { id, attemptId } = await claimed(u);
+      await result(attemptId, "failed", "applier_error");
+      await settleAll(db);
+      const email = await renderResendAvailable(`${id}:1`, u);
+      if ("skip" in email) throw new Error(`skipped: ${email.skip}`);
+      const token = new URL(email.text!.split("\n").at(-1)!).searchParams.get("t")!;
+      const post = () => request(app).post(`/api/applications/${id}/resend-link`).type("form").send({ t: token });
+
+      await setFlag("approvals_frozen", true, OWNER);
+      resetFlagCache();
+      const frozen = await post();
+      expect(frozen.status).toBe(200);
+      expect(frozen.text).toContain("Approvals are paused");
+      expect((await appOf(id)).status).toBe("failed");
+
+      await setFlag("approvals_frozen", false, OWNER);
+      resetFlagCache();
+      expect((await post()).status).toBe(200);
+      expect((await appOf(id)).status).toBe("approved");
+    });
+
+    it("no credit through the link: the page says so, and the link still works after buying one", async () => {
+      const u = await user(undefined, 0);
+      const id = await draft(u, { status: "failed", channel: "extension", approvedAt: new Date(), attemptNo: 1, failureCode: "extension_reported", failureReason: "x", terminalAt: new Date() });
+      const email = await renderResendAvailable(`${id}:1`, u);
+      if ("skip" in email) throw new Error(`skipped: ${email.skip}`);
+      const token = new URL(email.text!.split("\n").at(-1)!).searchParams.get("t")!;
+      const post = () => request(app).post(`/api/applications/${id}/resend-link`).type("form").send({ t: token });
+      const broke = await post();
+      expect(broke.status).toBe(200);
+      expect(broke.text).toContain("Not enough credits");
+      await db.insert(schema.creditLedger).values({ userId: u, delta: 1, reason: "free_grant" });
+      expect((await post()).status).toBe(200);
+      expect((await appOf(id)).status).toBe("approved");
+    });
+
     it("a required_missing failure can have its answers fixed, then resent; its lines cannot change", async () => {
       const u = await user();
       const { id, attemptId } = await claimed(u);
@@ -778,13 +885,96 @@ describe.skipIf(!hasTestDb)("WP-29 settlement against Postgres", () => {
       expect(await attemptsOf(id)).toMatchObject([{ attemptNo: 1, state: "open", phase: "claimed" }]);
     });
 
-    it("the payload function serves only the open attempt", async () => {
+    it("the payload function serves only the delivery holding the mark, only while the attempt is open", async () => {
       const u = await user();
       const { attemptId } = await claimed(u);
-      const read = async () => (await db.execute(sql`select * from get_applier_payload(${attemptId})`)).rows;
-      expect(await read()).toHaveLength(1);
+      const read = async (worker: string) => (await db.execute(sql`select * from get_applier_payload(${attemptId}, ${worker})`)).rows;
+      expect(await read("w")).toEqual([]); // claimed, not yet launched: nobody reads the answers
+      const mark = async (worker: string) => (await db.execute<{ ok: boolean }>(sql`select mark_browser_launched(${attemptId}, ${worker}) as ok`)).rows[0]!.ok;
+      // A replacement replica re-delivering before the first launched takes the attempt over.
+      expect(await mark("replacement")).toBe(true);
+      expect(await mark("w")).toBe(false);
+      expect((await attemptOf(attemptId)).workerIdentity).toBe("replacement");
+      expect(await read("replacement")).toHaveLength(1);
+      expect(await read("w")).toEqual([]);
       await result(attemptId, "failed", "applier_error");
-      expect(await read()).toEqual([]);
+      expect(await read("replacement")).toEqual([]);
+    });
+
+    it("a re-delivery past the browser step writes nothing, however the prechecks would read (P1)", async () => {
+      // Not the owner, so the plan check would say plan_lapsed. The first delivery reached filling and clicked, then died unreported.
+      const u = await user();
+      const { id, attemptId } = await claimed(u);
+      await db.execute(sql`select mark_browser_launched(${attemptId}, 'dead')`);
+      await phase(attemptId, "filling");
+      const launch = fakeBrowser({});
+      await expect(processCloudApply({ data: { applicationId: id, attemptNo: 1 } } as never)).resolves.toEqual({ skipped: true });
+      expect(launch).not.toHaveBeenCalled();
+      expect(await attemptOf(attemptId)).toMatchObject({ state: "open", phase: "filling", failureCode: null });
+
+      await age(attemptId, 91);
+      await processSweepSubmitting();
+      expect(await attemptOf(attemptId)).toMatchObject({ state: "needs_check", failureCode: "unconfirmed" });
+      expect(await appOf(id)).toMatchObject({ status: "failed", failureCode: "unconfirmed" });
+      await expect(resendApplication(db, u, id, "extension", false)).rejects.toMatchObject({ code: "acknowledgement_required" });
+    });
+
+    it("a mark that throws fails the job, so it retries and records nothing", async () => {
+      const u = await user();
+      const { id, attemptId } = await claimed(u);
+      await db.execute(sql`alter function mark_browser_launched(uuid, text) rename to mark_browser_launched_off`);
+      try {
+        await expect(processCloudApply({ data: { applicationId: id, attemptNo: 1 } } as never)).rejects.toThrow();
+      } finally {
+        await db.execute(sql`alter function mark_browser_launched_off(uuid, text) rename to mark_browser_launched`);
+      }
+      expect((await attemptOf(attemptId)).state).toBe("open");
+    });
+
+    it("a precheck failure of the delivery that holds the mark is recorded: nothing was sent", async () => {
+      const u = await user();
+      const id = await draft(u, { status: "approved", channel: "cloud", approvedAt: new Date(), attemptNo: 1 });
+      await expect(processCloudApply({ data: { applicationId: id, attemptNo: 1 } } as never)).resolves.toEqual({ submitted: false });
+      expect(await attemptsOf(id)).toMatchObject([{ state: "failed", failureCode: "plan_lapsed" }]);
+    });
+
+    it("an attempt closed while the page loads never fills: the run stops at the phase mark (P5)", async () => {
+      const u = await user(OWNER);
+      const id = await draft(u, { status: "approved", channel: "cloud", approvedAt: new Date(), attemptNo: 1 });
+      const fill = fakeBrowser({
+        goto: async () => {
+          await db.update(schema.submissionAttempts).set({ state: "failed", failureCode: "applier_error" }).where(eq(schema.submissionAttempts.applicationId, id));
+        },
+        fill: async () => ({ outcome: "submitted", filledFields: [] }),
+      });
+      await expect(processCloudApply({ data: { applicationId: id, attemptNo: 1 } } as never)).resolves.toEqual({ submitted: false });
+      expect(fill).not.toHaveBeenCalled();
+      expect(await charges(id)).toEqual([]);
+    });
+
+    it("a throw from around the page at or past filling is unconfirmed, never applier_error (C1)", async () => {
+      const u = await user(OWNER);
+      const id = await draft(u, { status: "approved", channel: "cloud", approvedAt: new Date(), attemptNo: 1 });
+      const fill = fakeBrowser({ fill: async () => ({ outcome: "submitted", filledFields: [] }) });
+      const { chromium } = await import("playwright-core");
+      vi.spyOn(applierPool(), "run").mockImplementation((async (fn: (b: never) => Promise<unknown>) => {
+        await fn((await chromium.launch()) as never);
+        throw new Error("the pool failed after the run");
+      }) as never);
+      await expect(processCloudApply({ data: { applicationId: id, attemptNo: 1 } } as never)).resolves.toEqual({ submitted: false });
+      expect(fill).toHaveBeenCalledTimes(1);
+      await settleAll(db);
+      expect(await appOf(id)).toMatchObject({ status: "failed", failureCode: "unconfirmed" });
+      expect(await charges(id)).toEqual([]);
+    });
+
+    it("the same throw before filling is applier_error: nothing can have reached the employer", async () => {
+      const u = await user(OWNER);
+      const id = await draft(u, { status: "approved", channel: "cloud", approvedAt: new Date(), attemptNo: 1 });
+      vi.spyOn(applierPool(), "run").mockRejectedValue(new Error("the browser would not launch"));
+      await processCloudApply({ data: { applicationId: id, attemptNo: 1 } } as never);
+      await settleAll(db);
+      expect(await appOf(id)).toMatchObject({ status: "failed", failureCode: "applier_error" });
     });
   });
 

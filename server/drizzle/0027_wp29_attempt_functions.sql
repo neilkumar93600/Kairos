@@ -17,6 +17,13 @@
 --      5.7 drops it, which leaves the user told "unconfirmed" about a send we know reached the employer.
 --   5. A failed result after the apply POST was seen is stored as `timeout` (08-submission-settlement 13, item 4).
 --   6. mark_attempt_phase returns whether the attempt is still open, and the run stops on false (see the function).
+--   7. mark_browser_launched binds the attempt to the delivery that won it, and get_applier_payload serves only that holder:
+--      a re-delivery that loses the mark never reads the answers, and one that wins it (the first died before launching)
+--      rebinds, so a replacement replica still runs. worker_identity therefore names the holder, not the first claimer.
+--   8. record_attempt_result takes only the three evidence keys a run writes: an allowlist under the table's denylist.
+--
+-- search_path = public on these functions is safe only because provision-roles.sql revokes CREATE on public from every
+-- runtime role: no role that can call them can plant an object they would resolve.
 
 -- The read before the claim. No answers, lines or letter; nothing at all once the row is not a pending cloud send.
 CREATE FUNCTION applier_job(p_application_id uuid)
@@ -30,6 +37,8 @@ $$;--> statement-breakpoint
 -- approved -> submitting and the attempt row, in one transaction. A replay of a committed claim returns the same attempt,
 -- so a job that died before its browser launched can still run; mark_browser_launched is what stops a second click.
 -- Null: nothing to send (withdrawn, re-approved under a newer number, or never this attempt).
+-- The application id is the capability: nothing binds a claim to a job or a token, so a compromised applier that knows the
+-- id of a pending cloud send can claim that send and read it. There is no token path; ids are not listable by this role.
 CREATE FUNCTION claim_cloud_attempt(p_application_id uuid, p_attempt_no int, p_worker text)
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE v_user text; v_by text; v_ats ats_provider; v_attempt uuid; v_no int := greatest(p_attempt_no, 1);
@@ -57,20 +66,22 @@ BEGIN
   RETURN v_attempt;
 END $$;--> statement-breakpoint
 
--- What the run fills in, for the attempt it holds and only while that attempt is open.
-CREATE FUNCTION get_applier_payload(p_attempt_id uuid)
+-- What the run fills in: only for the delivery that holds the launch mark, and only while the attempt is open.
+CREATE FUNCTION get_applier_payload(p_attempt_id uuid, p_worker text)
 RETURNS TABLE (answers jsonb, resume_lines jsonb, cover_letter text)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT a.answers, a.resume_lines, a.cover_letter
     FROM submission_attempts s JOIN applications a ON a.id = s.application_id
-   WHERE s.id = p_attempt_id AND s.state = 'open' AND s.channel = 'cloud';
+   WHERE s.id = p_attempt_id AND s.state = 'open' AND s.channel = 'cloud'
+     AND s.browser_launched_at IS NOT NULL AND s.worker_identity = left(p_worker, 100);
 $$;--> statement-breakpoint
 
--- False when the browser was already launched for this attempt, or the attempt is closed: a re-delivery never clicks again.
-CREATE FUNCTION mark_browser_launched(p_attempt_id uuid) RETURNS boolean
+-- The one delivery that sets this owns the attempt: it alone reads the payload, opens a browser and records a result. False
+-- when another delivery already holds it, or the attempt is closed: this one writes nothing and never clicks.
+CREATE FUNCTION mark_browser_launched(p_attempt_id uuid, p_worker text) RETURNS boolean
 LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
   WITH u AS (
-    UPDATE submission_attempts SET browser_launched_at = now(), heartbeat_at = now()
+    UPDATE submission_attempts SET browser_launched_at = now(), heartbeat_at = now(), worker_identity = left(p_worker, 100)
      WHERE id = p_attempt_id AND state = 'open' AND channel = 'cloud' AND browser_launched_at IS NULL
     RETURNING 1)
   SELECT EXISTS (SELECT 1 FROM u);
@@ -96,6 +107,9 @@ $$;--> statement-breakpoint
 CREATE FUNCTION record_attempt_result(p_attempt_id uuid, p_state text, p_failure_code text, p_evidence jsonb)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
+  IF EXISTS (SELECT 1 FROM jsonb_object_keys(p_evidence) k WHERE k NOT IN ('filledFieldKeys', 'confirmationText', 'detail')) THEN
+    RAISE EXCEPTION 'evidence holds a key a run does not write' USING ERRCODE = '22023';
+  END IF;
   IF p_state = 'submitted' THEN
     IF p_failure_code IS NOT NULL THEN RAISE EXCEPTION 'a submitted result carries no failure code' USING ERRCODE = '22023'; END IF;
     UPDATE submission_attempts
@@ -116,5 +130,5 @@ BEGIN
   END IF;
 END $$;--> statement-breakpoint
 
-REVOKE ALL ON FUNCTION applier_job(uuid), claim_cloud_attempt(uuid, int, text), get_applier_payload(uuid), mark_browser_launched(uuid),
+REVOKE ALL ON FUNCTION applier_job(uuid), claim_cloud_attempt(uuid, int, text), get_applier_payload(uuid, text), mark_browser_launched(uuid, text),
                        mark_attempt_phase(uuid, text), record_attempt_result(uuid, text, text, jsonb) FROM PUBLIC;

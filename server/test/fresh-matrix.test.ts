@@ -54,6 +54,6 @@ describe("session-fresh matrix", () => {
     calls.length = 0;
     const res = await request(app)[method.toLowerCase() as "post"](path).set("authorization", "Bearer x").send(body);
     expect(res.body?.error?.code).not.toBe("reauth_required");
-    expect(calls[0]).toBe(false);
+    expect(calls[0]).toBe(entry.nocache === true);
   });
 });

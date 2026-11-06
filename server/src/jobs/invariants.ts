@@ -139,6 +139,7 @@ const PII_COLUMNS = [
   ["ops_audit", "before"],
   ["ops_audit", "after"],
   ["outbox", "payload"],
+  ["submission_attempts", "evidence"],
   ["outbox", "dedupe_key"],
   ["outbox", "last_error"],
 ] as const;

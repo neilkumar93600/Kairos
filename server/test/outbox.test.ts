@@ -97,8 +97,9 @@ describe("the chaos verdict", () => {
     clicks: ["a", "b"],
     charges: ["a"],
     outbox: { done: 2, live: 0, dead: 0 },
-    reported: ["a"],
-    crashesByPhase: { filling: 50 },
+    finished: ["a"],
+    crashes: 50,
+    crashesByPhase: { navigating: 20, filling: 30 },
     minCrashes: 50,
     kills: 40,
     pgRestarts: 1,
@@ -120,8 +121,9 @@ describe("the chaos verdict", () => {
     ["a dead row", { outbox: { done: 1, live: 0, dead: 1 } }, /dead/],
     ["a row still moving", { outbox: { done: 1, live: 1, dead: 0 } }, /still live/],
     ["no kills", { kills: 0 }, /no process was killed/],
-    ["too few crashes in flight", { crashesByPhase: { navigating: 49 } }, /49 crashes with an attempt open/],
-    ["a charge nobody reported", { charges: ["a"], reported: [] }, /charge for an attempt nobody reported/],
+    ["too few crashes in flight", { crashes: 49 }, /49 crashes holding a live attempt/],
+    ["no crash on one side of the fill", { crashesByPhase: { filling: 50 } }, /no crash in phase navigating/],
+    ["a charge for a run that never finished", { charges: ["a"], finished: [] }, /charge for a run that never finished/],
     ["no Postgres restart", { pgRestarts: 0 }, /Postgres was not restarted/],
   ])("fails on %s", (_, over, why) => {
     const v = verdict(facts(over));

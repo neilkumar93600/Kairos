@@ -20,18 +20,24 @@ import { approveApplications } from "../../server/src/services/submissions";
  */
 const role = process.argv[2];
 const CLICK_LOG = process.env.CHAOS_CLICK_LOG!;
+const FINISHED_LOG = process.env.CHAOS_FINISHED_LOG!;
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const between = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
 
-/** Chromium's stand-in. The click is written before the pause that follows it, so a kill there is a click with no report. */
+/**
+ * Chromium's stand-in, with time in every phase so a kill can land in any of them: launch and new context (claimed), goto
+ * (navigating), the fill (filling). The click is written before the pause that follows it, so a kill there is a click with no
+ * report; `finished` is written just before the run returns `submitted`, independently of anything the database says.
+ */
 function scriptBrowser(): void {
   const fill = async (payload: { applicationId: string }) => {
-    await pause(between(200, 2000));
+    await pause(between(1000, 3000));
     // About 1 in 16 stops before the click: nothing reaches the employer and no credit is used.
     if (payload.applicationId.endsWith("0")) return { outcome: "failed", failureReason: "Unsupported application page", filledFields: [] };
     appendFileSync(CLICK_LOG, `${payload.applicationId}\n`);
-    await pause(between(200, 2000));
+    await pause(between(500, 2000));
+    appendFileSync(FINISHED_LOG, `${payload.applicationId}\n`);
     return { outcome: "submitted", filledFields: [{ fieldKey: "first_name", label: "First name", value: "Chaos" }] };
   };
   const page = {
@@ -39,13 +45,27 @@ function scriptBrowser(): void {
     url: () => "https://job-boards.greenhouse.io/chaos/jobs/1",
     title: async () => "Apply",
     $: async () => null,
-    goto: async () => ({ status: () => 200 }),
+    goto: async () => {
+      await pause(between(2000, 6000));
+      return { status: () => 200 };
+    },
     waitForLoadState: async () => {},
     frames: () => [],
     evaluate: async (fn: unknown, arg: { applicationId: string }) => (typeof fn === "string" ? undefined : fill(arg)),
   };
   const context = { route: async () => {}, on: () => {}, newPage: async () => page, close: async () => {} };
-  (chromium as unknown as { launch: () => Promise<unknown> }).launch = async () => ({ newContext: async () => context, on: () => {}, close: async () => {}, version: () => "chaos" });
+  (chromium as unknown as { launch: () => Promise<unknown> }).launch = async () => {
+    await pause(between(500, 1500));
+    return {
+      newContext: async () => {
+        await pause(between(100, 500));
+        return context;
+      },
+      on: () => {},
+      close: async () => {},
+      version: () => "chaos",
+    };
+  };
 }
 
 /** Runs a reconciler forever on its period; a pass that fails (Postgres restarting) is logged by the harness's stderr and tried again. */

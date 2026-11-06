@@ -8,12 +8,14 @@ export interface ChaosFacts {
   clicks: string[];
   /** One entry per credit_ledger row with reason 'submission'. */
   charges: string[];
-  /** Applications with an attempt in state submitted: a run or a report said so. A charge with none is the WP-29 failure. */
-  reported: string[];
+  /** One entry per run of the scripted browser that returned `submitted`, logged just before it did: a charge with none charged a run that never finished. */
+  finished: string[];
   outbox: { done: number; live: number; dead: number };
   kills: number;
   pgRestarts: number;
-  /** Applier kills with an attempt open, by a phase open at that moment (WP-29). */
+  /** Kills of a process holding a live attempt (WP-29). */
+  crashes: number;
+  /** The live attempts those kills held, by phase. */
   crashesByPhase: Record<string, number>;
   minCrashes: number;
 }
@@ -34,9 +36,10 @@ export function verdict(f: ChaosFacts): { pass: boolean; failures: string[] } {
   const submitted = new Set(f.apps.filter((a) => a.status === "submitted").map((a) => a.id));
   add([...new Set(f.charges)].filter((id) => !submitted.has(id)), "charge on an application not submitted");
   add([...submitted].filter((id) => !f.charges.includes(id)), "submitted without a charge");
-  add([...new Set(f.charges)].filter((id) => !f.reported.includes(id)), "charge for an attempt nobody reported");
-  const crashes = Object.values(f.crashesByPhase).reduce((a, b) => a + b, 0);
-  if (crashes < f.minCrashes) failures.push(`${crashes} crashes with an attempt open, wanted ${f.minCrashes}`);
+  add([...new Set(f.charges)].filter((id) => !f.finished.includes(id)), "charge for a run that never finished");
+  if (f.crashes < f.minCrashes) failures.push(`${f.crashes} crashes holding a live attempt, wanted ${f.minCrashes}`);
+  // Before the fill nothing was sent; from it on the send may have happened. Both sides of that line must have been crashed through.
+  for (const phase of ["navigating", "filling"]) if (!f.crashesByPhase[phase]) failures.push(`no crash in phase ${phase}`);
   if (f.outbox.dead) failures.push(`${f.outbox.dead} dead outbox rows`);
   if (f.outbox.live) failures.push(`${f.outbox.live} outbox rows still live`);
   // A run in which nothing went wrong proves nothing.

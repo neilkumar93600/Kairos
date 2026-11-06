@@ -2,7 +2,7 @@ import { Router, type RequestHandler } from "express";
 import { configuredProviders, type AuthGateway } from "../lib/auth";
 import { env } from "../lib/env";
 import { requireAdmin } from "../middleware/require-admin";
-import { routeDeadline } from "../middleware/deadline";
+import { DEADLINE, deadline, routeDeadline } from "../middleware/deadline";
 import { requireAuth } from "../middleware/require-auth";
 import { countFailedSignIn, type Limiters } from "../middleware/rate-limit";
 import { adminRouter } from "./admin";
@@ -37,7 +37,8 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   // where a burst would 429 real unsubscribes. A POST costs a signature check first and reaches the database only for a signed token.
   router.use("/unsubscribe", routeDeadline, (req, res, next) => (req.method === "POST" ? next() : limits.link(req, res, next)), unsubscribeRouter);
   // The signed resend link (05-api 10.4): the token is the credential, and it must stay above the session chain below.
-  router.use("/applications/:id/resend-link", routeDeadline, limits.link, signedLinkRouter(resendLinkAction));
+  // Its budget is resend's: ROUTE_DEADLINES matches the path inside the /api router, and under this mount req.path is "/", so a row there could never match.
+  router.use("/applications/:id/resend-link", deadline(DEADLINE.render), limits.link, signedLinkRouter(resendLinkAction));
   // Public newsletter (WP-50): its own classes per route (routes/newsletter.ts), ahead of the anonymous class.
   router.use("/newsletter", routeDeadline, newsletterRouter(limits));
   router.use(routeDeadline, limits.anon);
@@ -75,7 +76,9 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   router.use("/inbox", authed, inboxRouter);
   router.use("/forwarding", authed, forwardingRouter);
   router.use("/billing", freshAuthed, limits.billing, billingRouter);
-  router.use("/extension", authed, extensionRouter);
+  // The claim starts a send (05-api 13.3, session-nocache): a revoked session stops here at once. No age limit: the extension's session is long-lived.
+  const extensionAuthed = [requireAuth(gateway, (req) => (req.method === "POST" && req.path === "/claim" ? "session-fresh" : "session"), { enforceAge: () => false }), limits.user, noStore];
+  router.use("/extension", extensionAuthed, extensionRouter);
   router.use("/files", authed, filesRouter);
   router.use("/resumes", authed, resumesRouter);
   router.use("/admin", requireAdmin(gateway), limits.user, noStore, adminRouter);

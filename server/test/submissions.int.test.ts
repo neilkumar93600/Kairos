@@ -111,7 +111,7 @@ describe.skipIf(!hasTestDb)("submissions against Postgres", () => {
     expect(attempt).not.toBeNull();
     expect(await statusOf(id)).toBe("submitting");
     expect(await claim(id, 1)).toBe(attempt);
-    const mark = async () => (await db.execute<{ ok: boolean }>(sql`select mark_browser_launched(${attempt}) as ok`)).rows[0]!.ok;
+    const mark = async () => (await db.execute<{ ok: boolean }>(sql`select mark_browser_launched(${attempt}, 'w') as ok`)).rows[0]!.ok;
     expect(await mark()).toBe(true);
     expect(await mark()).toBe(false);
   });

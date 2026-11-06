@@ -274,38 +274,63 @@ interface AppliedJob extends Record<string, unknown> {
   approved_at: string | Date | null;
 }
 
+/** Who holds an attempt: this process. The launch mark binds the attempt to it, and only the holder reads the payload. */
+const workerIdentity = () => process.env.RAILWAY_REPLICA_ID ?? `applier-${process.pid}`;
+
+/** A bad value or a privilege error will not heal; anything else (a Postgres restart, a dropped connection) may. */
+const healable = (err: unknown) => !/^(22|23|42)/.test(((err as { cause?: { code?: string } }).cause ?? (err as { code?: string })).code ?? "");
+
 /**
- * Claims the application and runs it at most once; every path past the launch mark records a result. Null: nothing to send,
- * or another delivery holds the browser step, in which case its own report or the sweep (by the attempt's phase) ends it.
- * A crash before the mark leaves the attempt to the next delivery, which may still run it: nothing can have reached the employer.
+ * The result is the one write that cannot be replayed from anywhere else: past the mark no other delivery runs. So a real
+ * `submitted` is worth waiting about a minute for through a Postgres restart. After that the throw fails the job, the
+ * re-delivery loses the mark, and the sweep closes the attempt by its phase: safe, and only a late confirmation can recover it.
+ */
+export async function retryWhileHealable(write: () => Promise<unknown>, sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)), tries = 12): Promise<void> {
+  for (let i = 1; ; i++) {
+    try {
+      await write();
+      return;
+    } catch (err) {
+      if (i >= tries || !healable(err)) throw err;
+      logger.warn({ err }, "attempt result not written yet; retrying");
+      await sleep(5_000);
+    }
+  }
+}
+
+/**
+ * Claims the application and runs it at most once. The launch mark comes first and decides everything: the delivery that
+ * sets it owns the attempt and records its result, whatever the prechecks say. A delivery that loses it writes nothing,
+ * because the attempt may be past the click, and "the plan lapsed" or "setup failed" would then say nothing was sent about a
+ * send that reached the employer; the holder's report or the sweep, by the attempt's phase, ends it. A mark that throws
+ * fails the job, so it retries. A crash before the mark leaves the attempt to the next delivery. Null: nothing to do.
  */
 async function claimAndApply(applicationId: string, row: AppliedJob): Promise<{ submitted: boolean; detail?: string } | null> {
+  const worker = workerIdentity();
   // The read above can be stale: a withdraw may land in between. Only the conditional claim decides.
-  const claim = await firstRow<{ id: string | null }>(sql`select claim_cloud_attempt(${applicationId}, ${row.attempt_no}::int, ${process.env.RAILWAY_REPLICA_ID ?? "applier"}) as id`);
+  const claim = await firstRow<{ id: string | null }>(sql`select claim_cloud_attempt(${applicationId}, ${row.attempt_no}::int, ${worker}) as id`);
   const attemptId = claim?.id;
   if (!attemptId) return null;
-  const payload = await firstRow<{ answers: ApplicationAnswer[]; resume_lines: ResumeLine[]; cover_letter: string | null }>(sql`select answers, resume_lines, cover_letter from get_applier_payload(${attemptId})`);
-  if (!payload) return null;
+  const launched = await firstRow<{ ok: boolean }>(sql`select mark_browser_launched(${attemptId}, ${worker}) as ok`);
+  if (!launched?.ok) {
+    logger.warn({ applicationId, attemptId }, "cloud apply re-delivered past its browser step: writes nothing and never clicks");
+    return null;
+  }
   // S4: 95% of approved cloud attempts start within 10 minutes (README Reliability).
   const approvedMs = row.approved_at ? new Date(row.approved_at).getTime() : null;
   slo("s4", approvedMs === null || Date.now() - approvedMs <= 10 * 60_000);
 
-  let phase: "claimed" | "navigating" | "filling" = "claimed";
+  let phase = "claimed" as "claimed" | "navigating" | "filling";
   const markPhase = (p: typeof phase) => db().execute(sql`select mark_attempt_phase(${attemptId}, ${p})`);
-  let heartbeat: NodeJS.Timeout | undefined;
+  const heartbeat = setInterval(() => void markPhase(phase).catch((err: unknown) => logger.warn({ err, attemptId }, "attempt heartbeat failed")), HEARTBEAT_MS);
   let outcome: CloudOutcome;
   try {
+    const payload = await firstRow<{ answers: ApplicationAnswer[]; resume_lines: ResumeLine[]; cover_letter: string | null }>(sql`select answers, resume_lines, cover_letter from get_applier_payload(${attemptId}, ${worker})`);
     // Prechecks at claim (applications-v02): the plan may have lapsed, or the posting closed, since approval.
     if (!(await cloudAllowed(db(), row.user_id))) outcome = fail("plan_lapsed", "plan_lapsed");
     else if (row.closed_at) outcome = fail("posting_closed", "closed_in_catalog");
+    else if (!payload) outcome = fail("applier_error", "attempt_closed");
     else {
-      // The no-second-send invariant: the one delivery that sets this may open a browser, and the mark commits first.
-      const launched = await firstRow<{ ok: boolean }>(sql`select mark_browser_launched(${attemptId}) as ok`);
-      if (!launched?.ok) {
-        logger.warn({ applicationId, attemptId }, "cloud apply re-delivered past its browser step: never clicks twice");
-        return null;
-      }
-      heartbeat = setInterval(() => void markPhase(phase).catch((err: unknown) => logger.warn({ err, attemptId }, "attempt heartbeat failed")), HEARTBEAT_MS);
       const input: FillInput = {
         applicationId,
         applyUrl: row.apply_url,
@@ -323,14 +348,16 @@ async function claimAndApply(applicationId: string, row: AppliedJob): Promise<{ 
       outcome = await applierPool().run((browser) => fillInBrowser(browser, input));
     }
   } catch (err) {
-    // Launch, filler bundle or database failures: the page was never filled, so nothing reached the employer.
-    logger.error({ err, applicationId }, "cloud apply failed before the fill");
-    outcome = fail("applier_error", "setup_failed");
+    // fillInBrowser answers for its own page. What lands here came from around it: the launch, the filler bundle, the database,
+    // or the pool after the run. Before `filling` nothing can have reached the employer; from `filling` on it may have.
+    logger.error({ err, applicationId, phase }, "cloud apply run failed outside the page");
+    outcome = phase === "filling" ? fail("unconfirmed", "run_interrupted") : fail("applier_error", "setup_failed");
   } finally {
     clearInterval(heartbeat);
   }
 
-  await db().execute(sql`select record_attempt_result(${attemptId}, ${outcome.submitted ? "submitted" : "failed"}, ${outcome.submitted ? null : outcome.code}, ${JSON.stringify(evidenceOf(outcome))}::jsonb)`);
+  const done = outcome;
+  await retryWhileHealable(() => db().execute(sql`select record_attempt_result(${attemptId}, ${done.submitted ? "submitted" : "failed"}, ${done.submitted ? null : done.code}, ${JSON.stringify(evidenceOf(done))}::jsonb)`));
   // The outcome counters feed alert A-SUB-1 (jobs/alerts.ts); S5 is counted where the attempt settles.
   count("cloud.run", 1, outcome.submitted ? "submitted" : outcome.code);
   logger.info({ applicationId, attemptId, submitted: outcome.submitted, ...(outcome.submitted ? {} : { code: outcome.code, detail: outcome.detail }) }, "cloud apply result");

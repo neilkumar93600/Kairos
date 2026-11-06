@@ -140,7 +140,7 @@ describe.skipIf(!hasTestDb)("reconcilers against Postgres", () => {
       const claim = () => db.execute<{ id: string }>(sql`select claim_cloud_attempt(${id}, 0, 'w') as id`);
       const [one, two] = await Promise.all([claim(), claim()]);
       expect(one.rows[0]!.id).toBe(two.rows[0]!.id);
-      const launch = () => db.execute<{ ok: boolean }>(sql`select mark_browser_launched(${one.rows[0]!.id}) as ok`);
+      const launch = () => db.execute<{ ok: boolean }>(sql`select mark_browser_launched(${one.rows[0]!.id}, 'w') as ok`);
       const marks = await Promise.all([launch(), launch()]);
       expect(marks.map((m) => m.rows[0]!.ok).sort()).toEqual([false, true]);
     });
