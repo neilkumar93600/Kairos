@@ -2,6 +2,7 @@ import type { Job, RepeatOptions } from "bullmq";
 import { processAlerts, processMetricsPrune, processMetricsSample } from "./alerts";
 import { sweepOutbox } from "../durable/outbox";
 import { processBackupCheck } from "./backup-check";
+import { processBillingReconcile, processStripeSweep } from "./billing-reconcile";
 import { processContactReconcile } from "./contact-alert";
 import { processDigests } from "./digest";
 import { processBackfillSources, processStuckParses } from "./import-maintenance";
@@ -78,6 +79,9 @@ export const SCHEDULES: Schedule[] = [
   // Retention of reply bodies, contact messages, below-bar matches and closed jobs; the 7-day sensitive scrub (WP-25).
   { queue: "maintenance", id: "retention", repeat: { pattern: "10 4 * * *", tz: "UTC" }, run: () => processRetention() },
   { queue: "maintenance", id: "scrub-applications", repeat: { pattern: "40 4 * * *", tz: "UTC" }, run: () => processScrubApplications() },
+  // Stored Stripe events still waiting, and the one heal for lost webhooks (WP-32, billing-55). 04:15: retention is 04:10, scrub 04:40.
+  { queue: "maintenance", id: "stripe-sweep", repeat: { every: 5 * MINUTE }, run: () => processStripeSweep() },
+  { queue: "maintenance", id: "billing-reconcile", repeat: { pattern: "15 4 * * *", tz: "UTC" }, run: () => processBillingReconcile() },
   // Queue gauges, the alert evaluator, the invariant checks and the metrics prune (WP-27).
   { queue: "maintenance", id: "metrics-sample", repeat: { every: MINUTE }, run: () => processMetricsSample() },
   { queue: "maintenance", id: "alerts", repeat: { pattern: "*/5 * * * *", tz: "UTC" }, run: () => processAlerts() },

@@ -1,9 +1,9 @@
 import express, { Router, type NextFunction, type Request, type Response } from "express";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { and, eq, isNull, or, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client";
-import { deletionTasks, emailSuppressions, stripeEvents, subscriptions, user } from "../db/schema";
+import { emailSuppressions } from "../db/schema";
 import { env } from "../lib/env";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
@@ -11,12 +11,10 @@ import { count, slo } from "../lib/metrics";
 import { signal } from "../lib/sentry";
 import { addressHash } from "../lib/mailer";
 import { bodyPermit } from "../middleware/deadline";
-import { couponIdsOf, fetchStripeState, processStripeEvent } from "../services/billing-events";
-import { grantPlanCredits } from "../services/credits";
-import { stripeCustomerHash } from "../services/erasure";
+import { storeStripeEvent } from "../services/billing-events";
 import { optOutOfBroadcast } from "../services/mail-preferences";
 import { postmarkInboundSchema, storeInboundEmail } from "../services/inbound";
-import { INLINE_REQUEST, stripe, verifyStripeEvent } from "../services/stripe";
+import { verifyStripeEvent } from "../services/stripe";
 
 /** Provider webhooks. Mounted at /api/webhooks BEFORE express.json(), because Stripe signs the raw body. */
 export const webhooksRouter = Router();
@@ -28,54 +26,25 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 // 1 MB: a real event is under 100 KB, but an invoice with many lines can pass Express's 100 KB default.
+// Store then process (billing-12): a 2xx means the row is stored with the intent to process it. The route never calls Stripe
+// and never writes a subscription or a ledger row; a database fault answers 500 and Stripe redelivers.
 async function stripeWebhook(req: Request, res: Response) {
   const { STRIPE_WEBHOOK_SECRET, STRIPE_WEBHOOK_SECRET_PREVIOUS } = env();
   const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
   const event = verifyStripeEvent(body, req.header("stripe-signature"), [STRIPE_WEBHOOK_SECRET, STRIPE_WEBHOOK_SECRET_PREVIOUS]);
-
-  // Stripe first, outside the transaction, so a slow Stripe never pins a pooled connection; a failure is a 500 Stripe retries.
-  const fetched = await fetchStripeState(event, {
-    retrieveSubscription: (id) => stripe().subscriptions.retrieve(id, {}, INLINE_REQUEST),
-    listInvoiceLines: (id) => stripe().invoices.listLineItems(id, { limit: 100 }, INLINE_REQUEST).autoPagingToArray({ limit: 1000 }),
-    invoiceCouponIds: async (id) => couponIdsOf(await stripe().invoices.retrieve(id, { expand: ["discounts"] }, INLINE_REQUEST)),
-  });
-
-  // One transaction: if any effect fails, the event row rolls back too and Stripe's retry processes it again.
-  // ponytail: no per-customer ordering, so two events for one customer can commit their snapshots out of order; the
-  // stripe_event_created guard and the customer-partitioned queue come with store-then-process (billing-12, billing-19).
-  const outcome = await db().transaction((tx) =>
-    processStripeEvent(event, fetched, {
-      recordEvent: async (id, type) => (await tx.insert(stripeEvents).values({ id, type }).onConflictDoNothing().returning()).length > 0,
-      userExists: async (id) => (await tx.select({ id: user.id }).from(user).where(eq(user.id, id))).length > 0,
-      userForCustomer: async (customerId) =>
-        (await tx.select({ userId: subscriptions.userId }).from(subscriptions).where(eq(subscriptions.stripeCustomerId, customerId)))[0]?.userId ?? null,
-      customerErased: async (customerId) =>
-        (await tx.select({ h: deletionTasks.userHash }).from(deletionTasks).where(eq(deletionTasks.stripeCustomerHash, stripeCustomerHash(customerId)))).length > 0,
-      saveSubscription: async ({ userId, values }) => {
-        // An unpaid state only overwrites the row when it is about the subscription the row tracks (or none yet),
-        // so a late event for an old, cancelled subscription cannot drop a user who has since subscribed again.
-        const tracksThis = or(isNull(subscriptions.stripeSubscriptionId), eq(subscriptions.stripeSubscriptionId, values.stripeSubscriptionId));
-        // The grace anchor is set on entering past_due and kept while it lasts, so repeated events never extend it.
-        const pastDueSince = values.status === "past_due" ? sql`coalesce(${subscriptions.pastDueSince}, now())` : null;
-        await tx
-          .update(subscriptions)
-          .set({ ...values, pastDueSince, updatedAt: new Date() })
-          .where(and(eq(subscriptions.userId, userId), values.plan === "free" ? tracksThis : undefined));
-      },
-      grantCredits: async (grant) => void (await grantPlanCredits(tx, grant)),
-    }),
-  );
-  slo("s7", true);
-  logger.info({ eventId: event.id, type: event.type, outcome }, "stripe event");
-  res.json(outcome === "duplicate" ? { received: true, duplicate: true } : { received: true });
+  const stored = await storeStripeEvent(db(), event);
+  logger.info({ eventId: event.id, type: event.type, duplicate: !stored }, "stripe event stored");
+  res.json(stored ? { received: true } : { received: true, duplicate: true });
 }
 
-// S7 counts the events we tried to process: a bad signature (a 4xx) is not one, anything that throws is a miss.
+// S7 counts the events we tried to process, in processStoredEvent: here only a store that failed is a miss. A bad signature
+// (a 4xx) is not one: it signals, for A-BILL-3.
 webhooksRouter.post("/stripe", express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
   try {
     await stripeWebhook(req, res);
   } catch (err) {
-    if (!(err instanceof HttpError && err.status < 500)) slo("s7", false);
+    if (err instanceof HttpError && err.status < 500) signal("stripe_signature_rejected");
+    else slo("s7", false);
     throw err;
   }
 });

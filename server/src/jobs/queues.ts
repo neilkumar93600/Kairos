@@ -15,6 +15,7 @@ export const QUEUES = {
   ledgerWatch: "ledger-watch",
   maintenance: "maintenance",
   notify: "notify",
+  stripe: "stripe",
 } as const;
 
 export interface JobData {
@@ -35,6 +36,8 @@ export interface JobData {
   maintenance: { schedule: true };
   /** One email of the notify ledger (jobs/notify.ts); rendered from the database at send time. */
   notify: { kind: (typeof EMAIL_KINDS)[number]; entityId: string; userId: string | null };
+  /** One stored Stripe event (services/billing-events.ts); everything else is read from its row. */
+  stripe: { eventId: string };
 }
 
 export type QueueName = keyof JobData;
@@ -43,7 +46,7 @@ export type QueueName = keyof JobData;
  * The queues the outbox feeds (durable/outbox.ts). emitOutbox takes only these, and resume needs a refusal check for each,
  * so adding one here is what puts a queue on the seam, and the compiler asks for the rest.
  */
-export const OUTBOX_QUEUES = ["cloud-apply"] as const;
+export const OUTBOX_QUEUES = ["cloud-apply", "stripe"] as const;
 export type OutboxQueue = (typeof OUTBOX_QUEUES)[number];
 
 /**
@@ -96,6 +99,8 @@ export const QUEUE_CONFIG: Record<QueueName, QueueConfig> = {
   // A send is one 10 s Postmark call (plus a 10 s search on a re-claim). Five attempts, as the email_sends ledger;
   // 30 s, 60 s, 2 min... so a Postmark blip clears before the lease-only path matters (WP-44).
   notify: { concurrency: 8, attempts: 5, backoffMs: 30_000, lockDurationMs: 60_000 },
+  // A run is a 10 s refetch at most, plus the wait on one customer's earlier event. 3 s doubling: 8 tries over about 6 minutes (billing-17).
+  stripe: { concurrency: 4, attempts: 8, backoffMs: 3_000, lockDurationMs: 60_000 },
 };
 
 /** Every queue the worker consumes, with its concurrency: the table's, or QUEUE_CONCURRENCY's. Refuses unknown names. */

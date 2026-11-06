@@ -20,6 +20,7 @@ import { closeQueues, queue, QUEUES, workerConcurrency, workerOptions, type Queu
 import { processMaintenance, SCHEDULES } from "./jobs/schedules";
 import { processScoreMatches, processScoreUser } from "./jobs/score-matches";
 import { processTailorApplication } from "./jobs/tailor-application";
+import { processStoredEvent } from "./services/billing-events";
 
 setProcessRole("worker");
 initSentry("worker");
@@ -38,6 +39,7 @@ const handlers: Partial<Record<QueueName, (job: Job) => Promise<unknown>>> = {
   [QUEUES.ledgerWatch]: processLedgerWatch,
   [QUEUES.maintenance]: processMaintenance,
   [QUEUES.notify]: processNotify,
+  [QUEUES.stripe]: (job) => processStoredEvent(db(), (job.data as { eventId: string }).eventId),
 };
 
 // A Redis that evicts loses jobs silently: refuse to start (platform-68). 10 s, so a Redis that is down fails the boot too.

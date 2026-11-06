@@ -7,7 +7,7 @@ import { HttpError, notFound } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { count, slo } from "../lib/metrics";
 import { signal } from "../lib/sentry";
-import { chargeSubmission } from "./credits";
+import { chargeSubmission, lockCreditBalance } from "./credits";
 import { recordEvent } from "./events";
 import { redactConfirmation } from "./sensitive";
 import { AMBIGUOUS, boundedEvidence, FAILURE_MESSAGES, RESENDABLE, type FailureCode } from "./submissions";
@@ -127,15 +127,15 @@ export interface SettleResult {
 }
 
 /**
- * Settles one attempt (08 3.2). Lock order: the user's advisory lock (the balance row after WP-32), the application, the
- * attempt. Reads the attempt row and never a job's result, so it can run any number of times.
+ * Settles one attempt (08 3.2). Lock order: the balance row (rule L1, services/credits.ts), the application, the attempt.
+ * Reads the attempt row and never a job's result, so it can run any number of times.
  */
 export async function settleAttempt(db: Db, attemptId: string): Promise<SettleResult> {
   const [seen] = await db.select({ userId: submissionAttempts.userId, settledAt: submissionAttempts.settledAt }).from(submissionAttempts).where(eq(submissionAttempts.id, attemptId));
   if (!seen || seen.settledAt) return { result: "noop", charged: false };
 
   const out = await db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${seen.userId}))`);
+    await lockCreditBalance(tx, seen.userId);
     const [unlocked] = await tx.select({ applicationId: submissionAttempts.applicationId }).from(submissionAttempts).where(eq(submissionAttempts.id, attemptId));
     if (!unlocked) return { result: "noop" as const, charged: false, entity: null };
     const [app] = await tx.select().from(applications).where(eq(applications.id, unlocked.applicationId)).for("update");
@@ -228,7 +228,7 @@ const notApproved = (status: string) => new HttpError(409, "conflict", `Applicat
  */
 async function reportTx(db: Db, userId: string, sessionId: string, report: SubmissionReport): Promise<{ status: string; entity: string | null; refuse?: string }> {
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${userId}))`);
+    await lockCreditBalance(tx, userId);
     const [row] = await tx
       .select({ a: applications, ats: companies.ats })
       .from(applications)
@@ -365,11 +365,21 @@ export async function unsettledAttempts(db: Db): Promise<string[]> {
  * rules and the late-confirmation guard need. ponytail: both are empty once the previous release is gone; WP-46 removes them.
  */
 export async function repairLegacyRows(db: Db): Promise<string[]> {
-  const swept = await db
-    .update(applications)
-    .set({ status: "failed", failureCode: "unconfirmed", failureReason: FAILURE_MESSAGES.unconfirmed, updatedAt: new Date() })
-    .where(and(eq(applications.status, "submitting"), eq(applications.channel, "cloud"), isNull(applications.currentAttemptId), sql`${applications.updatedAt} < now() - interval '8 minutes'`))
-    .returning({ id: applications.id });
+  const legacy = and(eq(applications.status, "submitting"), eq(applications.channel, "cloud"), isNull(applications.currentAttemptId), sql`${applications.updatedAt} < now() - interval '8 minutes'`);
+  const found = await db.select({ userId: applications.userId }).from(applications).where(legacy).limit(200);
+  const swept: { id: string }[] = [];
+  // One transaction per user, balance row first (rule L1): submitting to failed leaves the in-flight set.
+  for (const userId of new Set(found.map((r) => r.userId))) {
+    const rows = await db.transaction(async (tx) => {
+      await lockCreditBalance(tx, userId);
+      return tx
+        .update(applications)
+        .set({ status: "failed", failureCode: "unconfirmed", failureReason: FAILURE_MESSAGES.unconfirmed, updatedAt: new Date() })
+        .where(and(eq(applications.userId, userId), legacy))
+        .returning({ id: applications.id });
+    });
+    swept.push(...rows);
+  }
   await db
     .update(applications)
     .set({
@@ -390,14 +400,14 @@ export async function repairLegacyRows(db: Db): Promise<string[]> {
  * Extension approvals unsent for 14 days go back to draft (applications-43, 08 3.5): the reservation frees itself, the
  * approval fields and the snapshot go (applications_snapshot_ck), attempt_no stays so the next approval takes the next
  * number. A lease in the last 24 hours means a side panel may still hold the item. Returns the rows to email. No event:
- * application_events has no kind for this yet (08 section 13, item 1). Advisory locks in user order keep the lock order.
+ * application_events has no kind for this yet (08 section 13, item 1). Balance rows in user order keep rule L1.
  */
 export async function returnStaleApprovals(db: Db): Promise<{ id: string; userId: string; attemptNo: number }[]> {
   return db.transaction(async (tx) => {
     const eligible = sql`${applications.status} = 'approved' AND ${applications.channel} = 'extension' AND ${applications.approvedAt} < now() - interval '14 days'
       AND (${applications.leaseExpiresAt} IS NULL OR ${applications.leaseExpiresAt} < now() - interval '24 hours')`;
     const rows = await tx.select({ id: applications.id, userId: applications.userId }).from(applications).where(eligible).orderBy(asc(applications.approvedAt)).limit(500);
-    for (const userId of [...new Set(rows.map((r) => r.userId))].sort()) await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${userId}))`);
+    for (const userId of [...new Set(rows.map((r) => r.userId))].sort()) await lockCreditBalance(tx, userId);
     if (!rows.length) return [];
     return tx
       .update(applications)

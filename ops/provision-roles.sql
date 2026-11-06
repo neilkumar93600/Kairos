@@ -288,8 +288,15 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON newsletter_subscribers TO kairos_api;
 GRANT SELECT, UPDATE, DELETE ON newsletter_subscribers TO kairos_worker;
 
 -- The durable seam (WP-22, migration 0026). The api writes a row in the approval's transaction and resumes dead rows from
--- /api/admin/outbox, so it reads and updates too. The worker drains and sweeps (S, U) and runs the retention delete; it
--- inserts nothing: settlement needs no outbox row, because an attempt with settled_at NULL is its own durable record (the sweep reads it every 30 s). The applier has no grant at all: the
+-- /api/admin/outbox, so it reads and updates too. The worker drains and sweeps (S, U), runs the retention delete and, since
+-- WP-32, reopens a stored Stripe event's row (I, as retention may have taken it). The applier has no grant at all: the
 -- sweep reads completion from BullMQ, so the process that opens hostile pages cannot touch a row. Nobody else reads it.
 GRANT SELECT, INSERT, UPDATE ON outbox TO kairos_api;
-GRANT SELECT, UPDATE, DELETE ON outbox TO kairos_worker;
+GRANT SELECT, INSERT, UPDATE, DELETE ON outbox TO kairos_worker;
+
+-- The credit balance cache (WP-32, migration 0028; _db/billing.md 2.3). Only its definer triggers write it. UPDATE (updated_at)
+-- is what SELECT ... FOR UPDATE asks for: lockCreditBalance runs in the api and the worker. kairos_readonly reads it, as it
+-- reads the ledger. ensure_credit_balance creates the row a lock needs; REVOKE ALL above took it from the applier's side.
+GRANT SELECT ON credit_balances TO kairos_api, kairos_worker, kairos_readonly;
+GRANT UPDATE (updated_at) ON credit_balances TO kairos_api, kairos_worker;
+GRANT EXECUTE ON FUNCTION ensure_credit_balance(text) TO kairos_api, kairos_worker;
