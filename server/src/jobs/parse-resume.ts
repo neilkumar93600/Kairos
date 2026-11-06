@@ -64,9 +64,11 @@ export async function processParseResume(job: Job<JobData["parse-resume"]>) {
         return !id;
       });
       if (fresh.length) {
+        // Facts list by created_at, then id: one transaction's now() would leave file order to random ids.
+        const at = Date.now();
         await tx
           .insert(facts)
-          .values(fresh.map((f) => ({ ...f, userId: claimed.userId, resumeProfileId: claimed.resumeProfileId, importId: claimed.id, confirmed: false, assertedBy: "import" as const })))
+          .values(fresh.map((f, i) => ({ ...f, userId: claimed.userId, resumeProfileId: claimed.resumeProfileId, importId: claimed.id, confirmed: false, assertedBy: "import" as const, createdAt: new Date(at + i) })))
           .onConflictDoNothing({ target: [facts.resumeProfileId, facts.sourceSpanHash] });
       }
       await tx

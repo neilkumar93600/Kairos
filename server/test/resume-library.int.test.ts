@@ -102,7 +102,8 @@ describe.skipIf(!hasTestDb)("resume library and imports (R1)", () => {
     const restored = await request(app).post(`/api/resumes/${base.id}/revisions/${named.body.revision.id}/restore`);
     expect(restored.body.resume.name).toBe(built.body.resume.name);
     const reasons = (await request(app).get(`/api/resumes/${base.id}/revisions`)).body.revisions.map((r: { reason: string }) => r.reason);
-    expect(reasons).toEqual(expect.arrayContaining(["named", "edit", "restore"]));
+    // No "edit": snapshot_resume folds an edit within 10 minutes into the last revision, here the named one, which holds that state.
+    expect(reasons).toEqual(expect.arrayContaining(["named", "restore"]));
     expect(listResumesResponseSchema.parse((await request(app).get("/api/resumes")).body).resumes).toHaveLength(1);
   });
 

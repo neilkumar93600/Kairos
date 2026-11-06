@@ -16,7 +16,8 @@ import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from ".
  * what B gets on ids that exist nowhere (status and body, byte for byte), never A's data, and changes none of A's rows.
  * Then A calls every route on A's own rows, and no answer of the whole run carries a marker seeded in an internal column.
  * Never reaches Stripe, R2, Redis or a model: Stripe is spied, storage is in memory, the queue and the two AI writers are
- * stubbed, and limits are in memory per app (sharedLimits off), so the run stays far below every limit.
+ * stubbed, and limits are in memory per app (sharedLimits off), so the run stays far below every limit but the AI burst
+ * cap: one user's walk through the AI routes crosses its 10 a minute, so that limiter is stubbed too.
  *   TEST_DATABASE_URL=postgres://kairos:kairos@localhost:55432/kairos_test npx vitest run test/authz-matrix.int.test.ts
  */
 
@@ -30,6 +31,10 @@ delete process.env.ANTHROPIC_API_KEY;
 const storage = vi.hoisted(() => ({ current: undefined as Storage | undefined }));
 vi.mock("../src/lib/storage", async (orig) => ({ ...(await orig<typeof import("../src/lib/storage")>()), storage: () => storage.current! }));
 vi.mock("../src/jobs/queues", async (orig) => ({ ...(await orig<typeof import("../src/jobs/queues")>()), enqueue: vi.fn(async () => {}) }));
+vi.mock("../src/middleware/rate-limit", async (orig) => ({
+  ...(await orig<typeof import("../src/middleware/rate-limit")>()),
+  aiLimiter: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
 vi.mock("../src/services/tailor", async (orig) => ({
   ...(await orig<typeof import("../src/services/tailor")>()),
   tailorResume: vi.fn(async () => ({ kept: [], rejected: [] })),
