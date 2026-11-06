@@ -111,7 +111,7 @@ describe("truthLockViolations", () => {
 describe("resumePlainText", () => {
   it("prints visible sections and entries in order, without hidden ones", () => {
     const text = resumePlainText(sample);
-    expect(text).toBe("Experience\nEngineer at Initech | Austin | 2021 to 2023\n- Built a dashboard\n- Ran k8s");
+    expect(text).toBe("Ada Lovelace\nada@example.com | 555 0100 | Austin, US\nExperience\nEngineer at Initech | Austin | 2021 to 2023\nBuilt a dashboard\nRan k8s");
     expect(text).not.toContain("Hooli");
     expect(text).not.toContain("TypeScript");
   });
