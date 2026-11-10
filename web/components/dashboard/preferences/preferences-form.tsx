@@ -9,7 +9,7 @@ import { Input, Select, Textarea } from "../../shared/field";
 import { Panel } from "../../shared/panel";
 import { StatusWord } from "../../shared/status";
 
-const AUTH_LABEL: Record<(typeof WORK_AUTHORIZATIONS)[number], string> = {
+export const AUTH_LABEL: Record<(typeof WORK_AUTHORIZATIONS)[number], string> = {
   citizen_or_pr: "Citizen or permanent resident",
   needs_sponsorship_now: "Need visa sponsorship now",
   needs_sponsorship_later: "Will need sponsorship later",

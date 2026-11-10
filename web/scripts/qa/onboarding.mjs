@@ -302,6 +302,178 @@ async function existing(browser, tag) {
   console.log(`ok existing ${tag} ${VIEWPORTS[tag].width}px: reuse choice goes straight to the rules`);
 }
 
+/** Opens a form section through the rail (desktop) or the section select (phones), then waits for its heading. */
+async function section(page, name) {
+  const rail = page.getByRole("navigation", { name: "Form sections" });
+  if (await rail.isVisible()) await rail.getByRole("button", { name, exact: true }).click();
+  else await page.getByLabel("Section", { exact: true }).selectOption({ label: name });
+  await page.getByRole("heading", { level: 2, name, exact: true }).waitFor();
+}
+
+/**
+ * Spec 5.3b, the fill-in form for a Build user: contact (name to the account, the rest to /profile/contact), a link
+ * refused on blur and on save with focus on it, Continue refused without a job or school, a reload mid-section keeps
+ * the unsaved field, one job with two result lines is one employment, education and skills become facts, saving a
+ * section again never duplicates a fact, and Continue makes one base resume after the employment.
+ */
+async function form(browser, tag) {
+  const { ctx, page, report, errors, warnings, puts, calls } = await open(browser, VIEWPORTS[tag]);
+  const snap = snapper(page, tag);
+  const next = page.getByRole("button", { name: "Continue" });
+  const nextSection = page.getByRole("button", { name: "Next section" });
+  const h2 = (name) => page.getByRole("heading", { level: 2, name, exact: true }).waitFor();
+  const jobs = [];
+  const contacts = [];
+  page.on("request", (r) => {
+    const p = new URL(r.url()).pathname;
+    if (r.method() === "POST" && p === "/api/profile/employments") jobs.push(r.postDataJSON());
+    if (r.method() === "PUT" && p === "/api/profile/contact") contacts.push(r.postDataJSON());
+  });
+  const facts = () => ({ posted: count(calls, "POST /profile/facts"), patched: calls.filter((c) => c.startsWith("PATCH /profile/facts/")).length });
+
+  await heading(page, "What brings you to Kairos?");
+  await option(page, "Build my resume").click();
+  await next.click();
+  await heading(page, "Which job are you going for?");
+  await page.getByLabel("Desired position").fill("Frontend Developer");
+  await page.getByLabel("Desired position").press("Enter");
+  await next.click();
+  await heading(page, "How do you want to add your resume?");
+  await option(page, "Fill it in with us").click();
+  await next.click();
+
+  await heading(page, "Fill in your resume");
+  await h2("Contact");
+  assert.equal(await page.getByLabel("Full name").inputValue(), "New User", "the name comes from the account");
+  assert.equal(await page.getByLabel("Email").inputValue(), "new.user@example.com", "email is shown, read-only");
+  await page.getByLabel("Full name").fill("Sample Applicant");
+  await page.getByLabel("Phone").fill("555-0100");
+  await page.getByLabel("City").fill("Sample City");
+  await page.getByLabel("Country").fill("Sample Country");
+  await noOverflow(page, "form contact");
+  await snap("form-contact");
+  await nextSection.click();
+  await h2("Links");
+  assert.equal(count(calls, "POST /auth/update-user"), 1, "the full name goes to the account");
+  assert.equal(contacts[0]?.phone, "555-0100", "phone, city and country go to /profile/contact");
+
+  // Inline validation on blur, then a refused save keeps the section and focuses the field.
+  const linkedin = page.getByLabel("LinkedIn");
+  await linkedin.fill("not a link");
+  await linkedin.blur();
+  await page.getByText("Enter a full link, for example https://your-site.com.").waitFor();
+  await page.getByLabel("GitHub").focus();
+  await nextSection.click();
+  await page.waitForFunction(() => document.activeElement?.id === "ob-linkedinUrl", null, { timeout: 3_000 });
+  await h2("Links");
+  await noOverflow(page, "form links error");
+  await snap("form-links-error", false);
+  await linkedin.fill("linkedin.example.com/in/sample-applicant");
+  await nextSection.click();
+  await h2("Work authorization");
+  assert.deepEqual(contacts[1], {
+    phone: "555-0100", city: "Sample City", country: "Sample Country",
+    linkedinUrl: "https://linkedin.example.com/in/sample-applicant", githubUrl: null, portfolioUrl: null,
+  }, "links are saved with https and with the contact saved before");
+
+  await page.getByLabel("Where you can work").selectOption({ label: "Citizen or permanent resident" });
+  await next.click();
+  await page.getByRole("alert").filter({ hasText: "Add at least one job or school before you continue." }).waitFor();
+  await h2("Experience");
+  assert.equal(count(calls, "POST /resumes"), 0, "no base resume without a job or school");
+
+  // A reload mid-section reopens the form on this section with the unsaved field.
+  await page.getByLabel("Job title").fill("Frontend Developer");
+  await page.getByLabel("Company").fill("Company 101");
+  await page.reload({ waitUntil: "load" });
+  await hideDevIndicator(page);
+  await heading(page, "Fill in your resume");
+  await h2("Experience");
+  assert.equal(await page.getByLabel("Job title").inputValue(), "Frontend Developer", "the unsaved title survives a reload");
+  assert.equal(await page.getByLabel("Company").inputValue(), "Company 101");
+  assert.equal(jobs.length, 0, "nothing saved yet");
+
+  await page.getByLabel("Start month").fill("2022-05");
+  await page.getByLabel("I work here now").check();
+  await page.getByLabel("What you did, one result per line").fill("Cut page load time from 3 s to 1 s\nShipped a design system used by 4 teams\n");
+  await noOverflow(page, "form experience");
+  await snap("form-experience");
+  await nextSection.click();
+  await h2("Education");
+  assert.equal(jobs.length, 1, "one POST /profile/employments");
+  assert.equal(jobs[0].results.length, 2, "with its two result lines");
+  assert.equal(jobs[0].isCurrent, true);
+
+  await page.getByLabel("School").fill("Sample University");
+  await page.getByLabel("Degree").fill("B.Tech");
+  await page.getByLabel("Field of study").fill("Computer Science");
+  await page.getByLabel("Start year").fill("2018");
+  await page.getByLabel("End year").fill("2022");
+  await nextSection.click();
+  await h2("Skills");
+  assert.deepEqual(facts(), { posted: 1, patched: 0 }, "one education fact");
+
+  const skill = page.getByRole("textbox", { name: "Add your skills" });
+  for (const s of ["TypeScript", "SQL"]) {
+    await skill.fill(s);
+    await skill.press("Enter");
+  }
+  await noOverflow(page, "form skills");
+  await snap("form-skills");
+  await nextSection.click();
+  await h2("Projects");
+  assert.deepEqual(facts(), { posted: 2, patched: 0 }, "one skill fact for the group");
+
+  // Saving a section again: unchanged sends nothing; changed patches its fact, never a second one.
+  await section(page, "Skills");
+  await page.getByRole("button", { name: "Remove SQL" }).waitFor();
+  await section(page, "Education");
+  assert.equal(await page.getByLabel("School").inputValue(), "Sample University", "a saved fact section refills");
+  await nextSection.click();
+  await h2("Skills");
+  await skill.fill("Go");
+  await skill.press("Enter");
+  await nextSection.click();
+  await h2("Projects");
+  assert.deepEqual(facts(), { posted: 2, patched: 1 }, "re-saving skills patches its fact instead of adding one");
+
+  // Continue saves the section on screen first.
+  await section(page, "Application details");
+  await page.getByLabel("Notice period").selectOption({ label: "1 month" });
+  await page.getByLabel("Expected salary per year").fill("120,000");
+  await noOverflow(page, "form details");
+  await snap("form-details");
+  const details = page.waitForRequest((r) => r.method() === "PUT" && r.url().endsWith("/api/profile/application-details"));
+  const before = puts.length;
+  // The pending base guard: /default fails once, and the retry repeats only /default.
+  const refusal = { error: { code: "internal", message: "Could not make it your default resume. Try again." } };
+  await page.route("**/api/resumes/*/default", (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify(refusal) }), { times: 1 });
+  await next.click();
+  assert.deepEqual((await details).postDataJSON(), { noticePeriod: "1_month", openToRelocation: null, expectedSalary: { amount: 120000, currency: "USD" } });
+  await page.getByRole("alert").filter({ hasText: refusal.error.message }).waitFor();
+  await next.click();
+  await heading(page, "Ready");
+  const order = (re) => calls.findIndex((c) => re.test(c));
+  const defaults = calls.filter((c) => /^POST \/resumes\/[^/]+\/default$/.test(c));
+  assert.equal(count(calls, "POST /resumes"), 1, "one base resume, also after a failed /default");
+  assert.ok(order(/^POST \/profile\/employments$/) < order(/^POST \/resumes$/), "made after the employment");
+  assert.equal(defaults.length, 2, "the retry repeats only /default");
+  assert.equal(count(calls, "PUT /profile/application-details"), 1, "the saved section is not saved again");
+  assert.equal(jobs.length, 1, "Continue made no second employment");
+  assert.deepEqual(puts.slice(before), [{ step: "done" }]);
+  assert.equal(await page.evaluate((k) => sessionStorage.getItem(k), "kairos.onboarding.form.section"), null, "leaving the form forgets its section");
+  assert.equal(await page.evaluate((k) => sessionStorage.getItem(k), "kairos.onboarding.resumeId"), null, "the pending base is cleared");
+
+  assert.deepEqual(report.unmocked, [], "every API call is mocked");
+  assert.deepEqual(errors.filter((e) => !e.includes("status of 500")), [], "no console or page errors beyond the refused /default");
+  assert.deepEqual(warnings, [], "no next/image warnings");
+  await ctx.close();
+  console.log(
+    `ok form ${tag} ${VIEWPORTS[tag].width}px: reload keeps the unsaved title; 1 employment with 2 results; re-save patches, ` +
+      "no duplicate fact; 1 base resume after it, a failed /default retried without a second",
+  );
+}
+
 /** Goals, target, source: two PUT bodies, focus on each new h1, answers kept on Back. */
 async function walk(browser, tag) {
   const { ctx, page, report, errors, warnings, puts } = await open(browser, VIEWPORTS[tag]);
@@ -399,6 +571,7 @@ try {
   for (const tag of ["m", "d"]) await earlierFacts(browser, tag, "retry");
   for (const tag of ["m", "s"]) await earlierFacts(browser, tag, "another");
   await staleImport(browser, "d");
+  for (const tag of Object.keys(VIEWPORTS)) await form(browser, tag);
 } finally {
   await browser.close();
 }

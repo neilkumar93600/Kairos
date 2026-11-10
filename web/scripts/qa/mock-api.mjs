@@ -250,7 +250,7 @@ function baseFixtures(scenario) {
 }
 
 /**
- * Onboarding routes: PUT /profile/onboarding, /profile/employments, /profile/application-details.
+ * Onboarding routes: PUT /profile/onboarding, /profile/employments, /profile/application-details, PUT /profile/contact.
  * Unlike the other mutations these change `data`, so a wizard walk sees its own writes. Returns null for any other path.
  */
 let seq = 0;
@@ -280,6 +280,11 @@ export function onboardingRespond({ method, path, body }, data) {
       if (results) e.results = results.map((text, i) => ({ factId: `fact-${e.id}-${i}`, text }));
       return ok({ employment: e });
     }
+  }
+  // The fill-in form saves contact and links in two PUTs of all six fields, each built on the profile the other wrote.
+  if (method === "PUT" && path === "/profile/contact") {
+    Object.assign(data.profile, body);
+    return ok({ profile: data.profile });
   }
   if (path === "/profile/application-details") {
     if (method === "PUT") data.appDetails = body;
@@ -358,6 +363,7 @@ export function handleApi(route, data, report) {
     if (p === "/billing/portal") return json({ url: "https://billing.example.com/portal/mock" });
     if (p === "/contact") return json({ ok: true });
     if (p === "/auth/sign-out") return json({ success: true });
+    if (p === "/auth/update-user") return json({ status: true });
   }
 
   if (method === "PUT") {

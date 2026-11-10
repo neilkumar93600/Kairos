@@ -4,8 +4,9 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/shared/button";
 import { Field, Textarea } from "@/components/shared/field";
 import { useOnboarding } from "@/hooks/use-onboarding";
+import { forgetPendingBase } from "@/lib/onboarding/session";
 import type { StepProps } from "../wizard";
-import { failureOf, forgetPendingBase, Reading, storedImport, storeImport, useImportCheck } from "./upload";
+import { failureOf, Reading, storedImport, storeImport, useImportCheck } from "./upload";
 
 const MIN = 200; // the server's minimum for pasted text
 

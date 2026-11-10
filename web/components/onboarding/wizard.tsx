@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, WarningCircle } from "@phosphor-icons/react";
-import { ONBOARDING_STEPS, type Goal, type OnboardingUpdate } from "@auto-career/shared";
+import { ONBOARDING_STEPS, type Goal, type OnboardingUpdate, type WorkAuthorization } from "@auto-career/shared";
 import { Button } from "@/components/shared/button";
 import { ErrorNote } from "@/components/shared/error-note";
 import { Logo } from "@/components/shared/logo";
@@ -15,7 +15,9 @@ import { ApiError } from "@/lib/api";
 import { openAt, serverStepFor, stepsFor, type Source, type WizardStep } from "@/lib/onboarding/flow";
 import { cn } from "@/lib/utils";
 import { ArtPane, briefRows, type BriefRow } from "./art-pane";
+import { storedWorkAuthorization } from "./form/work-auth";
 import { Progress, STEP_NAMES } from "./progress";
+import { formInProgress, FormStep } from "./steps/form";
 import { GoalsStep } from "./steps/goals";
 import { PasteStep } from "./steps/paste";
 import { SourceStep } from "./steps/source";
@@ -28,6 +30,8 @@ export interface WizardState {
   targetCompanies: string[];
   source: Source;
   baseResumeId: string | null;
+  /** From the form, for the rules step (spec 5.4 prefills it); null when not given. */
+  workAuthorization: WorkAuthorization | null;
   step: WizardStep;
 }
 
@@ -37,6 +41,7 @@ export interface WizardApi {
   setTargets: (targets: Partial<Pick<WizardState, "targetRoles" | "targetCompanies">>) => void;
   setSource: (source: Source) => void;
   setBaseResumeId: (id: string | null) => void;
+  setWorkAuthorization: (value: WorkAuthorization | null) => void;
   /** Saves this step's answers with the next server step, then advances. A failed save stays put and shows why. */
   next: () => Promise<void>;
   /**
@@ -65,7 +70,10 @@ export function useWizard(): WizardApi {
 
 const SKIPPABLE: WizardStep[] = ["target", "rules"];
 const rank = (step: string) => (ONBOARDING_STEPS as readonly string[]).indexOf(step);
-const failure = (e: unknown) => (e instanceof ApiError ? e.message : "Could not save your answers. Check your connection and try again.");
+/** A step's own refusal from onNext work (a required answer is missing): its message shows in the footer as it is. */
+export class StepError extends Error {}
+const failure = (e: unknown) =>
+  e instanceof ApiError || e instanceof StepError ? e.message : "Could not save your answers. Check your connection and try again.";
 
 /** /onboarding: opens at the first step whose data is missing (openAt), with saved answers prefilled. */
 export function Wizard() {
@@ -84,10 +92,23 @@ export function Wizard() {
       hasBaseResume: rank(me.data.onboardingStep) > rank("confirm-facts"),
       hasPreferences: profile.data.preferences != null,
     });
-    // A reload mid-parse goes back to the import being read (spec 5.3a); the server step alone would reopen the source step.
-    const resumed = opened.step === "source" && storedImport() ? ({ step: "upload", source: "upload" } as const) : null;
+    // A reload mid-parse goes back to the import being read (spec 5.3a), and one mid-form to the form; the server step
+    // alone would reopen the source step.
+    const resumed =
+      opened.step !== "source"
+        ? null
+        : storedImport()
+          ? ({ step: "upload", source: "upload" } as const)
+          : formInProgress()
+            ? ({ step: "form", source: "form" } as const)
+            : null;
+    const workAuthorization = storedWorkAuthorization() ?? profile.data.preferences?.workAuthorization ?? null;
     // Read once: the refetch after each save must not reset answers in progress.
-    return <Shell initial={{ ...opened, ...resumed, targetRoles: me.data.targetRoles, targetCompanies: me.data.targetCompanies, baseResumeId: null }} />;
+    return (
+      <Shell
+        initial={{ ...opened, ...resumed, targetRoles: me.data.targetRoles, targetCompanies: me.data.targetCompanies, baseResumeId: null, workAuthorization }}
+      />
+    );
   }
 
   const error = me.error ?? profile.error ?? facts.error;
@@ -184,6 +205,7 @@ function Shell({ initial }: { initial: WizardState }) {
     setTargets: (targets) => setState((s) => ({ ...s, ...targets })),
     setSource: (source) => setState((s) => ({ ...s, source })),
     setBaseResumeId: (baseResumeId) => setState((s) => ({ ...s, baseResumeId })),
+    setWorkAuthorization: (workAuthorization) => setState((s) => ({ ...s, workAuthorization })),
     next: () =>
       advance(
         step === "goals"
@@ -271,10 +293,11 @@ function StepBody({ step, onReady }: StepProps & { step: WizardStep }) {
   if (step === "source") return <SourceStep onReady={onReady} />;
   if (step === "upload") return <UploadStep onReady={onReady} />;
   if (step === "paste") return <PasteStep onReady={onReady} />;
+  if (step === "form") return <FormStep onReady={onReady} />;
   return <StepPending step={step} onReady={onReady} />;
 }
 
-// ponytail: stands in for the steps Tasks 10 and 11 build (form, rules, done) so the shell runs end to end.
+// ponytail: stands in for the steps Task 11 builds (rules, done) so the shell runs end to end.
 function StepPending({ step, onReady }: StepProps & { step: WizardStep }) {
   useEffect(() => {
     onReady(true);

@@ -4,6 +4,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ApplicationDetails, EmploymentInput, ImportDetail, OnboardingUpdate } from "@auto-career/shared";
 import { useApiQuery } from "@/lib/use-api-query";
 import { api, ApiError, patch, post, put } from "@/lib/api";
+import type { Profile } from "./use-profile";
+
+export type Contact = Pick<Profile, "phone" | "city" | "country" | "linkedinUrl" | "githubUrl" | "portfolioUrl">;
 
 export interface Employment {
   id: string;
@@ -39,7 +42,10 @@ export function useOnboarding() {
       onSuccess: employmentsDone,
     }),
     removeEmployment: useMutation({ mutationFn: (id: string) => api(`/profile/employments/${id}`, { method: "DELETE" }), onSuccess: employmentsDone }),
-    saveDetails: useMutation({ mutationFn: (input: ApplicationDetails) => put("/profile/application-details", input), onSuccess: refresh() }),
+    /** PUT /profile/application-details. A 409 `details_unreadable` refuses to overwrite what cannot be read; its message shows. */
+    saveDetails: useMutation({ mutationFn: (input: ApplicationDetails) => put("/profile/application-details", input), onSuccess: refresh(["application-details"]) }),
+    /** PUT /profile/contact replaces all six fields, so callers send the ones they did not change too. */
+    saveContact: useMutation({ mutationFn: (input: Contact) => put("/profile/contact", input), onSuccess: refresh() }),
     startImport: useMutation({
       mutationFn: ({ file, text, name }: { file?: File; text?: string; name: string }) => {
         if (file) {
@@ -78,6 +84,14 @@ export function useOnboarding() {
       onSuccess: refresh(),
     }),
   };
+}
+
+/** GET /profile/application-details: notice period, relocation, expected salary, read back only to their owner. */
+export function useApplicationDetails() {
+  return useApiQuery({
+    queryKey: ["application-details"],
+    queryFn: () => api<{ details: ApplicationDetails }>("/profile/application-details").then((r) => r.details),
+  });
 }
 
 /** pollImport: reads an import every 1.5 s until it is parsed or failed, or the server no longer knows it (404). */

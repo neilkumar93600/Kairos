@@ -9,6 +9,7 @@ import { useOnboarding, usePollImport } from "@/hooks/use-onboarding";
 import { useFacts } from "@/hooks/use-profile";
 import { ApiError } from "@/lib/api";
 import { nextAction } from "@/lib/onboarding/flow";
+import { basis, forgetPendingBase, keepPendingBase, pendingBase, readSession, writeSession } from "@/lib/onboarding/session";
 import { phaseLabel } from "@/lib/onboarding/upload-phase";
 import { cn } from "@/lib/utils";
 import { useWizard, type StepProps } from "../wizard";
@@ -17,39 +18,9 @@ const MAX_BYTES = 5 * 1024 * 1024; // the server's IMPORT_MAX_BYTES
 const TYPES = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
 const ACCEPT = [".pdf", ".docx", ...TYPES].join(",");
 
-// sessionStorage, so a reload or a retry picks up where it was. Storage can throw (blocked, private mode); then it starts over.
-const IMPORT = "kairos.onboarding.importId"; // the import being read
-const MADE = "kairos.onboarding.resumeId"; // { resumeId, from }: a base made whose /default failed; a retry from the same basis only repeats /default
-function read(key: string): string | null {
-  try {
-    return sessionStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-function write(key: string, value: string | null) {
-  try {
-    if (value) sessionStorage.setItem(key, value);
-    else sessionStorage.removeItem(key);
-  } catch {
-    // no storage: nothing to pick up after a reload
-  }
-}
-export const storedImport = () => read(IMPORT);
-export const storeImport = (id: string | null) => write(IMPORT, id);
-
-// A pending base is reused only for what it was built from (the same import and target roles); anything else makes a new one.
-const basis = (importId: string | null, roles: string[]) => JSON.stringify([importId, roles]);
-function pendingBase(from: string): string | undefined {
-  try {
-    const p = JSON.parse(read(MADE) ?? "null") as { resumeId: string; from: string } | null;
-    return p?.from === from ? p.resumeId : undefined;
-  } catch {
-    return undefined;
-  }
-}
-/** A new import, another file, or a lost import: a base pending from before must not become the default. */
-export const forgetPendingBase = () => write(MADE, null);
+const IMPORT = "kairos.onboarding.importId"; // the import being read, kept for a reload
+export const storedImport = () => readSession(IMPORT);
+export const storeImport = (id: string | null) => writeSession(IMPORT, id);
 
 export const failureOf = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
@@ -110,12 +81,12 @@ export function useImportCheck(importId: string | null, onReady: StepProps["onRe
           targetRoles: state.targetRoles,
           importId: live ?? undefined,
           resumeId: pendingBase(from),
-          onCreated: (resumeId) => write(MADE, JSON.stringify({ resumeId, from })),
+          onCreated: (resumeId) => keepPendingBase(resumeId, from),
         });
         setBaseResumeId(id);
       }
       // A base resume exists now, so a later visit must not reopen this import or reuse that id.
-      write(MADE, null);
+      forgetPendingBase();
       storeImport(null);
     });
     return () => onNext(null);
