@@ -26,9 +26,21 @@ export function skillFacts(skills: string[]): string[] {
   return groups;
 }
 
+const LANGUAGES = "Languages: ";
+
 /** "Languages: English, Hindi" as one skill fact (no language fact kind), or null when there are none. */
 export function languagesFact(langs: string[]): string | null {
-  return langs.length ? `Languages: ${langs.join(", ")}` : null;
+  return langs.length ? LANGUAGES + langs.join(", ") : null;
+}
+
+/** The languages back from a languagesFact text, so the form can refill and PATCH it; null for any other skill fact. */
+export function parseLanguages(text: string): string[] | null {
+  if (!text.startsWith(LANGUAGES)) return null;
+  return text
+    .slice(LANGUAGES.length)
+    .split(",")
+    .map((l) => l.trim())
+    .filter(Boolean);
 }
 
 /** "Job board: Built a search page (https://example.com)". */
@@ -42,6 +54,9 @@ export function certificationFact(c: { name: string; issuer: string; year: strin
   return join([c.name, c.issuer, c.year]);
 }
 
-export function draftKey(section: string): string {
-  return "kairos.onboarding.form." + section;
+export const DRAFTS = "kairos.onboarding.form.";
+
+/** Per user, so the next account in the same tab never reads the last one's drafts. */
+export function draftKey(userId: string, section: string): string {
+  return `${DRAFTS}${userId}.${section}`;
 }

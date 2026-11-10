@@ -99,10 +99,10 @@ export function Wizard() {
         ? null
         : storedImport()
           ? ({ step: "upload", source: "upload" } as const)
-          : formInProgress()
+          : formInProgress(me.data.user.id)
             ? ({ step: "form", source: "form" } as const)
             : null;
-    const workAuthorization = storedWorkAuthorization() ?? profile.data.preferences?.workAuthorization ?? null;
+    const workAuthorization = storedWorkAuthorization(me.data.user.id) ?? profile.data.preferences?.workAuthorization ?? null;
     // Read once: the refetch after each save must not reset answers in progress.
     return (
       <Shell

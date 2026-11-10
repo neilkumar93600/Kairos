@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { certificationFact, draftKey, educationFact, languagesFact, projectFact, skillFacts } from "@/lib/onboarding/form-facts";
+import { certificationFact, draftKey, educationFact, languagesFact, parseLanguages, projectFact, skillFacts } from "@/lib/onboarding/form-facts";
 
 describe("educationFact", () => {
   it("joins degree and field, school, and the years", () => {
@@ -46,6 +46,12 @@ describe("languagesFact", () => {
   it("is null when the list is empty", () => {
     expect(languagesFact([])).toBeNull();
   });
+
+  it("reads back into the list, and only from a languages fact", () => {
+    expect(parseLanguages("Languages: English, Hindi")).toEqual(["English", "Hindi"]);
+    expect(parseLanguages(languagesFact(["Tamil"]) ?? "")).toEqual(["Tamil"]);
+    expect(parseLanguages("TypeScript, SQL")).toBeNull();
+  });
 });
 
 describe("projectFact and certificationFact", () => {
@@ -63,7 +69,9 @@ describe("projectFact and certificationFact", () => {
 });
 
 describe("draftKey", () => {
-  it("namespaces the section", () => {
-    expect(draftKey("experience")).toBe("kairos.onboarding.form.experience");
+  it("namespaces the section under the user", () => {
+    expect(draftKey("u1", "experience")).toBe("kairos.onboarding.form.u1.experience");
+    expect(draftKey("u1", "experience")).not.toBe(draftKey("u10", "experience"));
+    expect(draftKey("u10", "x").startsWith(draftKey("u1", ""))).toBe(false);
   });
 });

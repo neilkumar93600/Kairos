@@ -180,6 +180,7 @@
     display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 0; border-radius: var(--r-pill);
     background: var(--surface); box-shadow: inset 0 0 0 1px var(--ob-line); color: var(--ink); font-size: 15px; cursor: pointer;
   }
+  .ob-saved { margin: 0; color: var(--ink); font-size: 16px; overflow-wrap: anywhere; }
   .ob-section-alert { margin-top: 16px; }
   .ob-next-section { margin-top: 32px; }
   @container (min-width: 440px) {

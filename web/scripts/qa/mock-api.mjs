@@ -297,7 +297,7 @@ const NOT_FOUND = { error: { code: "not_found", message: "mock" } };
 
 /**
  * Playwright handler for page.route("**\/api/**", ...). `data` is fixtures(); `report.unmocked` collects misses.
- * Mutations echo plausible results; they do not change `data`.
+ * Mutations echo plausible results; they do not change `data`, except the onboarding routes and the fact writes.
  */
 export function handleApi(route, data, report) {
   const req = route.request();
@@ -357,7 +357,12 @@ export function handleApi(route, data, report) {
     }
     if ((x = m(/^\/jobs\/([^/]+)\/tailor$/))) return json({ resume: data.resume, suggestions: suggestionsFor(data.resume), fit: fitFor(x[1]) });
     if (p === "/jobs/import") return json({ jobId: "job-imported", matchId: "m-imported", fit: { passed: true, reasons: ["Title matches your target roles", "Remote friendly"] } });
-    if (p === "/profile/facts") return json({ fact: { id: "f-added", kind: body.kind ?? "skill", text: body.text ?? "", sourceSpan: null, confirmed: body.confirmed ?? true } });
+    // Kept, with its own id, so a walk sees its own facts and crossed ids show up.
+    if (p === "/profile/facts") {
+      const fact = { id: `f-added-${++seq}`, kind: body.kind ?? "skill", text: body.text ?? "", sourceSpan: null, confirmed: body.confirmed ?? true };
+      data.facts.push(fact);
+      return json({ fact }, 201);
+    }
     if (p === "/profile/resumes") return json({ ok: true });
     if (p === "/billing/checkout") return json({ url: "https://checkout.example.com/session/mock" });
     if (p === "/billing/portal") return json({ url: "https://billing.example.com/portal/mock" });
@@ -373,11 +378,19 @@ export function handleApi(route, data, report) {
 
   if (method === "PATCH") {
     if (p === "/profile/preferences") return json({ ok: true });
-    if ((x = m(/^\/profile\/facts\/([^/]+)$/))) return json({ fact: { ...(data.facts.find((f) => f.id === x[1]) ?? { id: x[1], kind: "skill", text: "", sourceSpan: null }), ...body } });
+    if ((x = m(/^\/profile\/facts\/([^/]+)$/))) {
+      const fact = data.facts.find((f) => f.id === x[1]);
+      if (fact) Object.assign(fact, body);
+      return json({ fact: fact ?? { id: x[1], kind: "skill", text: "", sourceSpan: null, ...body } });
+    }
     if (m(/^\/applications\/([^/]+)$/)) return json({ ok: true });
   }
 
-  if (method === "DELETE" && m(/^\/profile\/facts\/([^/]+)$/)) return route.fulfill({ status: 204 });
+  if (method === "DELETE" && (x = m(/^\/profile\/facts\/([^/]+)$/))) {
+    const i = data.facts.findIndex((f) => f.id === x[1]);
+    if (i >= 0) data.facts.splice(i, 1);   // in place: the suite routes hold the same array
+    return route.fulfill({ status: 204 });
+  }
 
   report.unmocked.push(`${method} ${p}`);
   return json(NOT_FOUND, 404);

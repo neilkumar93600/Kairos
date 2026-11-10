@@ -461,7 +461,7 @@ async function form(browser, tag) {
   assert.equal(count(calls, "PUT /profile/application-details"), 1, "the saved section is not saved again");
   assert.equal(jobs.length, 1, "Continue made no second employment");
   assert.deepEqual(puts.slice(before), [{ step: "done" }]);
-  assert.equal(await page.evaluate((k) => sessionStorage.getItem(k), "kairos.onboarding.form.section"), null, "leaving the form forgets its section");
+  assert.equal(await page.evaluate((k) => sessionStorage.getItem(k), "kairos.onboarding.form.u2.section"), null, "leaving the form forgets its section");
   assert.equal(await page.evaluate((k) => sessionStorage.getItem(k), "kairos.onboarding.resumeId"), null, "the pending base is cleared");
 
   assert.deepEqual(report.unmocked, [], "every API call is mocked");
@@ -471,6 +471,141 @@ async function form(browser, tag) {
   console.log(
     `ok form ${tag} ${VIEWPORTS[tag].width}px: reload keeps the unsaved title; 1 employment with 2 results; re-save patches, ` +
       "no duplicate fact; 1 base resume after it, a failed /default retried without a second",
+  );
+}
+
+/**
+ * The form in a new tab, or setup run again, for a user who already has facts:
+ * - another account's drafts in this tab are ignored and dropped;
+ * - confirmed facts refill the fact sections (read-only entries, the languages fact as chips), so saving never posts them again;
+ * - removing one school and editing another writes only their own facts (unique mock ids show crossed ones);
+ * - a fact the resume cites is refused with the server's message and stays shown;
+ * - Continue with unsaved changes in another section jumps there and saves them before the base resume.
+ */
+async function formRefill(browser, tag) {
+  let mock;
+  const seed = async (data, ctx) => {
+    mock = data;
+    for (const o of [data.me, data.profile]) Object.assign(o, { goals: ["build"], targetRoles: ["Frontend Developer"], onboardingStep: "resume" });
+    data.facts.push(
+      { id: "f-edu", kind: "education", text: "B.Tech Computer Science, Sample University, 2018 to 2022", sourceSpan: null, confirmed: true },
+      { id: "f-edu-u", kind: "education", text: "MBA, Unconfirmed School", sourceSpan: "MBA, Unconfirmed School", confirmed: false },
+      { id: "f-sk", kind: "skill", text: "TypeScript, SQL", sourceSpan: null, confirmed: true },
+      { id: "f-lang", kind: "skill", text: "Languages: English, Hindi", sourceSpan: null, confirmed: true },
+    );
+    await ctx.addInitScript(() => {
+      sessionStorage.setItem("kairos.onboarding.form.u-other.section", "details");
+      sessionStorage.setItem("kairos.onboarding.form.u-other.contact", JSON.stringify({ value: { name: "Other Person", phone: "555-0199", city: "", country: "" }, dirty: true }));
+    });
+  };
+  const { ctx, page, report, errors, warnings, calls } = await open(browser, VIEWPORTS[tag], seed);
+  const snap = snapper(page, tag);
+  const next = page.getByRole("button", { name: "Continue" });
+  const nextSection = page.getByRole("button", { name: "Next section" });
+  const h2 = (name) => page.getByRole("heading", { level: 2, name, exact: true }).waitFor();
+  const school = (n) => page.getByRole("group", { name: `School ${n}`, exact: true });
+  const posts = () => count(calls, "POST /profile/facts");
+
+  await heading(page, "How do you want to add your resume?");   // another account's open form does not reopen here
+  await option(page, "Fill it in with us").click();
+  await next.click();
+  await heading(page, "Fill in your resume");
+  await h2("Contact");
+  assert.equal(await page.getByLabel("Full name").inputValue(), "New User", "another account's draft is ignored");
+  assert.deepEqual(await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.includes("u-other"))), [], "and dropped from the tab");
+
+  await section(page, "Education");
+  await page.getByText("B.Tech Computer Science, Sample University, 2018 to 2022").waitFor();
+  assert.equal(await page.getByText("MBA, Unconfirmed School").count(), 0, "unconfirmed facts do not refill");
+  await page.getByRole("button", { name: "Add another school" }).click();
+  await school(2).getByLabel("School", { exact: true }).fill("Second School");
+  await school(2).getByLabel("Degree", { exact: true }).fill("MBA");
+  await page.getByRole("button", { name: "Add another school" }).click();
+  await school(3).getByLabel("School", { exact: true }).fill("Third School");
+  await school(3).getByLabel("Degree", { exact: true }).fill("MSc");
+  await noOverflow(page, "refill education");
+  await snap("refill-education");
+  await nextSection.click();
+  await h2("Skills");
+  const idOf = (text) => mock.facts.find((f) => f.text === text)?.id;
+  const second = idOf("MBA, Second School");
+  const third = idOf("MSc, Third School");
+  assert.ok(second && third && second !== third, "each new school is its own fact");
+  assert.equal(posts(), 2, "the refilled school is not posted again");
+
+  await page.getByRole("button", { name: "Remove TypeScript, SQL" }).waitFor();
+  assert.equal(await page.getByRole("button", { name: /^Remove Languages/ }).count(), 0, "the languages fact stays out of Skills");
+  await noOverflow(page, "refill skills");
+  await snap("refill-skills");
+
+  // Remove one entry and edit another: each touches only its own fact.
+  await section(page, "Education");
+  await page.getByRole("button", { name: "Remove School 2" }).click();
+  await school(2).getByLabel("Degree", { exact: true }).fill("MSc Data");   // Third School is School 2 now
+  await nextSection.click();
+  await h2("Skills");
+  assert.equal(count(calls, `DELETE /profile/facts/${second}`), 1, "the removed school deletes its own fact");
+  assert.equal(count(calls, `PATCH /profile/facts/${third}`), 1, "the edited school patches its own fact");
+  assert.equal(count(calls, `PATCH /profile/facts/${second}`), 0, "and never the removed one's");
+  assert.equal(mock.facts.find((f) => f.id === third)?.text, "MSc Data, Third School");
+
+  // A fact the resume cites: the server refuses (409), its message shows, and the entry comes back.
+  const cited = { error: { code: "fact_cited", message: "This fact is cited by your resume or an application, so it cannot be deleted" } };
+  await page.route("**/api/profile/facts/f-edu", (route) =>
+    route.request().method() === "DELETE" ? route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify(cited) }) : route.fallback(),
+  );
+  await section(page, "Education");
+  await page.getByRole("button", { name: "Remove School 1" }).click();
+  assert.equal(await page.getByText("B.Tech Computer Science, Sample University, 2018 to 2022").count(), 0);
+  await nextSection.click();
+  await page.getByRole("alert").filter({ hasText: cited.error.message }).waitFor();
+  await page.getByText("B.Tech Computer Science, Sample University, 2018 to 2022").waitFor();
+  await h2("Education");
+  await noOverflow(page, "refused removal");
+  await nextSection.click();
+  await h2("Skills");
+  assert.equal(count(calls, "DELETE /profile/facts/f-edu"), 1, "a refused removal is not tried again on leaving");
+
+  await section(page, "Languages");
+  await page.getByRole("button", { name: "Remove Hindi" }).waitFor();   // the languages fact refills the chips
+  const lang = page.getByRole("textbox", { name: "Languages you speak" });
+  await lang.fill("Tamil");
+  await lang.press("Enter");
+  await nextSection.click();
+  await h2("Application details");
+  assert.equal(count(calls, "PATCH /profile/facts/f-lang"), 1, "saving languages again patches its fact");
+  assert.equal(mock.facts.find((f) => f.id === "f-lang")?.text, "Languages: English, Hindi, Tamil");
+  assert.equal(posts(), 2, "nothing refilled was posted again");
+
+  // Unsaved changes in another section: Back, the form again, then Continue.
+  await section(page, "Skills");
+  const skill = page.getByRole("textbox", { name: "Add your skills" });
+  await skill.fill("Rust");
+  await skill.press("Enter");
+  await page.getByRole("button", { name: "Back" }).click();
+  await heading(page, "How do you want to add your resume?");
+  await next.click();
+  await heading(page, "Fill in your resume");
+  await h2("Contact");
+  await next.click();
+  await page.getByRole("alert").filter({ hasText: "Your changes in Skills are not saved yet. Check them, then continue." }).waitFor();
+  await h2("Skills");
+  await page.getByRole("button", { name: "Remove Rust" }).waitFor();
+  assert.equal(count(calls, "POST /resumes"), 0, "no base resume while a section is unsaved");
+  await next.click();
+  await heading(page, "Ready");
+  const at = (re) => calls.findLastIndex((c) => re.test(c));
+  assert.ok(mock.facts.some((f) => f.text === "Rust" && f.confirmed), "the unsaved skill is saved");
+  assert.ok(at(/^POST \/profile\/facts$/) < at(/^POST \/resumes$/), "before the base resume");
+  assert.equal(count(calls, "POST /resumes"), 1);
+
+  assert.deepEqual(report.unmocked, [], "every API call is mocked");
+  assert.deepEqual(errors.filter((e) => !e.includes("status of 409")), [], "no console or page errors beyond the refused removal");
+  assert.deepEqual(warnings, [], "no next/image warnings");
+  await ctx.close();
+  console.log(
+    `ok form refill ${tag} ${VIEWPORTS[tag].width}px: other account's drafts dropped; saved facts refill, no re-POST; ` +
+      "remove A + edit B touch only their own ids; cited fact refused with its message and kept; unsaved section saved before the base",
   );
 }
 
@@ -572,6 +707,7 @@ try {
   for (const tag of ["m", "s"]) await earlierFacts(browser, tag, "another");
   await staleImport(browser, "d");
   for (const tag of Object.keys(VIEWPORTS)) await form(browser, tag);
+  for (const tag of Object.keys(VIEWPORTS)) await formRefill(browser, tag);
 } finally {
   await browser.close();
 }
