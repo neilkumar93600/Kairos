@@ -24,6 +24,7 @@ export const ROUTE_DEADLINES: [method: string, path: RegExp, ms: number][] = [
   ["POST", /^\/jobs\/[^/]+\/tailor$/, DEADLINE.ai],
   ["POST", /^\/applications\/[^/]+\/drafts$/, DEADLINE.ai],
   ["GET", /^\/jobs\/[^/]+\/fit$/, DEADLINE.render],
+  ["GET", /^\/resumes\/[^/]+\/export$/, DEADLINE.render],
   ["PATCH", /^\/applications\/[^/]+$/, DEADLINE.edit],
   // Money paths: a 503 while the work goes on invites a retry. Billing makes up to four Stripe calls of 10 s each.
   ["POST", /^\/applications\/approve$/, DEADLINE.render],

@@ -152,9 +152,9 @@ GRANT USAGE ON SEQUENCE llm_calls_id_seq TO kairos_worker;
 -- no DELETE anywhere.
 GRANT SELECT (user_id, plan, status, past_due_since) ON subscriptions TO kairos_applier;
 REVOKE EXECUTE ON FUNCTION applier_job(uuid), claim_cloud_attempt(uuid, int, text), get_applier_payload(uuid, text), mark_browser_launched(uuid, text),
-  mark_attempt_phase(uuid, text), record_attempt_result(uuid, text, text, jsonb) FROM PUBLIC, kairos_api, kairos_worker;
+  mark_attempt_phase(uuid, text), record_attempt_result(uuid, text, text, jsonb), applier_needs_render(uuid, text) FROM PUBLIC, kairos_api, kairos_worker;
 GRANT EXECUTE ON FUNCTION applier_job(uuid), claim_cloud_attempt(uuid, int, text), get_applier_payload(uuid, text), mark_browser_launched(uuid, text),
-  mark_attempt_phase(uuid, text), record_attempt_result(uuid, text, text, jsonb) TO kairos_applier;
+  mark_attempt_phase(uuid, text), record_attempt_result(uuid, text, text, jsonb), applier_needs_render(uuid, text) TO kairos_applier;
 
 -- kairos_readonly (analytics and support, 06 H3): no message bodies, answers, tokens or free text; column lists are
 -- filtered by what exists, so the script runs before and after the columns later migrations add.

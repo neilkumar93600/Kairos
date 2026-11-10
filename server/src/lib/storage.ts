@@ -130,8 +130,8 @@ export function createStorage(config: StorageConfig, makeClient: (endpoint: stri
     },
 
     /**
-     * A GET URL for the cloud applier, which holds no storage token (APPLIER_FORBIDDEN). Rendered PDFs only, at most
-     * 5 minutes: mint it at the last hop before the applier, never for a browser. Signed locally, no request to R2.
+     * A GET URL for the cloud applier, which holds no storage token (APPLIER_FORBIDDEN), and for the extension's filler
+     * (WP-19). Rendered PDFs only, at most 5 minutes: mint it at the last hop, never for the web. Signed locally, no request to R2.
      */
     async presignGet(key: string, expiresInSec = PRESIGN_MAX_SEC): Promise<string> {
       const { client, Bucket, Key, bucket } = locate(key);

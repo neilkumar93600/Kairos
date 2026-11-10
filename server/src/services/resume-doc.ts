@@ -191,10 +191,6 @@ export function headlineViolation(doc: ResumeInput, confirmed: ReadonlyMap<strin
   return claim?.rule ?? null;
 }
 
-/**
- * The plain text layer of what prints: visible sections and entries in order, contact left out. Feeds the deterministic
- * match score and the resume check.
- */
 export interface ProfileContactUpdate {
   phone: string | null;
   city: string | null;
@@ -236,16 +232,49 @@ function toUrl(raw: string): URL | null {
   }
 }
 
-export function renderResumeText(doc: ResumeInput): string {
-  return doc.sections
-    .filter((s) => !s.hidden)
-    .map((s) => {
-      const body = s.entries
-        .filter((e) => !e.hidden)
-        .flatMap((e) => [[e.heading, e.subheading, e.meta].filter(Boolean).join(" | "), ...e.lines.map((l) => `- ${l.text}`)])
-        .filter(Boolean);
-      return body.length ? [s.title, ...body].join("\n") : "";
-    })
-    .filter(Boolean)
-    .join("\n\n");
+/**
+ * What prints, in print order: the one view the template (templates/classic.typ) and resumePlainText both read, so they
+ * cannot disagree about a line. Hidden parts and empty ones are gone. Design never touches content (PRD rule 8).
+ */
+export interface PrintView {
+  name: string;
+  headline: string | null;
+  contact: string;
+  sections: { title: string; entries: { heading: string; lines: string[] }[] }[];
+}
+
+export function printView(doc: ResumeInput): PrintView {
+  const { name, email, phone, location, links } = doc.contact;
+  return {
+    name: name.trim(),
+    headline: doc.headline?.text ?? null,
+    contact: [email, phone, location, ...links].map((c) => c.trim()).filter(Boolean).join(" | "),
+    sections: doc.sections
+      .filter((s) => !s.hidden)
+      .map((s) => ({
+        title: s.title,
+        entries: s.entries
+          .filter((e) => !e.hidden)
+          .map((e) => ({ heading: [e.heading, e.subheading, e.meta].filter(Boolean).join(" | "), lines: e.lines.map((l) => l.text) }))
+          .filter((e) => e.heading || e.lines.length),
+      }))
+      .filter((s) => s.entries.length),
+  };
+}
+
+/** The document as plain text (resume-30): F1's resumeText, the txt export, and the lines the PDF's text layer must hold in order. */
+export function resumePlainText(doc: ResumeInput): string {
+  const v = printView(doc);
+  return [v.name, v.headline, v.contact, ...sectionLines(v)].filter(Boolean).join("\n");
+}
+
+const sectionLines = (v: PrintView) => v.sections.flatMap((s) => [s.title, ...s.entries.flatMap((e) => [e.heading, ...e.lines])]);
+
+/**
+ * What F1 scores (routes/jobs.ts fitFor): the plain text without the name and contact line. A link such as
+ * github.com/x/react-kit is not a skill claim, and the old scoring text left contact out for that reason. The headline counts.
+ */
+export function resumeScoringText(doc: ResumeInput): string {
+  const v = printView(doc);
+  return [v.headline, ...sectionLines(v)].filter(Boolean).join("\n");
 }

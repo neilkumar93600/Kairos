@@ -25,8 +25,8 @@ export const APPLY_LIMITS = {
   perMinute: 240,
   /** ponytail: fixed; reading the 429's Retry-After would fit the ATS better. */
   coolDownMs: 60_000,
-  /** Longer than a run can take (QUEUE_CONFIG cloud-apply lock); a crashed replica's slots free themselves after it. */
-  leaseMs: 5 * 60_000,
+  /** Longer than the worst run (about 305 s with the render wait, jobs/queues.ts); a crashed replica's slots free themselves after it. */
+  leaseMs: 6 * 60_000,
   /** How long a run waits for a busy ATS before it is tried again. */
   busyRetryMs: 15_000,
 };

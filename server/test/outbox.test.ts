@@ -81,8 +81,12 @@ describe("the completed job the sweep reads", () => {
 
   it("every other queue keeps its count and its 24 hours", () => {
     for (const name of Object.keys(QUEUE_CONFIG) as QueueName[]) {
-      if (!(OUTBOX_QUEUES as readonly string[]).includes(name)) expect(completedRetention(name)).toEqual({ age: 24 * 3600, count: 5000 });
+      if (!(OUTBOX_QUEUES as readonly string[]).includes(name) && name !== "render") expect(completedRetention(name)).toEqual({ age: 24 * 3600, count: 5000 });
     }
+  });
+
+  it("a render's result holds a presigned URL: the waiter removes it, and an unread one goes within the minute it lives", () => {
+    expect(completedRetention("render")).toEqual({ age: 60 });
   });
 });
 

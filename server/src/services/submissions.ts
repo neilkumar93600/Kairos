@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getPlan, type PlanId, type SubmitChannel } from "@auto-career/shared";
 import type { Db } from "../db/client";
 import { applications, companies, facts, jobs, profiles, resumes, submissionAttempts, subscriptions, type ApplicationFailureCode, trackerItems } from "../db/schema";
-import { baseEnv, type BaseEnv } from "../lib/env";
+import { baseEnv, env, type BaseEnv } from "../lib/env";
 import { cloudApplyKey, emitOutbox } from "../durable/outbox";
 import { forbidden, HttpError, notFound, paymentRequired } from "../lib/errors";
 import { getFlags } from "../lib/flags";
+import { logger } from "../lib/logger";
+import { PRESIGN_MAX_SEC, storage } from "../lib/storage";
+import { redrive } from "../jobs/queues";
 import { effectivePlan } from "./billing-events";
 import { availableCreditsNow } from "./credits";
 import { recordEvent } from "./events";
@@ -64,6 +67,20 @@ export const FAILURE_MESSAGES: Record<ApplicationFailureCode, string> = {
   render_failed: "We could not prepare your resume file, so nothing was sent and no credit was used. You can resend it.",
 };
 export type FailureCode = ApplicationFailureCode;
+
+/**
+ * Run details that will fail the same way on every cloud resend, because a resend keeps the stored snapshot (arch B.6.4): each
+ * has its own copy, and a cloud resend is refused (409 not_approvable). A transient render failure (the queue, the worker,
+ * R2, the fetch) is not here and stays resendable to the cloud.
+ */
+export const CLOUD_DEAD_ENDS: Readonly<Record<string, string>> = {
+  render_mismatch:
+    "Your resume has characters our PDF fonts cannot print yet (such as Chinese, Japanese, Korean or emoji), so nothing was sent and no credit was used. Send it from the extension and attach your resume on the job page yourself.",
+  render_too_large: "Your resume is too long to turn into a PDF, so nothing was sent and no credit was used. Shorten it and approve again, or send it from the extension.",
+  render_output_too_large: "Your resume is too long to turn into a PDF, so nothing was sent and no credit was used. Shorten it and approve again, or send it from the extension.",
+  render_bad_document: "We could not read the resume saved with this application, so nothing was sent and no credit was used. Send it from the extension and attach your resume on the job page yourself.",
+  resume_missing: "This job board needs a resume file and this application has none, so nothing was sent and no credit was used. Send it from the extension and attach your resume on the job page yourself.",
+};
 
 /** The send may have reached the employer: never resent without the user's acknowledgement, and a later report can settle it forward. */
 export const AMBIGUOUS: ReadonlySet<FailureCode> = new Set(["unconfirmed", "timeout", "no_report"]);
@@ -278,6 +295,15 @@ export async function resendCore(tx: Tx, userId: string, id: string, channel: Su
     throw new HttpError(409, "acknowledgement_required", "Check your email for the employer's confirmation first: this application may already have reached them.", { failureCode: code });
   }
   if (channel === "cloud" && EXTENSION_ONLY_RESEND.has(code)) throw new HttpError(409, "not_approvable", "This one can only be resent from the extension.", { reason: "cloud_unavailable_for_ats" });
+  if (channel === "cloud" && (code === "render_failed" || code === "applier_error")) {
+    const [last] = await tx
+      .select({ detail: sql<string | null>`${submissionAttempts.evidence}->>'detail'` })
+      .from(submissionAttempts)
+      .where(and(eq(submissionAttempts.applicationId, id), eq(submissionAttempts.channel, "cloud")))
+      .orderBy(desc(submissionAttempts.attemptNo))
+      .limit(1);
+    if (last?.detail && last.detail in CLOUD_DEAD_ENDS) throw new HttpError(409, "not_approvable", CLOUD_DEAD_ENDS[last.detail]!, { reason: last.detail });
+  }
   const [open] = await tx.select({ id: submissionAttempts.id }).from(submissionAttempts).where(and(eq(submissionAttempts.applicationId, id), eq(submissionAttempts.state, "open")));
   if (open) throw new HttpError(409, "conflict", "A send of this application is still open. Try again in a few minutes.", { status: app.status });
   // A report says the employer already has it (a submitted report answered 409 keeps its evidence here): an operator decides, not a resend.
@@ -399,11 +425,28 @@ export async function releaseForExtension(db: Db, userId: string, sessionId: str
  * viewing the queue cannot strand an application.
  */
 export async function leaseExtensionQueue(db: Db, userId: string, sessionId: string) {
-  const { rows } = await db.execute<{ application_id: string; apply_url: string; title: string; answers: unknown; resume_lines: unknown; cover_letter: string | null; approved_at: string }>(sql`
+  // With the snapshot PDF on (WP-19): an item with a document waits for its file (arch B.5, 02-database 7.3.1), and this poll
+  // asks for it. BullMQ drops a repeat of the id. A legacy row has no document and goes as it did.
+  const withPdf = env().EXTENSION_RESUME_PDF;
+  const hasDocument = sql`jsonb_typeof(resume_snapshot->'document') = 'object'`;
+  if (withPdf) {
+    const { rows: waiting } = await db.execute<{ id: string; attempt_no: number }>(sql`
+      SELECT id, attempt_no FROM applications
+       WHERE user_id = ${userId} AND status = 'approved' AND channel = 'extension' AND resume_file_key IS NULL AND ${hasDocument} LIMIT 20`);
+    // redrive replaces a finished job of the same id: a failed one whose failExtensionRender threw would otherwise make every
+    // poll a no-op for the 7 days BullMQ keeps it.
+    await Promise.all(
+      waiting.map((a) =>
+        redrive("render", { kind: "snapshot", applicationId: a.id, attemptNo: a.attempt_no }, `render-${a.id}-${a.attempt_no}`, true).catch((err: unknown) => logger.warn({ err, applicationId: a.id }, "snapshot render not queued; the next poll asks again")),
+      ),
+    );
+  }
+  const { rows } = await db.execute<{ application_id: string; apply_url: string; title: string; answers: unknown; resume_lines: unknown; cover_letter: string | null; approved_at: string; resume_file_key: string | null }>(sql`
     WITH picked AS (
       SELECT id FROM applications
        WHERE user_id = ${userId} AND status = 'approved' AND channel = 'extension'
          AND (lease_session_id IS NULL OR lease_expires_at < now() OR lease_session_id = ${sessionId})
+         AND (${!withPdf} OR resume_file_key IS NOT NULL OR NOT coalesce(${hasDocument}, false))
        ORDER BY approved_at, id
        LIMIT 20
        FOR UPDATE SKIP LOCKED)
@@ -411,8 +454,20 @@ export async function leaseExtensionQueue(db: Db, userId: string, sessionId: str
        SET lease_session_id = ${sessionId}, lease_expires_at = now() + interval '10 minutes'
       FROM picked, jobs j
      WHERE a.id = picked.id AND j.id = a.job_id
-    RETURNING a.id AS application_id, j.apply_url, j.title, a.answers, a.resume_lines, a.cover_letter, a.approved_at::text AS approved_at`);
-  return rows
-    .sort((x, y) => x.approved_at.localeCompare(y.approved_at) || x.application_id.localeCompare(y.application_id))
-    .map((r) => ({ applicationId: r.application_id, applyUrl: r.apply_url, title: r.title, answers: r.answers, resumeLines: r.resume_lines, coverLetter: r.cover_letter }));
+    RETURNING a.id AS application_id, j.apply_url, j.title, a.answers, a.resume_lines, a.cover_letter, a.approved_at::text AS approved_at, a.resume_file_key`);
+  rows.sort((x, y) => x.approved_at.localeCompare(y.approved_at) || x.application_id.localeCompare(y.application_id));
+  return Promise.all(
+    rows.map(async (r) => ({
+      applicationId: r.application_id,
+      applyUrl: r.apply_url,
+      title: r.title,
+      answers: r.answers,
+      resumeLines: r.resume_lines,
+      coverLetter: r.cover_letter,
+      // Present only with a rendered file (05-api 13.4). Signed locally, so this adds no request. ponytail: 5 minutes, and the frozen
+      // panel keeps its queue in memory: a send from a panel opened longer ago than that goes without the file. The 24-hour
+      // API-origin link of 05-api 13.5 is the fix once a client is seen doing this.
+      ...(withPdf && r.resume_file_key ? { resumePdfUrl: await storage().presignGet(r.resume_file_key, PRESIGN_MAX_SEC) } : {}),
+    })),
+  );
 }

@@ -308,6 +308,11 @@ const envSchema = z.object({
   // opens one bucket. A bucket is on when its name and both key halves are set; lib/storage.ts refuses the others.
   /** https://<account id>.r2.cloudflarestorage.com */
   R2_ENDPOINT: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  /**
+   * Gives the extension's queue items a presigned link to the snapshot PDF (WP-19). Off until the snapshots bucket has its
+   * CORS rule (owner-actions/WP-19.md): the frozen filler fetches the link from the employer's page, and a refused fetch throws there.
+   */
+  EXTENSION_RESUME_PDF: flag("0"),
   R2_BUCKET_UPLOADS: z.preprocess(emptyToUndefined, z.string().optional()),
   R2_UPLOADS_ACCESS_KEY_ID: z.preprocess(emptyToUndefined, z.string().optional()),
   R2_UPLOADS_SECRET_ACCESS_KEY: z.preprocess(emptyToUndefined, z.string().optional()),

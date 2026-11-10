@@ -14,6 +14,7 @@ import { processClassifyEmail } from "./jobs/classify-email";
 import { processCostRollup } from "./jobs/cost-rollup";
 import { processLedgerWatch } from "./jobs/ledger-watch";
 import { processNotify } from "./jobs/notify";
+import { processRender } from "./jobs/render";
 import { processParseResume } from "./jobs/parse-resume";
 import { processPollBoards } from "./jobs/poll-boards";
 import { closeQueues, queue, QUEUES, workerConcurrency, workerOptions, type QueueName } from "./jobs/queues";
@@ -38,6 +39,7 @@ const handlers: Partial<Record<QueueName, (job: Job) => Promise<unknown>>> = {
   [QUEUES.ledgerWatch]: processLedgerWatch,
   [QUEUES.maintenance]: processMaintenance,
   [QUEUES.notify]: processNotify,
+  [QUEUES.render]: processRender,
 };
 
 // A Redis that evicts loses jobs silently: refuse to start (platform-68). 10 s, so a Redis that is down fails the boot too.

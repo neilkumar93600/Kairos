@@ -834,6 +834,8 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `tracker.*` | `GET/POST /api/tracker`, `GET/PATCH /api/tracker/:id`, `GET /api/tracker/:id/events`, `GET /api/tracker/insights` | 409 `stage_owned_by_pipeline`; insights 403 `forbidden` below Pro (D10) | WP-21 |
 | `contacts.*`, `interviews.*` | `GET/POST/PATCH/DELETE /api/contacts[/:id]`, `GET /api/interviews`, `POST/PATCH/DELETE /api/tracker/:id/interviews[/:iid]`, `GET /api/tracker/:id/interviews/:iid.ics` | `.ics` is `text/calendar` | WP-21 |
 
+*[Amended 2026-11-06, WP-19]* `resumes.export` as built: pdf and txt. Every render runs on the worker (CISO mustFix 8), so the api enqueues on the `render` queue and waits up to 25 s; a file already in `renders/{userId}/{hash}.pdf` is served without a job. Any failure, including `format=docx` until WP-39, is 503 `service_unavailable` with `Retry-After: 5`, `details.reason` `render_failed` or `format_unavailable`; a text-layer mismatch is also this 503, not a 500, so the web can still print. 20 a minute per user (bucket `resume_export`). `Content-Disposition` is `attachment` with an ASCII-only `{Name} - {role} - Resume.ext`. A cloud resend of a send that failed for a reason that would repeat (`render_mismatch`, `render_too_large`, `render_output_too_large`, `render_bad_document`, `resume_missing`) answers 409 `not_approvable` with that `reason`.
+
 ### 9.3 Better Auth routes
 
 Mounted from `toNodeHandler(auth.handler)` under `/api/auth/*`; not in the registry, but the contract suite covers each path the clients call (paths [verify S-B1] against 1.7.10). Their error format is Better Auth's (section 4.6).
@@ -1606,7 +1608,7 @@ The 409 message keeps the skeleton's wording, "Application is {status}, not appr
 | Body | `application/pdf` streamed from R2 by key inside the handler. `Content-Disposition: inline; filename="resume.pdf"`, `Cache-Control: private, no-store`, `Content-Length` set, `X-Content-Type-Options: nosniff`. |
 | CORS | `Access-Control-Allow-Origin: <Origin>` only when `Origin` is in `EXTENSION_PDF_ORIGINS` (default: `https://job-boards.greenhouse.io`, `https://boards.greenhouse.io`, `https://jobs.lever.co`, `https://jobs.ashbyhq.com`), plus `Vary: Origin`, `Cross-Origin-Resource-Policy: cross-origin`. No `Access-Control-Allow-Credentials`. Any other origin gets the PDF without CORS headers (a browser then blocks it), so the URL is useless on a page that should not have it. |
 | Log hygiene | The query string `t` is redacted from every log line (section 19.2). |
-| The cloud applier | Never uses this route; it reads the PDF from R2 with its own scoped token [arch B.4.1] and attaches it with `setInputFiles`. |
+| The cloud applier | Never uses this route. *[Amended 2026-11-10, WP-19]* It holds no storage token: the worker renders at claim time and hands the holder of the attempt a 60-second presigned GET through the render job's result (read once, then removed from Redis); the applier fetches it from Node, https only, and attaches it with `setInputFiles` before the `filling` mark. |
 
 ### 13.6 Compatibility rules for this channel
 
@@ -2130,6 +2132,7 @@ Validated by one zod schema at boot (`server/src/lib/env.ts`, kept); an invalid 
 | `USER_HASH_KEY` | string min 32, Prod | HMAC key of `userHash()` (`03-agent-runtime.md` section 10.3), reused for the user and address hashes in logs and traces |
 | `CLIENT_MIN_VERSIONS` | JSON, `{}` | Minimum `X-Kairos-Client` versions (17.4) |
 | `RENDER_CONCURRENCY` | int, 2 | Typst renders at once per replica (11.1) |
+| `EXTENSION_RESUME_PDF` | flag, off | *[WP-19]* Queue items carry `resumePdfUrl`, a 5-minute presigned GET of the snapshot PDF (replaces the token route of 13.5 for now). On only after the snapshots bucket has its CORS rule (`owner-actions/WP-19.md`). |
 | `LARGE_BODY_PERMITS` | int, 1 | Concurrent request bodies above 5 MB per replica (2.4) |
 | `ANTHROPIC_KEY_INTERACTIVE`, `ANTHROPIC_ADMIN_KEY` | strings | The api holds only the interactive key (B.4.1); the admin key only if the reconciliation lives here (`03-agent-runtime.md`) |
 | `REDIS_URL` | url, optional | Exists only until phase P7 removes Redis and BullMQ; `/health` reports `redis` only while it is set |

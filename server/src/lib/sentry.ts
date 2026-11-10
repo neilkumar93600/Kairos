@@ -166,6 +166,8 @@ const SIGNALS = {
   erasure_rows_remain: 1,
   /** R2 prefixes of no live user, deleted by the orphan-upload reconciler (WP-25). */
   orphan_uploads: 1,
+  /** A-WS-6: a rendered PDF's text layer lost a line, so no file left (WP-19). A template or font bug. */
+  render_text_mismatch: 1,
 } as const;
 export type Signal = keyof typeof SIGNALS;
 
