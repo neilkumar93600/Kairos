@@ -22,13 +22,16 @@ const VIEWPORTS = { d: { width: 1440, height: 900 }, m: { width: 390, height: 84
 // The dev server's indicator sits bottom-left over the phone footer's Back button; it never ships.
 const hideDevIndicator = (page) => page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
 
-/** `setup(data)` may change the fixtures before the first request. `calls` logs every API request as "METHOD /path". */
+/**
+ * `setup(data, ctx)` may change the fixtures (or the context) before the first request. `calls` logs every API request
+ * as "METHOD /path", including those a later page.route answers itself.
+ */
 async function open(browser, viewport, setup = () => {}) {
   const ctx = await browser.newContext({ viewport });
   await ctx.addCookies([{ name: "better-auth.session_token", value: "mock", url: base }]);
   const page = await ctx.newPage();
   const data = fixtures("empty");
-  setup(data);
+  await setup(data, ctx);
   const report = { unmocked: [] };
   const errors = [];
   const warnings = [];   // next/image only: it warns when `fill` has no positioned parent
@@ -39,11 +42,13 @@ async function open(browser, viewport, setup = () => {}) {
     if (m.type() === "warning" && m.text().includes("Image with src")) warnings.push(m.text().slice(0, 240));
   });
   page.on("pageerror", (x) => errors.push(String(x.message).slice(0, 240)));
+  page.on("request", (req) => {
+    const p = new URL(req.url()).pathname;
+    if (p.startsWith("/api/")) calls.push(`${req.method()} ${p.replace(/^\/api/, "")}`);
+  });
   await page.route("**/api/**", (route) => {
     const req = route.request();
-    const p = new URL(req.url()).pathname;
-    calls.push(`${req.method()} ${p.replace(/^\/api/, "")}`);
-    if (req.method() === "PUT" && p === "/api/profile/onboarding") puts.push(req.postDataJSON());
+    if (req.method() === "PUT" && new URL(req.url()).pathname === "/api/profile/onboarding") puts.push(req.postDataJSON());
     return handleApi(route, data, report);
   });
   await page.goto(`${base}/onboarding`, { waitUntil: "networkidle", timeout: 120_000 });
@@ -167,7 +172,13 @@ async function uploadErrors(browser, tag) {
   await page.locator('input[type="file"]').setInputFiles(pdf("scan-resume.pdf"));
   await page.getByRole("alert").filter({ hasText: "This PDF is a scanned image. Paste the text instead." }).waitFor();
   await noOverflow(page, "upload error");
-  await snapper(page, tag)("upload-error");
+  // The way out is fully on screen, above the sticky footer, without the user scrolling.
+  await page.waitForFunction(() => {
+    const link = document.querySelector(".ob-note .ob-link")?.getBoundingClientRect();
+    const foot = document.querySelector(".ob-foot")?.getBoundingClientRect();
+    return !!link && !!foot && link.top >= 0 && link.bottom <= foot.top;
+  }, null, { timeout: 3_000 });
+  await snapper(page, tag)("upload-error", false);
   await page.getByRole("button", { name: "Paste the text instead" }).click();
 
   await heading(page, "Paste your resume");
@@ -189,6 +200,68 @@ async function uploadErrors(browser, tag) {
   assert.deepEqual(warnings, [], "no next/image warnings");
   await ctx.close();
   console.log(`ok upload errors ${tag} ${VIEWPORTS[tag].width}px: 5 MB refused before upload; scan message + paste link; paste imports JSON text`);
+}
+
+/**
+ * Spec 7: a user at confirm-facts in a new tab (no stored import) gets the fact check, not an empty drop zone. Continue
+ * builds the base from the facts; a failed /default is retried without a second POST /resumes.
+ */
+async function earlierFacts(browser, tag) {
+  const seed = (data) => {
+    for (const o of [data.me, data.profile]) o.onboardingStep = "confirm-facts";
+    data.facts.push(
+      { id: "f-e1", kind: "role", text: "Data Analyst at Sample Analytics Co, 2018 to 2020", sourceSpan: "Data Analyst at Sample Analytics Co, 2018 to 2020", confirmed: false },
+      { id: "f-e2", kind: "skill", text: "SQL, Python, dbt", sourceSpan: "SQL, Python, dbt", confirmed: false },
+    );
+  };
+  const { ctx, page, report, errors, warnings, calls } = await open(browser, VIEWPORTS[tag], seed);
+  const next = page.getByRole("button", { name: "Continue" });
+  await heading(page, "Upload your resume");
+  await page.getByText("Kairos read your resume earlier. Check its facts below.").waitFor();
+  await page.getByRole("button", { name: /^Confirm all 2/ }).waitFor();
+  await page.getByRole("button", { name: "Upload a different file" }).waitFor();
+  assert.equal(await next.isDisabled(), false, "Continue is ready on the earlier facts");
+  await noOverflow(page, "earlier facts");
+  await snapper(page, tag)("earlier", false);
+
+  const refusal = { error: { code: "internal", message: "Could not make it your default resume. Try again." } };
+  await page.route("**/api/resumes/*/default", (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify(refusal) }), { times: 1 });
+  const created = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/api/resumes"));
+  await next.click();
+  const body = (await created).postDataJSON();
+  assert.equal(body.name, "Main resume");
+  assert.equal(body.importId, undefined, "built from the facts, with no import");
+  await page.getByRole("alert").filter({ hasText: refusal.error.message }).waitFor();
+  await next.click();
+  await heading(page, "Your rules");
+  assert.equal(count(calls, "POST /resumes"), 1, "a retry after a failed /default makes no second base resume");
+  assert.equal(calls.filter((c) => /^POST \/resumes\/[^/]+\/default$/.test(c)).length, 2, "the retry repeats only /default");
+  assert.equal(await page.evaluate(() => sessionStorage.getItem("kairos.onboarding.resumeId")), null, "the half-made id is cleared");
+
+  assert.deepEqual(report.unmocked, [], "every API call is mocked");
+  assert.deepEqual(errors.filter((e) => !e.includes("status of 500")), [], "no console or page errors beyond the refused /default");
+  assert.deepEqual(warnings, [], "no next/image warnings");
+  await ctx.close();
+  console.log(`ok earlier facts ${tag} ${VIEWPORTS[tag].width}px: confirm-facts reopens the fact check; failed /default retried with 1 POST /resumes`);
+}
+
+/** A stored id the server no longer knows (404): polling stops, the id is forgotten, the drop zone comes back. */
+async function staleImport(browser, tag) {
+  const seed = async (data, ctx) => {
+    for (const o of [data.me, data.profile]) Object.assign(o, { goals: ["find"], targetRoles: ["Frontend Developer"], onboardingStep: "resume" });
+    await ctx.addInitScript((k) => sessionStorage.setItem(k, "imp-gone"), IMPORT_KEY);
+  };
+  const { ctx, page, report, errors, calls } = await open(browser, VIEWPORTS[tag], seed);
+  await heading(page, "Upload your resume");
+  await page.getByRole("alert").filter({ hasText: "Kairos could not find that upload. Choose the file again or paste the text." }).waitFor();
+  await page.getByRole("button", { name: /^Drop your file here/ }).waitFor();
+  assert.equal(await stored(page), null, "the stale id is forgotten");
+  await page.waitForTimeout(3_500);   // two poll intervals
+  assert.equal(count(calls, "GET /profile/imports/imp-gone"), 1, "polling stops on a 404");
+  assert.deepEqual(report.unmocked, [], "every API call is mocked");
+  assert.deepEqual(errors.filter((e) => !e.includes("status of 404")), [], "no console or page errors beyond the 404");
+  await ctx.close();
+  console.log(`ok stale import ${tag} ${VIEWPORTS[tag].width}px: 404 stops polling, clears the id, shows the drop zone`);
 }
 
 /** A user with a confirmed fact can reuse what they added: straight to the rules, no base resume made here. */
@@ -300,6 +373,8 @@ try {
   for (const tag of Object.keys(VIEWPORTS)) await upload(browser, tag);
   await uploadErrors(browser, "m");
   await existing(browser, "d");
+  for (const tag of ["m", "d"]) await earlierFacts(browser, tag);
+  await staleImport(browser, "d");
 } finally {
   await browser.close();
 }

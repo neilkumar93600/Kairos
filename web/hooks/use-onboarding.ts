@@ -3,7 +3,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ApplicationDetails, EmploymentInput, ImportDetail, OnboardingUpdate } from "@auto-career/shared";
 import { useApiQuery } from "@/lib/use-api-query";
-import { api, patch, post, put } from "@/lib/api";
+import { api, ApiError, patch, post, put } from "@/lib/api";
 
 export interface Employment {
   id: string;
@@ -51,23 +51,45 @@ export function useOnboarding() {
       },
       onSuccess: refresh(),
     }),
+    /**
+     * POST /resumes, then makes it the default. `onCreated` hears the new id before the second call, and passing it
+     * back as `resumeId` skips the POST, so a retry after a failed /default repeats only /default.
+     */
     createBase: useMutation({
-      mutationFn: async ({ name, targetRoles, importId }: { name: string; targetRoles: string[]; importId?: string }) => {
-        const { resume } = await post<{ resume: { id: string } }>("/resumes", { from: "facts", name, targetRoles, importId });
-        await post(`/resumes/${resume.id}/default`);
-        return { id: resume.id };
+      mutationFn: async ({
+        resumeId,
+        onCreated,
+        ...input
+      }: {
+        name: string;
+        targetRoles: string[];
+        importId?: string;
+        resumeId?: string;
+        onCreated?: (id: string) => void;
+      }) => {
+        let id = resumeId;
+        if (!id) {
+          id = (await post<{ resume: { id: string } }>("/resumes", { from: "facts", ...input })).resume.id;
+          onCreated?.(id);
+        }
+        await post(`/resumes/${id}/default`);
+        return { id };
       },
       onSuccess: refresh(),
     }),
   };
 }
 
-/** pollImport: reads an import every 1.5 s until it is parsed or failed. */
+/** pollImport: reads an import every 1.5 s until it is parsed or failed, or the server no longer knows it (404). */
 export function usePollImport(importId: string | null) {
   return useApiQuery({
     queryKey: ["import", importId],
     queryFn: () => api<ImportState>(`/profile/imports/${importId}`),
     enabled: !!importId,
-    refetchInterval: (q) => (q.state.data && (q.state.data.parseStatus === "parsed" || q.state.data.parseStatus === "failed") ? false : 1500),
+    refetchInterval: (q) => {
+      const status = q.state.data?.parseStatus;
+      const gone = q.state.error instanceof ApiError && q.state.error.status === 404;
+      return status === "parsed" || status === "failed" || gone ? false : 1500;
+    },
   });
 }

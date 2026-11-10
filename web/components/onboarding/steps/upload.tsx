@@ -1,66 +1,82 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { UploadSimple, WarningCircle } from "@phosphor-icons/react";
 import { FactList } from "@/components/dashboard/profile/fact-list";
+import { useMe } from "@/hooks/use-me";
 import { useOnboarding, usePollImport } from "@/hooks/use-onboarding";
+import { useFacts } from "@/hooks/use-profile";
 import { ApiError } from "@/lib/api";
 import { nextAction } from "@/lib/onboarding/flow";
 import { phaseLabel } from "@/lib/onboarding/upload-phase";
 import { cn } from "@/lib/utils";
 import { useWizard, type StepProps } from "../wizard";
 
-const KEY = "kairos.onboarding.importId";
 const MAX_BYTES = 5 * 1024 * 1024; // the server's IMPORT_MAX_BYTES
 const TYPES = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
 const ACCEPT = [".pdf", ".docx", ...TYPES].join(",");
 
-/** The import being read sits in sessionStorage so a reload resumes it. Storage can throw (blocked, private mode); then a reload starts over. */
-export function storedImport(): string | null {
+// sessionStorage, so a reload or a retry picks up where it was. Storage can throw (blocked, private mode); then it starts over.
+const IMPORT = "kairos.onboarding.importId"; // the import being read
+const MADE = "kairos.onboarding.resumeId"; // a base resume made whose /default call failed: the retry only repeats /default
+function read(key: string): string | null {
   try {
-    return sessionStorage.getItem(KEY);
+    return sessionStorage.getItem(key);
   } catch {
     return null;
   }
 }
-
-export function storeImport(id: string | null) {
+function write(key: string, value: string | null) {
   try {
-    if (id) sessionStorage.setItem(KEY, id);
-    else sessionStorage.removeItem(KEY);
+    if (value) sessionStorage.setItem(key, value);
+    else sessionStorage.removeItem(key);
   } catch {
-    // no storage: nothing to resume after a reload
+    // no storage: nothing to pick up after a reload
   }
 }
+export const storedImport = () => read(IMPORT);
+export const storeImport = (id: string | null) => write(IMPORT, id);
 
 export const failureOf = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
 /**
  * Shared by upload and paste. Polls the import, puts its progress in words, and once it is parsed reports ready and
  * makes Continue build the base resume from it. A base made earlier in this run is reused (Back, then Continue again).
+ * `earlier`: facts from a parse that finished before this visit (spec 7, `confirm-facts` in a new tab), checked here
+ * with no import to poll; Continue then builds the base from the confirmed facts.
  */
-export function useImportCheck(importId: string | null, onReady: StepProps["onReady"]) {
+export function useImportCheck(importId: string | null, onReady: StepProps["onReady"], earlier = false) {
   const { state, setBaseResumeId, onNext } = useWizard();
   const { createBase } = useOnboarding();
   const qc = useQueryClient();
   const poll = usePollImport(importId);
-  const data = importId ? poll.data : undefined;
+  // A stale or foreign id: polling stops (usePollImport), the id is forgotten and the drop zone comes back.
+  const gone = !!importId && poll.error instanceof ApiError && poll.error.status === 404;
+  const live = gone ? null : importId;
+  const data = live ? poll.data : undefined;
   const parsed = data?.parseStatus === "parsed";
   // Back from a later step: the stored import was cleared when the base resume was made.
-  const saved = !importId && state.baseResumeId !== null;
+  const saved = !live && state.baseResumeId !== null;
+  const old = !live && !saved && earlier;
   const failed =
     data?.parseStatus === "failed"
       ? data.failureCode === "no_text_layer"
         ? "This PDF is a scanned image. Paste the text instead."
         : "Kairos could not read this resume. Try another file or paste the text."
-      : importId && poll.error
+      : live && poll.error
         ? "Kairos could not check on this resume. Try again or paste the text."
-        : null;
+        : gone && !saved && !old
+          ? "Kairos could not find that upload. Choose the file again or paste the text."
+          : null;
 
   useEffect(() => {
-    onReady(parsed || saved);
-  }, [parsed, saved, onReady]);
+    if (gone) storeImport(null);
+  }, [gone]);
+
+  useEffect(() => {
+    onReady(parsed || saved || old);
+  }, [parsed, saved, old, onReady]);
 
   // The fact list reads /profile/facts, which holds the new facts only once the parse is done.
   useEffect(() => {
@@ -69,14 +85,17 @@ export function useImportCheck(importId: string | null, onReady: StepProps["onRe
 
   // Re-registered every render so Continue always sees the current targets and base resume.
   useEffect(() => {
-    if (!parsed || !importId) return;
+    if (!(parsed && live) && !old) return;
     onNext(async () => {
       if (nextAction(state) === "create") {
-        const name = data?.fileName?.replace(/\.[^.]+$/, "").trim().slice(0, 80) || "Main resume";
-        const { id } = await createBase.mutateAsync({ name, targetRoles: state.targetRoles, importId });
+        const name = (old ? null : data?.fileName?.replace(/\.[^.]+$/, "").trim().slice(0, 80)) || "Main resume";
+        const made = read(MADE) ?? undefined;
+        const { id } = await createBase.mutateAsync({ name, targetRoles: state.targetRoles, importId: live ?? undefined, resumeId: made, onCreated: (x) => write(MADE, x) });
         setBaseResumeId(id);
       }
-      storeImport(null); // a base resume exists now, so a later visit must not reopen this import
+      // A base resume exists now, so a later visit must not reopen this import or reuse that id.
+      write(MADE, null);
+      storeImport(null);
     });
     return () => onNext(null);
   });
@@ -86,16 +105,18 @@ export function useImportCheck(importId: string | null, onReady: StepProps["onRe
   const polls = poll.dataUpdatedAt ? (qc.getQueryState(["import", importId])?.dataUpdateCount ?? 0) : 0;
   const phase = saved
     ? "Your resume is saved. Check its facts below."
-    : parsed
-      ? n
-        ? `${n} ${n === 1 ? "fact" : "facts"} found. Check each one.`
-        : "No facts found. Add them below or paste the text instead."
-      : phaseLabel(data?.progressText ?? null, polls);
-  return { showing: saved || (!!importId && !failed), done: parsed || saved, failed, phase, fileName: data?.fileName ?? null };
+    : old
+      ? "Kairos read your resume earlier. Check its facts below."
+      : parsed
+        ? n
+          ? `${n} ${n === 1 ? "fact" : "facts"} found. Check each one.`
+          : "No facts found. Add them below or paste the text instead."
+        : phaseLabel(data?.progressText ?? null, polls);
+  return { showing: saved || old || (!!live && !failed), done: parsed || saved || old, old, failed, phase, fileName: data?.fileName ?? null };
 }
 
 /** Progress in words, then the found facts with Confirm, Edit and Remove. */
-export function Reading({ phase, done, line }: { phase: string; done: boolean; line?: string | null }) {
+export function Reading({ phase, done, line, action }: { phase: string; done: boolean; line?: string | null; action?: ReactNode }) {
   return (
     <>
       <div className="ob-reading">
@@ -104,6 +125,7 @@ export function Reading({ phase, done, line }: { phase: string; done: boolean; l
           {phase}
         </p>
         {line ? <p className="ob-reading__line">{line}</p> : null}
+        {action}
       </div>
       {done ? (
         <div className="ob-facts">
@@ -120,12 +142,23 @@ const kb = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024))} KB`;
 export function UploadStep({ onReady }: StepProps) {
   const { switchTo } = useWizard();
   const { startImport } = useOnboarding();
+  const me = useMe();
+  const facts = useFacts();
   const [importId, setImportId] = useState(storedImport);
   const [file, setFile] = useState<{ name: string; size: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [over, setOver] = useState(false);
+  const [another, setAnother] = useState(false); // "Upload a different file" over facts read earlier
   const input = useRef<HTMLInputElement>(null);
-  const check = useImportCheck(importId, onReady);
+  const note = useRef<HTMLDivElement>(null);
+  const earlier = !another && me.data?.onboardingStep === "confirm-facts" && !!facts.data?.length;
+  const check = useImportCheck(importId, onReady, earlier);
+  const message = error ?? check.failed;
+
+  // The way out of an error must not sit under the sticky footer on a phone (.ob-note keeps a scroll margin for it).
+  useEffect(() => {
+    if (message) note.current?.scrollIntoView({ block: "nearest" });
+  }, [message]);
 
   const send = (f: File | undefined) => {
     if (!f) return;
@@ -145,7 +178,6 @@ export function UploadStep({ onReady }: StepProps) {
     );
   };
 
-  const message = error ?? check.failed;
   return (
     <>
       <h1 tabIndex={-1} className="ob-h1">
@@ -153,7 +185,18 @@ export function UploadStep({ onReady }: StepProps) {
       </h1>
       <p className="ob-sub">A LinkedIn “Save to PDF” works too. Scanned images do not; paste the text for those.</p>
       {startImport.isPending || check.showing ? (
-        <Reading phase={startImport.isPending ? "Uploading your file" : check.phase} done={check.done} line={file ? `${file.name}, ${kb(file.size)}` : check.fileName} />
+        <Reading
+          phase={startImport.isPending ? "Uploading your file" : check.phase}
+          done={check.done}
+          line={file ? `${file.name}, ${kb(file.size)}` : check.fileName}
+          action={
+            check.old ? (
+              <button type="button" className="ob-link" onClick={() => setAnother(true)}>
+                Upload a different file
+              </button>
+            ) : null
+          }
+        />
       ) : (
         <>
           <input
@@ -189,7 +232,7 @@ export function UploadStep({ onReady }: StepProps) {
             <span className="ob-drop__line">PDF or DOCX, up to 5 MB</span>
           </button>
           {message ? (
-            <div className="ob-note">
+            <div ref={note} className="ob-note">
               <p id="ob-drop-error" role="alert" className="ob-note__text">
                 <WarningCircle size={18} aria-hidden />
                 {message}
