@@ -76,7 +76,7 @@ export async function processParseResume(job: Job<JobData["parse-resume"]>) {
       await tx
         .update(profiles)
         .set({ onboardingStep: "confirm-facts", updatedAt: new Date() })
-        .where(and(eq(profiles.userId, claimed.userId), eq(profiles.onboardingStep, "resume")));
+        .where(and(eq(profiles.userId, claimed.userId), inArray(profiles.onboardingStep, ["goals", "target", "resume"])));
       return { facts: fresh.length, duplicates: duplicates.size };
     });
     // Parse metrics (resume-68): counts only, never text.

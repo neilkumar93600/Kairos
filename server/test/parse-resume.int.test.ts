@@ -122,6 +122,17 @@ describe.skipIf(!hasTestDb)("processParseResume", () => {
     expect(await step()).toBe("done");
   });
 
+  it("moves goals, target and resume to confirm-facts but leaves later steps alone", async () => {
+    chatJson.mockResolvedValue({ facts: [{ kind: "skill", text: "TypeScript", sourceSpan: "TypeScript" }] });
+    const step = async () => (await tdb.select().from(schema.profiles).where(eq(schema.profiles.userId, userId)))[0]!.onboardingStep;
+    for (const [from, to] of [["target", "confirm-facts"], ["rules", "rules"]] as const) {
+      await tdb.update(schema.profiles).set({ onboardingStep: from }).where(eq(schema.profiles.userId, userId));
+      await tdb.update(schema.resumeImports).set({ parseStatus: "pending" }).where(eq(schema.resumeImports.id, importId));
+      await run();
+      expect(await step()).toBe(to);
+    }
+  });
+
   it("fails the import after its third attempt and skips a legacy job", async () => {
     chatJson.mockRejectedValue(new Error("model down"));
     for (let i = 0; i < 3; i++) await expect(run()).rejects.toThrow("model down");
