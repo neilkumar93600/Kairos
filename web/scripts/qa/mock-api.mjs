@@ -297,7 +297,8 @@ const NOT_FOUND = { error: { code: "not_found", message: "mock" } };
 
 /**
  * Playwright handler for page.route("**\/api/**", ...). `data` is fixtures(); `report.unmocked` collects misses.
- * Mutations echo plausible results; they do not change `data`, except the onboarding routes and the fact writes.
+ * Mutations echo plausible results; they do not change `data`, except the onboarding routes, the fact writes and PUT
+ * /profile/preferences.
  */
 export function handleApi(route, data, report) {
   const req = route.request();
@@ -373,7 +374,11 @@ export function handleApi(route, data, report) {
 
   if (method === "PUT") {
     if (p === "/resume") return json({ resume: { ...body, id: data.resume.id, updatedAt: new Date().toISOString() } });
-    if (p === "/profile/preferences") return json({ ok: true });
+    // Kept, as the server does: the onboarding Done screen reads whether rules exist.
+    if (p === "/profile/preferences") {
+      data.profile.preferences = body;
+      return json({ preferences: body });
+    }
   }
 
   if (method === "PATCH") {

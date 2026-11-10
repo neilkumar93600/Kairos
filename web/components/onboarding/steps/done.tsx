@@ -6,12 +6,16 @@ import { ArrowRight, WarningCircle } from "@phosphor-icons/react";
 import type { Goal } from "@auto-career/shared";
 import { ButtonLink } from "@/components/shared/button";
 import { useOnboarding } from "@/hooks/use-onboarding";
+import { useProfile } from "@/hooks/use-profile";
 import { endFor } from "@/lib/onboarding/flow";
 import { useWizard } from "../wizard";
 import { failureOf } from "./upload";
 
-const GO = { "/resume": "Open the resume builder", "/matches": "Go to matches", "/dashboard": "Go to Overview" } as const;
+const GO = { "/resume": "Open the resume builder", "/matches": "Go to matches", "/dashboard": "Go to Overview", "/preferences": "Set your rules" } as const;
 const WHERE: Record<Exclude<Goal, "look">, keyof typeof GO> = { build: "/resume", find: "/matches", interview: "/dashboard" };
+// Copy states only what happened or what the app already says elsewhere (the Settings panels, app/(dashboard)/settings/page.tsx).
+const EXTENSION = ["Connect the browser extension", "Connect it once so it can fill applications you approved."];
+const FORWARDING = ["Set up reply forwarding", "Forward employer replies to your private address so they land in Replies."];
 
 /**
  * Spec 4 and 5.6: saves the step as done when it opens (the wizard can open here too), then one card with the title
@@ -22,7 +26,12 @@ export function DoneStep() {
   const { state } = useWizard();
   const { mutate, error } = useOnboarding().save;
   const sent = useRef(false); // Strict Mode runs the effect twice in development
-  const { href, others } = endFor(state.goals);
+  const end = endFor(state.goals);
+  // Matching only scores users with saved rules (server/src/jobs/score-matches.ts), so a Find ending without them goes to
+  // Preferences. Rules saved here are already refetched: savePreferences awaits its profile refresh before Done opens.
+  const hasRules = useProfile().data?.preferences != null;
+  const { others } = end;
+  const href = end.href === "/matches" && !hasRules ? "/preferences" : end.href;
 
   useEffect(() => {
     if (sent.current) return;
@@ -30,19 +39,19 @@ export function DoneStep() {
     mutate({ step: "done" });
   }, [mutate]);
 
-  const roles = state.targetRoles.join(", ");
+  const companies = state.targetCompanies;
+  const at = companies.slice(0, 2).join(" or ") + (companies.length > 2 ? " and others" : "");
   const [title, line] =
     href === "/resume"
-      ? ["Opening the resume builder", "Edit each section of your resume and see the page change as you go."]
+      ? ["Your resume is ready to edit", "Open it in the resume builder to edit it and preview the page."]
       : href === "/matches"
-        ? ["Your first matches are on the way", "Kairos checks new jobs against your rules. Matches land on the Matches page."]
-        : state.goals.includes("interview")
-          ? ["Interview practice is coming", `${roles ? `Your target is saved: ${roles}. ` : ""}We will tell you when practice opens.`]
-          : ["Look around first", "Your setup checklist waits on the Overview."];
-  const todo = [
-    ...(state.goals.includes("find") ? [["Connect the browser extension", "It fills in the applications you approve. In Settings."]] : []),
-    ["Set up reply forwarding", "Employer replies land in Replies. In Settings."],
-  ];
+        ? ["Your first matches are on the way", "Matches that pass your rules land on the Matches page."]
+        : href === "/preferences"
+          ? ["Set your rules to start matching", "Matches arrive once you save the rules a job must pass."]
+          : state.goals.includes("interview")
+            ? ["Interview practice is coming", state.targetRoles.length ? `Your target is saved: ${state.targetRoles.join(", ")}${at ? ` at ${at}` : ""}.` : "Your goal is saved."]
+            : ["Look around first", "Nothing more to answer now. Start from the Overview."];
+  const todo = state.goals.includes("find") ? [EXTENSION, FORWARDING] : [FORWARDING];
 
   return (
     <div className="ob-done">

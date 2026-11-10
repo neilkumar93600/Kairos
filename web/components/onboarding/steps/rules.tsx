@@ -28,6 +28,8 @@ type Problem = keyof typeof PROBLEMS;
 export function RulesStep({ onReady }: StepProps) {
   const { state, onNext, setWorkAuthorization } = useWizard();
   const { savePreferences } = useProfileActions();
+  // Loaded: the wizard renders no step until the profile is in (wizard.tsx, `me.data && profile.data && facts.data`),
+  // so a returning user's excluded lists and cap are here at mount and survive the save.
   const saved = useProfile().data?.preferences;
   // Read once: the refetch after the save must not reset what is on screen.
   const [start] = useState(() => ({ ...DEFAULT_PREFERENCES, ...saved }));
@@ -126,7 +128,7 @@ export function RulesStep({ onReady }: StepProps) {
         <Field
           label="Where you can work"
           htmlFor="ob-work-auth"
-          hint="If you need sponsorship, postings that say they will not sponsor are dropped."
+          hint="If you need sponsorship or are on OPT, postings that say they will not sponsor are dropped."
           error={errors.workAuthorization}
         >
           <Select
