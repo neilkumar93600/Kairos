@@ -34,6 +34,8 @@ export const ROUTE_DEADLINES: [method: string, path: RegExp, ms: number][] = [
   ["POST", /^\/profile\/imports$/, 25_000],
   ["POST", /^\/resumes\/tailor$/, DEADLINE.ai],
   ["POST", /^\/resumes\/suggestions$/, DEADLINE.ai],
+  // WP-21: { url } imports the posting, which scores it.
+  ["POST", /^\/tracker$/, DEADLINE.ai],
 ];
 
 /** One mount for the whole api router: picks the budget from ROUTE_DEADLINES. */

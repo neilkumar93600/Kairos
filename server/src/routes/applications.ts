@@ -3,14 +3,14 @@ import { and, desc, eq, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { APPLICATION_STATUSES, approveApplicationsSchema, draftRequestSchema, getPlan, resendRequestSchema, updateApplicationSchema } from "@auto-career/shared";
 import { db } from "../db/client";
-import { applications, companies, facts, inboundEmails, jobs, savedAnswers, type ApplicationStage } from "../db/schema";
+import { applications, companies, facts, inboundEmails, jobs, savedAnswers, trackerItems, type ApplicationStage } from "../db/schema";
 import { asActor } from "../lib/actor";
 import { HttpError, notFound } from "../lib/errors";
 import { keysetBefore, pageParams, slicePage, tsKey } from "../lib/pagination";
 import { APPLICATION_COLUMNS, JOB_COLUMNS } from "../lib/serializers";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
-import { recordEvent } from "../services/events";
+import { eventPage, recordEvent } from "../services/events";
 import { draftAnswer, draftCoverLetter } from "../services/draft-writer";
 import { classifySensitive, isProfileQuestion } from "../services/sensitive";
 import { approveWithSkips, planFor, resendApplication, withdrawApplication } from "../services/submissions";
@@ -250,6 +250,21 @@ applicationsRouter.post("/:id/stage/clear", async (req, res) => {
     return { stage: moved.stage, detached: rows.length };
   });
   res.json(result);
+});
+
+/**
+ * The timeline of an application (05-api 10.5, PRD 9.3), oldest first. Events are keyed by tracker item, so this is the item's whole
+ * timeline, the saved and note events too, in the shared event shape; a reply's payload carries stageHeld and authenticated for the
+ * "this reply did not move the stage" line. An application with no event yet has no item: an empty list.
+ */
+applicationsRouter.get("/:id/events", async (req, res) => {
+  const id = parseParam(z.uuid(), req.params.id);
+  const userId = currentUser(req).id;
+  const page = pageParams(req.query, 200, "app_events", ["ts"], "bigint");
+  const [app] = await db().select({ id: applications.id }).from(applications).where(and(eq(applications.id, id), eq(applications.userId, userId)));
+  if (!app) throw notFound("Application");
+  const [item] = await db().select({ id: trackerItems.id }).from(trackerItems).where(and(eq(trackerItems.applicationId, id), eq(trackerItems.userId, userId)));
+  res.json(item ? await eventPage(item.id, page, "app_events", "asc") : { events: [] });
 });
 
 applicationsRouter.post("/:id/withdraw", async (req, res) => {

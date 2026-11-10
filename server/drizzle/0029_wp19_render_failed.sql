@@ -1,3 +1,4 @@
+-- (Numbered 0028 on wp/19; renumbered 0029 after WP-21 took 0028.)
 -- WP-19: the applier's two database needs for a snapshot PDF. Custom migration, written by hand. No table changes.
 --   1. record_attempt_result accepts render_failed: a snapshot that could not be rendered closes the attempt as "nothing was
 --      sent" (02-database 7.3.1). The body is 0027's with that one code added. CREATE OR REPLACE keeps the grants.

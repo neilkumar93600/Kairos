@@ -214,8 +214,15 @@ GRANT SELECT, DELETE ON board_requests TO kairos_worker;
 -- application's item when a worker records its first event, and WP-21's projector moves stages. Never the user's notes,
 -- salary text or saved posting. The applier gets nothing here; the attempt functions of 0027 give it its rows.
 GRANT SELECT, INSERT, UPDATE, DELETE ON tracker_items TO kairos_api;
-GRANT SELECT, INSERT ON tracker_items TO kairos_worker;
-GRANT UPDATE (application_id, stage, stage_set_by, closed_reason, updated_at) ON tracker_items TO kairos_worker;
+GRANT INSERT ON tracker_items TO kairos_worker;
+-- WP-21, rule 12: the role that runs agents cannot read notes, salary_text or job_snapshot at all. recordEvent's conflict target, the
+-- retention check on job_id and the projector read these columns; the projector writes the floor beside the stage.
+GRANT SELECT (id, user_id, job_id, application_id, stage, stage_set_by, closed_reason, user_moved_at, created_at, updated_at) ON tracker_items TO kairos_worker;
+GRANT UPDATE (application_id, stage, stage_set_by, closed_reason, user_moved_at, updated_at) ON tracker_items TO kairos_worker;
+GRANT SELECT, INSERT, UPDATE ON tracker_projector_state TO kairos_worker;
+-- WP-21: contacts and interviews are the api's. The worker holds what erasure's zero-row check reads (jobs/erasure.ts), nothing else; readonly nothing.
+GRANT SELECT, INSERT, UPDATE, DELETE ON contacts, contact_jobs, interviews, interview_contacts TO kairos_api;
+GRANT SELECT (id, user_id) ON contacts, interviews TO kairos_worker;
 GRANT SELECT, INSERT ON application_events TO kairos_api, kairos_worker;
 GRANT SELECT, INSERT, UPDATE ON submission_attempts TO kairos_api, kairos_worker;
 GRANT SELECT ON application_events TO kairos_readonly;
