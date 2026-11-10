@@ -79,6 +79,231 @@ async function toSource(page) {
   await heading(page, "How do you want to add your resume?");
 }
 
+const RULES = "Set the rules a job must pass";
+/** Done saves `{ step: "done" }` itself when it opens; register before the click that leads there. */
+const doneSaved = (page) =>
+  page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith("/api/profile/onboarding") && r.request().postDataJSON()?.step === "done");
+/** Every PUT /profile/preferences body, in order. */
+const prefsLog = (page) => {
+  const bodies = [];
+  page.on("request", (r) => {
+    if (r.method() === "PUT" && new URL(r.url()).pathname === "/api/profile/preferences") bodies.push(r.postDataJSON());
+  });
+  return bodies;
+};
+/** A confirmed fact: the source step offers "Use what you already added", so no resume needs making here. */
+const withFact = (data) => data.facts.push({ id: "f-seed", kind: "skill", text: "SQL, Python", sourceSpan: null, confirmed: true });
+
+/** Goals, one position, then "Use what you already added". */
+async function throughExisting(page, ...goals) {
+  const next = page.getByRole("button", { name: "Continue" });
+  await heading(page, "What brings you to Kairos?");
+  for (const g of goals) await option(page, g).click();
+  await next.click();
+  await heading(page, "Which job are you going for?");
+  await page.getByLabel("Desired position").fill("Frontend Developer");
+  await page.getByLabel("Desired position").press("Enter");
+  await next.click();
+  await heading(page, "How do you want to add your resume?");
+  await option(page, "Use what you already added").click();
+  await next.click();
+}
+
+/** The Done card's next items: the extension (Find only) and reply forwarding, both to Settings. */
+async function nextItems(page, find) {
+  const ext = page.getByRole("link", { name: /^Connect the browser extension/ });
+  assert.equal(await ext.count(), find ? 1 : 0, find ? "Find users see the extension" : "only Find users see the extension");
+  if (find) assert.equal(await ext.getAttribute("href"), "/settings");
+  assert.equal(await page.getByRole("link", { name: /^Set up reply forwarding/ }).getAttribute("href"), "/settings");
+  assert.equal(await page.getByRole("button", { name: "Continue" }).count(), 0, "no Continue on Done");
+}
+
+/**
+ * Brief path 1, Find + Build: roles come from the target; work authorization must be chosen (no form here); the rules
+ * go out as one valid preferences body; Done saves its step once, opens the builder and links to matches.
+ */
+async function findBuild(browser, tag) {
+  const { ctx, page, report, errors, warnings, puts, calls } = await open(browser, VIEWPORTS[tag], withFact);
+  const snap = snapper(page, tag);
+  const next = page.getByRole("button", { name: "Continue" });
+  const prefs = prefsLog(page);
+  await throughExisting(page, "Find and apply to jobs", "Build my resume");
+
+  await heading(page, RULES);
+  assert.equal(await page.getByRole("textbox", { name: "Roles" }).count(), 0, "roles come from the target step");
+  assert.equal(await page.getByLabel(/^Fit bar/).inputValue(), "75", "the fit bar starts at 75");
+  await next.click();
+  await page.getByRole("alert").filter({ hasText: "Choose where you can work." }).waitFor();
+  assert.equal(prefs.length, 0, "nothing is saved while a rule is missing");
+  await page.waitForFunction(() => document.activeElement?.id === "ob-work-auth", null, { timeout: 3_000 });
+
+  const loc = page.getByLabel("Locations");
+  await loc.fill("Remote India");
+  await loc.press("Enter");
+  await page.getByLabel("Where you can work").selectOption({ label: "Citizen or permanent resident" });
+  await page.getByRole("button", { name: "Mid", exact: true }).click();
+  await page.getByLabel("Salary floor per year (USD)").fill("120,000");
+  const fit = page.getByLabel(/^Fit bar/);
+  for (let i = 0; i < 5; i++) await fit.press("ArrowRight");
+  await noOverflow(page, "rules");
+  await snap("rules");
+
+  const before = puts.length;
+  const finished = doneSaved(page);
+  await next.click();
+  await heading(page, "Opening the resume builder");
+  await finished;
+  await page.waitForTimeout(500);   // room for a second save, if the guard failed
+  assert.deepEqual(prefs, [{
+    roles: ["Frontend Developer"], seniority: ["entry", "mid"], locations: ["Remote India"], remoteOk: true, workAuthorization: "citizen_or_pr",
+    salaryFloorUsd: 120000, excludedCompanies: [], excludedKeywords: [], fitThreshold: 80, maxApplicationsPerCompanyPer30Days: 2,
+  }], "one preferences body, the rest from the defaults");
+  assert.deepEqual(puts.slice(before), [{ step: "done" }], "Done saves its step once");
+
+  const primary = page.getByRole("link", { name: "Open the resume builder" });
+  assert.equal(await primary.getAttribute("href"), "/resume");
+  assert.equal(await page.getByRole("link", { name: "Go to matches" }).getAttribute("href"), "/matches");
+  await nextItems(page, true);
+  assert.equal(await page.getByRole("button", { name: "Skip setup", exact: true }).count(), 0, "nothing to skip on Done");
+  await noOverflow(page, "done");
+  await snap("done");
+  await primary.click();
+  await page.waitForURL("**/resume", { timeout: 60_000 });
+
+  assert.equal(count(calls, "POST /resumes"), 0, "the reused facts make no base resume");
+  assert.deepEqual(report.unmocked, [], "every API call is mocked");
+  assert.deepEqual(errors, [], "no console or page errors");
+  assert.deepEqual(warnings, [], "no next/image warnings");
+  await ctx.close();
+  console.log(`ok find+build ${tag} ${VIEWPORTS[tag].width}px: work auth required; 1 valid preferences body; Done PUT once; primary /resume, Go to matches`);
+}
+
+/**
+ * A returning Find user who skipped Target: the rules ask for roles first (prefilled from saved preferences), keep the
+ * saved work authorization, excluded lists and cap, refuse no roles on the client, and show a 422's message.
+ */
+async function rulesWithoutTarget(browser, tag) {
+  const saved = {
+    roles: ["Data Analyst"], seniority: ["senior"], locations: ["Austin, TX"], remoteOk: false, workAuthorization: "needs_sponsorship_now",
+    salaryFloorUsd: 90000, excludedCompanies: ["Company 900"], excludedKeywords: ["unpaid"], fitThreshold: 70, maxApplicationsPerCompanyPer30Days: 4,
+  };
+  const seed = (data) => {
+    withFact(data);
+    for (const o of [data.me, data.profile]) Object.assign(o, { goals: ["find"], onboardingStep: "target" });
+    data.profile.preferences = saved;
+  };
+  const { ctx, page, report, errors, warnings, puts } = await open(browser, VIEWPORTS[tag], seed);
+  const snap = snapper(page, tag);
+  const next = page.getByRole("button", { name: "Continue" });
+  const prefs = prefsLog(page);
+
+  await heading(page, "Which job are you going for?");
+  await page.getByRole("button", { name: "Skip this step" }).click();
+  await heading(page, "How do you want to add your resume?");
+  await option(page, "Use what you already added").click();
+  await next.click();
+
+  await heading(page, RULES);
+  const roles = page.getByRole("textbox", { name: "Roles" });
+  await roles.waitFor();
+  assert.equal(await page.getByLabel("Where you can work").inputValue(), "needs_sponsorship_now", "saved work authorization is prefilled");
+  assert.equal(await page.getByLabel("Salary floor per year (USD)").inputValue(), "90000");
+  await page.getByRole("button", { name: "Remove Data Analyst" }).click();
+  await next.click();
+  await page.getByRole("alert").filter({ hasText: "Add at least one role." }).waitFor();
+  await page.waitForFunction(() => document.activeElement?.id === "ob-pref-roles", null, { timeout: 3_000 });
+  assert.equal(prefs.length, 0, "no roles, no save");
+  await roles.fill("Data Engineer");
+  await roles.press("Enter");
+  await noOverflow(page, "rules with roles");
+  await snap("rules-roles");
+
+  const refusal = { error: { code: "invalid_body", message: "Some fields are invalid" } };
+  await page.route("**/api/profile/preferences", (route) => route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify(refusal) }), { times: 1 });
+  await next.click();
+  await page.getByRole("alert").filter({ hasText: refusal.error.message }).waitFor();
+  assert.equal(await page.getByRole("heading", { level: 1 }).innerText(), RULES, "a refused save stays on the rules");
+  await snap("rules-422", false);
+
+  const before = puts.length;
+  const finished = doneSaved(page);
+  await next.click();
+  await heading(page, "Your first matches are on the way");
+  await finished;
+  assert.deepEqual(prefs.at(-1), { ...saved, roles: ["Data Engineer"] }, "saved rules, cap and excluded lists are kept");
+  assert.deepEqual(puts.slice(before), [{ step: "done" }]);
+  assert.equal(await page.getByRole("link", { name: "Go to matches" }).getAttribute("href"), "/matches");
+  await nextItems(page, true);
+
+  assert.deepEqual(report.unmocked, [], "every API call is mocked");
+  assert.deepEqual(errors.filter((e) => !e.includes("status of 422")), [], "no console or page errors beyond the refused save");
+  assert.deepEqual(warnings, [], "no next/image warnings");
+  await ctx.close();
+  console.log(`ok rules without target ${tag} ${VIEWPORTS[tag].width}px: roles field shown; saved rules kept; no roles refused; 422 message shown`);
+}
+
+/** Brief path 2, interview only: no rules step, Done names the target and goes to the Overview. */
+async function interviewOnly(browser, tag) {
+  const { ctx, page, report, errors, warnings, puts } = await open(browser, VIEWPORTS[tag], withFact);
+  const finished = doneSaved(page);
+  await throughExisting(page, "Prepare for interviews");
+  await heading(page, "Interview practice is coming");
+  await finished;
+  await page.getByText("Your target is saved: Frontend Developer.", { exact: false }).waitFor();
+  const primary = page.getByRole("link", { name: "Go to Overview" });
+  assert.equal(await primary.getAttribute("href"), "/dashboard");
+  assert.equal(await page.getByRole("link", { name: /^(Go to matches|Open the resume builder)$/ }).count(), 0, "no other goals, no other links");
+  await nextItems(page, false);
+  assert.equal(puts.filter((p) => p.step === "done").length, 1, "Done saves its step once");
+  await noOverflow(page, "interview done");
+  await snapper(page, tag)("done-interview");
+  await primary.click();
+  await page.waitForURL("**/dashboard", { timeout: 60_000 });
+  assert.deepEqual(report.unmocked, [], "every API call is mocked");
+  assert.deepEqual(errors, [], "no console or page errors");
+  assert.deepEqual(warnings, [], "no next/image warnings");
+  await ctx.close();
+  console.log(`ok interview only ${tag} ${VIEWPORTS[tag].width}px: no rules; Done primary /dashboard, no other links`);
+}
+
+/**
+ * Brief path 3, look: Just look around goes straight to Done ("Look around first", to the Overview), and a failed Done
+ * save shows its message with Try again. Back, then Skip setup lands on /dashboard.
+ */
+async function look(browser, tag) {
+  const { ctx, page, report, errors, warnings, puts } = await open(browser, VIEWPORTS[tag]);
+  await heading(page, "What brings you to Kairos?");
+  await option(page, "Just look around").click();
+  const refusal = { error: { code: "internal", message: "Could not save your progress. Try again." } };
+  await page.route("**/api/profile/onboarding", (route) =>
+    route.request().postDataJSON()?.step === "done" ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify(refusal) }) : route.fallback(),
+  { times: 2 });
+  await page.getByRole("button", { name: "Continue" }).click();
+  await heading(page, "Look around first");
+  await page.getByRole("alert").filter({ hasText: refusal.error.message }).waitFor();
+  assert.ok(page.url().endsWith("/onboarding"), "a failed save does not navigate");
+  await snapper(page, tag)("done-error", false);
+  const finished = doneSaved(page);
+  await page.getByRole("button", { name: "Try again" }).click();
+  await finished;
+  await page.getByRole("alert").filter({ hasText: refusal.error.message }).waitFor({ state: "detached" });
+  assert.equal(await page.getByRole("link", { name: "Go to Overview" }).getAttribute("href"), "/dashboard");
+  await nextItems(page, false);
+  // The refused save is answered by the route above, so only the goals and the retry reach the log.
+  assert.deepEqual(puts, [{ goals: ["look"] }, { step: "done" }], "goals, then Done's retried save");
+
+  await page.getByRole("button", { name: "Back" }).click();
+  await heading(page, "What brings you to Kairos?");
+  await page.getByRole("button", { name: "Skip setup", exact: true }).click();
+  await page.waitForURL("**/dashboard", { timeout: 60_000 });
+  assert.deepEqual(puts.at(-1), { goals: ["look"], step: "done" });
+  assert.deepEqual(report.unmocked, [], "every API call is mocked");
+  assert.deepEqual(errors.filter((e) => !e.includes("status of 500")), [], "no console or page errors beyond the refused save");
+  assert.deepEqual(warnings, [], "no next/image warnings");
+  await ctx.close();
+  console.log(`ok look ${tag} ${VIEWPORTS[tag].width}px: Done to /dashboard; failed save shows Try again and stays; Skip setup lands on /dashboard`);
+}
+
 // A one-page PDF with no text; the mock reads only the file name.
 const PDF = Buffer.from(
   "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n" +
@@ -135,7 +360,7 @@ async function upload(browser, tag) {
 
   const before = puts.length;
   await next.dblclick();
-  await heading(page, "Your rules");
+  await heading(page, RULES);
   await page.waitForTimeout(500);   // room for a second request, if the guard failed
   assert.equal(count(calls, "POST /resumes"), 1, "a double-clicked Continue makes one base resume");
   assert.equal(calls.filter((c) => /^POST \/resumes\/[^/]+\/default$/.test(c)).length, 1, "and makes it the default");
@@ -146,7 +371,7 @@ async function upload(browser, tag) {
   await heading(page, "Upload your resume");
   await page.getByText("Your resume is saved. Check its facts below.").waitFor();
   await next.click();
-  await heading(page, "Your rules");
+  await heading(page, RULES);
   assert.equal(count(calls, "POST /resumes"), 1, "Back then Continue reuses the base resume");
 
   assert.deepEqual(report.unmocked, [], "every API call is mocked");
@@ -192,7 +417,7 @@ async function uploadErrors(browser, tag) {
   assert.ok(body.text.length >= 200, "pasted text goes as JSON");
   await page.getByText(/facts? found\. Check each one\./).waitFor({ timeout: 15_000 });
   await next.click();
-  await heading(page, "Your rules");
+  await heading(page, RULES);
   assert.equal(count(calls, "POST /resumes"), 1, "paste makes the base resume too");
 
   assert.deepEqual(report.unmocked, [], "every API call is mocked");
@@ -238,7 +463,7 @@ async function earlierFacts(browser, tag, then) {
 
   if (then === "retry") {
     await next.click();
-    await heading(page, "Your rules");
+    await heading(page, RULES);
     assert.equal(count(calls, "POST /resumes"), 1, "a retry after a failed /default makes no second base resume");
     assert.equal(defaults().length, 2, "the retry repeats only /default");
   } else {
@@ -251,7 +476,7 @@ async function earlierFacts(browser, tag, then) {
     await next.click();
     const res = await remade;
     const newId = (await res.json()).resume.id;
-    await heading(page, "Your rules");
+    await heading(page, RULES);
     assert.equal(count(calls, "POST /resumes"), 2, "a new import makes a new base resume, not the pending one");
     assert.equal(res.request().postDataJSON().importId, importId, "built from the new import");
     assert.equal(defaults().at(-1), `POST /resumes/${newId}/default`, "and the new one becomes the default");
@@ -294,7 +519,7 @@ async function existing(browser, tag) {
   await toSource(page);
   await option(page, "Use what you already added").click();
   await page.getByRole("button", { name: "Continue" }).click();
-  await heading(page, "Your rules");
+  await heading(page, RULES);
   assert.equal(count(calls, "POST /resumes"), 0);
   assert.deepEqual(report.unmocked, [], "every API call is mocked");
   assert.deepEqual(errors, [], "no console or page errors");
@@ -451,8 +676,10 @@ async function form(browser, tag) {
   await next.click();
   assert.deepEqual((await details).postDataJSON(), { noticePeriod: "1_month", openToRelocation: null, expectedSalary: { amount: 120000, currency: "USD" } });
   await page.getByRole("alert").filter({ hasText: refusal.error.message }).waitFor();
+  const finished = doneSaved(page);
   await next.click();
-  await heading(page, "Ready");
+  await heading(page, "Opening the resume builder");
+  await finished;
   const order = (re) => calls.findIndex((c) => re.test(c));
   const defaults = calls.filter((c) => /^POST \/resumes\/[^/]+\/default$/.test(c));
   assert.equal(count(calls, "POST /resumes"), 1, "one base resume, also after a failed /default");
@@ -593,7 +820,7 @@ async function formRefill(browser, tag) {
   await page.getByRole("button", { name: "Remove Rust" }).waitFor();
   assert.equal(count(calls, "POST /resumes"), 0, "no base resume while a section is unsaved");
   await next.click();
-  await heading(page, "Ready");
+  await heading(page, "Opening the resume builder");
   const at = (re) => calls.findLastIndex((c) => re.test(c));
   assert.ok(mock.facts.some((f) => f.text === "Rust" && f.confirmed), "the unsaved skill is saved");
   assert.ok(at(/^POST \/profile\/facts$/) < at(/^POST \/resumes$/), "before the base resume");
@@ -700,6 +927,10 @@ const browser = await chromium.launch();
 try {
   for (const tag of Object.keys(VIEWPORTS)) await walk(browser, tag);
   for (const tag of ["m", "d"]) await edges(browser, tag);
+  for (const tag of Object.keys(VIEWPORTS)) await findBuild(browser, tag);
+  for (const tag of ["m", "s"]) await rulesWithoutTarget(browser, tag);
+  for (const tag of ["d", "m"]) await interviewOnly(browser, tag);
+  for (const tag of ["s", "d"]) await look(browser, tag);
   for (const tag of Object.keys(VIEWPORTS)) await upload(browser, tag);
   await uploadErrors(browser, "m");
   await existing(browser, "d");

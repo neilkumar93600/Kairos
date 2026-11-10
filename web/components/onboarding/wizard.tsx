@@ -16,10 +16,12 @@ import { openAt, serverStepFor, stepsFor, type Source, type WizardStep } from "@
 import { cn } from "@/lib/utils";
 import { ArtPane, briefRows, type BriefRow } from "./art-pane";
 import { storedWorkAuthorization } from "./form/work-auth";
-import { Progress, STEP_NAMES } from "./progress";
+import { Progress } from "./progress";
+import { DoneStep } from "./steps/done";
 import { formInProgress, FormStep } from "./steps/form";
 import { GoalsStep } from "./steps/goals";
 import { PasteStep } from "./steps/paste";
+import { RulesStep } from "./steps/rules";
 import { SourceStep } from "./steps/source";
 import { TargetStep } from "./steps/target";
 import { storedImport, UploadStep } from "./steps/upload";
@@ -182,14 +184,17 @@ function Shell({ initial }: { initial: WizardState }) {
     setError(null);
   };
 
-  const advance = async (answers: Omit<OnboardingUpdate, "step">) => {
+  /** Skipping a step leaves its work undone (Skip this step on the rules saves no preferences). */
+  const advance = async (answers: Omit<OnboardingUpdate, "step">, skip = false) => {
     if (!following || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError(null);
     try {
-      await work.current?.();
-      await save.mutateAsync({ ...answers, step: serverStepFor(following) });
+      if (!skip) await work.current?.();
+      // Done saves its own step when it opens (the wizard can also open there), so going to it sends only the answers.
+      const body = following === "done" ? answers : { ...answers, step: serverStepFor(following) };
+      if (Object.keys(body).length) await save.mutateAsync(body);
       go(following, 1);
     } catch (e) {
       setError(failure(e));
@@ -224,7 +229,7 @@ function Shell({ initial }: { initial: WizardState }) {
     back: () => {
       if (index > 0) go(steps[index - 1], -1);
     },
-    skipStep: () => advance({}),
+    skipStep: () => advance({}, true),
     skipSetup: async () => {
       setError(null);
       try {
@@ -245,9 +250,12 @@ function Shell({ initial }: { initial: WizardState }) {
         scene={scene}
         rows={rows}
         action={
-          <button type="button" className="ob-text-btn" disabled={pending} onClick={api.skipSetup}>
-            Skip setup
-          </button>
+          // Setup is finished on Done; skipping there would only replace the chosen goals with "look".
+          step === "done" ? null : (
+            <button type="button" className="ob-text-btn" disabled={pending} onClick={api.skipSetup}>
+              Skip setup
+            </button>
+          )
         }
       >
         <Progress steps={steps} step={step} />
@@ -294,20 +302,6 @@ function StepBody({ step, onReady }: StepProps & { step: WizardStep }) {
   if (step === "upload") return <UploadStep onReady={onReady} />;
   if (step === "paste") return <PasteStep onReady={onReady} />;
   if (step === "form") return <FormStep onReady={onReady} />;
-  return <StepPending step={step} onReady={onReady} />;
-}
-
-// ponytail: stands in for the steps Task 11 builds (rules, done) so the shell runs end to end.
-function StepPending({ step, onReady }: StepProps & { step: WizardStep }) {
-  useEffect(() => {
-    onReady(true);
-  }, [onReady]);
-  return (
-    <>
-      <h1 tabIndex={-1} className="ob-h1">
-        {STEP_NAMES[step]}
-      </h1>
-      <p className="ob-sub">This step is still being built. Continue to move on.</p>
-    </>
-  );
+  if (step === "rules") return <RulesStep onReady={onReady} />;
+  return <DoneStep />;
 }

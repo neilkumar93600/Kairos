@@ -195,6 +195,22 @@
     }
   }
 
+  /* ===== Rules: the fit bar; Done: one card, the next items, then where to go ===== */
+  .ob-range { display: block; width: 100%; height: 44px; margin: 0; accent-color: var(--ink); cursor: pointer; }
+  .ob-done { padding: 24px 20px; border-radius: 24px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--ob-line); }
+  .ob-done .ob-h1 { max-width: none; }
+  .ob-done .ob-sub { margin-bottom: 0; }
+  .ob-todo { display: grid; margin: 20px 0 0; padding: 0; list-style: none; }
+  .ob-todo a {
+    display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-top: 1px solid var(--ob-line);
+    color: var(--faint); font-size: 15px; text-decoration: none;
+  }
+  .ob-todo .ob-dot { margin-top: 7px; }
+  .ob-todo b { display: block; color: var(--ink); font-size: 16px; font-weight: 500; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 4px; }
+  .ob-done__go { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; margin-top: 16px; }
+  .ob-done__go .ob-link { display: inline-flex; align-items: center; margin: 0; }
+  @container (min-width: 540px) { .ob-done { padding: 32px; } }
+
   /* ===== Footer and text buttons ===== */
   /* A failed save's message takes the footer's first line, above Back and Continue. */
   .ob-error { display: flex; flex-basis: 100%; align-items: flex-start; gap: 8px; margin: 0; color: var(--bad); font-size: 15px; }
@@ -222,6 +238,7 @@
     .ob-entry__remove:hover, .ob-add:hover { background: var(--sunk); }
     .ob-drop:hover { border-color: var(--ink); }
     .ob-link:hover { text-decoration-thickness: 2px; }
+    .ob-todo a:hover b { text-decoration-color: currentColor; }
     .ob-text-btn:hover { text-decoration-color: currentColor; }
     .ob-next:hover .ob-arrow { translate: 3px 0; }
     .ob-back:hover .ob-arrow { translate: -3px 0; }

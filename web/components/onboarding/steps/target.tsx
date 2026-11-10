@@ -5,7 +5,7 @@ import { ChipsInput } from "../chips-input";
 import { useWizard, type StepProps } from "../wizard";
 
 // ponytail: a static list of common titles; swap for a server list when one exists.
-const TITLES = [
+export const TITLES = [
   "Software Engineer",
   "Frontend Developer",
   "Backend Developer",

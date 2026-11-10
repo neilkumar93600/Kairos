@@ -18,11 +18,13 @@ interface ChipsInputProps {
   /** Suggestions, filtered by the typed prefix (start of the title or of any word), at most three shown. */
   options?: readonly string[];
   help?: string;
+  /** Shown below the help, and read with the field. */
+  error?: string;
   autoComplete?: string;
 }
 
 /** Type and press Enter to add a chip; addChip drops blanks, case duplicates and anything past the cap. */
-export function ChipsInput({ id, label, optional, placeholder, values, onChange, max, minLen, maxLen, options = [], help, autoComplete }: ChipsInputProps) {
+export function ChipsInput({ id, label, optional, placeholder, values, onChange, max, minLen, maxLen, options = [], help, error, autoComplete }: ChipsInputProps) {
   const [text, setText] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const q = text.trim().toLowerCase();
@@ -51,7 +53,8 @@ export function ChipsInput({ id, label, optional, placeholder, values, onChange,
         maxLength={maxLen}
         autoComplete={autoComplete}
         enterKeyHint="enter"
-        aria-describedby={help ? `${id}-help` : undefined}
+        aria-describedby={[help && `${id}-help`, error && `${id}-error`].filter(Boolean).join(" ") || undefined}
+        aria-invalid={error ? true : undefined}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
           if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
@@ -99,6 +102,11 @@ export function ChipsInput({ id, label, optional, placeholder, values, onChange,
       {help ? (
         <p id={`${id}-help`} className="ob-help">
           {help}
+        </p>
+      ) : null}
+      {error ? (
+        <p id={`${id}-error`} role="alert" className="ob-help text-bad">
+          {error}
         </p>
       ) : null}
     </div>

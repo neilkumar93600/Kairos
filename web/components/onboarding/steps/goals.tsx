@@ -7,7 +7,7 @@ import { useWizard, type StepProps } from "../wizard";
 
 const OPTIONS: Array<{ goal: Goal; Icon: Icon; title: string; line: string }> = [
   { goal: "find", Icon: Briefcase, title: "Find and apply to jobs", line: "Matches that pass your rules, drafts you approve before anything is sent." },
-  { goal: "build", Icon: FileText, title: "Build my resume", line: "Upload or fill it in, then pick a Formal, Modern or Creative template." },
+  { goal: "build", Icon: FileText, title: "Build my resume", line: "Upload or fill it in, then shape it in the resume builder." },
   { goal: "interview", Icon: Microphone, title: "Prepare for interviews", line: "Get ready for the role and company you are aiming at." },
   { goal: "look", Icon: Compass, title: "Just look around", line: "Skip setup and explore. The checklist waits on your Overview." },
 ];
