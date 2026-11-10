@@ -20,6 +20,7 @@ describe("retention rules (WP-25)", () => {
       outbox_done: 7,
       outbox_dead: 90,
       scrub_applications: 7,
+      stripe_events: 90,
     });
   });
 

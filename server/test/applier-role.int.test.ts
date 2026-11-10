@@ -176,6 +176,27 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
     expect(await charges(lapsed.userId)).toHaveLength(0);
   });
 
+  // WP-32: what a real role does, not the fixture owner: no write grant on the cache, and the triggers still keep it.
+  it.each(["kairos_api", "kairos_worker"])("as %s, a ledger insert and a status move reach the balance through the definer triggers", async (role) => {
+    const userId = await seedUser(admin, { credits: 5 });
+    const [company] = await admin.insert(schema.companies).values({ name: "c", ats: "greenhouse", boardToken: `balance-${role}` }).returning();
+    const [job] = await admin.insert(schema.jobs).values({ companyId: company!.id, externalId: "1", title: "t", applyUrl: "https://boards.greenhouse.io/x/jobs/1", descriptionText: "d" }).returning();
+    const [app] = await admin.insert(schema.applications).values({ userId, jobId: job!.id, status: "draft" }).returning();
+    const read = async () => (await raw.query("select balance, in_flight from credit_balances where user_id = $1", [userId])).rows[0];
+    await raw.query("begin");
+    try {
+      await raw.query(`set local role ${role}`);
+      await raw.query("select ensure_credit_balance($1)", [userId]);
+      await raw.query("select balance from credit_balances where user_id = $1 for update", [userId]);
+      await raw.query("insert into credit_ledger (user_id, delta, reason, note) values ($1, 7, 'admin_adjustment', 'role test')", [userId]);
+      expect(await read()).toEqual({ balance: 12, in_flight: 0 });
+      await raw.query("update applications set status = 'approved', channel = 'extension', approved_at = now(), approved_by = 'user', resume_snapshot = '{}' where id = $1", [app!.id]);
+      expect(await read()).toEqual({ balance: 12, in_flight: 1 });
+    } finally {
+      await raw.query("rollback");
+    }
+  });
+
   describe("grant matrix (T-12, 02-database 4.2)", () => {
     // [kairos_api, kairos_worker, kairos_readonly]: S select, I insert, U update, D delete; "cols" a column-limited select.
     const MATRIX: Record<string, [string, string, string]> = {
@@ -222,7 +243,9 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       feature_flags: ["S", "S", ""],
       ops_audit: ["SI", "SI", ""],
       // WP-22: the applier holds nothing here (the refusal list above), and the readonly role reads nothing.
-      outbox: ["SIU", "SUD", ""],
+      outbox: ["SIU", "SIUD", ""],
+      // WP-32: its triggers write it. A column grant of updated_at (for FOR UPDATE) reads as no table UPDATE here; the cases below hold it.
+      credit_balances: ["S", "S", "S"],
       metrics_minute: ["SIU", "SIUD", ""],
       tracker_items: ["SIUD", "SI", ""],
       application_events: ["SI", "SI", "S"],
@@ -293,6 +316,16 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       ["kairos_api", "update inbound_emails set application_id = null, linked_by = 'none' where false", true],
       ["kairos_api", "update inbound_emails set kind = null where false", false],
       ["kairos_api", "update inbound_emails set verified_domains = '{}' where false", false],
+      ["kairos_api", "update credit_balances set balance = 1000", false],
+      ["kairos_worker", "update credit_balances set in_flight = 0", false],
+      ["kairos_api", "insert into credit_balances (user_id, balance) values ('x', 1)", false],
+      ["kairos_worker", "delete from credit_balances", false],
+      ["kairos_api", "select balance from credit_balances where false for update", true],
+      ["kairos_worker", "select balance from credit_balances where false for update", true],
+      ["kairos_readonly", "select balance from credit_balances where false for update", false],
+      ["kairos_applier", "select balance from credit_balances", false],
+      ["kairos_applier", "select ensure_credit_balance('nobody')", false],
+      ["kairos_readonly", "select ensure_credit_balance('nobody')", false],
       ["kairos_api", "update credit_ledger set delta = 100", false],
       ["kairos_api", "delete from credit_ledger", false],
       ["kairos_worker", "update credit_ledger set note = 'x'", false],

@@ -54,7 +54,7 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
     ]);
 
     expect(await retention.processRetention()).toEqual({
-      attempt_evidence: 0, inbound_body: 1, inbound_hidden: 0, reminders: 0, forwarding_codes: 0, forwarding_stale: 0, contact_messages: 1, newsletter_inactive: 0, matches_below_bar: 0, board_requests: 0, jobs_closed: 4, verified_claims: 1, outbox_done: 0, outbox_dead: 0,
+      attempt_evidence: 0, inbound_body: 1, inbound_hidden: 0, reminders: 0, forwarding_codes: 0, forwarding_stale: 0, contact_messages: 1, newsletter_inactive: 0, matches_below_bar: 0, board_requests: 0, jobs_closed: 4, verified_claims: 1, outbox_done: 0, outbox_dead: 0, stripe_events: 0,
     });
     expect((await db.select().from(schema.verifiedClaims)).map((r) => r.verdict)).toEqual(["unsupported"]);
     expect((await db.select().from(schema.inboundEmails)).map((r) => r.textBody)).toEqual(expect.arrayContaining([null, "new"]));
@@ -66,8 +66,20 @@ describe.skipIf(!hasTestDb)("retention against Postgres (WP-25)", () => {
     expect(jobs.find((j) => j.id === saved)).toMatchObject({ descriptionText: "", raw: null });
     // A second run changes nothing.
     expect(await retention.processRetention()).toEqual({
-      attempt_evidence: 0, inbound_body: 0, inbound_hidden: 0, reminders: 0, forwarding_codes: 0, forwarding_stale: 0, contact_messages: 0, newsletter_inactive: 0, matches_below_bar: 0, board_requests: 0, jobs_closed: 0, verified_claims: 0, outbox_done: 0, outbox_dead: 0,
+      attempt_evidence: 0, inbound_body: 0, inbound_hidden: 0, reminders: 0, forwarding_codes: 0, forwarding_stale: 0, contact_messages: 0, newsletter_inactive: 0, matches_below_bar: 0, board_requests: 0, jobs_closed: 0, verified_claims: 0, outbox_done: 0, outbox_dead: 0, stripe_events: 0,
     });
+  });
+
+  it("deletes a finished Stripe event after 90 days, and never one still received or dead (WP-32)", async () => {
+    const row = (id: string, status: string, days: number) =>
+      db.insert(schema.stripeEvents).values({ id, type: "invoice.paid", status, receivedAt: ago(days), processedAt: status === "received" || status === "dead" ? null : ago(days), lastError: status === "dead" ? "payload_invalid" : null });
+    await row("evt_old_done", "processed", 91);
+    await row("evt_old_ignored", "ignored", 91);
+    await row("evt_new_done", "processed", 89);
+    await row("evt_old_received", "received", 91);
+    await row("evt_old_dead", "dead", 91);
+    expect(await retention.processRetention()).toMatchObject({ stripe_events: 2 });
+    expect((await db.select({ id: schema.stripeEvents.id }).from(schema.stripeEvents)).map((r) => r.id).sort()).toEqual(["evt_new_done", "evt_old_dead", "evt_old_received"]);
   });
 
   it("deletes newsletter sign-ups 30 days after their last confirm request or their unsubscribe, never a confirmed one (WP-50)", async () => {

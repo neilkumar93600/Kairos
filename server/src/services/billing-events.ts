@@ -427,7 +427,9 @@ export async function processStoredEvent(db: Db, eventId: string, api: StripeFet
   try {
     const result = await db.transaction(async (tx) => {
       if (seen.customer) await lockStripeCustomer(tx, seen.customer);
-      const [row] = await tx.select().from(stripeEvents).where(and(eq(stripeEvents.id, eventId), eq(stripeEvents.status, "received"))).for("update");
+      // No row lock here: erasure holds the balance row and then writes this one, so holding this across the balance lock below
+      // would be a cycle. A job delivered twice waits on the customer's lock above and then finds the status moved.
+      const [row] = await tx.select().from(stripeEvents).where(and(eq(stripeEvents.id, eventId), eq(stripeEvents.status, "received")));
       if (!row) return null;
       const parsed = stripeEventPayload.nullable().safeParse(row.payload);
       if (!parsed.success || (parsed.data === null && handledEventType(row.type))) {
@@ -440,7 +442,10 @@ export async function processStoredEvent(db: Db, eventId: string, api: StripeFet
       const erased = row.stripeCustomerId !== null && (await deps.customerErased(row.stripeCustomerId));
       const out = erased ? ({ status: "ignored", outcome: "user_deleted", userId: null } as const) : await processStripeEvent(stored, await fetchStripeState(stored, api), deps);
       const forgotten = out.outcome === "user_deleted" ? { payload: null, stripeCustomerId: null } : {};
-      await tx.update(stripeEvents).set({ status: out.status, outcome: out.outcome, userId: out.userId, processedAt: sql`now()`, lastError: null, ...forgotten }).where(eq(stripeEvents.id, eventId));
+      await tx
+        .update(stripeEvents)
+        .set({ status: out.status, outcome: out.outcome, userId: out.userId, processedAt: sql`now()`, lastError: null, ...forgotten })
+        .where(and(eq(stripeEvents.id, eventId), eq(stripeEvents.status, "received")));
       return { ...out, receivedAt: row.receivedAt };
     });
     if (!result) return "done";

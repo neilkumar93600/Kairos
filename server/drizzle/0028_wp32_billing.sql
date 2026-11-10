@@ -12,6 +12,8 @@
 --      deviation: both triggers upsert except on a DELETE, so no user with a ledger row or an in-flight application can lack
 --      a row. A DELETE only updates: in the "user" cascade the balance row may already be gone, and inserting it again would
 --      fail its foreign key.
+--      ensure_credit_balance makes nothing for a user that does not exist, instead of failing its foreign key: a request whose
+--      account was erased while it waited finds no row, and no application either, rather than a 500.
 --   4. effective_plan, the SQL mirror of effectivePlan (database-76); the shared vectors are in test/credit-balances.int.test.ts.
 --
 -- Grants are in ops/provision-roles.sql. EXECUTE is revoked from PUBLIC here because development and test databases have no
@@ -62,7 +64,9 @@ SELECT u."id",
 
 CREATE FUNCTION ensure_credit_balance(p_user text) RETURNS void
 LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
-  INSERT INTO credit_balances (user_id, balance, in_flight) VALUES (p_user, 0, 0) ON CONFLICT (user_id) DO NOTHING;
+  INSERT INTO credit_balances (user_id, balance, in_flight)
+  SELECT id, 0, 0 FROM "user" WHERE id = p_user
+  ON CONFLICT (user_id) DO NOTHING;
 $$;--> statement-breakpoint
 
 CREATE FUNCTION credit_ledger_apply() RETURNS trigger
