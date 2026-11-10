@@ -552,7 +552,7 @@ Growth topology (3 api, 4 worker, 8 applier) for 24 hours at 1.5x peak with an 8
 - Spec refs: resume-80,81,83,85,v09; tests-68
 - Needs owner: DOCX library choice and template licensing (freehire MIT source).
 
-Five more Typst templates (modern, serif, compact, executive, minimal) with accents at 4.5:1 contrast and A4 and Letter pagination. A GET /templates registry and per-resume design settings. A DOCX renderer (Word heading styles, real lists, no tables) with a round-trip check via mammoth. Export format docx. Files: templates/*, services/render-docx.ts, routes/templates.ts.
+*[Note from WP-19]* Every `templateId` prints as Classic today (`services/render.ts`, one embedded template); the render hash and the R2 keys include the template source, so adding templates re-renders nothing that is cached under another. Pick the template from `doc.templateId` in `typstData`, keep the one-`json(`-call rule of `render-sandbox.test.ts`, and add goldens per template. Five more Typst templates (modern, serif, compact, executive, minimal) with accents at 4.5:1 contrast and A4 and Letter pagination. A GET /templates registry and per-resume design settings. A DOCX renderer (Word heading styles, real lists, no tables) with a round-trip check via mammoth. Export format docx. Files: templates/*, services/render-docx.ts, routes/templates.ts.
 
 **Acceptance:** All six templates pass the golden round trip in PDF and DOCX at both page sizes. The contrast check passes for every swatch.
 
