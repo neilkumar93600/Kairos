@@ -1,0 +1,49 @@
+name: Chaos
+
+# WP-22: the process-kill chaos harness (ops/chaos/run.ts), run by hand from the Actions tab. Its own throwaway Postgres
+# and Redis; nothing here reaches staging or production. It has not run yet: its first run is this workflow's first run.
+on:
+  workflow_dispatch:
+    inputs:
+      approvals:
+        description: Scripted approvals
+        default: "1000"
+
+permissions:
+  contents: read
+
+jobs:
+  chaos:
+    runs-on: ubuntu-latest
+    # About 12 minutes when it passes (the last orphaned claim settles 8.5 minutes after it was made); 18 when it does not.
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17@sha256:3b0cda93be7c8dba2ed484d19393d93845dc3dafb88973e248ba8e6d99d784e1
+        env:
+          POSTGRES_USER: kairos
+          POSTGRES_PASSWORD: kairos
+          POSTGRES_DB: kairos_chaos
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U kairos"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7@sha256:b6b6e3dc0c0952737748e55d5d885272840c7e42ba41ab1d5489f693419882f5
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts && npm rebuild esbuild
+      - run: npx tsx ops/chaos/run.ts
+        env:
+          CHAOS_DATABASE_URL: postgres://kairos:kairos@localhost:5432/kairos_chaos
+          CHAOS_REDIS_URL: redis://localhost:6379
+          CHAOS_PG_RESTART_CMD: docker restart ${{ job.services.postgres.id }}
+          CHAOS_APPROVALS: ${{ inputs.approvals }}

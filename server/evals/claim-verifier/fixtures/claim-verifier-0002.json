@@ -1,0 +1,55 @@
+{
+  "caseId": "claim-verifier-0002",
+  "promptVersion": 1,
+  "promptSha256": "640f29b20b7bf9f0a332e68bb0c05bf43748b6f734db2869f7c829800d9a2127",
+  "inputHash": "51e9e7a1c7263bd07b390ecb1d345a8312cb023be79dbc9e5c47be678195a88a",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "verdicts": [
+          {
+            "claimId": "c01",
+            "verdict": "supported",
+            "factRef": "f2"
+          },
+          {
+            "claimId": "c02",
+            "verdict": "unsupported",
+            "factRef": null
+          },
+          {
+            "claimId": "c03",
+            "verdict": "supported",
+            "factRef": "f3"
+          },
+          {
+            "claimId": "c04",
+            "verdict": "unsupported",
+            "factRef": null
+          },
+          {
+            "claimId": "c05",
+            "verdict": "supported",
+            "factRef": "f4"
+          },
+          {
+            "claimId": "c06",
+            "verdict": "contradicted",
+            "factRef": "f4"
+          },
+          {
+            "claimId": "c07",
+            "verdict": "unsupported",
+            "factRef": null
+          },
+          {
+            "claimId": "c08",
+            "verdict": "contradicted",
+            "factRef": "f1"
+          }
+        ]
+      }
+    }
+  ]
+}

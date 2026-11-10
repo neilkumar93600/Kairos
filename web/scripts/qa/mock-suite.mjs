@@ -215,7 +215,7 @@ export function buildSuite(b) {
 
   /* insights are static sample numbers; the schema's own refinements check they are consistent */
   const insights = {
-    "30d": { range: "30d", sent: 3, replies: 1, interviews: 1, offers: 0, replyRate: null, interviewRate: null, medianDaysToFirstReply: 2, lowSample: true, funnel: stageCounts(items), byResume: [{ resumeId: "resume-1", name: "Backend", sent: 3, replies: 1, replyRate: null }] },
+    "30d": { range: "30d", sent: 3, replies: 1, interviews: 1, offers: 0, replyRate: null, interviewRate: null, medianDaysToFirstReply: null, lowSample: true, funnel: stageCounts(items), byResume: [{ resumeId: "resume-1", name: "Backend", sent: 3, replies: 1, replyRate: null }] },
     "90d": { range: "90d", sent: 12, replies: 5, interviews: 2, offers: 0, replyRate: 5 / 12, interviewRate: 2 / 12, medianDaysToFirstReply: 3, lowSample: false, funnel: stageCounts(items), byResume: [{ resumeId: "resume-1", name: "Backend", sent: 8, replies: 4, replyRate: 0.5 }, { resumeId: "resume-3", name: "Data engineer", sent: 4, replies: 1, replyRate: null }] },
     all: { range: "all", sent: 21, replies: 8, interviews: 4, offers: 1, replyRate: 8 / 21, interviewRate: 4 / 21, medianDaysToFirstReply: 4, lowSample: false, funnel: stageCounts(items), byResume: [{ resumeId: "resume-1", name: "Backend", sent: 15, replies: 7, replyRate: 7 / 15 }, { resumeId: "resume-3", name: "Data engineer", sent: 6, replies: 1, replyRate: 1 / 6 }] },
   };
@@ -606,7 +606,10 @@ export function suiteRespond(req, data) {
       if (!data.me.plan.outcomeReport) return err(403, "forbidden", "Insights are on the Pro and Max plans.");
       const range = query.get("range") ?? "30d";
       if (!s.insights[range]) return invalid("range must be 30d, 90d or all");
-      return json({ insights: { ...s.insights[range], funnel: stageCounts(s.items) } });
+      // As the server: cards created in the range.
+      const days = { "30d": 30, "90d": 90 }[range];
+      const since = days ? new Date(NOW() - days * DAY).toISOString() : "";
+      return json({ insights: { ...s.insights[range], funnel: stageCounts(s.items.filter((i) => i.createdAt >= since)) } });
     }
     if ((x = m(/^\/tracker\/([^/]+)$/))) {
       const it = item(x[1]);

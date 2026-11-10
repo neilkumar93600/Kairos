@@ -20,6 +20,12 @@ export interface TenantIds {
   resumeId: string;
   revisionId: string;
   importId: string;
+  /** WP-35: a saved search. */
+  savedSearchId: string;
+  /** WP-21: a tracker item, a contact and an interview of that item. */
+  trackerItemId: string;
+  contactId: string;
+  interviewId: string;
 }
 
 /** Exempt from the two-user check, with the reason: no session user, or a credential of its own. */
@@ -35,6 +41,8 @@ export interface TenantEntry {
   request: (ids: TenantIds) => { path: string; body?: object };
   foreign?: number;
   why?: string;
+  /** Read uncached with no age limit (05-api session-nocache), like the extension's claim. */
+  nocache?: true;
   /** A session-fresh route (05-api 5.2): test/fresh-matrix.test.ts holds this flag against how routes/index.ts mounts it. */
   fresh?: true;
 }
@@ -52,8 +60,15 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "ALL /api/auth/*splat": { public: "Better Auth: sign-in and the caller's own session; it checks its own origins and limits" },
   "POST /api/webhooks/stripe": { public: "Stripe: the signature is the credential, and the event names its own customer" },
   "POST /api/webhooks/inbound-email": { public: "Postmark inbound: the token is the credential; mail is filed by forwarding address" },
+  "POST /api/webhooks/postmark/inbound/:pathSecret": {
+    public: "Postmark inbound (WP-24): the path secret and Basic pair are the credential; mail is filed by forwarding address",
+  },
   "POST /api/webhooks/postmark-events": { public: "Postmark delivery events: the token is the credential; it only adds or lifts address-hash suppressions" },
   "POST /api/contact": { public: "the public contact form: stores a message and reads nothing back" },
+  "GET /api/applications/:id/resend-link": { public: "the signed token is the credential; GET only reads, and shows what a POST would do" },
+  "POST /api/applications/:id/resend-link": { public: "the signed token is the credential; single use, it re-approves one failed application of the token's own user" },
+  "GET /api/unsubscribe": { public: "the signed token is the credential; GET only reads, and shows what a POST would stop" },
+  "POST /api/unsubscribe": { public: "the signed token is the credential; it turns off one optional mail kind for the token's own user" },
   "POST /api/newsletter": { public: "the public newsletter form: the same 202 for every address, reads nothing back" },
   "POST /api/newsletter/confirm": { public: "the emailed confirm token is the credential; it confirms one address and returns nothing" },
   "GET /api/newsletter/unsubscribe": { public: "changes and reads nothing: redirects to the web page that posts the token" },
@@ -105,14 +120,20 @@ export const MATRIX: Record<string, MatrixEntry> = {
     why: "approves the caller's own drafts among the ids sent; another user's id is left out ({ approved: [] })",
   },
   "POST /api/applications/:id/drafts": { request: (t) => ({ path: `/api/applications/${t.applicationId}/drafts`, body: { kind: "cover_letter" } }) },
+  "POST /api/applications/:id/stage/clear": { request: (t) => ({ path: `/api/applications/${t.applicationId}/stage/clear` }) },
   "POST /api/applications/:id/withdraw": { request: (t) => ({ path: `/api/applications/${t.applicationId}/withdraw` }) },
+  "POST /api/applications/:id/resend": { fresh: true, request: (t) => ({ path: `/api/applications/${t.applicationId}/resend`, body: { channel: "extension", acknowledgeUnconfirmed: true } }) },
 
   "GET /api/credits": own("/api/credits"),
   "GET /api/inbox": own("/api/inbox"),
+  "GET /api/forwarding/status": own("/api/forwarding/status"),
+  "POST /api/forwarding/confirm": own("/api/forwarding/confirm", { provider: "other" }),
   "POST /api/billing/checkout": { ...own("/api/billing/checkout", { plan: "starter", interval: "month" }), fresh: true },
   "POST /api/billing/portal": { ...own("/api/billing/portal"), fresh: true },
 
   "GET /api/extension/queue": own("/api/extension/queue"),
+  "POST /api/extension/claim": { nocache: true, request: (t) => ({ path: "/api/extension/claim", body: { applicationId: t.applicationId } }) },
+  "POST /api/extension/release": { request: (t) => ({ path: "/api/extension/release", body: { applicationId: t.applicationId } }) },
   "POST /api/extension/report": {
     request: (t) => ({
       path: "/api/extension/report",
@@ -128,8 +149,10 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "POST /api/profile/facts/confirm": { request: (t) => ({ path: "/api/profile/facts/confirm", body: { ids: [t.factId] } }) },
   "GET /api/resumes": own("/api/resumes"),
   "POST /api/resumes": { request: (t) => ({ path: "/api/resumes", body: { from: "duplicate", sourceId: t.resumeId, name: "Copy" } }) },
+  "POST /api/resumes/suggestions": { request: (t) => ({ path: "/api/resumes/suggestions", body: { scope: "resume", resumeId: t.resumeId } }) },
   "POST /api/resumes/tailor": { request: (t) => ({ path: "/api/resumes/tailor", body: { jobId: t.jobId } }) },
   "GET /api/resumes/:id": { request: (t) => ({ path: `/api/resumes/${t.resumeId}` }) },
+  "GET /api/resumes/:id/export": { request: (t) => ({ path: `/api/resumes/${t.resumeId}/export?format=txt` }) },
   "PUT /api/resumes/:id": { request: (t) => ({ path: `/api/resumes/${t.resumeId}`, body: { name: "Base resume", density: "comfortable", contact: { name: "Test User", email: "user@test.local", phone: "", location: "", links: [] }, sections: [] } }) },
   "PATCH /api/resumes/:id": { request: (t) => ({ path: `/api/resumes/${t.resumeId}`, body: { name: "Renamed" } }) },
   "DELETE /api/resumes/:id": { request: (t) => ({ path: `/api/resumes/${t.resumeId}` }) },
@@ -145,10 +168,42 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "GET /api/admin/info": { ...own("/api/admin/info"), fresh: true },
   "GET /api/admin/companies": { ...own("/api/admin/companies"), fresh: true },
   "POST /api/admin/companies/:id/activate": { ...own("/api/admin/companies/00000000-0000-4000-8000-000000000001/activate"), fresh: true },
+  "GET /api/admin/board-requests": { ...own("/api/admin/board-requests"), fresh: true },
+  "GET /api/admin/outbox": { ...own("/api/admin/outbox"), fresh: true },
+  "POST /api/admin/outbox/:id/resume": { ...own("/api/admin/outbox/00000000-0000-4000-8000-000000000001/resume", { reason: "matrix" }), fresh: true },
   "POST /api/admin/companies/:id/deactivate": { ...own("/api/admin/companies/00000000-0000-4000-8000-000000000001/deactivate"), fresh: true },
   // WP-44: every statement filters by the caller's user id; read-all touches only the caller's unread rows.
   "GET /api/notifications": own("/api/notifications"),
   "POST /api/notifications/read": own("/api/notifications/read", { all: true }),
+  // WP-35: email preferences act on the caller's own profile; a saved search is reached by id and by owner.
+  "GET /api/email-preferences": own("/api/email-preferences"),
+  "PATCH /api/email-preferences": own("/api/email-preferences", { digest: true }),
+  // WP-21. POST /api/tracker takes a match id, so another user's is a 404 like the rest; its { url } form sits behind writerLimiter and is not walked here.
+  "GET /api/tracker": own("/api/tracker"),
+  "POST /api/tracker": { request: (t) => ({ path: "/api/tracker", body: { matchId: t.matchId } }) },
+  "GET /api/tracker/insights": own("/api/tracker/insights"),
+  "GET /api/tracker/:id": { request: (t) => ({ path: `/api/tracker/${t.trackerItemId}` }) },
+  "PATCH /api/tracker/:id": { request: (t) => ({ path: `/api/tracker/${t.trackerItemId}`, body: { notes: "Theirs" } }) },
+  "GET /api/tracker/:id/events": { request: (t) => ({ path: `/api/tracker/${t.trackerItemId}/events` }) },
+  "POST /api/tracker/:id/interviews": { request: (t) => ({ path: `/api/tracker/${t.trackerItemId}/interviews`, body: { startsAt: "2030-01-01T10:00:00.000Z", timeZone: "UTC", durationMinutes: 30, kind: "video" } }) },
+  "PATCH /api/tracker/:id/interviews/:iid": { request: (t) => ({ path: `/api/tracker/${t.trackerItemId}/interviews/${t.interviewId}`, body: { outcome: "Theirs" } }) },
+  "DELETE /api/tracker/:id/interviews/:iid": { request: (t) => ({ path: `/api/tracker/${t.trackerItemId}/interviews/${t.interviewId}` }) },
+  "GET /api/tracker/:id/interviews/:iid.ics": { request: (t) => ({ path: `/api/tracker/${t.trackerItemId}/interviews/${t.interviewId}.ics` }) },
+  "GET /api/contacts": own("/api/contacts"),
+  "POST /api/contacts": { request: (t) => ({ path: "/api/contacts", body: { name: "Theirs", jobIds: [t.trackerItemId] } }) },
+  "GET /api/contacts/:id": { request: (t) => ({ path: `/api/contacts/${t.contactId}` }) },
+  "PATCH /api/contacts/:id": { request: (t) => ({ path: `/api/contacts/${t.contactId}`, body: { notes: "Theirs" } }) },
+  "DELETE /api/contacts/:id": { request: (t) => ({ path: `/api/contacts/${t.contactId}` }) },
+  "GET /api/interviews": own("/api/interviews"),
+  "GET /api/applications/:id/events": { request: (t) => ({ path: `/api/applications/${t.applicationId}/events` }) },
+  "GET /api/saved-searches": own("/api/saved-searches"),
+  "POST /api/saved-searches": own("/api/saved-searches", { name: "Remote only", filters: { remoteOnly: true }, frequency: "weekly" }),
+  "PATCH /api/saved-searches/:id": { request: (t) => ({ path: `/api/saved-searches/${t.savedSearchId}`, body: { frequency: "off" } }) },
+  "DELETE /api/saved-searches/:id": {
+    request: (t) => ({ path: `/api/saved-searches/${t.savedSearchId}` }),
+    foreign: 204,
+    why: "an idempotent delete: a missing or foreign id is 204 and deletes nothing (05-api 10.8)",
+  },
 };
 
 type Layer = { route?: { path: string | string[]; methods: Record<string, boolean> }; handle: { stack?: Layer[] }; mountPath?: string | string[] };

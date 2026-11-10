@@ -6,14 +6,27 @@ import { vi } from "vitest";
  * browser whose one page shows `frames` (each visible) and whose filler call returns `fill()`. Real page behaviour
  * is covered by cloud-apply.browser.test.ts. Returns the fill spy. Call closeBrowser() (jobs/browser-pool.ts) after each test.
  */
-export function fakeBrowser(opts: { frames?: string[]; fill?: () => Promise<unknown> } = {}) {
+export function fakeBrowser(opts: { frames?: string[]; fill?: () => Promise<unknown>; goto?: () => Promise<void>; resumeInput?: { uploads: unknown[]; required?: boolean; fails?: boolean } } = {}) {
   const fill = vi.fn(opts.fill ?? (async () => ({})));
   const page = {
     on: () => {},
     url: () => "https://job-boards.greenhouse.io/x/jobs/1",
     title: async () => "Apply",
-    $: async () => null,
-    goto: async () => ({ status: () => 200 }),
+    // The fake ATS's resume input, when the test gives it one: setInputFiles is recorded there.
+    $: async (selector: string) =>
+      opts.resumeInput && selector.includes("type=file")
+        ? {
+            setInputFiles: async (file: unknown) => {
+              if (opts.resumeInput!.fails) throw new Error("element is not attached to the DOM");
+              opts.resumeInput!.uploads.push(file);
+            },
+            evaluate: async () => opts.resumeInput!.required ?? false,
+          }
+        : null,
+    goto: async () => {
+      await opts.goto?.();
+      return { status: () => 200 };
+    },
     waitForLoadState: async () => {},
     frames: () => (opts.frames ?? []).map((u) => ({ url: () => u, frameElement: async () => ({ evaluate: async () => true }) })),
     evaluate: async (fn: unknown) => (typeof fn === "string" ? undefined : fill()),

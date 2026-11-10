@@ -126,3 +126,56 @@ describe("report", () => {
     expect(text).toContain("eval (fixtures): FAIL");
   });
 });
+
+describe("the labelled-set bars (WP-26)", () => {
+  /** A live client for the verifier: every claim gets the verdict `judge` gives its text. */
+  const judging = (judge: (text: string) => string) => () => ({
+    messages: {
+      async create(body: Record<string, unknown>) {
+        const text = (body.messages as { content: { text: string }[] }[])[0]!.content.map((c) => c.text).join("\n");
+        const verdicts = [...text.matchAll(/^\[(c\d\d)\] kind=\S+ cites=(\S+) :: (.*)$/gm)].map((m) => {
+          const verdict = judge(m[3]!);
+          return { claimId: m[1]!, verdict, factRef: verdict === "supported" || verdict === "contradicted" ? m[2]!.split(",")[0]! : null };
+        });
+        return {
+          data: { content: [{ type: "text", text: JSON.stringify({ verdicts }) }], stop_reason: "end_turn", usage: { input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cache_creation: null } },
+          requestId: "r",
+          rateRemaining: { requests: 999, inputTokens: 999_999, outputTokens: 99_999 },
+          rateLimitRequests: 2_000,
+          retryAfterSeconds: null,
+        };
+      },
+    },
+  });
+
+  it("the committed fixtures pass and report rates, flagged as plumbing only", async () => {
+    const report = await runEval({ mode: "fixtures", agents: ["claim-verifier"] });
+    expect(report.verdictBars).toEqual([expect.objectContaining({ agentId: "claim-verifier", falseAcceptRate: 0, falseRejectRate: 0, ok: true })]);
+    expect(formatReport(report)).toMatch(/false accept 0\.0% \(bar 1\.0%\), false reject 0\.0% \(bar 8\.0%\): ok, from fixtures/);
+  });
+
+  it("a model that accepts everything is over the false-accept bar, and fails the injection slice one by one", async () => {
+    const report = await runEval({ mode: "live", agents: ["claim-verifier"], liveClient: judging(() => "supported") as never });
+    expect(report.verdictBars[0]).toMatchObject({ ok: false, falseRejectRate: 0 });
+    expect(report.verdictBars[0]!.falseAcceptRate).toBeGreaterThan(0.01);
+    expect(report.passed).toBe(false);
+    expect(report.results.flatMap((r) => r.failures).some((f) => f.grader === "verdict")).toBe(true);
+    expect(formatReport(report)).toContain("OVER THE BAR");
+  });
+
+  it("a model that rejects everything is over the false-reject bar", async () => {
+    const report = await runEval({ mode: "live", agents: ["claim-verifier"], liveClient: judging(() => "unsupported") as never });
+    expect(report.verdictBars[0]).toMatchObject({ ok: false, falseAcceptRate: 0, falseRejectRate: 1 });
+  });
+
+  it("a live run of a model at the labels passes the bars", async () => {
+    const lines = readFileSync(new URL("../../evals/claim-verifier/cases.jsonl", import.meta.url), "utf8").split(/\r?\n/).filter(Boolean);
+    const gold = new Map<string, string>();
+    for (const line of lines) {
+      const c = JSON.parse(line) as { input: { claims: { id: string; text: string }[] }; expect: { verdicts: Record<string, string> } };
+      for (const claim of c.input.claims) gold.set(claim.text.replace(/\s+/g, " ").replace(/<<END DATA/gi, "\u00abDATA"), c.expect.verdicts[claim.id]!);
+    }
+    const report = await runEval({ mode: "live", agents: ["claim-verifier"], liveClient: judging((t) => gold.get(t) ?? "unsupported") as never });
+    expect(report.verdictBars[0]).toMatchObject({ ok: true, falseAcceptRate: 0, falseRejectRate: 0 });
+  });
+});

@@ -16,7 +16,8 @@ import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from ".
  * what B gets on ids that exist nowhere (status and body, byte for byte), never A's data, and changes none of A's rows.
  * Then A calls every route on A's own rows, and no answer of the whole run carries a marker seeded in an internal column.
  * Never reaches Stripe, R2, Redis or a model: Stripe is spied, storage is in memory, the queue and the two AI writers are
- * stubbed, and limits are in memory per app (sharedLimits off), so the run stays far below every limit.
+ * stubbed, and limits are in memory per app (sharedLimits off), so the run stays far below every limit but the AI burst
+ * cap: one user's walk through the AI routes crosses its 10 a minute, so that limiter is stubbed too.
  *   TEST_DATABASE_URL=postgres://kairos:kairos@localhost:55432/kairos_test npx vitest run test/authz-matrix.int.test.ts
  */
 
@@ -30,6 +31,10 @@ delete process.env.ANTHROPIC_API_KEY;
 const storage = vi.hoisted(() => ({ current: undefined as Storage | undefined }));
 vi.mock("../src/lib/storage", async (orig) => ({ ...(await orig<typeof import("../src/lib/storage")>()), storage: () => storage.current! }));
 vi.mock("../src/jobs/queues", async (orig) => ({ ...(await orig<typeof import("../src/jobs/queues")>()), enqueue: vi.fn(async () => {}) }));
+vi.mock("../src/middleware/rate-limit", async (orig) => ({
+  ...(await orig<typeof import("../src/middleware/rate-limit")>()),
+  aiLimiter: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
 vi.mock("../src/services/tailor", async (orig) => ({
   ...(await orig<typeof import("../src/services/tailor")>()),
   tailorResume: vi.fn(async () => ({ kept: [], rejected: [] })),
@@ -73,6 +78,10 @@ const MISSING: TenantIds = {
   resumeId: randomUUID(),
   revisionId: randomUUID(),
   importId: randomUUID(),
+  savedSearchId: randomUUID(),
+  trackerItemId: randomUUID(),
+  contactId: randomUUID(),
+  interviewId: randomUUID(),
 };
 
 /** "Bearer <userId>" signs in as that seeded user; anything else is signed out. A bearer request skips originGuard. */
@@ -93,7 +102,13 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
   let B: Tenant;
   let rowsOfA: Awaited<ReturnType<typeof rowsOf>>;
   const seen: { as: string | undefined; text: string }[] = [];
-  const stripeSpies: { mock: { calls: unknown[][] } }[] = [];
+  // Kept here, not read from spy.mock.calls: Vitest empties a spy's history between tests, and the check runs after the pass.
+  const stripeCalls: unknown[][] = [];
+  const stripeAnswers = (result: object) =>
+    ((...args: unknown[]) => {
+      stripeCalls.push(args);
+      return Promise.resolve(result);
+    }) as never;
 
   /** User-visible rows tagged with `tag`, and markers in internal columns, for one tenant. */
   async function seedTenant(letter: "A" | "B"): Promise<Tenant> {
@@ -156,6 +171,11 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
     const source = `Led the ${tag} platform team for two years and shipped the billing service.`;
     await tdb.insert(schema.resumeImports).values({ id: importId, userId, resumeProfileId: resumeProfile!.id, sourceKind: "text", sourceTextEnc: encrypt(source, sourceAad(importId)), sourceHash: sourceHash(source), parseStatus: "parsed", parsedAt: new Date() });
     await tdb.update(schema.facts).set({ resumeProfileId: resumeProfile!.id, importId }).where(eq(schema.facts.id, fact!.id));
+    const [trackerItem] = await tdb.insert(schema.trackerItems).values({ userId, jobId: job!.id, applicationId: application!.id, stage: "drafting", notes: `${tag} notes`, salaryText: `${tag} pay` }).returning();
+    const [contact] = await tdb.insert(schema.contacts).values({ userId, name: `${tag} recruiter`, notes: `${tag} contact` }).returning();
+    await tdb.insert(schema.contactJobs).values({ contactId: contact!.id, trackerItemId: trackerItem!.id });
+    const [interview] = await tdb.insert(schema.interviews).values({ userId, trackerItemId: trackerItem!.id, startsAt: new Date(Date.now() + 86_400_000), timeZone: "UTC", durationMinutes: 30, kind: "video", notes: `${tag} interview` }).returning();
+    const [savedSearch] = await tdb.insert(schema.savedSearches).values({ userId, name: `${tag} jobs`, filters: { roles: [`${tag} Engineer`] } }).returning();
     await tdb.insert(schema.inboundEmails).values({
       userId,
       applicationId: application!.id,
@@ -168,7 +188,7 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
     await tdb.insert(schema.session).values({ id: randomUUID(), token: `${MARKER}-${letter}`, userId, expiresAt: new Date(Date.now() + 86_400_000) });
     const fileKey = `snapshots/${userId}/cv.pdf`;
     await r2.storage.put(fileKey, `%PDF-1.7 ${tag}`, "application/pdf");
-    return { userId, tag, customerId, applicationId: application!.id, factId: fact!.id, answerId: answer!.id, matchId: match!.id, jobId: job!.id, fileKey, resumeId: resume!.id, revisionId: revision!.id, importId };
+    return { userId, tag, customerId, applicationId: application!.id, factId: fact!.id, answerId: answer!.id, matchId: match!.id, jobId: job!.id, fileKey, resumeId: resume!.id, revisionId: revision!.id, importId, savedSearchId: savedSearch!.id, trackerItemId: trackerItem!.id, contactId: contact!.id, interviewId: interview!.id };
   }
 
   /** Every row a user owns, each table's rows as sorted JSON, so two reads compare whatever order Postgres returns. */
@@ -189,6 +209,10 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
       applications: json(await tdb.select().from(s.applications).where(eq(s.applications.userId, userId))),
       creditLedger: json(await tdb.select().from(s.creditLedger).where(eq(s.creditLedger.userId, userId))),
       inboundEmails: json(await tdb.select().from(s.inboundEmails).where(eq(s.inboundEmails.userId, userId))),
+      savedSearches: json(await tdb.select().from(s.savedSearches).where(eq(s.savedSearches.userId, userId))),
+      trackerItems: json(await tdb.select().from(s.trackerItems).where(eq(s.trackerItems.userId, userId))),
+      contacts: json(await tdb.select().from(s.contacts).where(eq(s.contacts.userId, userId))),
+      interviews: json(await tdb.select().from(s.interviews).where(eq(s.interviews.userId, userId))),
       aiUsage: json(await tdb.select().from(aiUsage).where(eq(aiUsage.userId, userId))),
       account: json(await tdb.select().from(s.account).where(eq(s.account.userId, userId))),
       session: json(await tdb.select().from(s.session).where(eq(s.session.userId, userId))),
@@ -218,12 +242,10 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
     A = await seedTenant("A");
     B = await seedTenant("B");
     const stripeClient = (await import("../src/services/stripe")).stripe();
-    stripeSpies.push(
-      vi.spyOn(stripeClient.customers, "create").mockResolvedValue({ id: "cus_created" } as never),
-      vi.spyOn(stripeClient.subscriptions, "list").mockResolvedValue({ data: [] } as never),
-      vi.spyOn(stripeClient.checkout.sessions, "create").mockResolvedValue({ url: "https://checkout.test/s" } as never),
-      vi.spyOn(stripeClient.billingPortal.sessions, "create").mockResolvedValue({ url: "https://portal.test/p" } as never),
-    );
+    vi.spyOn(stripeClient.customers, "create").mockImplementation(stripeAnswers({ id: "cus_created" }));
+    vi.spyOn(stripeClient.subscriptions, "list").mockImplementation(stripeAnswers({ data: [] }));
+    vi.spyOn(stripeClient.checkout.sessions, "create").mockImplementation(stripeAnswers({ url: "https://checkout.test/s" }));
+    vi.spyOn(stripeClient.billingPortal.sessions, "create").mockImplementation(stripeAnswers({ url: "https://portal.test/p" }));
     app = createApp({ auth: byBearer, corsOrigins: [], healthChecks: {} });
     rowsOfA = await rowsOf(A.userId);
   });
@@ -261,7 +283,7 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
 
   it("B's pass changed none of A's rows, never reached A's Stripe customer, and did serve B's own rows", async () => {
     expect(await rowsOf(A.userId)).toEqual(rowsOfA);
-    const stripeArgs = JSON.stringify(stripeSpies.map((s) => s.mock.calls));
+    const stripeArgs = JSON.stringify(stripeCalls);
     expect(stripeArgs).not.toContain(A.customerId);
     expect(stripeArgs).toContain(B.customerId);
     expect(seen.filter((s) => s.as === B.userId).map((s) => s.text).join("\n")).toContain(B.tag);
@@ -272,7 +294,8 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
     const reads = TENANT_ROUTES.filter((k) => k.startsWith("GET "));
     for (const key of [...reads, ...TENANT_ROUTES.filter((k) => !reads.includes(k))]) {
       const status = (await send(key, A, A.userId)).status;
-      expect(status < 500 || status === 503, key).toBe(true);
+      // Before 0011 a second resume answers 503 resumes_user_uq by design (drop this with 0011); nothing else may be a 5xx.
+      expect(status < 500 || (status === 503 && ["POST /api/resumes", "POST /api/resumes/tailor"].includes(key)), key).toBe(true);
     }
     expect(seen.filter((s) => s.as === A.userId).map((s) => s.text).join("\n")).toContain(A.tag);
     for (const { text } of seen) {

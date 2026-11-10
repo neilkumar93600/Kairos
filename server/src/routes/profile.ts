@@ -1,12 +1,15 @@
+import { createHash } from "node:crypto";
 import { Router } from "express";
 import { and, eq, exists, inArray, not, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { FACT_KINDS, confirmFactsRequestSchema, getPlan, httpUrl, preferencesSchema } from "@auto-career/shared";
-import { db } from "../db/client";
+import { db, type Db } from "../db/client";
 import { applications, employments, facts, profiles, resumeProfiles, resumes, savedAnswers } from "../db/schema";
+import { enqueue } from "../jobs/queues";
 import { asActor } from "../lib/actor";
 import { HttpError, forbidden, notFound } from "../lib/errors";
+import { logger, logUserHash } from "../lib/logger";
 import { FACT_COLUMNS, PROFILE_COLUMNS, RESUME_PROFILE_COLUMNS } from "../lib/serializers";
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
@@ -16,6 +19,30 @@ import { planFor } from "../services/submissions";
 
 /** Profile, preferences, resumes, facts and saved answers. Mounted at /api/profile. */
 export const profileRouter = Router();
+
+/**
+ * The job id of one backfill: the same cause in the same minute is one run, and a different save in that minute is its
+ * own, so a correction a few seconds later is not dropped. The minute is in there because BullMQ refuses an id it still
+ * holds, completed or not, so saving back to earlier preferences runs again.
+ */
+export const backfillJobId = (userId: string, cause: string, now = Date.now()): string => `backfill-${userId}-${cause}-${Math.floor(now / 60_000)}`;
+
+/** What changed about the preferences, as a job id part. */
+export const preferencesCause = (prefs: unknown): string => createHash("sha256").update(JSON.stringify(prefs)).digest("hex").slice(0, 16);
+
+/**
+ * Asks for one capped backfill (matching-69). Best effort: the save already committed, and a lost backfill only means the
+ * feed fills from the next postings.
+ */
+function requestBackfill(userId: string, cause: string): void {
+  enqueue("score-matches", { backfillUserId: userId }, backfillJobId(userId, cause)).catch((err: unknown) =>
+    logger.warn({ err, userHash: logUserHash(userId) }, "backfill not queued"),
+  );
+}
+
+/** Whether this user has a confirmed fact yet: the first one is what makes them scoreable, whichever route confirms it. */
+const hasConfirmedFact = async (tx: Pick<Db, "select">, userId: string): Promise<boolean> =>
+  (await tx.select({ id: facts.id }).from(facts).where(and(eq(facts.userId, userId), eq(facts.confirmed, true))).limit(1)).length > 0;
 
 /** Links are printed on resumes and rendered as hrefs: http(s) only, as profiles_urls_ck also insists. */
 const link = httpUrl(300).nullable();
@@ -49,6 +76,7 @@ profileRouter.put("/preferences", validateBody(preferencesSchema), async (req, r
     .set({ preferences: req.body, onboardingStep: "done", updatedAt: new Date() })
     .where(eq(profiles.userId, currentUser(req).id))
     .returning({ preferences: profiles.preferences });
+  requestBackfill(currentUser(req).id, preferencesCause(req.body));
   res.json({ preferences: profile?.preferences ?? null });
 });
 
@@ -83,8 +111,10 @@ profileRouter.post("/facts/confirm", validateBody(confirmFactsRequestSchema), as
   const me = currentUser(req);
   const ids = [...new Set((req.body as { ids: string[] }).ids)];
   if (!ids.every((id) => z.uuid().safeParse(id).success)) throw notFound("Fact");
+  let first = false;
   const confirmedFacts = await db().transaction(async (tx) => {
     await asActor(tx, "user");
+    first = !(await hasConfirmedFact(tx, me.id));
     const mine = and(inArray(facts.id, ids), eq(facts.userId, me.id));
     const owned = await tx.select({ id: facts.id, employmentId: facts.employmentId }).from(facts).where(mine);
     if (owned.length !== ids.length) throw notFound("Fact");
@@ -98,6 +128,7 @@ profileRouter.post("/facts/confirm", validateBody(confirmFactsRequestSchema), as
     }
     return rows;
   });
+  if (first && confirmedFacts.length) requestBackfill(me.id, "facts");
   res.json({ facts: confirmedFacts });
 });
 
@@ -110,10 +141,14 @@ const factSchema = z.object({ kind: z.enum(FACT_KINDS), text: z.string().trim().
 
 // Fact writes run as the user (asActor): facts_guard refuses a confirm or an edit from anyone else (INV-2).
 profileRouter.post("/facts", validateBody(factSchema), async (req, res) => {
+  const userId = currentUser(req).id;
+  let first = false;
   const [fact] = await db().transaction(async (tx) => {
     await asActor(tx, "user");
-    return tx.insert(facts).values({ ...req.body, assertedBy: "user", userId: currentUser(req).id }).returning(FACT_COLUMNS);
+    first = req.body.confirmed && !(await hasConfirmedFact(tx, userId));
+    return tx.insert(facts).values({ ...req.body, assertedBy: "user", userId }).returning(FACT_COLUMNS);
   });
+  if (first) requestBackfill(userId, "facts");
   res.status(201).json({ fact });
 });
 
@@ -125,8 +160,11 @@ export const factPatchSchema = factSchema
 
 profileRouter.patch("/facts/:id", validateBody(factPatchSchema), async (req, res) => {
   const id = parseParam(z.uuid(), req.params.id);
+  const userId = currentUser(req).id;
+  let first = false;
   const [fact] = await db().transaction(async (tx) => {
     await asActor(tx, "user");
+    first = req.body.confirmed === true && !(await hasConfirmedFact(tx, userId));
     return tx
       .update(facts)
       .set(req.body)
@@ -134,6 +172,7 @@ profileRouter.patch("/facts/:id", validateBody(factPatchSchema), async (req, res
       .returning(FACT_COLUMNS);
   });
   if (!fact) throw notFound("Fact");
+  if (first) requestBackfill(userId, "facts");
   res.json({ fact });
 });
 

@@ -34,6 +34,25 @@ describe("request logs never contain secrets", () => {
     expect(out).not.toContain("\"query\""); // pino-http's parsed req.query is dropped whole, not just token and code
   });
 
+  it("masks the inbound route's path secret, and its Basic credentials", async () => {
+    let out = "";
+    const sink = new Writable({
+      write(chunk, _enc, done) {
+        out += chunk.toString();
+        done();
+      },
+    });
+    const app = express();
+    app.use(httpLogger(createLogger(sink, "info")));
+    app.post("/api/webhooks/postmark/inbound/:pathSecret", (_req, res) => void res.json({ ok: true }));
+
+    await request(app).post("/api/webhooks/postmark/inbound/PATHSECRET?x=1").set("authorization", "Basic BASICSECRET").send({});
+    await new Promise((r) => setImmediate(r));
+
+    expect(out).toContain("/api/webhooks/postmark/inbound/:pathSecret");
+    for (const secret of ["PATHSECRET", "BASICSECRET"]) expect(out).not.toContain(secret);
+  });
+
   it("serializes req.log errors without row values (pino-http builds its own child logger)", async () => {
     let out = "";
     const sink = new Writable({

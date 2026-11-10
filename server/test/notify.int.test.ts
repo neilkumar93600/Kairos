@@ -10,6 +10,9 @@ import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from ".
 // receives no further mail). Postmark and Redis are stubbed: sendEmail, findSent and redrive are mocks.
 process.env.DATABASE_URL = testDbUrl("notify");
 process.env.ALERT_EMAIL_TO = "owner@test.local";
+// Broadcast kinds need the link key and origin (WP-35), and a profile that has not opted out.
+process.env.LINK_SIGNING_KEY = `v1:${Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 23 + 9) % 256)).toString("base64")}`;
+process.env.API_PUBLIC_ORIGIN = "https://api.test.local";
 
 const sendEmail = vi.fn(async (_email: { to: string; stream?: string; metadata?: Record<string, string> }) => ({ messageId: "mid-1" }));
 const findSent = vi.fn(async (_key: string, _stream: string): Promise<string | null> => null);
@@ -42,6 +45,7 @@ describe.skipIf(!hasTestDb)("notify ledger against Postgres", () => {
     findSent.mockImplementation(async () => null);
     await resetDb(db);
     userId = await seedUser(db);
+    await db.insert(schema.profiles).values({ userId, forwardingAddress: `u-${userId}@replies.test`, mailOptOut: [] });
   });
   afterAll(async () => {
     const { closeDb } = await import("../src/db/client");

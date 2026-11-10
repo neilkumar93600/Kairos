@@ -52,6 +52,7 @@ export async function seedEverything(db: Db, email: string, mark = MARK) {
     .values({ companyId: co!.id, externalId: randomUUID(), title: "Engineer", descriptionText: "Build", applyUrl: "https://job-boards.greenhouse.io/x/jobs/1" })
     .returning();
   await db.insert(schema.matches).values({ userId: id, jobId: job!.id, passedFilters: true, score: 80, reasons: [mark] });
+  await db.insert(schema.boardRequests).values({ userId: id, host: "careers.example.com", path: `/${mark}` });
   const [app] = await db
     .insert(schema.applications)
     .values({
@@ -68,6 +69,11 @@ export async function seedEverything(db: Db, email: string, mark = MARK) {
     company: `Co ${mark}`,
     stage: "applied",
   }).returning();
+  // WP-21: a contact and an interview linked to the item, each table of the erasure and export inventory.
+  const [contact] = await db.insert(schema.contacts).values({ userId: id, name: "Recruiter", notes: mark }).returning();
+  await db.insert(schema.contactJobs).values({ contactId: contact!.id, trackerItemId: trackerItem!.id });
+  const [interview] = await db.insert(schema.interviews).values({ userId: id, trackerItemId: trackerItem!.id, startsAt: new Date(), timeZone: "UTC", durationMinutes: 30, kind: "video", notes: mark }).returning();
+  await db.insert(schema.interviewContacts).values({ interviewId: interview!.id, contactId: contact!.id });
   await db.insert(schema.applicationEvents).values({
     trackerItemId: trackerItem!.id,
     applicationId: app!.id,
@@ -98,7 +104,11 @@ export async function seedEverything(db: Db, email: string, mark = MARK) {
     entityId: app!.id,
   });
   await db.insert(schema.creditLedger).values({ userId: id, delta: -1, reason: "submission", applicationId: app!.id });
+  // WP-35: bootstrapUser made the default saved search; a reminder about the application.
+  await db.insert(schema.reminders).values({ userId: id, kind: "no_reply", applicationId: app!.id, dueAt: new Date() });
   await db.insert(schema.inboundEmails).values({ userId: id, applicationId: app!.id, providerMessageId: randomUUID(), sender: "hr@co.example", subject: "Re", textBody: mark });
+  // WP-24: a Gmail code held for the user; privacy-scripts.int.test.ts needs a row in every exported table.
+  await db.insert(schema.forwardingVerifications).values({ userId: id, provider: "gmail", code: "123456", expiresAt: new Date(Date.now() + 3 * 86_400_000) });
   await db.insert(schema.contactMessages).values({ name: "Ann", email: email.toUpperCase(), topic: "support", message: mark });
   await db.insert(schema.newsletterSubscribers).values({ email: email.toLowerCase(), source: "popup" }); // WP-50, by address
   await db.execute(sql`insert into user_daily_usage (user_id, day) values (${id}, current_date)`);

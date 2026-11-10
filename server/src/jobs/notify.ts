@@ -3,12 +3,15 @@ import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { Errors } from "postmark";
 import { db } from "../db/client";
-import { actionTokens, emailSends, emailSuppressions, notifications, type EMAIL_KINDS, type NOTIFICATION_KINDS } from "../db/schema";
+import { actionTokens, emailSends, emailSuppressions, notifications, profiles, type EMAIL_KINDS, type NOTIFICATION_KINDS } from "../db/schema";
+import { BROADCAST_OPT_OUT, broadcastMissing, isBroadcastKind, postalAddress, unsubscribeUrl, withBroadcastCompliance } from "../lib/broadcast";
 import { env } from "../lib/env";
 import { logger } from "../lib/logger";
 import { addressHash, findSent, mailErrorCode, metadataKey, sendEmail, type Email, type Stream } from "../lib/mailer";
 import { signal } from "../lib/sentry";
+import { renderForwardingCode } from "../services/forwarding";
 import { renderNewsletterConfirm } from "../services/newsletter";
+import { renderResendAvailable, renderReturnToDraft } from "../services/submission-mail";
 import { enqueue, redrive, type JobData } from "./queues";
 
 /**
@@ -25,16 +28,29 @@ import { enqueue, redrive, type JobData } from "./queues";
 export type EmailKind = (typeof EMAIL_KINDS)[number];
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
-/** A rendered email, or `{ skip }` with the email_sends error code when it must not be sent (e.g. `unsubscribed`). */
-export type Rendered = Omit<Email, "stream" | "metadata" | "tag"> | { skip: string };
+/**
+ * A rendered email, or `{ skip }` with the email_sends error code when it must not be sent (e.g. `gone`, `empty`).
+ * `onSent` runs once Postmark has accepted the message and the ledger says sent: side effects of this email that belong
+ * to it alone (the digest marks its reminders sent). It is skipped when a re-claim finds the message already at Postmark
+ * (`already_sent`, no render) and when it throws; either way the effect is repeated once at worst, never the email.
+ */
+export type Rendered = (Omit<Email, "stream" | "metadata" | "tag"> & { onSent?: () => Promise<void> }) | { skip: string };
 /** Builds the email of one entity at send time, from the database, so a redrive needs only the kind and the id. */
 export type Renderer = (entityId: string, userId: string | null) => Promise<Rendered>;
 
 /** One renderer per kind; a kind without one is never sent (its job fails, so Sentry hears of it). */
-export const RENDERERS: Partial<Record<EmailKind, Renderer>> = { newsletter_confirm: renderNewsletterConfirm };
+export const RENDERERS: Partial<Record<EmailKind, Renderer>> = {
+  forwarding_code: renderForwardingCode,
+  newsletter_confirm: renderNewsletterConfirm,
+  resend_available: renderResendAvailable,
+  return_to_draft: renderReturnToDraft,
+};
 
-/** Non-transactional mail (05-api 12.1): the broadcast stream and the back of the queue. Everything else is transactional. */
-export const BROADCAST_KINDS: ReadonlySet<EmailKind> = new Set(["digest", "outcome_report", "autopilot_hourly"]);
+/**
+ * Non-transactional mail (05-api 12.1): the broadcast stream and the back of the queue. Everything else is transactional.
+ * Each has an opt-out key (lib/broadcast.ts), which processNotify enforces at send time.
+ */
+export const BROADCAST_KINDS: ReadonlySet<EmailKind> = new Set(Object.keys(BROADCAST_OPT_OUT) as EmailKind[]);
 /**
  * Transactional kinds a spam complaint still stops, because anyone can type the address: the mail is not about the
  * person's own account. Not broadcast kinds, which would queue them behind digest bursts.
@@ -87,11 +103,28 @@ async function finish(kind: string, entityId: string, status: "sent" | "failed" 
     .where(where(kind, entityId));
 }
 
-/** The notify job: claim, render, check the suppression list, send, record. */
+/**
+ * Why a broadcast email must not go to this user, as the email_sends error code, or null: no profile (`no_recipient`)
+ * or the kind's opt-out key is set (`unsubscribed`).
+ */
+async function broadcastRefusal(userId: string | null, key: (typeof profiles.$inferSelect.mailOptOut)[number]): Promise<"no_recipient" | "unsubscribed" | null> {
+  if (!userId) return "no_recipient";
+  const [p] = await db().select({ optOut: profiles.mailOptOut }).from(profiles).where(eq(profiles.userId, userId));
+  if (!p) return "no_recipient";
+  return p.optOut.includes(key) ? "unsubscribed" : null;
+}
+
+/** The notify job: claim, check the opt-out (broadcast kinds), render, check the suppression list, send, record. */
 export async function processNotify(job: Pick<Job<JobData["notify"]>, "data">): Promise<Outcome> {
   const { kind, entityId, userId } = job.data;
   const render = RENDERERS[kind];
   if (!render) throw new Error(`no email renderer for ${kind}`);
+  // A settings gap is not the email's fault: fail the job before the claim, so BullMQ's retries run out, not the ledger's
+  // five attempts (which would end the email as lease_exhausted).
+  if (isBroadcastKind(kind)) {
+    const missing = broadcastMissing();
+    if (missing.length) throw new Error(`broadcast mail needs ${missing.join(", ")}`);
+  }
 
   // Claim: a new row, or a stale claim (lease over, attempts left). No row: sent, failed, suppressed or in flight.
   // A user erased since the enqueue fails the foreign key: nothing to send, and nothing to retry.
@@ -112,6 +145,16 @@ export async function processNotify(job: Pick<Job<JobData["notify"]>, "data">): 
 
   const stream: Stream = BROADCAST_KINDS.has(kind) ? "broadcast" : "transactional";
   const key = metadataKey(`${kind}:${entityId}`);
+  // Broadcast mail is refused to an opted-out user here, at send time, whatever the producer filtered when it enqueued:
+  // a preference changed since then (an unsubscribe, a toggle) stops this very email (WP-35 acceptance).
+  const optOut = isBroadcastKind(kind) ? BROADCAST_OPT_OUT[kind] : null;
+  if (optOut) {
+    const refusal = await broadcastRefusal(userId, optOut);
+    if (refusal) {
+      await finish(kind, entityId, "suppressed", { code: refusal });
+      return { result: "suppressed", code: refusal };
+    }
+  }
   // A re-claim may follow a send Postmark accepted before the worker died: look for it before sending again. If the
   // search itself fails, the lease alone decides (messaging-43's fallback).
   if (claim.attempts > 1) {
@@ -125,11 +168,14 @@ export async function processNotify(job: Pick<Job<JobData["notify"]>, "data">): 
     }
   }
 
-  const email = await render(entityId, userId);
-  if ("skip" in email) {
-    await finish(kind, entityId, "suppressed", { code: email.skip });
-    return { result: "suppressed", code: email.skip };
+  const rendered = await render(entityId, userId);
+  if ("skip" in rendered) {
+    await finish(kind, entityId, "suppressed", { code: rendered.skip });
+    return { result: "suppressed", code: rendered.skip };
   }
+  const { onSent, ...plain } = rendered;
+  // Every broadcast email carries the one-click headers, a visible unsubscribe link and the postal address.
+  const email = optOut ? withBroadcastCompliance(plain, optOut, await unsubscribeUrl(db(), userId!, optOut), postalAddress()!) : plain;
   const hash = addressHash(email.to);
   const [suppressed] = await db().select({ reason: emailSuppressions.reason }).from(emailSuppressions).where(eq(emailSuppressions.addressHash, hash));
   // A spam complaint stops broadcast mail and COMPLAINT_RESPECTING_KINDS: the user still gets resend links, offer-pause
@@ -142,6 +188,8 @@ export async function processNotify(job: Pick<Job<JobData["notify"]>, "data">): 
   try {
     const { messageId } = await sendEmail({ ...email, stream, tag: kind, metadata: { k: key } });
     await finish(kind, entityId, "sent", { messageId });
+    // ponytail: best effort and outside the ledger's update; a failure here leaves the digest's reminders pending, to be nudged once more.
+    await onSent?.().catch((err: unknown) => logger.warn({ err, kind }, "after-send step failed"));
     return { result: "sent" };
   } catch (err) {
     const code = mailErrorCode(err);

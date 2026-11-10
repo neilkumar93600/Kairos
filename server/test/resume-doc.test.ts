@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resumeInputSchema, type ResumeInput } from "@auto-career/shared";
-import { defaultResume, profileContactFrom, renderResumeText, truthLockViolations, type ProfileFact } from "../src/services/resume-doc";
+import { defaultResume, profileContactFrom, resumePlainText, resumeScoringText, truthLockViolations, type ProfileFact } from "../src/services/resume-doc";
 
 describe("profileContactFrom", () => {
   const contact = (over: Partial<ResumeInput["contact"]> = {}): ResumeInput["contact"] => ({
@@ -108,11 +108,22 @@ describe("truthLockViolations", () => {
   });
 });
 
-describe("renderResumeText", () => {
+describe("resumePlainText", () => {
   it("prints visible sections and entries in order, without hidden ones", () => {
-    const text = renderResumeText(sample);
-    expect(text).toBe("Experience\nEngineer at Initech | Austin | 2021 to 2023\n- Built a dashboard\n- Ran k8s");
+    const text = resumePlainText(sample);
+    expect(text).toBe("Ada Lovelace\nada@example.com | 555 0100 | Austin, US\nExperience\nEngineer at Initech | Austin | 2021 to 2023\nBuilt a dashboard\nRan k8s");
     expect(text).not.toContain("Hooli");
     expect(text).not.toContain("TypeScript");
+  });
+});
+
+describe("resumeScoringText (F1)", () => {
+  it("scores the headline and the body, never the name or a contact link", () => {
+    const doc = { ...sample, headline: { text: "Frontend engineer", factIds: ["p1"] }, contact: { ...sample.contact, links: ["github.com/ada/react-kit"] } };
+    const text = resumeScoringText(doc);
+    expect(text.split("\n").slice(0, 2)).toEqual(["Frontend engineer", "Experience"]);
+    expect(text).not.toContain("react-kit");
+    expect(text).not.toContain("Ada Lovelace");
+    expect(resumePlainText(doc)).toContain("react-kit");
   });
 });

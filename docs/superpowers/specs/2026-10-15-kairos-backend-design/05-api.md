@@ -307,6 +307,7 @@ Every error from `/api/*` except Better Auth's own routes (4.6) leaves as
 |---|---|---|---|---|
 | `unauthorized` | 401 | every `session` route | none | |
 | `email_unverified` | 403 | every `session` route | none | |
+| `resume_refused` | 409 | `POST /api/admin/outbox/:id/resume`: the row is not dead, or a cloud apply may be past the browser step (WP-22), or the row is of an earlier attempt, `stale_attempt` (WP-29) | `{ reason: "stale_attempt" \| "not_dead" \| "past_browser_step" \| "not_approved" \| "no_application" \| "no_refusal_check" }` | |
 | `forbidden` | 403 | plan gates (`cloud applier is on Pro and Max`, `cover letters`, resume profile limit), Autopilot unavailable, admin | `{ reason?: string }` | |
 | `reauth_required` | 403 | `session-fresh` routes | `{ maxAgeSec }` | yes |
 | `origin_not_allowed` | 403 | `originGuard` | `{ origin: string \| null }` | yes |
@@ -330,12 +331,14 @@ Every error from `/api/*` except Better Auth's own routes (4.6) leaves as
 | `bad_signature` | 400 | Stripe webhook | none | |
 | `price_unavailable` | 400 | `POST /api/billing/checkout` | none | |
 | `invalid_body` | 422 | body fails its schema | zod issues array (kept [code]) | |
+| `invalid_body` | 400 | `POST /api/webhooks/postmark/inbound/:pathSecret` only: the Postmark payload fails its schema (14.3) | the failing field paths, never a value | Length alone never fails it (WP-24) |
 | `truth_lock` | 422 | `PUT /api/resume`, `PATCH /api/applications/:id`, `POST /api/applications/:id/drafts`, revision restore | 4.5 | |
 | `profile_only` | 422 | `POST /api/applications/:id/drafts` | none | |
 | `invalid_scope` | 422 | `POST /api/resume/suggestions` (an id that is not in the resume) | none | |
 | `unsupported_board` | 422 | `POST /api/jobs/import` | none | |
 | `idempotency_key_reused` | 422 | `workflow-id` routes with a key whose earlier request differed | none | yes |
-| `limit_reached` | 422 | `POST /api/saved-searches` (10), rehearsal sessions per application (2) | `{ limit }` | yes |
+| `limit_reached` | 422 | rehearsal sessions per application (2) | `{ limit }` | yes |
+| `limit_reached` (saved searches) | 409 | `POST /api/saved-searches` (10) *[Amended 2026-11-05, WP-35: 409 with the code catalog's `limit_reached`, as the resume cap above]* | `{ limit }` | yes |
 | `payment_required` | 402 | `POST /api/applications/approve`, resend | `{ available, requested }` | |
 | `rate_limited` | 429 | any rate-limited or metered route; a spent daily AI allowance is `details.reason = "daily_allowance"` with `resetsAt` (never 402) | 6.6 | |
 | `limit_reached` (resume cap) | 409 | `POST /api/resumes` (10 base resumes per profile) *[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 11)]* | `{ limit }` | |
@@ -693,6 +696,8 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `usage.today` | `GET /api/usage/today` | session | | 200 `usageTodayResponseSchema` | | none | new | P1 |
 | `notifications.list` | `GET /api/notifications` | session | `notificationsQuerySchema` | 200 `notificationsResponseSchema` | | none | new | P2 |
 | `notifications.read` | `POST /api/notifications/read` | session | `notificationsReadSchema` | 200 `{ updated }` | | natural | new | P2 |
+| `emailPreferences.get` | `GET /api/email-preferences` | session | | 200 `{ emailPreferences }` | `not_found` | none | new | WP-35 |
+| `emailPreferences.patch` | `PATCH /api/email-preferences` | session | `emailPreferencesPatchSchema` | 200 `{ emailPreferences }` | `invalid_body` | natural | new | WP-35 |
 | `forwarding.status` | `GET /api/forwarding/status` | session | | 200 `forwardingStatusSchema` | | none | new | P6 |
 | `forwarding.confirm` | `POST /api/forwarding/confirm` | session | `forwardingConfirmSchema` | 200 `{ state }` | | natural | new | P6 |
 | `mail.unsubscribe.page` | `GET /api/unsubscribe?t=` | signed-token . link | query `t` | 200 HTML | `link_expired` | none | new | P6 |
@@ -751,11 +756,12 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `applications.approve` | `POST /api/applications/approve` | session-nocache | `approveApplicationsSchema` | 200 `approveResponseSchema` | `forbidden`, `payment_required` | workflow-id | frozen+additive | P2 |
 | `applications.drafts` | `POST /api/applications/:id/drafts` | session . ai_burst | `draftRequestSchema` | 200 `draftResponseSchema` | `not_found`, `profile_only`, `forbidden`, `truth_lock`, `ai_unavailable` | none | frozen | P3 |
 | `applications.withdraw` | `POST /api/applications/:id/withdraw` | session | | 200 `{ ok: true }` | `not_found` | natural | frozen | P2 |
+| `applications.stage.clear` | `POST /api/applications/:id/stage/clear` | session | | 200 `{ stage, detached }` (`stage`: `applied` for a submitted application, else null) | `not_found`, `conflict` | natural | new | P2 |
 | `applications.prepare` | `POST /api/applications/:id/prepare` | session . prepare | | 202 `{ id, draftState }` | `not_found`, `conflict` | workflow-id | new | P3 |
 | `applications.pdf` | `GET /api/applications/:id/pdf` | session | | 200 `application/pdf` | `not_found`, `not_ready` | none | new | P3 |
-| `applications.events` | `GET /api/applications/:id/events` | session | `pageQuerySchema` | 200 `eventsResponseSchema` | `not_found` | none | new | P2 |
+| `applications.events` | `GET /api/applications/:id/events` | session | `pageQuerySchema` | 200 `{ events: ApplicationEvent[], nextCursor? }` *[Amended 2026-11-06, WP-21]* | `not_found` | none | new | WP-21 |
 | `applications.verification` | `GET /api/applications/:id/verification` | session | | 200 `verificationDetailSchema` | `not_found` | none | new | P3 |
-| `applications.resend` | `POST /api/applications/:id/resend` | session-nocache | `resendRequestSchema` | 200 `resendResponseSchema` | `not_found`, `forbidden`, `payment_required`, `not_approvable`, `acknowledgement_required`, `conflict` | workflow-id | new | P2 |
+| `applications.resend` | `POST /api/applications/:id/resend` | session-nocache (built as session-fresh with approve) | `resendRequestSchema` | 200 `resendResponseSchema` | `not_found`, `forbidden`, `payment_required`, `not_approvable`, `acknowledgement_required`, `conflict` | workflow-id | new | P2 |
 | `applications.resendLink.page` | `GET /api/applications/:id/resend-link?t=` | signed-token . link | query `t` | 200 HTML | `link_expired` | none | new | P2 |
 | `applications.resendLink.submit` | `POST /api/applications/:id/resend-link` | signed-token . link | form fields `t`, `acknowledge` | 200 HTML | `link_expired` | workflow-id | new | P2 |
 | `rehearsals.start` | `POST /api/applications/:id/rehearsals` | session . ai_burst | | 201 `rehearsalStartResponseSchema` | `not_found`, `conflict`, `limit_reached`, `ai_unavailable` | none | new | P6 |
@@ -784,8 +790,8 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `extension.release` | `POST /api/extension/release` | session | `extensionClaimSchema` | 200 `{ released }` | `not_found` | natural | new | P2 |
 | `extension.resumePdf` | `GET /api/extension/applications/:id/resume.pdf?t=` | signed-token . pdf_link | query `t` | 200 `application/pdf` | `link_expired` | none | new | P3 |
 | `webhooks.stripe` | `POST /api/webhooks/stripe` | stripe-signature . webhook_ip | raw JSON | 200 `{ received, duplicate? }` | `bad_signature` | workflow-id | frozen | P2 |
-| `webhooks.postmark.inbound` | `POST /api/webhooks/postmark/inbound/:pathSecret` | postmark-basic-path . webhook_ip | Postmark JSON | 200 `{ stored, duplicate? }` | 400 `invalid_body`, 403 `forbidden` | workflow-id | new | P1 |
-| `webhooks.inbound.legacy` | `POST /api/webhooks/inbound-email?token=` | public (query token) . webhook_ip | Postmark JSON | 200 `{ stored }` | `unauthorized`, `invalid_body` | workflow-id | frozen (sunset) | P1 to P2 + 7 days |
+| `webhooks.postmark.inbound` | `POST /api/webhooks/postmark/inbound/:pathSecret` | postmark-basic-path . webhook_ip | Postmark JSON | 200 `{ stored, duplicate? }` | 400 `invalid_body`, 404 `route_not_found` (a failed check, WP-24) | workflow-id | new | P1 |
+| `webhooks.inbound.legacy` | `POST /api/webhooks/inbound-email?token=` | public (query token) . webhook_ip | Postmark JSON | 200 `{ stored }` | 403 `forbidden`, 422 `invalid_body` | workflow-id | frozen (sunset) | P1 to P2 + 7 days |
 
 **Admin** (all `admin` auth, `admin_write` on writes, never CORS; section 16)
 
@@ -802,6 +808,8 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `admin.workflows.fork` | `POST /api/admin/workflows/:workflowId/fork` | `adminForkSchema` | 200 `{ workflowId }` (replays from step 0 on another application version) | P2 |
 | `admin.queues.list` | `GET /api/admin/queues` | | 200 `adminQueuesResponseSchema`: each queue's registered options and live counts | P2 |
 | `admin.queues.set` | `PUT /api/admin/queues/:name` | `adminQueueSetSchema` | 200 `{ queue }` (`globalConcurrency` or `workerConcurrency` only) | P2 |
+| `admin.outbox.list` | `GET /api/admin/outbox?status=pending\|enqueued\|dead&limit&cursor` | `status` defaults to `dead` | 200 `{ summary: { pending, enqueued, dead, oldestPendingS }, items, nextCursor }` (WP-22; ids and codes only; replaces `admin.workflows.list` under ADR-001 Revision 3's outbox) | built |
+| `admin.outbox.resume` | `POST /api/admin/outbox/:id/resume` | `{ reason }`, a code matching `^[a-z0-9_-]{3,64}$` (it lands in `ops_audit`, which holds no free text) | 200 `{ id, status: "pending" }`; 409 `resume_refused` `{ reason: not_dead \| past_browser_step \| not_approved \| no_application \| no_refusal_check }`; audited (WP-22; replaces `admin.workflows.resume`) | built |
 | `admin.boardRequests.list` | `GET /api/admin/board-requests` | `pageQuerySchema` | 200 `{ requests }` | P3 |
 | `admin.boardRequests.resolve` | `POST /api/admin/board-requests/:id/resolve` | `adminBoardRequestResolveSchema` | 200 `{ request }` | P3 |
 | `admin.companies.list` | `GET /api/admin/companies` | `adminCompaniesQuerySchema` | 200 `{ companies }` | P3 |
@@ -820,11 +828,13 @@ Every route the api serves is one row below and one `RouteSpec` in `server/src/a
 | `resumes.list`, `resumes.create`, `resumes.get`, `resumes.put`, `resumes.delete`, `resumes.setDefault` | `GET/POST /api/resumes`, `GET/PUT/DELETE /api/resumes/:id`, `POST /api/resumes/:id/default` | `?kind=base\|tailored`; 409 `limit_reached` (10 base per profile), 409 `is_default`, 409 `last_base`, 409 `read_only` (sent), 422 `truth_lock` | WP-17 |
 | `resumes.revisions.*` | `GET/POST /api/resumes/:id/revisions`, `POST /api/resumes/:id/revisions/:revId/restore` | Keep 50 unnamed and every named revision (`02-database.md` 7.1.8); restore re-runs the truth lock | WP-17 |
 | `resumes.export` | `GET /api/resumes/:id/export?format=pdf\|docx\|txt` | PDF is the Typst render (503 `service_unavailable` falls back to the browser print); class `user_api`, deadline 30 s; renders deduplicate by content hash | WP-19, WP-39 |
-| `resumes.tailor`, `resumes.suggestions` | `POST /api/resumes/tailor`, `POST /api/resumes/suggestions` | `ai_burst`; allowance `jobTailor` and `resumeSuggestions`; a spent allowance is 429 `daily_allowance`; `tailor` answers 409 `exists` with the existing id | WP-17, WP-31 |
+| `resumes.tailor`, `resumes.suggestions` | `POST /api/resumes/tailor`, `POST /api/resumes/suggestions` | `ai_burst`; allowance `jobTailor` and `resumeSuggestions`; a spent allowance is 429 `daily_allowance`; `tailor` answers 409 `exists` with the existing id; `suggestions` answers 409 `read_only` for a sent copy, 422 `invalid_scope` for an id outside the resume, and 503 `ai_unavailable` when the model is unavailable or a headline is asked of v1; a deterministic question takes no allowance | WP-17, WP-31 |
 | `templates.list` | `GET /api/templates` | `{ templates: { id, name, atsSafe, accents }[] }` | WP-39 |
 | `imports.create`, `imports.get`, `facts.confirm` | `POST /api/profile/imports` (multipart file or `{ text }`, 202), `GET /api/profile/imports/:id`, `POST /api/profile/facts/confirm` | Multipart is the PRD's shape and replaces the raw-body upload route of 12.3 for imports; the 5 MB cap through the Vercel rewrite is measured in S-INF2; 413, 415, 422 `no_text_layer` | WP-17 |
-| `tracker.*` | `GET/POST /api/tracker`, `PATCH /api/tracker/:id`, `GET /api/tracker/:id/events`, `GET /api/tracker/insights` | 409 `stage_owned_by_pipeline`; insights 403 `forbidden` below Pro (D10) | WP-21 |
+| `tracker.*` | `GET/POST /api/tracker`, `GET/PATCH /api/tracker/:id`, `GET /api/tracker/:id/events`, `GET /api/tracker/insights` | 409 `stage_owned_by_pipeline`; insights 403 `forbidden` below Pro (D10) | WP-21 |
 | `contacts.*`, `interviews.*` | `GET/POST/PATCH/DELETE /api/contacts[/:id]`, `GET /api/interviews`, `POST/PATCH/DELETE /api/tracker/:id/interviews[/:iid]`, `GET /api/tracker/:id/interviews/:iid.ics` | `.ics` is `text/calendar` | WP-21 |
+
+*[Amended 2026-11-06, WP-19]* `resumes.export` as built: pdf and txt. Every render runs on the worker (CISO mustFix 8), so the api enqueues on the `render` queue and waits up to 25 s; a file already in `renders/{userId}/{hash}.pdf` is served without a job. Any failure, including `format=docx` until WP-39, is 503 `service_unavailable` with `Retry-After: 5`, `details.reason` `render_failed` or `format_unavailable`; a text-layer mismatch is also this 503, not a 500, so the web can still print. 20 a minute per user (bucket `resume_export`). `Content-Disposition` is `attachment` with an ASCII-only `{Name} - {role} - Resume.ext`. A cloud resend of a send that failed for a reason that would repeat (`render_mismatch`, `render_too_large`, `render_output_too_large`, `render_bad_document`, `resume_missing`) answers 409 `not_approvable` with that `reason`.
 
 ### 9.3 Better Auth routes
 
@@ -865,7 +875,7 @@ const uuid = z.uuid();
 export const DRAFT_STATES = ["pending", "ready", "failed", "needs_facts", "stale", "expired"] as const;
 export const SKIP_REASONS = [
   "not_ready", "verification_pending", "facts_changed", "required_answers_missing", "cover_letter_required",
-  "company_cap", "paused", "cloud_unavailable_for_ats", "free_grant_used", "posting_closed",
+  "company_cap", "paused", "cloud_unavailable_for_ats", "free_grant_used", "posting_closed", "card_closed",
   "autopilot_off", "below_autopilot_threshold", "manual_import", "gate_override", "sensitive_answer_source",
   "ghost_risk", "injection_suspect", "stale_posting", "autopilot_daily_cap", "no_credits",
 ] as const;
@@ -1208,7 +1218,7 @@ The skeleton answers `{ applicationId: null }` with status 200 for every refusal
 
 **`GET /api/applications`** keeps its query (`status`, validated against `APPLICATION_STATUSES`; an invalid value is 400 `invalid_param`), its order (`updatedAt desc`, `id` tiebreaker) and its default and frozen limit of 200. Rows are built by `serializeApplicationRow`: the frozen keys (`id`, `status`, `channel`, `approvedAt`, `submittedAt`, `failureReason`, `job { id, title, location, applyUrl }`, `company { name, ats }`) plus the optional `draftState`, `stage`, `approvedBy` and `updatedAt`. The list never carries lines, answers, letters or the job description, so a page of 200 stays under 100 KB.
 
-**`GET /api/applications/:id`** returns `{ application, job, companyName }` through three explicit serializers; nothing is spread from a row (A-4).
+**`GET /api/applications/:id`** returns `{ application, job, companyName }` through three explicit serializers; nothing is spread from a row (A-4). WP-24 adds `stage` beside them, additive and nullable: the reply-driven stage, which `applications.stage.clear` can undo.
 
 | Object | Exposed (frozen keys, byte-compatible) | Exposed (additive, optional) | Never exposed |
 |---|---|---|---|
@@ -1238,7 +1248,7 @@ sequenceDiagram
 
 1. Request validation is the frozen `approveApplicationsSchema` (1 to 50 uuids, `channel` of `extension` or `cloud`); duplicate ids are removed before the workflow id is computed.
 2. The plan gate for the cloud channel runs first inside `approveCore`, as today: 403 `forbidden` "The cloud applier is on Pro and Max" (AC-8).
-3. Success is `200 { approved: string[] }`. The additive `skipped: { id, reason }[]` is present only when at least one of the caller's own drafts was skipped for a reason (`SkipReason`, section 9.4); ids that are not the caller's, or not drafts, are skipped silently exactly as today, so a plain success is byte-identical to the skeleton's `{ approved }`. A draft with no tailored lines, which the skeleton left silently untouched, is now reported as `not_ready`.
+3. Success is `200 { approved: string[] }`. The additive `skipped: { id, reason }[]` is present only when at least one of the caller's own drafts was skipped for a reason (`SkipReason`, section 9.4); ids that are not the caller's, or not drafts, are skipped silently exactly as today, so a plain success is byte-identical to the skeleton's `{ approved }`. A draft with no tailored lines, which the skeleton left silently untouched, is now reported as `not_ready`. A draft whose tracker card is Closed is skipped as `card_closed` until the user reopens the card (WP-21, PRD 9.1); `POST /api/applications/:id/resend` answers 409 `not_approvable` with the same reason.
 4. Credits: if `balance - in_flight` is below the number of rows that would be approved, nothing changes and the route answers 402 `payment_required`, message `You have {available} credits left for {requested} applications` (the wording the web shows [code: `send-controls.tsx`]), `details { available, requested }`. `requested` counts approvable rows, not ids the checks would have skipped, so a partly ineligible batch fails less often than in the skeleton.
 5. The workflow enqueues `applyCloud` for each cloud id after the approval transaction commits. If the 5-second wait expires the route answers 503 `service_unavailable` with `Retry-After: 2`; the workflow completes in the background and a retry within the same bucket, or with the same `Idempotency-Key`, returns its outcome (section 7).
 6. A response is returned only after the approval transaction has committed, so the web's `invalidateQueries` that follows reads the new state.
@@ -1272,7 +1282,7 @@ sequenceDiagram
 
 **`GET /api/applications/:id/pdf`** *[Amended 2026-10-30, WP-43, decision "PRD authoritative" (resume-suite PRD 11)]* streams the resume PDF of the application. For a `draft` it renders the tailored copy on demand (content-hash cache); for an approved or later application it streams the frozen snapshot file `resume_file_key` and answers 409 `not_ready` while that file is not rendered yet. Revision 2 text: streams the tailored resume PDF the extension and applier will upload: `application/pdf`, `Content-Disposition: attachment; filename="<company>-<title>-resume.pdf"` (ASCII-folded, 80 characters), `Cache-Control: private, no-store`. 409 `not_ready` with `details { draftState }` while `resume_file_key` is empty (for a draft the on-demand render means this applies only to approved rows whose snapshot is still rendering). The bytes are read from R2 by key inside the handler, never redirected.
 
-**`GET /api/applications/:id/events`** returns `{ events, nextCursor? }` from the append-only `application_events` ledger, `at asc, id asc`, default 200. An event is `{ id, kind, actor, at, detail }`; `detail` is a small object of scalars (ids, codes, counts), never free text, so an event never carries personal content.
+**`GET /api/applications/:id/events`** *[Amended 2026-11-06, WP-21, decision "PRD authoritative": events are keyed by tracker item, and the shape is the shared `applicationEventSchema`, as on `GET /api/tracker/:id/events`.]* returns `{ events, nextCursor? }` from the append-only `application_events` ledger for the application's tracker item, `at asc, id asc`, default 200, keyset pages with a bigint id; an application with no item yet returns `{ events: [] }`. An event is `{ id, trackerItemId, kind, source, payload, at }`; `payload` is a small object of scalars (ids, codes, counts), never free text, so an event never carries personal content. A `reply_routed` payload carries `stageChanged`, `stageHeld` and `authenticated`.
 
 **`GET /api/applications/:id/verification`** returns `{ state, verifiedAt, supported, escalated, dropped[] }`, where `dropped` lists `{ kind, ref, rule }` for items the truth lock removed. Dropped text is never stored (arch store-nothing rule), so the list names the line id, field key or `cover_letter` and the rule that dropped it, which is enough for the review screen to say "2 lines were removed because their numbers were not in your facts".
 
@@ -1317,7 +1327,7 @@ The response is the same object as GET. `channel` is derived from the plan (`ext
 
 ### 10.8 Saved searches
 
-`GET /api/saved-searches` returns `{ searches }` (at most 10, `createdAt asc`). `POST` creates one (201, `{ search }`; 422 `limit_reached` `details { limit: 10 }` at the eleventh). `PATCH /:id` merges; `DELETE /:id` is 204 whether or not it existed. Filters are `{ minScore?, roles?, companies?, remoteOnly? }` over the user's own matches and add no scoring (arch B.7.10). Frequency `off` stops the digest email only; the search still filters the web feed if a future screen uses it.
+`GET /api/saved-searches` returns `{ searches }` (at most 10, `createdAt asc`). `POST` creates one (201, `{ search }`; 409 `limit_reached` `details { limit: 10 }` at the eleventh *[Amended 2026-11-05, WP-35: 409, as the code catalog; a duplicate name is 409 `exists`]*). `PATCH /:id` merges; `DELETE /:id` is 204 whether or not it existed. Filters are `{ minScore?, roles?, companies?, remoteOnly? }` over the user's own matches and add no scoring (arch B.7.10). Frequency `off` stops the digest email only; the search still filters the web feed if a future screen uses it.
 
 ### 10.9 Interview rehearsal (P6)
 
@@ -1433,6 +1443,8 @@ Rules (arch B.8.10): limits come only from `shared/src/plans.ts` (`aiDailyAllowa
 **Notifications** (P2): `GET /api/notifications?unread=true&limit&cursor` returns `{ notifications, unread, nextCursor? }`, newest first, default 50; titles are joined at read time (the table stores ids and codes only), so a notification never carries personal text. `POST /api/notifications/read` takes `{ ids: uuid[] }` (1 to 100) or `{ all: true }`, sets `read_at` once and answers `{ updated }`.
 
 **Forwarding** (P6): `GET /api/forwarding/status` returns `{ state, address, lastMailAt, verification }`; `verification` is the Gmail code and confirmation link Kairos received for the user (expires after 3 days) or `null`. `POST /api/forwarding/confirm` with `{ provider }` records "I have set it up" (the only signal Google or Outlook gives) and answers `{ state }`.
+
+**Email preferences** (WP-35): `GET /api/email-preferences` returns `{ emailPreferences: { digest, outcomeReport, autopilotSummary, reminders } }` (true means send); `PATCH` with any non-empty subset answers the same object. They are `profiles.mail_opt_out` (inverted); turning one on records consent and off withdraws it, and the send path reads them at send time. Account mail has no switch.
 
 **Unsubscribe** (P6): non-transactional mail (`digest`, `outcome_report`, `autopilot_summary`) carries `List-Unsubscribe: <API_PUBLIC_ORIGIN/api/unsubscribe?t=...>` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058). `GET /api/unsubscribe?t=` shows what will stop; `POST /api/unsubscribe` takes the token from the form field `t` or, for the one-click form post a mail client sends, from the query string, appends the kind to `profiles.mail_opt_out` and answers a confirmation page. Transactional mail (receipts, resend links, verification codes, billing notices) cannot be opted out. The token is `purpose: "unsubscribe"` in `action_tokens` (valid 90 days, deterministic per user, kind and month). A second click shows "already unsubscribed" and changes nothing, because an unsubscribe is naturally idempotent (`_db/platform.md` section 4.10). The opt-out lives in `profiles.mail_opt_out` (section 24.1).
 
@@ -1560,12 +1572,12 @@ RETURNING lease_expires_at;
 | Situation | Result |
 |---|---|
 | Updated one row | 200 `{ claimed: true, leaseExpiresAt }`; event `claimed` is not written (the ledger has no such kind); the credit stays in `in_flight` (both `approved` and `submitting` count). |
-| The row is already `submitting` and this session holds a live claim | 200 with the same `leaseExpiresAt`, unchanged (a repeat claim never extends the lease; the sweeper's 10-minute bound is real). |
+| The row is already `submitting` and this session holds a live claim | *[Amended 2026-11-05, WP-29]* 409 `already_claimed`, `details { leaseExpiresAt }`: two tabs of one extension share a session, so a 200 here would let both send. A client that lost the response releases and claims again. Revision 2 text: 200 with the same `leaseExpiresAt`, unchanged. |
 | Another session holds a live lease or claim, or the row is `submitting` for another session | 409 `already_claimed`, `details { leaseExpiresAt }` (FR-34). |
 | The row is not `approved` for any other reason (withdrawn, submitted, failed) | 409 `conflict`, `details { status }`. |
 | Not the caller's, or does not exist | 404 `not_found`. |
 
-**Release** (`session`, success 200 `{ released: boolean }`): sets a `submitting` row held by this session back to `approved` and clears the lease, or clears this session's visibility lease on an `approved` row. Any other state, including a lease held by another session, is a no-op that answers `{ released: false }`; an application that is not the caller's is 404. An expired explicit claim is not released by the client: `leaseSweeper` (every minute) fails it with `failure_code = 'no_report'`, message "No report from the extension within 10 minutes. Check for the employer's confirmation email before you resend.", and no charge [arch B.6.6].
+**Release** (`session`, success 200 `{ released: boolean }`; *[Amended 2026-11-06, WP-29]* a released claim's closed attempt keeps its number, so the application moves to `attempt_no + 1`): sets a `submitting` row held by this session back to `approved` and clears the lease, or clears this session's visibility lease on an `approved` row. Any other state, including a lease held by another session, is a no-op that answers `{ released: false }`; an application that is not the caller's is 404. An expired explicit claim is not released by the client: `leaseSweeper` (every minute) fails it with `failure_code = 'no_report'`, message "No report from the extension within 10 minutes. Check for the employer's confirmation email before you resend.", and no charge [arch B.6.6].
 
 ### 13.4 `POST /api/extension/report`
 
@@ -1596,7 +1608,7 @@ The 409 message keeps the skeleton's wording, "Application is {status}, not appr
 | Body | `application/pdf` streamed from R2 by key inside the handler. `Content-Disposition: inline; filename="resume.pdf"`, `Cache-Control: private, no-store`, `Content-Length` set, `X-Content-Type-Options: nosniff`. |
 | CORS | `Access-Control-Allow-Origin: <Origin>` only when `Origin` is in `EXTENSION_PDF_ORIGINS` (default: `https://job-boards.greenhouse.io`, `https://boards.greenhouse.io`, `https://jobs.lever.co`, `https://jobs.ashbyhq.com`), plus `Vary: Origin`, `Cross-Origin-Resource-Policy: cross-origin`. No `Access-Control-Allow-Credentials`. Any other origin gets the PDF without CORS headers (a browser then blocks it), so the URL is useless on a page that should not have it. |
 | Log hygiene | The query string `t` is redacted from every log line (section 19.2). |
-| The cloud applier | Never uses this route; it reads the PDF from R2 with its own scoped token [arch B.4.1] and attaches it with `setInputFiles`. |
+| The cloud applier | Never uses this route. *[Amended 2026-11-10, WP-19]* It holds no storage token: the worker renders at claim time and hands the holder of the attempt a 60-second presigned GET through the render job's result (read once, then removed from Redis); the applier fetches it from Node, https only, and attaches it with `setInputFiles` before the `filling` mark. |
 
 ### 13.6 Compatibility rules for this channel
 
@@ -1668,7 +1680,7 @@ The user forwards employer replies to a private address `u-<id8>-<hex8>@replies.
 | HTTP Basic | The webhook URL configured in Postmark embeds credentials (`https://user:pass@api.../...`). The route compares the decoded user and password with `POSTMARK_INBOUND_BASIC_USER` and `POSTMARK_INBOUND_BASIC_PASSWORD`. Every comparison hashes both sides with SHA-256 and uses `crypto.timingSafeEqual`, so length does not leak. |
 | TLS only | The route answers only when `req.protocol === "https"` (trust proxy hop). Postmark's published webhook IP range is optional defense in depth, not relied on (the origin address can change per attempt). |
 
-**Failures.** Any failed check answers **403 `forbidden`** with no detail, which makes Postmark stop retrying that message (kept from arch B.6.12); the operator can re-drive it from Postmark. A payload that fails the schema answers **400 `invalid_body`** (P-05); Postmark retries a non-200 answer up to 10 times and then marks the message "Inbound Error", which is acceptable for a payload that can never become valid.
+**Failures.** Any failed check answers **404 `route_not_found`**, exactly as a route that does not exist (WP-24, replacing the earlier 403, so the route cannot be told from a missing one; Postmark keeps retrying until a corrected URL takes the message). A payload that fails the schema answers **400 `invalid_body`** (P-05); Postmark retries a non-200 answer up to 10 times and then marks the message "Inbound Error", which is acceptable for a payload that can never become valid.
 
 **Parser.** `express.json({ limit: "50mb" })` on this route only (default 1 MB elsewhere). Postmark's own limit is believed to be 35 MB including base64 attachments [unverified, integrations section 6]; 50 MB leaves room. A request whose `Content-Length` exceeds 5 MB takes the large-body gate, one permit per replica (2.4); a second one waits for nothing and answers 503 `service_unavailable` with `Retry-After: 5`, which Postmark retries. The parsed object is reduced at once: only the fields below are copied; `Attachments` (and its `Content`), `HtmlBody`, `StrippedTextReply` and the raw `Headers` array are dropped, except the spam score read from `Headers`.
 
@@ -1699,7 +1711,7 @@ A failure at step 5 or 6 answers 503 and Postmark retries. If the process dies b
 
 ### 14.4 The legacy route `POST /api/webhooks/inbound-email?token=`
 
-Kept exactly as the skeleton has it (401 `unauthorized` for a bad token, 422 `invalid_body` for a bad payload, 200 `{ stored }`), but it now calls the same `storeInboundEmail` and workflow as 14.3, so both URLs feed one table [`_db/messaging.md`]. It exists for the week in which Postmark is reconfigured to the new URL.
+Kept as WP-00 left it (403 `forbidden` for a bad token, 422 `invalid_body` for a bad payload, 200 `{ stored }`), but it now calls the same `storeInboundEmail` and workflow as 14.3, so both URLs feed one table [`_db/messaging.md`]. It exists for the week in which Postmark is reconfigured to the new URL.
 
 - Every call increments `kairos_legacy_inbound_calls_total` and logs a warning; the `token` query parameter is redacted.
 - Removal gate: the new route has received at least one real message, the legacy counter has been zero for 48 hours, and 7 days have passed since the reconfiguration. Removal is one deleted route and one deleted env var (`INBOUND_WEBHOOK_SECRET`).
@@ -2120,6 +2132,7 @@ Validated by one zod schema at boot (`server/src/lib/env.ts`, kept); an invalid 
 | `USER_HASH_KEY` | string min 32, Prod | HMAC key of `userHash()` (`03-agent-runtime.md` section 10.3), reused for the user and address hashes in logs and traces |
 | `CLIENT_MIN_VERSIONS` | JSON, `{}` | Minimum `X-Kairos-Client` versions (17.4) |
 | `RENDER_CONCURRENCY` | int, 2 | Typst renders at once per replica (11.1) |
+| `EXTENSION_RESUME_PDF` | flag, off | *[WP-19]* Queue items carry `resumePdfUrl`, a 5-minute presigned GET of the snapshot PDF (replaces the token route of 13.5 for now). On only after the snapshots bucket has its CORS rule (`owner-actions/WP-19.md`). |
 | `LARGE_BODY_PERMITS` | int, 1 | Concurrent request bodies above 5 MB per replica (2.4) |
 | `ANTHROPIC_KEY_INTERACTIVE`, `ANTHROPIC_ADMIN_KEY` | strings | The api holds only the interactive key (B.4.1); the admin key only if the reconciliation lives here (`03-agent-runtime.md`) |
 | `REDIS_URL` | url, optional | Exists only until phase P7 removes Redis and BullMQ; `/health` reports `redis` only while it is set |
@@ -2138,11 +2151,11 @@ Per-user rollout flags live in `feature_flags` (`flags.forUser(userId, name)`); 
 | `MATCHING_V2` | `feature_flags` | `usage.today` (the `matching` field), `matches.list` (the `ghost` field) | Skeleton matching and no optional fields | v2 matching and the optional fields |
 | `CLOUD_APPLY_V2` | `feature_flags` | `applications.approve` and `applications.resend` for the `cloud` channel | The BullMQ `cloud-apply` queue | `applyCloud` with the attempt protocol |
 | `AUTOPILOT` | `feature_flags` | `autopilot.get`, `autopilot.put` | `GET` returns `enabled: false, dailySendCap: 0`; `PUT` answers 403 `forbidden` "Autopilot is not available to your account yet" | The routes work within the plan cap |
-| `approvals_frozen` | `ops_flags` | `applications.approve`, `applications.resend`, Autopilot | n/a | Approvals skip with `paused` (200 with `skipped`, or 409 `not_approvable` on single-row routes) |
+| `approvals_frozen` | `ops_flags` | `applications.approve`, `applications.resend`, the signed resend link, Autopilot | n/a | *[Amended 2026-11-06, WP-29, to the code]* Approve and resend answer 503 `approvals_frozen`, and so does a replica that cannot read the flags; the signed link shows a "paused" page and stays usable. Revision 2 text: approvals skip with `paused`. |
 | `autopilot_frozen` | `ops_flags` | `autopilot.put` (turning on) | n/a | 403 `forbidden`, message "Autopilot is paused for everyone while we check something" |
 | `llm_paused`, `agent_disabled:<agent>`, `llm_shed_level` | `ops_flags` | `resume.suggestions`, `jobs.tailor`, `jobs.import`, `jobs.fit` (card creation), `applications.drafts`, `rehearsals.*` | n/a | 503 `ai_unavailable` with `Retry-After`; allowances refunded |
 | `pause_drafting` | `ops_flags` | `matches.queue`, `applications.prepare` | n/a | The draft is created and stays `pending`; preparation starts when the flag clears |
-| `extension_only:<ats>` | `ops_flags` | `applications.approve`, `applications.resend` | n/a | Cloud approvals for that ATS skip with `cloud_unavailable_for_ats` |
+| `extension_only:<ats>` | `ops_flags` | `applications.approve`, `applications.resend` | n/a | *[Amended 2026-11-06, WP-29, to the code]* A cloud approval or resend for that ATS answers 409 `extension_only`. Revision 2 text: skips with `cloud_unavailable_for_ats`. |
 
 The two webhook cut-overs (Stripe store-then-process, Postmark path secret) are deploy-level: one code path is live at a time, and the old inline Stripe path is deleted after 7 days of clean daily reconciliation.
 

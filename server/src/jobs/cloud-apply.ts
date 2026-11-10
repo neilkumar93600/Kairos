@@ -1,19 +1,20 @@
 import { DelayedError, type Job } from "bullmq";
 import { readFileSync } from "node:fs";
-import { eq } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import type { Browser, Frame, Page } from "playwright-core";
 import { submissionReportSchema, type ApplicationAnswer, type ResumeLine, type SubmissionReport } from "@auto-career/shared";
+// The filler's own selector (07-cloud-applier 3.2). server/Dockerfile copies these files for its build too, since build.mjs bundles every entry.
+import { detectAdapter } from "../../../extension/src/ats";
 import { db } from "../db/client";
-import { applications, jobs } from "../db/schema";
 import { applierEnv } from "../lib/env";
 import { getFlags } from "../lib/flags";
 import { logger } from "../lib/logger";
 import { count, slo } from "../lib/metrics";
 import { signal } from "../lib/sentry";
-import { claimForCloud, cloudAllowed, FAILURE_MESSAGES, recordSubmission, type FailureCode } from "../services/submissions";
+import { boundedEvidence, cloudAllowed, type FailureCode } from "../services/submissions";
 import { admitOrPark, type ApplyGate } from "./apply-gate";
 import { applierPool } from "./browser-pool";
-import type { JobData } from "./queues";
+import { renderAndWait, type JobData } from "./queues";
 
 /**
  * The cloud applier runs the same form filler the Chrome extension uses (built to extension/dist/filler.js),
@@ -108,6 +109,11 @@ export type CloudOutcome = { submitted: true; report: SubmissionReport } | { sub
 
 const fail = (code: FailureCode, detail: string): CloudOutcome => ({ submitted: false, code, detail });
 
+export interface ResumePdf {
+  name: string;
+  buffer: Buffer;
+}
+
 export interface FillInput {
   applicationId: string;
   applyUrl: string;
@@ -115,6 +121,12 @@ export interface FillInput {
   resumeLines: ResumeLine[];
   coverLetter: string | null;
   fillerSource: string;
+  /** The snapshot PDF; null when this send has none (a legacy row) or the render failed. */
+  resumePdf?: ResumePdf | null;
+  /** Why the render failed, coded; only with no PDF. Decides what a resume input on the page does with the run. */
+  renderFailure?: string | null;
+  /** Writes the phase, and commits before the page can see the click: a run that cannot record `filling` never fills. Rejects when the attempt is closed. */
+  onPhase?: (phase: "navigating" | "filling") => Promise<void>;
 }
 
 /** A visible challenge on the page, or null. Never clicks or types into one (INV-8). */
@@ -151,6 +163,7 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
   let navBlocked = false;
   let filling = false;
   try {
+    await input.onPhase?.("navigating");
     // Nothing here may throw or reject: a page controls when it runs, and an unhandled rejection would end the process.
     await context.route("**/*", (route) => {
       const req = route.request();
@@ -184,6 +197,24 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
     if (before) return fail("challenge", before);
 
     await page.evaluate(input.fillerSource);
+    // Before the mark of `filling` (phase `navigating`): an attach that fails, or a file the page wants and we lack, still
+    // means nothing was sent. A page with no resume input sends without a file whatever the render did, as before WP-19.
+    const selector = detectAdapter(new URL(input.applyUrl))?.resumeInputSelector;
+    const fileInput = selector ? await page.$(selector) : null;
+    let attached = false;
+    if (fileInput && input.resumePdf) {
+      const ok = await fileInput
+        .setInputFiles({ name: input.resumePdf.name, mimeType: "application/pdf", buffer: input.resumePdf.buffer }, { timeout: 15_000 })
+        .then(() => true, () => false);
+      if (!ok) return fail("applier_error", "attach_failed");
+      attached = true;
+    } else if (fileInput && input.renderFailure) {
+      // The document had a resume and we could not make the file: never send it without one, required or not.
+      return fail("render_failed", input.renderFailure);
+    } else if (fileInput && (await fileInput.evaluate((e) => (e as HTMLInputElement).required))) {
+      return fail("applier_error", "resume_missing");
+    }
+    await input.onPhase?.("filling");
     filling = true;
     let timer: NodeJS.Timeout | undefined;
     const deadline = new Promise<never>((_, reject) => {
@@ -198,6 +229,7 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
     // The page wrote this object: keep its shape only, and pin it to the application the applier claimed.
     const parsed = submissionReportSchema.safeParse({ ...(raw as object), applicationId: input.applicationId, submittedAt: new Date().toISOString() });
     if (!parsed.success) return fail("unconfirmed", "invalid_report");
+    if (attached) parsed.data.filledFields.push({ fieldKey: "resume", label: "Resume", value: input.resumePdf!.name });
     if (parsed.data.outcome === "submitted") return { submitted: true, report: parsed.data };
     // A captcha that appears on submit blocks the post, so it is a challenge rather than an unconfirmed send.
     const after = await visibleChallenge(page);
@@ -212,49 +244,88 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
   }
 }
 
-let filler: string | undefined;
-const fillerSource = () => (filler ??= readFileSync(applierEnv().FILLER_SCRIPT_PATH, "utf8"));
+/**
+ * How long the run waits for its file. Three tries fit when each is quick (a render is about a second); a slow path (a 10 s
+ * kill, then a 30 s R2 put, three times, plus 2 s and 4 s of backoff) is about 130 s and does not fit, so the wait ends
+ * first as render_wait_timeout and the run goes on without the file. The heartbeat runs throughout.
+ */
+const RENDER_WAIT_MS = 90_000;
+const MAX_PDF_BYTES = 5 * 1024 * 1024;
 
-/** What recordSubmission stores. Receipt rows come from the stored answers, never from labels or values the page wrote. */
-function toReport(app: { id: string; answers: ApplicationAnswer[] }, outcome: CloudOutcome): SubmissionReport {
-  const submittedAt = new Date().toISOString();
-  if (!outcome.submitted) {
-    return { applicationId: app.id, outcome: "failed", failureReason: FAILURE_MESSAGES[outcome.code], filledFields: [], submittedAt };
+/** Reads the presigned link from Node, not from the page, so the employer's page never sees it. Bounded in size and time, and no redirect. */
+export async function fetchPdf(url: string, fetcher: typeof fetch = fetch): Promise<Buffer> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("pdf_url_rejected");
   }
-  const stored = new Map(app.answers.map((a) => [a.fieldKey, a]));
-  const filledFields = outcome.report.filledFields.flatMap((f) => {
-    const a = stored.get(f.fieldKey);
-    return a ? [{ fieldKey: a.fieldKey, label: a.label, value: a.value }] : [];
-  });
-  return { ...outcome.report, applicationId: app.id, filledFields, submittedAt };
+  if (parsed.protocol !== "https:") throw new Error("pdf_url_rejected");
+  const res = await fetcher(url, { redirect: "error", signal: AbortSignal.timeout(20_000) });
+  if (!res.ok || !res.body) throw new Error("pdf_fetch_failed");
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+    size += chunk.length;
+    if (size > MAX_PDF_BYTES) throw new Error("pdf_too_large");
+    chunks.push(chunk);
+  }
+  const pdf = Buffer.concat(chunks);
+  if (pdf.subarray(0, 5).toString("latin1") !== "%PDF-") throw new Error("pdf_not_pdf");
+  return pdf;
 }
 
 /**
- * The applier's processor. With a gate (the applier passes one; the tests call it bare) the run is admitted per ATS
- * before the claim, so a parked job leaves the application approved and unclaimed.
+ * The send's PDF, rendered on the worker at claim time (PRD 7.6). The applier holds no storage token and no Typst: it asks for
+ * its own attempt, as the holder of the mark, and the worker answers with a 60-second presigned link through the job's result,
+ * which renderAndWait removes from Redis on reading. Rejects when it cannot be had.
  */
-export async function processCloudApply(job: Job<JobData["cloud-apply"]>, opts: { gate?: ApplyGate; token?: string } = {}) {
-  const [row] = await db()
-    .select({ app: applications, applyUrl: jobs.applyUrl, closedAt: jobs.closedAt })
-    .from(applications)
-    .innerJoin(jobs, eq(jobs.id, applications.jobId))
-    .where(eq(applications.id, job.data.applicationId));
-  if (!row || row.app.status !== "approved" || row.app.channel !== "cloud") return { skipped: true };
+export async function snapshotPdf(applicationId: string, attemptNo: number, attemptId: string, worker: string): Promise<ResumePdf | null> {
+  const rendered = await renderAndWait({ kind: "snapshot", applicationId, attemptNo, attemptId, worker }, RENDER_WAIT_MS);
+  return rendered.url ? { name: rendered.filename, buffer: await fetchPdf(rendered.url) } : null;
+}
 
-  const ats = atsOfApplyUrl(row.applyUrl);
+let filler: string | undefined;
+const fillerSource = () => (filler ??= readFileSync(applierEnv().FILLER_SCRIPT_PATH, "utf8"));
+
+/** What the attempt keeps of a run. Settlement builds the receipt from the stored answers, never from what the page wrote. */
+export const evidenceOf = (outcome: CloudOutcome): Record<string, unknown> =>
+  outcome.submitted ? boundedEvidence(outcome.report.filledFields.map((f) => f.fieldKey), outcome.report.confirmationText) : { detail: outcome.detail.slice(0, 64) };
+
+/** How often a live run renews its heartbeat; the sweep closes an attempt 90 s after the last one (services/settle.ts). */
+const HEARTBEAT_MS = 10_000;
+
+const firstRow = async <T extends Record<string, unknown>>(query: ReturnType<typeof sql>): Promise<T | undefined> => (await db().execute<T>(query)).rows[0] as T | undefined;
+
+/**
+ * The applier's processor (database-11): it reaches the database only through the definer functions of migration 0027 and
+ * ends with a result on the attempt row. It never writes a status after the claim and never charges: settlement does, in
+ * the worker. With a gate (the applier passes one; the tests call it bare) the run is admitted per ATS before the claim, so
+ * a parked job leaves the application approved and unclaimed. Delivery is at least once: a re-delivery after completion, a
+ * stall or a Redis loss finds the state and returns skipped. mark_browser_launched is the no-second-send invariant, and
+ * BullMQ's `done` is only informational.
+ */
+export async function processCloudApply(job: Job<JobData["cloud-apply"]>, opts: { gate?: ApplyGate; token?: string; getPdf?: typeof snapshotPdf } = {}) {
+  const row = await firstRow<AppliedJob>(sql`select status, attempt_no, user_id, apply_url, closed_at, approved_at from applier_job(${job.data.applicationId})`);
+  // A job of an earlier attempt has nothing left to do. A job of the previous release has no number and means the current one.
+  if (!row || (job.data.attemptNo !== undefined && job.data.attemptNo !== row.attempt_no)) return { skipped: true };
+
+  const ats = atsOfApplyUrl(row.apply_url);
   // The operator flags (lib/flags.ts) are read before every claim, so a flip stops new claims within 10 s. A parked run
   // leaves the application approved and unclaimed; it resumes when the flag is lifted.
-  const flags = await getFlags();
-  // Never read the table in this process (database blip at boot): the kill switches are unknown, so do not claim.
-  if (!flags.loaded || flags.pauseCloudApply || flags.approvalsFrozen || (ats !== undefined && flags.extensionOnly.has(ats))) {
-    logger.info({ jobId: job.id, ats }, "cloud apply parked by an ops flag");
-    count("cloud.parked", 1, ats ?? "");
-    await job.moveToDelayed(Date.now() + 15_000 + Math.floor(Math.random() * 5_000), opts.token);
-    throw new DelayedError();
+  if (row.status === "approved") {
+    const flags = await getFlags();
+    // Never read the table in this process (database blip at boot): the kill switches are unknown, so do not claim.
+    if (!flags.loaded || flags.pauseCloudApply || flags.approvalsFrozen || (ats !== undefined && flags.extensionOnly.has(ats))) {
+      logger.info({ jobId: job.id, ats }, "cloud apply parked by an ops flag");
+      count("cloud.parked", 1, ats ?? "");
+      await job.moveToDelayed(Date.now() + 15_000 + Math.floor(Math.random() * 5_000), opts.token);
+      throw new DelayedError();
+    }
   }
   const leave = opts.gate && ats ? await admitOrPark(opts.gate, ats, job, opts.token) : undefined;
   try {
-    const outcome = await claimAndApply(row);
+    const outcome = await claimAndApply(job.data.applicationId, row, opts.getPdf ?? snapshotPdf);
     // A 429 on the apply page cools that ATS down on every replica; the other ATS keep running.
     if (opts.gate && ats && outcome?.detail === "http_429") await opts.gate.coolDown(ats).catch((err: unknown) => logger.warn({ err, ats }, "cool-down not recorded"));
     return outcome ? { submitted: outcome.submitted } : { skipped: true };
@@ -264,33 +335,124 @@ export async function processCloudApply(job: Job<JobData["cloud-apply"]>, opts: 
   }
 }
 
-/** Claims the approved application and runs it once; every path after the claim records an outcome. Null: not claimed. */
-async function claimAndApply(row: { app: typeof applications.$inferSelect; applyUrl: string; closedAt: Date | null }): Promise<{ submitted: boolean; detail?: string } | null> {
-  // The read above can be stale: a withdraw may land in between. Only the conditional claim decides.
-  if (!(await claimForCloud(db(), row.app.id))) return null;
-  // S4: 95% of approved cloud attempts start within 10 minutes (README Reliability).
-  slo("s4", !row.app.approvedAt || Date.now() - row.app.approvedAt.getTime() <= 10 * 60_000);
+interface AppliedJob extends Record<string, unknown> {
+  status: "approved" | "submitting";
+  attempt_no: number;
+  user_id: string;
+  apply_url: string;
+  closed_at: string | Date | null;
+  approved_at: string | Date | null;
+}
 
+/** Who holds an attempt: this process. The launch mark binds the attempt to it, and only the holder reads the payload. */
+const workerIdentity = () => process.env.RAILWAY_REPLICA_ID ?? `applier-${process.pid}`;
+
+/** A bad value or a privilege error will not heal; anything else (a Postgres restart, a dropped connection) may. */
+const healable = (err: unknown) => !/^(22|23|42)/.test(((err as { cause?: { code?: string } }).cause ?? (err as { code?: string })).code ?? "");
+
+/**
+ * The result is the one write that cannot be replayed from anywhere else: past the mark no other delivery runs. So a real
+ * `submitted` is worth waiting about a minute for through a Postgres restart. After that the throw fails the job, the
+ * re-delivery loses the mark, and the sweep closes the attempt by its phase: safe, and only a late confirmation can recover it.
+ */
+export async function retryWhileHealable(write: () => Promise<unknown>, sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)), tries = 12): Promise<void> {
+  for (let i = 1; ; i++) {
+    try {
+      await write();
+      return;
+    } catch (err) {
+      if (i >= tries || !healable(err)) throw err;
+      logger.warn({ err }, "attempt result not written yet; retrying");
+      await sleep(5_000);
+    }
+  }
+}
+
+/**
+ * The render step, after the mark and before the browser. It never ends the run: a failure travels to the page as a coded
+ * reason, and only a page with a resume input fails on it (fillInBrowser), before `filling`. A row with no document skips
+ * the queue. A claim moves attempt_no 0 to 1, so the number the render checks is at least 1.
+ */
+async function resumePdfFor(attemptId: string, worker: string, applicationId: string, attemptNo: number, getPdf: typeof snapshotPdf): Promise<{ pdf: ResumePdf | null; failure: string | null }> {
+  const needs = await firstRow<{ needs: boolean }>(sql`select applier_needs_render(${attemptId}, ${worker}) as needs`);
+  if (!needs?.needs) return { pdf: null, failure: null };
+  try {
+    return { pdf: await getPdf(applicationId, Math.max(attemptNo, 1), attemptId, worker), failure: null };
+  } catch (err) {
+    // Coded reasons only. A message that is not one of ours (an R2 or network error) is folded to one code, so no text of
+    // the document or the URL can reach the evidence.
+    const message = (err as Error).message;
+    const failure = /^(render|pdf)_[a-z_]{1,40}$/.test(message) ? message : "render_unavailable";
+    logger.warn({ applicationId, attemptId, reason: failure }, "snapshot render failed; the page decides whether the run can go on");
+    return { pdf: null, failure };
+  }
+}
+
+/**
+ * Claims the application and runs it at most once. The launch mark comes first and decides everything: the delivery that
+ * sets it owns the attempt and records its result, whatever the prechecks say. A delivery that loses it writes nothing,
+ * because the attempt may be past the click, and "the plan lapsed" or "setup failed" would then say nothing was sent about a
+ * send that reached the employer; the holder's report or the sweep, by the attempt's phase, ends it. A mark that throws
+ * fails the job, so it retries. A crash before the mark leaves the attempt to the next delivery. Null: nothing to do.
+ */
+async function claimAndApply(applicationId: string, row: AppliedJob, getPdf: typeof snapshotPdf): Promise<{ submitted: boolean; detail?: string } | null> {
+  const worker = workerIdentity();
+  // The read above can be stale: a withdraw may land in between. Only the conditional claim decides.
+  const claim = await firstRow<{ id: string | null }>(sql`select claim_cloud_attempt(${applicationId}, ${row.attempt_no}::int, ${worker}) as id`);
+  const attemptId = claim?.id;
+  if (!attemptId) return null;
+  const launched = await firstRow<{ ok: boolean }>(sql`select mark_browser_launched(${attemptId}, ${worker}) as ok`);
+  if (!launched?.ok) {
+    logger.warn({ applicationId, attemptId }, "cloud apply re-delivered past its browser step: writes nothing and never clicks");
+    return null;
+  }
+  // S4: 95% of approved cloud attempts start within 10 minutes (README Reliability).
+  const approvedMs = row.approved_at ? new Date(row.approved_at).getTime() : null;
+  slo("s4", approvedMs === null || Date.now() - approvedMs <= 10 * 60_000);
+
+  let phase = "claimed" as "claimed" | "navigating" | "filling";
+  const markPhase = (p: typeof phase) => db().execute(sql`select mark_attempt_phase(${attemptId}, ${p})`);
+  const heartbeat = setInterval(() => void markPhase(phase).catch((err: unknown) => logger.warn({ err, attemptId }, "attempt heartbeat failed")), HEARTBEAT_MS);
   let outcome: CloudOutcome;
   try {
+    const payload = await firstRow<{ answers: ApplicationAnswer[]; resume_lines: ResumeLine[]; cover_letter: string | null }>(sql`select answers, resume_lines, cover_letter from get_applier_payload(${attemptId}, ${worker})`);
     // Prechecks at claim (applications-v02): the plan may have lapsed, or the posting closed, since approval.
-    if (!(await cloudAllowed(db(), row.app.userId))) outcome = fail("plan_lapsed", "plan_lapsed");
-    else if (row.closedAt) outcome = fail("posting_closed", "closed_in_catalog");
+    if (!(await cloudAllowed(db(), row.user_id))) outcome = fail("plan_lapsed", "plan_lapsed");
+    else if (row.closed_at) outcome = fail("posting_closed", "closed_in_catalog");
+    else if (!payload) outcome = fail("applier_error", "attempt_closed");
     else {
-      const { id, answers, resumeLines, coverLetter } = row.app;
-      const input = { applicationId: id, applyUrl: row.applyUrl, answers, resumeLines, coverLetter, fillerSource: fillerSource() };
-      outcome = await applierPool().run((browser) => fillInBrowser(browser, input));
+      const { pdf: resumePdf, failure: renderFailure } = await resumePdfFor(attemptId, worker, applicationId, row.attempt_no, getPdf);
+      const input: FillInput = {
+        applicationId,
+        applyUrl: row.apply_url,
+        answers: payload.answers,
+        resumeLines: payload.resume_lines,
+        coverLetter: payload.cover_letter,
+        resumePdf,
+        renderFailure,
+        fillerSource: fillerSource(),
+        onPhase: async (p) => {
+          const marked = await firstRow<{ ok: boolean }>(sql`select mark_attempt_phase(${attemptId}, ${p}) as ok`);
+          // The sweep closed this attempt as "nothing was sent": it must stay true. The throw ends the run before the fill.
+          if (!marked?.ok) throw new Error("attempt closed");
+          phase = p;
+        },
+      };
+        outcome = await applierPool().run((browser) => fillInBrowser(browser, input));
     }
   } catch (err) {
-    // Launch, filler bundle or database failures: the page was never filled, so nothing reached the employer.
-    logger.error({ err, applicationId: row.app.id }, "cloud apply failed before the fill");
-    outcome = fail("applier_error", "setup_failed");
+    // fillInBrowser answers for its own page. What lands here came from around it: the launch, the filler bundle, the database,
+    // or the pool after the run. Before `filling` nothing can have reached the employer; from `filling` on it may have.
+    logger.error({ err, applicationId, phase }, "cloud apply run failed outside the page");
+    outcome = phase === "filling" ? fail("unconfirmed", "run_interrupted") : fail("applier_error", "setup_failed");
+  } finally {
+    clearInterval(heartbeat);
   }
 
-  await recordSubmission(db(), row.app.userId, toReport(row.app, outcome), "cloud");
-  // S5 counts the settle (99.9% within 10 minutes of approval); the outcome counters feed alert A-SUB-1 (jobs/alerts.ts).
-  slo("s5", !row.app.approvedAt || Date.now() - row.app.approvedAt.getTime() <= 10 * 60_000);
+  const done = outcome;
+  await retryWhileHealable(() => db().execute(sql`select record_attempt_result(${attemptId}, ${done.submitted ? "submitted" : "failed"}, ${done.submitted ? null : done.code}, ${JSON.stringify(evidenceOf(done))}::jsonb)`));
+  // The outcome counters feed alert A-SUB-1 (jobs/alerts.ts); S5 is counted where the attempt settles.
   count("cloud.run", 1, outcome.submitted ? "submitted" : outcome.code);
-  logger.info({ applicationId: row.app.id, submitted: outcome.submitted, ...(outcome.submitted ? {} : { code: outcome.code, detail: outcome.detail }) }, "cloud apply result");
+  logger.info({ applicationId, attemptId, submitted: outcome.submitted, ...(outcome.submitted ? {} : { code: outcome.code, detail: outcome.detail }) }, "cloud apply result");
   return outcome.submitted ? { submitted: true } : { submitted: false, detail: outcome.detail };
 }

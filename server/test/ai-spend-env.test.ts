@@ -1,3 +1,4 @@
+import { memoryLane } from "./helpers/lanes";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseEnv } from "../src/lib/env";
 
@@ -52,7 +53,9 @@ describe("PAUSE_SCORING", () => {
   it("stops the scoring loop before it reads anything", async () => {
     vi.stubEnv("PAUSE_SCORING", "true");
     vi.resetModules();
-    const { processScoreMatches, processScoreUser } = await import("../src/jobs/score-matches");
+    const { processScoreMatches, processScoreUser, setScoreLane } = await import("../src/jobs/score-matches");
+    // A paused user job does read its lane, to look again later if it holds anything (F6), so the lane is in memory.
+    setScoreLane(memoryLane());
     // No database or Redis is reachable here, so any query would throw. Both the fan-out and the user's chunk stop.
     expect(await processScoreMatches({ data: { jobId: "00000000-0000-4000-8000-000000000000" } } as never)).toEqual({ queued: 0, paused: true });
     expect(await processScoreUser({ data: { userId: "u" } } as never)).toEqual({ stored: 0, retrying: 0, paused: true });

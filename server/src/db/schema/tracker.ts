@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigint, check, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { bigint, check, index, integer, jsonb, pgTable, primaryKey, smallint, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { applications } from "./applications";
 import { user } from "./auth";
 import { jobs } from "./catalog";
@@ -26,12 +26,19 @@ export const trackerItems = pgTable(
     stage: text("stage").$type<"saved" | "drafting" | "applied" | "interviewing" | "offer" | "closed">().notNull().default("saved"),
     stageSetBy: text("stage_set_by").$type<"system" | "user">().notNull().default("system"),
     closedReason: text("closed_reason").$type<"rejected" | "withdrawn" | "not_pursuing" | "posting_closed">(),
-    // ponytail: a fractional-index key compared byte-wise (ORDER BY position COLLATE "C"); WP-21 picks the method (PRD 15).
-    position: text("position").notNull().default("a0"),
+    /**
+     * A fractional-index key compared byte-wise (ORDER BY position COLLATE "C"; shared positionBetween). The default is the
+     * insert time, so a new card sorts after older ones and two cards rarely tie, which a key between them could not split.
+     */
+    position: text("position")
+      .notNull()
+      .default(sql`'t' || lpad(to_hex((extract(epoch from clock_timestamp()) * 1000)::bigint), 12, '0')`),
     notes: text("notes"),
     salaryText: text("salary_text"),
     /** The posting as saved (PRD 9.3), kept after the job is purged. */
     jobSnapshot: jsonb("job_snapshot"),
+    /** When the user last moved the stage: an automatic move older than this is stale (PRD rule 11; jobs/tracker-projector.ts). */
+    userMovedAt: timestamp("user_moved_at", { withTimezone: true }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -138,4 +145,108 @@ export const applicationEvents = pgTable(
         AND NOT jsonb_path_exists(payload, '$.* ? (@ like_regex "^.{201}")')`,
     ),
   ],
+);
+
+/** How far jobs/tracker-projector.ts has read application_events. One row; the job creates it. No user data. */
+export const trackerProjectorState = pgTable(
+  "tracker_projector_state",
+  {
+    id: smallint("id").primaryKey().default(1),
+    lastEventId: bigint("last_event_id", { mode: "number" }).notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [check("tracker_projector_state_one_ck", sql`id = 1`)],
+);
+
+/**
+ * The user's own reference (PRD 9.4): third-party personal data, hard deleted, gone with the account. Rule 12: no agent reads
+ * it, nothing sends it; the worker role that runs agents holds only (id, user_id) for the erasure check, the readonly role nothing.
+ */
+export const contacts = pgTable(
+  "contacts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    title: text("title").notNull().default(""),
+    company: text("company").notNull().default(""),
+    email: text("email"),
+    phone: text("phone"),
+    linkedinUrl: text("linkedin_url"),
+    notes: text("notes").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("contacts_user_idx").on(t.userId, t.createdAt, t.id),
+    check(
+      "contacts_text_ck",
+      sql`char_length(name) BETWEEN 1 AND 120 AND char_length(title) <= 120 AND char_length(company) <= 200
+        AND (email IS NULL OR char_length(email) <= 200) AND (phone IS NULL OR char_length(phone) <= 40)
+        AND (linkedin_url IS NULL OR (char_length(linkedin_url) <= 300 AND linkedin_url ~* '^https?://')) AND char_length(notes) <= 5000`,
+    ),
+  ],
+);
+
+/** A contact's linked jobs. Both sides are the same user's: routes/contacts.ts checks it before it writes. */
+export const contactJobs = pgTable(
+  "contact_jobs",
+  {
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    trackerItemId: uuid("tracker_item_id")
+      .notNull()
+      .references(() => trackerItems.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.contactId, t.trackerItemId] }), index("contact_jobs_item_idx").on(t.trackerItemId)],
+);
+
+/** One interview of a tracked job (PRD 9.5). Kairos never guesses a date: start and zone come from the user. */
+export const interviews = pgTable(
+  "interviews",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    trackerItemId: uuid("tracker_item_id")
+      .notNull()
+      .references(() => trackerItems.id, { onDelete: "cascade" }),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    timeZone: text("time_zone").notNull(),
+    durationMinutes: integer("duration_minutes").notNull(),
+    kind: text("kind").$type<"phone" | "video" | "onsite" | "assessment" | "other">().notNull(),
+    location: text("location"),
+    notes: text("notes").notNull().default(""),
+    outcome: text("outcome"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("interviews_user_starts_idx").on(t.userId, t.startsAt, t.id),
+    index("interviews_item_starts_idx").on(t.trackerItemId, t.startsAt),
+    check("interviews_kind_ck", sql`kind IN ('phone','video','onsite','assessment','other')`),
+    check(
+      "interviews_text_ck",
+      sql`char_length(time_zone) BETWEEN 1 AND 64 AND duration_minutes BETWEEN 5 AND 1440 AND (location IS NULL OR char_length(location) <= 500)
+        AND char_length(notes) <= 5000 AND (outcome IS NULL OR char_length(outcome) <= 500)`,
+    ),
+  ],
+);
+
+/** An interview's linked contacts; deleting either side removes the link (hard delete, PRD 9.4). */
+export const interviewContacts = pgTable(
+  "interview_contacts",
+  {
+    interviewId: uuid("interview_id")
+      .notNull()
+      .references(() => interviews.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.interviewId, t.contactId] }), index("interview_contacts_contact_idx").on(t.contactId)],
 );
