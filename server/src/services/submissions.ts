@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getPlan, type PlanId, type SubmitChannel } from "@auto-career/shared";
 import type { Db } from "../db/client";
-import { applications, companies, facts, jobs, profiles, resumes, submissionAttempts, subscriptions, type ApplicationFailureCode } from "../db/schema";
+import { applications, companies, facts, jobs, profiles, resumes, submissionAttempts, subscriptions, type ApplicationFailureCode, trackerItems } from "../db/schema";
 import { baseEnv, type BaseEnv } from "../lib/env";
 import { cloudApplyKey, emitOutbox } from "../durable/outbox";
 import { forbidden, HttpError, notFound, paymentRequired } from "../lib/errors";
@@ -100,7 +100,7 @@ const citedFactIds = (lines: { factIds?: string[] }[]) => [...new Set(lines.flat
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Why a draft of the caller's was not approved (05-api 9.4), the reasons this release can give. The additive `skipped[]` of approve. */
-export type SkipReason = "not_ready" | "facts_changed" | "company_cap" | "paused" | "posting_closed";
+export type SkipReason = "not_ready" | "facts_changed" | "company_cap" | "paused" | "posting_closed" | "card_closed";
 
 export interface ApproveResult {
   approved: { id: string; attemptNo: number }[];
@@ -181,6 +181,11 @@ async function approveCore(tx: Tx, userId: string, ids: string[], channel: Submi
     : [];
   const factById = new Map(factRows.map((f) => [f.id, f]));
 
+  // A job the user closed on the tracker is not sent until they reopen it (PRD 9.1). After the row locks, so a drag to Closed in flight is seen.
+  const closedCards = rows.length
+    ? new Set((await tx.select({ id: trackerItems.applicationId }).from(trackerItems).where(and(inArray(trackerItems.applicationId, rows.map((r) => r.a.id)), eq(trackerItems.stage, "closed")))).map((c) => c.id))
+    : new Set<string | null>();
+
   const result: ApproveResult = { approved: [], skipped: [] };
   const moving: typeof rows = [];
   for (const row of rows) {
@@ -198,6 +203,7 @@ async function approveCore(tx: Tx, userId: string, ids: string[], channel: Submi
     else if (cap !== undefined && (perCompany.get(row.companyId) ?? 0) >= cap) skip("company_cap");
     else if (profile?.pausedAt) skip("paused");
     else if (row.closedAt) skip("posting_closed");
+    else if (closedCards.has(a.id)) skip("card_closed");
     else {
       perCompany.set(row.companyId, (perCompany.get(row.companyId) ?? 0) + 1);
       moving.push(row);
@@ -280,6 +286,7 @@ export async function resendCore(tx: Tx, userId: string, id: string, channel: Su
 
   const { approved, skipped } = await approveCore(tx, userId, [id], channel, true);
   const done = approved[0];
+  if (skipped[0]?.reason === "card_closed") throw new HttpError(409, "not_approvable", "You closed this job on your tracker. Reopen the card to send it.", { reason: "card_closed" });
   if (!done) throw new HttpError(409, "not_approvable", "This application cannot be resent right now.", { reason: skipped[0]?.reason ?? "not_ready" });
   return { applicationId: id, status: "approved", attemptNo: done.attemptNo };
 }

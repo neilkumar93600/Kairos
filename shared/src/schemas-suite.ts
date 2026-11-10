@@ -325,12 +325,14 @@ export const insightsSchema = z
     medianDaysToFirstReply: z.number().min(0).nullable(),
     /** True when sent is below the minimum sample: show counts, never percentages. */
     lowSample: z.boolean(),
+    /** Cards created in the range, not archived, by their stage now. */
     funnel: z.array(z.object({ stage: z.enum(TRACKER_STAGES), count: z.number().int().min(0) })),
     byResume: z.array(z.object({ resumeId: id, name: z.string(), sent: z.number().int().min(0), replies: z.number().int().min(0), replyRate: rateOrNull })),
   })
   .superRefine((v, ctx) => {
     if (v.lowSample !== v.sent < INSIGHTS_MIN_SAMPLE) ctx.addIssue({ code: "custom", message: "lowSample must equal sent < 5", path: ["lowSample"] });
     if (v.lowSample && (v.replyRate !== null || v.interviewRate !== null)) ctx.addIssue({ code: "custom", message: "Below the minimum sample only counts are shown", path: ["replyRate"] });
+    if (v.lowSample && v.medianDaysToFirstReply !== null) ctx.addIssue({ code: "custom", message: "Below the minimum sample only counts are shown", path: ["medianDaysToFirstReply"] });
     for (const [i, g] of v.byResume.entries()) {
       if (g.sent < INSIGHTS_MIN_SAMPLE && g.replyRate !== null) ctx.addIssue({ code: "custom", message: "Below the minimum sample only counts are shown", path: ["byResume", i, "replyRate"] });
     }

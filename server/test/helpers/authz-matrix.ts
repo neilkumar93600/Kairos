@@ -22,6 +22,10 @@ export interface TenantIds {
   importId: string;
   /** WP-35: a saved search. */
   savedSearchId: string;
+  /** WP-21: a tracker item, a contact and an interview of that item. */
+  trackerItemId: string;
+  contactId: string;
+  interviewId: string;
 }
 
 /** Exempt from the two-user check, with the reason: no session user, or a credential of its own. */
@@ -173,6 +177,24 @@ export const MATRIX: Record<string, MatrixEntry> = {
   // WP-35: email preferences act on the caller's own profile; a saved search is reached by id and by owner.
   "GET /api/email-preferences": own("/api/email-preferences"),
   "PATCH /api/email-preferences": own("/api/email-preferences", { digest: true }),
+  // WP-21. POST /api/tracker takes a match id, so another user's is a 404 like the rest; its { url } form sits behind writerLimiter and is not walked here.
+  "GET /api/tracker": own("/api/tracker"),
+  "POST /api/tracker": { request: (t) => ({ path: "/api/tracker", body: { matchId: t.matchId } }) },
+  "GET /api/tracker/insights": own("/api/tracker/insights"),
+  "GET /api/tracker/:id": { request: (t) => ({ path: `/api/tracker/${t.trackerItemId}` }) },
+  "PATCH /api/tracker/:id": { request: (t) => ({ path: `/api/tracker/${t.trackerItemId}`, body: { notes: "Theirs" } }) },
+  "GET /api/tracker/:id/events": { request: (t) => ({ path: `/api/tracker/${t.trackerItemId}/events` }) },
+  "POST /api/tracker/:id/interviews": { request: (t) => ({ path: `/api/tracker/${t.trackerItemId}/interviews`, body: { startsAt: "2030-01-01T10:00:00.000Z", timeZone: "UTC", durationMinutes: 30, kind: "video" } }) },
+  "PATCH /api/tracker/:id/interviews/:iid": { request: (t) => ({ path: `/api/tracker/${t.trackerItemId}/interviews/${t.interviewId}`, body: { outcome: "Theirs" } }) },
+  "DELETE /api/tracker/:id/interviews/:iid": { request: (t) => ({ path: `/api/tracker/${t.trackerItemId}/interviews/${t.interviewId}` }) },
+  "GET /api/tracker/:id/interviews/:iid.ics": { request: (t) => ({ path: `/api/tracker/${t.trackerItemId}/interviews/${t.interviewId}.ics` }) },
+  "GET /api/contacts": own("/api/contacts"),
+  "POST /api/contacts": { request: (t) => ({ path: "/api/contacts", body: { name: "Theirs", jobIds: [t.trackerItemId] } }) },
+  "GET /api/contacts/:id": { request: (t) => ({ path: `/api/contacts/${t.contactId}` }) },
+  "PATCH /api/contacts/:id": { request: (t) => ({ path: `/api/contacts/${t.contactId}`, body: { notes: "Theirs" } }) },
+  "DELETE /api/contacts/:id": { request: (t) => ({ path: `/api/contacts/${t.contactId}` }) },
+  "GET /api/interviews": own("/api/interviews"),
+  "GET /api/applications/:id/events": { request: (t) => ({ path: `/api/applications/${t.applicationId}/events` }) },
   "GET /api/saved-searches": own("/api/saved-searches"),
   "POST /api/saved-searches": own("/api/saved-searches", { name: "Remote only", filters: { remoteOnly: true }, frequency: "weekly" }),
   "PATCH /api/saved-searches/:id": { request: (t) => ({ path: `/api/saved-searches/${t.savedSearchId}`, body: { frequency: "off" } }) },

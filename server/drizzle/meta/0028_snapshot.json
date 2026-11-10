@@ -1,5 +1,5 @@
 {
-  "id": "7f6fc382-aebe-4e02-b058-d543c3d9704f",
+  "id": "6f6c03ec-044f-4c6c-b902-bcbe306c61f9",
   "prevId": "e36fe70d-4c42-48ff-89a9-4ef260dea177",
   "version": "7",
   "dialect": "postgresql",
@@ -3871,59 +3871,6 @@
       },
       "isRLSEnabled": false
     },
-    "public.credit_balances": {
-      "name": "credit_balances",
-      "schema": "",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "balance": {
-          "name": "balance",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "in_flight": {
-          "name": "in_flight",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "credit_balances_user_id_user_id_fk": {
-          "name": "credit_balances_user_id_user_id_fk",
-          "tableFrom": "credit_balances",
-          "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.credit_ledger": {
       "name": "credit_ledger",
       "schema": "",
@@ -4130,175 +4077,16 @@
           "name": "processed_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'processed'"
-        },
-        "outcome": {
-          "name": "outcome",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "object_id": {
-          "name": "object_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "stripe_customer_id": {
-          "name": "stripe_customer_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "event_created": {
-          "name": "event_created",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "payload": {
-          "name": "payload",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "received_at": {
-          "name": "received_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
           "notNull": true,
           "default": "now()"
-        },
-        "attempts": {
-          "name": "attempts",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "redrives": {
-          "name": "redrives",
-          "type": "smallint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "last_error": {
-          "name": "last_error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         }
       },
-      "indexes": {
-        "stripe_events_open_idx": {
-          "name": "stripe_events_open_idx",
-          "columns": [
-            {
-              "expression": "received_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "status IN ('received','dead')",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "stripe_events_object_idx": {
-          "name": "stripe_events_object_idx",
-          "columns": [
-            {
-              "expression": "object_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "type",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "stripe_events_user_idx": {
-          "name": "stripe_events_user_idx",
-          "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "user_id IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "stripe_events_user_id_user_id_fk": {
-          "name": "stripe_events_user_id_user_id_fk",
-          "tableFrom": "stripe_events",
-          "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
+      "indexes": {},
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "stripe_events_status_ck": {
-          "name": "stripe_events_status_ck",
-          "value": "status IN ('received','processed','ignored','dead')"
-        },
-        "stripe_events_outcome_ck": {
-          "name": "stripe_events_outcome_ck",
-          "value": "outcome IS NULL OR outcome IN ('subscription_synced','subscription_stale','grant_applied','grant_duplicate','zero_amount','proration_only','alert_only','unhandled_type','user_deleted','anomaly_no_user','anomaly_unmapped_price')"
-        },
-        "stripe_events_consistency_ck": {
-          "name": "stripe_events_consistency_ck",
-          "value": "(status = 'received' AND processed_at IS NULL AND outcome IS NULL) OR (status IN ('processed','ignored') AND processed_at IS NOT NULL) OR (status = 'dead' AND last_error IS NOT NULL)"
-        },
-        "stripe_events_last_error_ck": {
-          "name": "stripe_events_last_error_ck",
-          "value": "last_error IS NULL OR char_length(last_error) <= 120"
-        },
-        "stripe_events_payload_ck": {
-          "name": "stripe_events_payload_ck",
-          "value": "payload IS NULL OR octet_length(payload::text) <= 4096"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.subscriptions": {
@@ -4376,25 +4164,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
-        },
-        "stripe_event_created": {
-          "name": "stripe_event_created",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "collection_paused": {
-          "name": "collection_paused",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "pause_source": {
-          "name": "pause_source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -4439,14 +4208,6 @@
         "subscriptions_past_due_ck": {
           "name": "subscriptions_past_due_ck",
           "value": "(status = 'past_due') = (past_due_since IS NOT NULL)"
-        },
-        "subscriptions_pause_ck": {
-          "name": "subscriptions_pause_ck",
-          "value": "collection_paused = (pause_source IS NOT NULL)"
-        },
-        "subscriptions_pause_source_ck": {
-          "name": "subscriptions_pause_source_ck",
-          "value": "pause_source IS NULL OR pause_source IN ('offer_email','customer')"
         }
       },
       "isRLSEnabled": false
@@ -7505,6 +7266,464 @@
       },
       "isRLSEnabled": false
     },
+    "public.contact_jobs": {
+      "name": "contact_jobs",
+      "schema": "",
+      "columns": {
+        "contact_id": {
+          "name": "contact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tracker_item_id": {
+          "name": "tracker_item_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "contact_jobs_item_idx": {
+          "name": "contact_jobs_item_idx",
+          "columns": [
+            {
+              "expression": "tracker_item_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "contact_jobs_contact_id_contacts_id_fk": {
+          "name": "contact_jobs_contact_id_contacts_id_fk",
+          "tableFrom": "contact_jobs",
+          "tableTo": "contacts",
+          "columnsFrom": [
+            "contact_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "contact_jobs_tracker_item_id_tracker_items_id_fk": {
+          "name": "contact_jobs_tracker_item_id_tracker_items_id_fk",
+          "tableFrom": "contact_jobs",
+          "tableTo": "tracker_items",
+          "columnsFrom": [
+            "tracker_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "contact_jobs_contact_id_tracker_item_id_pk": {
+          "name": "contact_jobs_contact_id_tracker_item_id_pk",
+          "columns": [
+            "contact_id",
+            "tracker_item_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.contacts": {
+      "name": "contacts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "company": {
+          "name": "company",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "linkedin_url": {
+          "name": "linkedin_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "contacts_user_idx": {
+          "name": "contacts_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "contacts_user_id_user_id_fk": {
+          "name": "contacts_user_id_user_id_fk",
+          "tableFrom": "contacts",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "contacts_text_ck": {
+          "name": "contacts_text_ck",
+          "value": "char_length(name) BETWEEN 1 AND 120 AND char_length(title) <= 120 AND char_length(company) <= 200\n        AND (email IS NULL OR char_length(email) <= 200) AND (phone IS NULL OR char_length(phone) <= 40)\n        AND (linkedin_url IS NULL OR (char_length(linkedin_url) <= 300 AND linkedin_url ~* '^https?://')) AND char_length(notes) <= 5000"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.interview_contacts": {
+      "name": "interview_contacts",
+      "schema": "",
+      "columns": {
+        "interview_id": {
+          "name": "interview_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "contact_id": {
+          "name": "contact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "interview_contacts_contact_idx": {
+          "name": "interview_contacts_contact_idx",
+          "columns": [
+            {
+              "expression": "contact_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "interview_contacts_interview_id_interviews_id_fk": {
+          "name": "interview_contacts_interview_id_interviews_id_fk",
+          "tableFrom": "interview_contacts",
+          "tableTo": "interviews",
+          "columnsFrom": [
+            "interview_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "interview_contacts_contact_id_contacts_id_fk": {
+          "name": "interview_contacts_contact_id_contacts_id_fk",
+          "tableFrom": "interview_contacts",
+          "tableTo": "contacts",
+          "columnsFrom": [
+            "contact_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "interview_contacts_interview_id_contact_id_pk": {
+          "name": "interview_contacts_interview_id_contact_id_pk",
+          "columns": [
+            "interview_id",
+            "contact_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.interviews": {
+      "name": "interviews",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tracker_item_id": {
+          "name": "tracker_item_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "starts_at": {
+          "name": "starts_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "time_zone": {
+          "name": "time_zone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "duration_minutes": {
+          "name": "duration_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "location": {
+          "name": "location",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "interviews_user_starts_idx": {
+          "name": "interviews_user_starts_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "interviews_item_starts_idx": {
+          "name": "interviews_item_starts_idx",
+          "columns": [
+            {
+              "expression": "tracker_item_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "interviews_user_id_user_id_fk": {
+          "name": "interviews_user_id_user_id_fk",
+          "tableFrom": "interviews",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "interviews_tracker_item_id_tracker_items_id_fk": {
+          "name": "interviews_tracker_item_id_tracker_items_id_fk",
+          "tableFrom": "interviews",
+          "tableTo": "tracker_items",
+          "columnsFrom": [
+            "tracker_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "interviews_kind_ck": {
+          "name": "interviews_kind_ck",
+          "value": "kind IN ('phone','video','onsite','assessment','other')"
+        },
+        "interviews_text_ck": {
+          "name": "interviews_text_ck",
+          "value": "char_length(time_zone) BETWEEN 1 AND 64 AND duration_minutes BETWEEN 5 AND 1440 AND (location IS NULL OR char_length(location) <= 500)\n        AND char_length(notes) <= 5000 AND (outcome IS NULL OR char_length(outcome) <= 500)"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.tracker_items": {
       "name": "tracker_items",
       "schema": "",
@@ -7583,7 +7802,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'a0'"
+          "default": "'t' || lpad(to_hex((extract(epoch from clock_timestamp()) * 1000)::bigint), 12, '0')"
         },
         "notes": {
           "name": "notes",
@@ -7600,6 +7819,12 @@
         "job_snapshot": {
           "name": "job_snapshot",
           "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_moved_at": {
+          "name": "user_moved_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -7765,6 +7990,45 @@
         "tracker_items_snapshot_ck": {
           "name": "tracker_items_snapshot_ck",
           "value": "job_snapshot IS NULL OR (jsonb_typeof(job_snapshot) = 'object' AND octet_length(job_snapshot::text) <= 65536)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.tracker_projector_state": {
+      "name": "tracker_projector_state",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "smallint",
+          "primaryKey": true,
+          "notNull": true,
+          "default": 1
+        },
+        "last_event_id": {
+          "name": "last_event_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "tracker_projector_state_one_ck": {
+          "name": "tracker_projector_state_one_ck",
+          "value": "id = 1"
         }
       },
       "isRLSEnabled": false

@@ -69,6 +69,11 @@ export async function seedEverything(db: Db, email: string, mark = MARK) {
     company: `Co ${mark}`,
     stage: "applied",
   }).returning();
+  // WP-21: a contact and an interview linked to the item, each table of the erasure and export inventory.
+  const [contact] = await db.insert(schema.contacts).values({ userId: id, name: "Recruiter", notes: mark }).returning();
+  await db.insert(schema.contactJobs).values({ contactId: contact!.id, trackerItemId: trackerItem!.id });
+  const [interview] = await db.insert(schema.interviews).values({ userId: id, trackerItemId: trackerItem!.id, startsAt: new Date(), timeZone: "UTC", durationMinutes: 30, kind: "video", notes: mark }).returning();
+  await db.insert(schema.interviewContacts).values({ interviewId: interview!.id, contactId: contact!.id });
   await db.insert(schema.applicationEvents).values({
     trackerItemId: trackerItem!.id,
     applicationId: app!.id,

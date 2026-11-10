@@ -27,6 +27,9 @@ import { profileRouter } from "./profile";
 import { resumeRouter } from "./resume";
 import { resumesRouter } from "./resumes";
 import { savedSearchesRouter } from "./saved-searches";
+import { contactsRouter } from "./contacts";
+import { interviewsRouter, trackerInterviewsRouter } from "./interviews";
+import { trackerRouter } from "./tracker";
 import { unsubscribeRouter } from "./unsubscribe";
 
 /** Every JSON route under /api. Auth routes (/api/auth/*) and webhooks are mounted separately in app.ts. */
@@ -85,6 +88,9 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   router.use("/notifications", authed, notificationsRouter);
   router.use("/email-preferences", authed, emailPreferencesRouter);
   router.use("/saved-searches", authed, savedSearchesRouter);
+  router.use("/tracker", authed, trackerRouter, trackerInterviewsRouter);
+  router.use("/contacts", authed, contactsRouter);
+  router.use("/interviews", authed, interviewsRouter);
   router.use(countFailedSignIn(limits));
   return router;
 }

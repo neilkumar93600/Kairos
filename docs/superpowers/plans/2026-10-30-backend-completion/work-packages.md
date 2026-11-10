@@ -462,7 +462,7 @@ Typst pinned by SHA-256 in the worker image. A render queue on the worker with c
 
 Also owns `GET /api/applications/:id/events` (05-api lines 756 and 1275; messaging-26, handed over from WP-24; `application_events_app_idx` exists for it): events are keyed by tracker item, and WP-24 writes the reply events it shows. `lib/pagination.ts` needs a bigint id variant for it, since `application_events.id` is not a uuid; no local cursor codec. Also the tracker UI for a stage set by mail: the `reply_*` event payload's `stageHeld` and `authenticated` say when a reply did not move the stage. WP-24 owns the undo route itself, `POST /api/applications/:id/stage/clear`; WP-21 only calls it.
 
-tracker_items (stage, fractional position, notes, salary_text, archive). Contacts and contact_jobs (hard delete). Interviews with .ics (escaped text, explicit time zone). Insights gated by outcomeReport, with counts under 5 hidden. Forward-only automatic stage moves come from a tracker projector job that reads application_events, without editing the producers. A lint rule and a test keep notes, salary and contacts out of every prompt builder. The erasure and export inventory is updated. Files: routes/tracker.ts, routes/contacts.ts, routes/interviews.ts, jobs/tracker-projector.ts, db/schema/tracker.ts migrations.
+tracker_items (stage, fractional position, notes, salary_text, archive). Contacts and contact_jobs (hard delete). Interviews with .ics (escaped text, explicit time zone). Insights gated by outcomeReport; below 5 sent in a group, counts are shown and rates and the median are null (PRD 9.6, decided in WP-21's review). Forward-only automatic stage moves come from a tracker projector job that reads application_events, without editing the producers. A lint rule and a test keep notes, salary and contacts out of every prompt builder. The erasure and export inventory is updated. Files: routes/tracker.ts, routes/contacts.ts, routes/interviews.ts, jobs/tracker-projector.ts, db/schema/tracker.ts migrations.
 
 **Acceptance:** PRD R4 acceptance passes. A prompt-builder test proves tracker notes never reach runAgent. A drag into Applied is refused while approved or submitting.
 
@@ -575,6 +575,8 @@ autopilot_settings with consent_version and a fresh session. Match hand-offs fro
 - Needs owner: no
 
 Contract releases after soak: drop the resume source_text and inbound text_body plaintext columns once the encrypted columns have been read-verified for 14 days; FK RESTRICT for jobs.company_id and applications.job_id; SET NOT NULL on backfilled columns; drop the superseded indexes; add `applications (updated_at) WHERE status = 'draft'` for draft expiry (WP-29). Each change ships behind the '-- kairos:contract' header with a restore rehearsal on a staging dump. Files: db/schema/* contract migrations.
+
+`test/tracker.int.test.ts`'s `seedApp("submitted")` inserts `stage` NULL, which `applications_stage_shape_ck` would refuse: give that fixture `stage: "applied"` when the check lands.
 
 **Acceptance:** No plaintext copy of resume source or reply bodies exists in the database. Restore rehearsal T-DB-4 passes on a staging dump before each release.
 
