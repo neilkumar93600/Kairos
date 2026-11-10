@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { FactKind, Preferences } from "@auto-career/shared";
+import type { FactKind, Goal, Preferences } from "@auto-career/shared";
 import { useApiQuery } from "@/lib/use-api-query";
 import { api, patch, post, put } from "@/lib/api";
 
@@ -21,6 +21,9 @@ export interface Profile {
   githubUrl: string | null;
   portfolioUrl: string | null;
   preferences: Preferences | null;
+  goals: Goal[];
+  targetRoles: string[];
+  targetCompanies: string[];
   onboardingStep: string;
   forwardingAddress: string;
 }

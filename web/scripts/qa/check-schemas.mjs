@@ -1,9 +1,10 @@
 // Parses the mock fixtures and the resume suite walk against the shared zod schemas.
 // Run from the repo root: npx tsx web/scripts/qa/check-schemas.mjs
 // CI runs the same checks through shared/test/mock-contract.test.ts (npm test), which adds the rule tests.
-import { fixtures, fitFor, suggestionsFor, suiteRespond } from "./mock-api.mjs";
+import { fixtures, fitFor, suggestionsFor, suiteRespond, onboardingRespond } from "./mock-api.mjs";
 import { SUITE_CASES, walk } from "./suite-cases.mjs";
 import { RESUME_SUITE_ROUTES, apiErrorSchema } from "../../../shared/src/index.ts";
+import { onboardingUpdateSchema, employmentInputSchema, applicationDetailsSchema } from "../../../shared/src/onboarding.ts";
 import { jobFitSchema, resumeSuggestionSchema, resumeSchema, applicationAnswerSchema, resumeLineSchema, preferencesSchema } from "../../../shared/src/schemas.ts";
 
 let bad = 0;
@@ -46,4 +47,29 @@ for (const { case: c, path, body, result } of out) {
   else console.log(`ok   ${c.name} (${route.response})`);
 }
 for (const r of RESUME_SUITE_ROUTES) if (!seen.has(r.id)) { bad++; console.error(`FAIL no recorded case for route ${r.id}`); }
+
+// Onboarding routes: the mock responses parse against the Task 1 schemas, and state changes stick in `data`.
+const ob = fixtures("empty");
+const call = (method, path, body = {}) => onboardingRespond({ method, path, body }, ob);
+const want = (name, got, status) => { if (got?.status !== status) { bad++; console.error(`FAIL ${name}: status ${got?.status}, wanted ${status}`); return false; } return true; };
+const put = call("PUT", "/profile/onboarding", { goals: ["find"], targetRoles: ["Backend Engineer"], targetCompanies: [], step: "target" });
+if (want("onboarding put", put, 200)) {
+  const p = put.json.profile;
+  check("onboarding response", onboardingUpdateSchema, { goals: p.goals, targetRoles: p.targetRoles, targetCompanies: p.targetCompanies, step: p.onboardingStep });
+  if (ob.me.onboardingStep !== "target" || ob.me.goals[0] !== "find") { bad++; console.error("FAIL onboarding put did not update me"); }
+}
+const job = { title: "Engineer", company: "Acme", location: null, startMonth: "2021-01", endMonth: null, isCurrent: true, results: ["Cut build time by 40 percent"] };
+const made = call("POST", "/profile/employments", job);
+if (want("employment post", made, 201)) {
+  const e = made.json.employment;
+  check("employment response", employmentInputSchema, { ...e, results: e.results.map((r) => r.text) });
+  const upd = call("PATCH", `/profile/employments/${e.id}`, { title: "Senior Engineer" });
+  if (want("employment patch", upd, 200) && upd.json.employment.title !== "Senior Engineer") { bad++; console.error("FAIL employment patch did not stick"); }
+  want("employment delete", call("DELETE", `/profile/employments/${e.id}`), 204);
+  if (call("GET", "/profile/employments").json.employments.length) { bad++; console.error("FAIL employment delete did not stick"); }
+}
+check("details get", applicationDetailsSchema, call("GET", "/profile/application-details").json.details);
+const det = { noticePeriod: "1_month", openToRelocation: true, expectedSalary: { amount: 90000, currency: "USD" } };
+const saved = call("PUT", "/profile/application-details", det);
+if (want("details put", saved, 200)) check("details response", applicationDetailsSchema, saved.json.details);
 process.exit(bad ? 1 : 0);

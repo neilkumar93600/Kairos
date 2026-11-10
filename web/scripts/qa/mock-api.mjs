@@ -191,7 +191,7 @@ export function fixtures(scenario) {
 
 function baseFixtures(scenario) {
   if (scenario === "empty") {
-    const me = { user: { id: "u2", email: "new.user@example.com", name: "New User" }, plan: PLANS.free, credits: { balance: 25, inFlight: 0, available: 25 }, onboardingStep: "resume", forwardingAddress: null, subscription: null };
+    const me = { user: { id: "u2", email: "new.user@example.com", name: "New User" }, plan: PLANS.free, credits: { balance: 25, inFlight: 0, available: 25 }, goals: [], targetRoles: [], targetCompanies: [], onboardingStep: "goals", forwardingAddress: null, subscription: null };
     return {
       scenario,
       me,
@@ -202,8 +202,10 @@ function baseFixtures(scenario) {
       details: {},
       credits: { balance: 25, inFlight: 0, available: 25, entries: [ent("c1", 25, "free_grant", 0)] },
       inbox: [],
-      profile: { phone: null, city: null, country: null, linkedinUrl: null, githubUrl: null, portfolioUrl: null, preferences: null, onboardingStep: "resume", forwardingAddress: "kairos-new0user@in.kairos.example" },
+      profile: { phone: null, city: null, country: null, linkedinUrl: null, githubUrl: null, portfolioUrl: null, preferences: null, goals: [], targetRoles: [], targetCompanies: [], onboardingStep: "goals", forwardingAddress: "kairos-new0user@in.kairos.example" },
       facts: [],
+      employments: [],
+      appDetails: { noticePeriod: null, openToRelocation: null, expectedSalary: null },
       resume: resumeEmpty(),
     };
   }
@@ -214,7 +216,7 @@ function baseFixtures(scenario) {
     row(10, "submitting"),
   ];
   const details = Object.fromEntries(applications.map((a, i) => [a.id, detailFor(i + 1, a.status, a.failureReason)]));
-  const me = { user: { id: "u1", email: "sample.applicant@example.com", name: "Sample Applicant" }, plan: PLANS.pro, credits: { balance: 1144, inFlight: 1, available: 1143 }, onboardingStep: "done", forwardingAddress: "kairos-7f3a9c@in.kairos.example", subscription: { status: "active", interval: "month", currentPeriodEnd: ago(-12), cancelAtPeriodEnd: false } };
+  const me = { user: { id: "u1", email: "sample.applicant@example.com", name: "Sample Applicant" }, plan: PLANS.pro, credits: { balance: 1144, inFlight: 1, available: 1143 }, goals: ["find"], targetRoles: ["Backend Engineer"], targetCompanies: [], onboardingStep: "done", forwardingAddress: "kairos-7f3a9c@in.kairos.example", subscription: { status: "active", interval: "month", currentPeriodEnd: ago(-12), cancelAtPeriodEnd: false } };
   return {
     scenario,
     me,
@@ -239,10 +241,51 @@ function baseFixtures(scenario) {
       email("em4", "talent@company-107.example.com", "Complete the coding assessment", "assessment", "app-7", 4, "Please finish the 60 minute online assessment within 5 days using the link below."),
       email("em5", "people@company-108.example.com", "Welcome to our hiring newsletter", null, null, 6, "Here is what is new on the team this month."),
     ],
-    profile: { phone: "555-0100", city: "New York", country: "United States", linkedinUrl: "https://linkedin.example.com/in/sample-applicant", githubUrl: "https://github.example.com/sample-applicant", portfolioUrl: "https://example.com/sample-applicant", preferences: PREFS, onboardingStep: "done", forwardingAddress: "kairos-7f3a9c@in.kairos.example" },
+    profile: { phone: "555-0100", city: "New York", country: "United States", linkedinUrl: "https://linkedin.example.com/in/sample-applicant", githubUrl: "https://github.example.com/sample-applicant", portfolioUrl: "https://example.com/sample-applicant", preferences: PREFS, goals: ["find"], targetRoles: ["Backend Engineer"], targetCompanies: [], onboardingStep: "done", forwardingAddress: "kairos-7f3a9c@in.kairos.example" },
     facts: FACTS_FULL,
+    employments: [],
+    appDetails: { noticePeriod: "1_month", openToRelocation: false, expectedSalary: { amount: 120000, currency: "USD" } },
     resume: resumeFull(),
   };
+}
+
+/**
+ * Onboarding routes: PUT /profile/onboarding, /profile/employments, /profile/application-details.
+ * Unlike the other mutations these change `data`, so a wizard walk sees its own writes. Returns null for any other path.
+ */
+let seq = 0;
+export function onboardingRespond({ method, path, body }, data) {
+  const ok = (json, status = 200) => ({ status, json });
+  let x;
+  if (method === "PUT" && path === "/profile/onboarding") {
+    const { step, ...rest } = body;
+    for (const k of ["goals", "targetRoles", "targetCompanies"]) if (rest[k]) { data.me[k] = rest[k]; data.profile[k] = rest[k]; }
+    if (step) { data.me.onboardingStep = step; data.profile.onboardingStep = step; }
+    return ok({ profile: data.profile });
+  }
+  if (path === "/profile/employments" && method === "GET") return ok({ employments: data.employments });
+  if (path === "/profile/employments" && method === "POST") {
+    const { results = [], ...rest } = body;
+    const e = { id: `emp-${++seq}`, roleFactId: `fact-r${seq}`, ...rest, results: results.map((text, i) => ({ factId: `fact-${seq}-${i}`, text })) };
+    data.employments.push(e);
+    return ok({ employment: e }, 201);
+  }
+  if ((x = path.match(/^\/profile\/employments\/([^/]+)$/))) {
+    const e = data.employments.find((r) => r.id === x[1]);
+    if (!e) return ok(NOT_FOUND, 404);
+    if (method === "DELETE") { data.employments.splice(data.employments.indexOf(e), 1); return { status: 204 }; }
+    if (method === "PATCH") {
+      const { results, ...rest } = body;
+      Object.assign(e, rest);
+      if (results) e.results = results.map((text, i) => ({ factId: `fact-${e.id}-${i}`, text }));
+      return ok({ employment: e });
+    }
+  }
+  if (path === "/profile/application-details") {
+    if (method === "PUT") data.appDetails = body;
+    if (method === "GET" || method === "PUT") return ok({ details: data.appDetails });
+  }
+  return null;
 }
 
 const NOT_FOUND = { error: { code: "not_found", message: "mock" } };
@@ -271,6 +314,9 @@ export function handleApi(route, data, report) {
     if (hit.json === undefined) return route.fulfill({ status: hit.status });
     return route.fulfill({ status: hit.status, contentType: "application/json", headers: hit.headers, body: JSON.stringify(hit.json) });
   }
+
+  const ob = onboardingRespond({ method, path: p, body }, data);
+  if (ob) return ob.json === undefined ? route.fulfill({ status: ob.status }) : json(ob.json, ob.status);
 
   if (method === "GET") {
     if (p === "/me") return json(data.me);
