@@ -1,0 +1,157 @@
+/*
+ * Onboarding wizard (spec 8): the form beside the painting, continuing the auth pages. The day rises as you answer
+ * (dawn, morning, noon) and the brief card on the painting collects the answers. Phones get a 200px painted band and a
+ * one-line brief under the progress bar. Motion is transform and opacity only; reduced motion turns all of it off.
+ */
+@layer components {
+  .ob {
+    --ob-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --ob-line: color-mix(in srgb, var(--rule) 25%, transparent);   /* the prototype's lighter hairline */
+    display: flex;
+    flex-direction: column;
+    min-height: 100dvh;
+    background: var(--canvas);
+  }
+  .ob-col { display: flex; flex: 1; flex-direction: column; min-width: 0; padding: 0 16px; }
+  .ob-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 60px; }
+  .ob-main { display: flex; flex: 1; flex-direction: column; outline: none; }
+
+  /* ===== Art: dawn, morning and noon cross-fade; the brief card is strong glass (14px text) ===== */
+  .ob-art {
+    position: relative; order: -1; flex: none; height: 200px; overflow: clip; isolation: isolate;
+    border-radius: 0 0 var(--r-media) var(--r-media);
+    background: linear-gradient(180deg, var(--art-sky), var(--art-haze) 55%, var(--art-meadow));
+  }
+  .ob-art img { object-fit: cover; opacity: 0; transform: scale(1.04); transition: opacity 900ms var(--ob-ease), transform 1.6s var(--ob-ease); }
+  .ob-art img.is-on { opacity: 1; transform: none; }
+  .ob-hour {
+    position: absolute; top: 16px; left: 16px; display: inline-flex; align-items: center; min-height: 28px; padding: 0 12px;
+    border-radius: var(--r-pill); color: var(--ink); font-size: 13px; font-weight: 500;
+  }
+  .ob-brief { display: none; }
+  .ob-brief h2 { margin: 0 0 4px; color: var(--ink); font: 400 26px / 1.05 var(--font-instrument-serif), ui-serif, Georgia, serif; letter-spacing: -0.01em; }
+  .ob-brief__lede { margin: 0 0 10px; color: var(--faint); font-size: 14px; }
+  .ob-brief dl { margin: 0; }
+  .ob-brief__row, .ob-brief__empty { padding: 8px 0; border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); font-size: 14px; }
+  .ob-brief__row { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; animation: ob-settle 700ms var(--ob-ease) backwards; }
+  .ob-brief__row dt, .ob-brief__empty { color: var(--faint); }
+  .ob-brief__row dd { margin: 0; color: var(--ink); font-weight: 500; overflow-wrap: anywhere; }
+
+  /* ===== Progress ===== */
+  .ob-progress { margin-top: 8px; }
+  .ob-progress__meta { display: flex; justify-content: space-between; gap: 12px; margin: 0 0 10px; color: var(--faint); font-size: 14px; }
+  .ob-progress__meta b { color: var(--ink); font-weight: 500; }
+  .ob-bars { display: flex; gap: 6px; }
+  .ob-bars > span { position: relative; flex: 1; height: 4px; overflow: hidden; border-radius: var(--r-pill); background: var(--ob-line); }
+  .ob-bars > span::after {
+    content: ""; position: absolute; inset: 0; background: var(--ink);
+    transform: scaleX(0); transform-origin: left; transition: transform 600ms var(--ob-ease);
+  }
+  .ob-bars > span.is-done::after { transform: none; }
+  .ob-phone-brief { margin: 12px 0 0; color: var(--faint); font-size: 14px; overflow-wrap: anywhere; }
+
+  /* ===== Step: enters from the side it is going to ===== */
+  .ob-stage { flex: 1; padding: 28px 0 24px; }
+  .ob-stage[data-dir="next"] { animation: ob-enter 550ms var(--ob-ease); }
+  .ob-stage[data-dir="back"] { animation: ob-enter-back 550ms var(--ob-ease); }
+  .ob-h1 {
+    max-width: 18ch; margin: 0 0 12px; color: var(--ink);
+    font-size: clamp(30px, 3.2vw, 44px); font-weight: 400; line-height: 1.05; letter-spacing: -0.035em; text-wrap: balance;
+  }
+  .ob-h1:focus { outline: none; }
+  .ob-sub { max-width: 52ch; margin: 0 0 32px; color: var(--body); font-size: 17px; text-wrap: pretty; }
+
+  /* ===== Option rows (goals) ===== */
+  .ob-options { display: grid; gap: 10px; }
+  .ob-opt {
+    display: grid; grid-template-columns: 44px minmax(0, 1fr) 24px; align-items: center; gap: 16px; width: 100%;
+    padding: 16px 18px; border: 0; border-radius: 16px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--ob-line);
+    color: var(--body); text-align: left; cursor: pointer;
+  }
+  .ob-opt[aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px var(--ink); }
+  .ob-opt__icon {
+    display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: var(--sunk); color: var(--ink);
+    transition: background-color 250ms ease-out, color 250ms ease-out;
+  }
+  .ob-opt[aria-pressed="true"] .ob-opt__icon { background: var(--ink); color: var(--on-action); }
+  .ob-opt__title { display: block; color: var(--ink); font-size: 17px; font-weight: 500; }
+  .ob-opt__line { display: block; margin-top: 2px; color: var(--faint); font-size: 15px; line-height: 1.4; }
+  .ob-opt__tick {
+    display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--rule);
+    color: var(--on-action); transition: background-color 200ms ease-out, box-shadow 200ms ease-out;
+  }
+  .ob-opt[aria-pressed="true"] .ob-opt__tick { background: var(--ink); box-shadow: none; }
+  .ob-opt__tick svg { opacity: 0; transform: scale(0.6); transition: opacity 250ms var(--ob-ease), transform 250ms var(--ob-ease); }
+  .ob-opt[aria-pressed="true"] .ob-opt__tick svg { opacity: 1; transform: none; }
+
+  /* ===== Fields and chips ===== */
+  .ob-field + .ob-field { margin-top: 24px; }
+  .ob-label { display: block; margin-bottom: 8px; color: var(--ink); font-size: 15px; font-weight: 500; }
+  .ob-label__opt { color: var(--faint); font-weight: 400; }
+  .ob-help { margin: 8px 0 0; color: var(--faint); font-size: 14px; }
+  .ob-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .ob-chip {
+    position: relative; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 36px; padding: 6px 14px;
+    border: 0; border-radius: var(--r-pill); background: var(--surface); box-shadow: inset 0 0 0 1px var(--ob-line);
+    color: var(--ink); font-size: 15px; line-height: 1.3; text-align: left; overflow-wrap: anywhere; cursor: pointer;
+  }
+  .ob-chip::before { content: ""; position: absolute; inset: -4px 0; }   /* 44px target; the 8px gap keeps rows apart */
+  .ob-chip--on { background: var(--ink); box-shadow: none; color: var(--on-action); }
+  .ob-chip svg { flex: none; }
+
+  /* ===== Footer and text buttons ===== */
+  .ob-error { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px; color: var(--bad); font-size: 15px; }
+  .ob-error svg { flex: none; margin-top: 2px; }
+  .ob-foot {
+    position: sticky; bottom: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 16px 0 max(16px, env(safe-area-inset-bottom)); border-top: 1px solid var(--ob-line);
+    background: var(--canvas);   /* solid, so its hairline never crosses the content scrolling under it */
+  }
+  .ob-foot__end { display: flex; align-items: center; gap: 12px; }
+  .ob-text-btn {
+    min-height: 44px; padding: 0 4px; border: 0; background: none; color: var(--faint); font-size: 15px; cursor: pointer;
+    text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 4px;
+  }
+  .ob-text-btn:disabled { opacity: 0.5; cursor: default; }
+  .ob-arrow { transition: translate 250ms var(--ob-ease); }
+
+  @media (hover: hover) and (pointer: fine) {
+    .ob-opt:hover { translate: 0 -1px; }
+    .ob-opt:not([aria-pressed="true"]):hover { box-shadow: inset 0 0 0 1px var(--rule); }
+    .ob-chip:not(.ob-chip--on):hover { box-shadow: inset 0 0 0 1px var(--rule); }
+    .ob-text-btn:hover { text-decoration-color: currentColor; }
+    .ob-next:hover .ob-arrow { translate: 3px 0; }
+    .ob-back:hover .ob-arrow { translate: -3px 0; }
+  }
+  /* Back, Skip this step and Continue fit on one line at 360px without their arrows. */
+  @media (max-width: 419px) {
+    .ob-arrow { display: none; }
+    .ob-foot, .ob-foot__end { gap: 8px; }
+  }
+
+  @media (min-width: 900px) {
+    .ob { display: grid; grid-template-columns: minmax(360px, 42%) minmax(0, 1fr); gap: 12px; padding: 12px; }
+    .ob-art { position: sticky; top: 12px; align-self: start; height: calc(100dvh - 24px); border-radius: var(--r-media); }
+    .ob-hour { top: 20px; left: 20px; }
+    .ob-brief { display: block; position: absolute; inset: auto 16px 16px; padding: 18px 20px; border-radius: var(--r-card); }
+    .ob-col { max-width: 780px; min-height: calc(100dvh - 24px); padding: 0 4vw 0 3vw; }
+    .ob-progress { margin-top: 28px; }
+    .ob-phone-brief { display: none; }
+    .ob-stage { padding-top: 48px; }
+    .ob-foot { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  }
+
+  @keyframes ob-enter { from { opacity: 0; transform: translateX(18px); } }
+  @keyframes ob-enter-back { from { opacity: 0; transform: translateX(-18px); } }
+  @keyframes ob-settle { from { opacity: 0; transform: translateY(10px); } }
+
+  /* The OS setting and the app's own switch (html[data-motion], lib/motion/preference.ts) both stop every move. */
+  @media (prefers-reduced-motion: reduce) {
+    .ob *, .ob *::before, .ob *::after { animation: none !important; transition: none !important; }
+    .ob .ob-arrow { translate: none !important; }
+  }
+  html[data-motion="reduced"] .ob *,
+  html[data-motion="reduced"] .ob *::before,
+  html[data-motion="reduced"] .ob *::after { animation: none !important; transition: none !important; }
+  html[data-motion="reduced"] .ob .ob-arrow { translate: none !important; }
+}
