@@ -43,13 +43,13 @@ vi.mock("../src/lib/storage", async (orig) => ({
 const { createApp } = await import("../src/app");
 const { closeDb } = await import("../src/db/client");
 const schema = await import("../src/db/schema");
-const { closeQueues, workerOptions } = await import("../src/jobs/queues");
+const { closeQueues, queue, workerOptions } = await import("../src/jobs/queues");
 const { processCloudApply } = await import("../src/jobs/cloud-apply");
 const { processRender } = await import("../src/jobs/render");
 const { closeBrowser } = await import("../src/jobs/browser-pool");
 const { redis } = await import("../src/lib/redis");
 const { resetFlagCache } = await import("../src/lib/flags");
-const { resendApplication } = await import("../src/services/submissions");
+const { CLOUD_DEAD_ENDS, FAILURE_MESSAGES, resendApplication } = await import("../src/services/submissions");
 const { resumePlainText } = await import("../src/services/resume-doc");
 const { pdfText } = await import("../src/services/import/pdf");
 const { settleAll } = await import("./helpers/settle");
@@ -137,6 +137,8 @@ describe.skipIf(!hasTestDb)("WP-19 against Postgres, Redis and Typst", () => {
     it("uploads the rendered snapshot PDF to the fake ATS, and charges once on settlement", async () => {
       const u = await user(OWNER);
       const id = await cloudRow(u, DOC);
+      // P2: a later edit of the live tailored copy must not reach the file. The send renders the frozen snapshot only.
+      await db.insert(schema.resumes).values({ userId: u, kind: "tailored", name: "Edited", applicationId: id, document: { ...DOC, contact: { ...DOC.contact, name: "Edited Afterwards" } } });
       const uploads: { name: string; mimeType: string; buffer: Buffer }[] = [];
       const fill = fakeBrowser({ fill: async () => SUBMITTED, resumeInput: { uploads } });
 
@@ -148,18 +150,23 @@ describe.skipIf(!hasTestDb)("WP-19 against Postgres, Redis and Typst", () => {
       const { text } = await pdfText(uploads[0]!.buffer, 5);
       expect(text).toContain("Avery Stone");
       expect(text).toContain("Northwind");
+      expect(text).not.toContain("Edited Afterwards");
 
       const row = await appOf(id);
       expect(row.resumeFileKey).toMatch(new RegExp(`^snapshots/${u}/[0-9a-f]{64}\\.pdf$`));
       expect(r2.objects.get(row.resumeFileKey!)!.equals(uploads[0]!.buffer)).toBe(true);
       expect((await attemptsOf(id))[0]!.evidence).toMatchObject({ filledFieldKeys: expect.arrayContaining(["resume"]) });
+      // K1: the link left Redis when the applier read it.
+      const left = (await queue("render").getJobs(["completed"])).filter((j) => (j.data as { applicationId?: string }).applicationId === id);
+      expect(left).toEqual([]);
 
       await settleAll(db);
       expect(await appOf(id)).toMatchObject({ status: "submitted" });
+      expect((await appOf(id)).receipt?.filledFields).toContainEqual({ fieldKey: "resume", label: "Resume", value: "PDF attached" });
       expect(await charges(u)).toHaveLength(1);
     }, 60_000);
 
-    it("a render that fails closes the attempt as nothing sent: the page never opens, no charge, and it can be resent", async () => {
+    it("a render that cannot work stops at a resume input before filling: no charge, and the cloud refuses a resend that would loop", async () => {
       const u = await user(OWNER);
       const id = await cloudRow(u, UNPRINTABLE);
       const fill = fakeBrowser({ fill: async () => SUBMITTED, resumeInput: { uploads: [] } });
@@ -167,23 +174,40 @@ describe.skipIf(!hasTestDb)("WP-19 against Postgres, Redis and Typst", () => {
       await expect(run(id)).resolves.toEqual({ submitted: false });
 
       expect(fill).not.toHaveBeenCalled();
-      expect(await attemptsOf(id)).toMatchObject([{ state: "failed", failureCode: "render_failed", phase: "reported" }]);
+      expect(await attemptsOf(id)).toMatchObject([{ state: "failed", failureCode: "render_failed", phase: "reported", evidence: { detail: "render_mismatch" } }]);
       await settleAll(db);
-      expect(await appOf(id)).toMatchObject({ status: "failed", failureCode: "render_failed", resumeFileKey: null });
+      expect(await appOf(id)).toMatchObject({ status: "failed", failureCode: "render_failed", failureReason: CLOUD_DEAD_ENDS.render_mismatch, resumeFileKey: null });
       expect(await charges(u)).toEqual([]);
-      await expect(resendApplication(db, u, id, "cloud", false)).resolves.toMatchObject({ status: "approved", attemptNo: 2 });
+      await expect(resendApplication(db, u, id, "cloud", false)).rejects.toMatchObject({ code: "not_approvable", details: { reason: "render_mismatch" } });
+      await expect(resendApplication(db, u, id, "extension", false)).resolves.toMatchObject({ status: "approved", attemptNo: 2 });
     }, 60_000);
 
-    it("a PDF the applier cannot fetch is the same: render_failed before the page", async () => {
+    it("the same failed render on a page with no resume input still sends, without a file, as before WP-19", async () => {
+      const u = await user(OWNER);
+      const id = await cloudRow(u, UNPRINTABLE);
+      const fill = fakeBrowser({ fill: async () => SUBMITTED });
+
+      await expect(run(id)).resolves.toEqual({ submitted: true });
+
+      expect(fill).toHaveBeenCalledTimes(1);
+      await settleAll(db);
+      expect(await appOf(id)).toMatchObject({ status: "submitted" });
+      expect(await charges(u)).toHaveLength(1);
+    }, 60_000);
+
+    it("a PDF the applier cannot fetch is transient: render_failed at the input with its reason, and the cloud may resend", async () => {
       const u = await user(OWNER);
       const id = await cloudRow(u, DOC);
-      const fill = fakeBrowser({ fill: async () => SUBMITTED });
+      const fill = fakeBrowser({ fill: async () => SUBMITTED, resumeInput: { uploads: [] } });
       vi.stubGlobal("fetch", async () => new Response("denied", { status: 403 }));
 
       await expect(run(id)).resolves.toEqual({ submitted: false });
 
       expect(fill).not.toHaveBeenCalled();
-      expect(await attemptsOf(id)).toMatchObject([{ state: "failed", failureCode: "render_failed" }]);
+      expect(await attemptsOf(id)).toMatchObject([{ state: "failed", failureCode: "render_failed", evidence: { detail: "pdf_fetch_failed" } }]);
+      await settleAll(db);
+      expect(await appOf(id)).toMatchObject({ failureReason: FAILURE_MESSAGES.render_failed });
+      await expect(resendApplication(db, u, id, "cloud", false)).resolves.toMatchObject({ status: "approved", attemptNo: 2 });
     }, 60_000);
 
     it("the render comes after the mark: a delivery that loses it asks for nothing and writes nothing", async () => {
@@ -202,7 +226,7 @@ describe.skipIf(!hasTestDb)("WP-19 against Postgres, Redis and Typst", () => {
       expect(await attemptsOf(id)).toMatchObject([{ state: "open", phase: "filling", failureCode: null }]);
     });
 
-    it("a legacy row with no document skips the queue and sends as it did, unless the form requires a file", async () => {
+    it("a legacy row with no document skips the queue and sends as it did, unless the form requires a file, which the cloud then refuses to resend", async () => {
       const u = await user(OWNER);
       const getPdf = vi.fn(async () => null);
       const uploads: unknown[] = [];
@@ -219,6 +243,9 @@ describe.skipIf(!hasTestDb)("WP-19 against Postgres, Redis and Typst", () => {
       expect(fill).not.toHaveBeenCalled();
       expect(await attemptsOf(required)).toMatchObject([{ state: "failed", failureCode: "applier_error", evidence: { detail: "resume_missing" } }]);
       expect(getPdf).toHaveBeenCalledTimes(0);
+      await settleAll(db);
+      expect(await appOf(required)).toMatchObject({ status: "failed", failureReason: CLOUD_DEAD_ENDS.resume_missing });
+      await expect(resendApplication(db, u, required, "cloud", false)).rejects.toMatchObject({ code: "not_approvable", details: { reason: "resume_missing" } });
     });
 
     it("a resend reuses the rendered file: no second render, the key stays", async () => {
@@ -236,16 +263,22 @@ describe.skipIf(!hasTestDb)("WP-19 against Postgres, Redis and Typst", () => {
       expect((await appOf(id)).resumeFileKey).toBe(key);
     }, 60_000);
 
-    it("the worker gives no link for a send that is not claimed, or for another attempt", async () => {
+    it("the worker gives a link only to the holder of the attempt: not unclaimed, not another attempt, not another worker (K1)", async () => {
       const u = await user(OWNER);
-      const unclaimed = await cloudRow(u, DOC);
-      const job = (applicationId: string, attemptNo: number) => ({ data: { kind: "snapshot", applicationId, attemptNo }, opts: { attempts: 3 }, attemptsMade: 0, timestamp: Date.now() }) as never;
-      await expect(processRender(job(unclaimed, 1))).rejects.toThrow("render_not_pending");
-      await db.execute(sql`select claim_cloud_attempt(${unclaimed}, 1, 'w')`);
-      await expect(processRender(job(unclaimed, 2))).rejects.toThrow("render_not_pending");
-      await expect(processRender(job(randomUUID(), 1))).rejects.toThrow("render_not_pending");
+      const id = await cloudRow(u, DOC);
+      const job = (data: object) => ({ data: { kind: "snapshot", ...data }, opts: { attempts: 3 }, attemptsMade: 0, timestamp: Date.now() }) as never;
+      await expect(processRender(job({ applicationId: id, attemptNo: 1 }))).rejects.toThrow("render_not_pending");
+      const { rows } = await db.execute<{ id: string }>(sql`select claim_cloud_attempt(${id}, 1, 'holder') as id`);
+      const attemptId = rows[0]!.id;
+      await db.execute(sql`select mark_browser_launched(${attemptId}, 'holder')`);
+      await expect(processRender(job({ applicationId: id, attemptNo: 1 }))).rejects.toThrow("render_not_pending"); // no binding at all
+      await expect(processRender(job({ applicationId: id, attemptNo: 1, attemptId, worker: "intruder" }))).rejects.toThrow("render_not_pending");
+      await expect(processRender(job({ applicationId: id, attemptNo: 2, attemptId, worker: "holder" }))).rejects.toThrow("render_not_pending");
+      await expect(processRender(job({ applicationId: randomUUID(), attemptNo: 1, attemptId, worker: "holder" }))).rejects.toThrow("render_not_pending");
       expect(r2.puts).toEqual([]);
-    });
+      const ok = await processRender(job({ applicationId: id, attemptNo: 1, attemptId, worker: "holder" }));
+      expect(ok.url).toMatch(/\?expires=60$/);
+    }, 60_000);
   });
 
   describe("the extension's queue", () => {
