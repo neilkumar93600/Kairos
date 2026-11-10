@@ -115,7 +115,8 @@ describe("the template and what it is given", () => {
   it("has no way in for anything but sys.inputs: no import, include, read, image, plugin, eval or text-matching show rule", () => {
     const code = classic.replace(/^\/\/.*$/gm, "");
     expect(code).toContain("json(bytes(sys.inputs.data))");
-    expect(code).not.toMatch(/#?\b(import|include|read|image|plugin|eval)\b\s*[("@]/);
+    expect(code).not.toMatch(/#?\b(import|include|read|image|plugin|eval|yaml|toml|csv|xml|cbor)\b\s*[("@]/);
+    expect(code.match(/\bjson\(/g)).toHaveLength(1);
     expect(code).not.toMatch(/\bshow\b/);
   });
 
@@ -196,6 +197,13 @@ describe("fetchPdf", () => {
     await expect(fetchPdf("https://r2.test/x", answer("<html>"))).rejects.toThrow("pdf_not_pdf");
     await expect(fetchPdf("https://r2.test/x", answer("%PDF-", 403))).rejects.toThrow("pdf_fetch_failed");
     await expect(fetchPdf("https://r2.test/x", answer(Buffer.alloc(5 * 1024 * 1024 + 1)))).rejects.toThrow("pdf_too_large");
+  });
+
+  it("refuses any URL that is not https before a request", async () => {
+    const never = (async () => {
+      throw new Error("fetched");
+    }) as unknown as typeof fetch;
+    for (const url of ["http://r2.test/x", "file:///etc/passwd", "data:application/pdf,%PDF-", "not a url"]) await expect(fetchPdf(url, never)).rejects.toThrow("pdf_url_rejected");
   });
 
   it("follows no redirect", async () => {

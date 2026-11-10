@@ -123,7 +123,10 @@ const exportLimiter = aiLimiter("resume_export", 20);
  * is the 503 the web turns into the browser print.
  */
 async function exportPdf(userId: string, resumeId: string, document: unknown, deadline: AbortSignal | undefined): Promise<StoredFile> {
-  const doc = resumeInputSchema.parse(document);
+  // safeParse: a ZodError's message can hold document values, and it would reach the log as the reason.
+  const parsed = resumeInputSchema.safeParse(document);
+  if (!parsed.success) throw new Error("invalid_document");
+  const doc = parsed.data;
   const cached = await storage().get(userKey("renders", userId, `${renderHash(doc)}.pdf`));
   if (cached) return cached;
   const { key } = await renderAndWait({ kind: "export", userId, resumeId }, EXPORT_WAIT_MS, { priority: 1, ...(deadline ? { signal: deadline } : {}) });
@@ -135,7 +138,8 @@ async function exportPdf(userId: string, resumeId: string, document: unknown, de
 /**
  * GET /api/resumes/:id/export?format=pdf|txt (resume-82, 84). The caller's own resume, with one 404 for a missing and a
  * foreign id. The name is safe ASCII built from the document, and the file leaves as a no-store attachment under a sandbox CSP.
- * ponytail: docx answers 503 until WP-39 builds it, which the contract already lists and the web already handles.
+ * ponytail: docx answers 503 until WP-39 builds it; the contract lists the 503. The web does not call this route yet: its
+ * download is window.print(), and the button, the 503-to-print fallback and its notice are web work (frontend-handoff/WP-19.md).
  */
 resumesRouter.get("/:id/export", exportLimiter, async (req, res) => {
   const me = currentUser(req);
@@ -152,13 +156,16 @@ resumesRouter.get("/:id/export", exportLimiter, async (req, res) => {
   res.set({ "cache-control": "no-store", "content-security-policy": "default-src 'none'; sandbox" });
   if (format === "txt") {
     const doc = resumeInputSchema.safeParse(row.document);
-    if (!doc.success) throw unavailable("render_failed");
+    if (!doc.success) throw unavailable("invalid_document");
     res.set({ "content-type": "text/plain; charset=utf-8", "content-disposition": `attachment; filename="${name("txt")}"` }).send(resumePlainText(doc.data));
     return;
   }
   const file = await exportPdf(me.id, row.id, row.document, res.locals.deadline).catch((err: unknown) => {
-    logger.warn({ resumeId: row.id, reason: (err as Error).message }, "resume export failed");
-    throw unavailable("render_failed");
+    // Coded reasons only: anything else (R2, the network) is folded, so no document text or URL reaches the log.
+    const message = (err as Error).message;
+    const reason = /^(render|pdf)_[a-z_]{1,40}$|^invalid_document$/.test(message) ? message : "render_unavailable";
+    logger.warn({ resumeId: row.id, reason }, "resume export failed");
+    throw unavailable(reason === "invalid_document" ? "invalid_document" : "render_failed");
   });
   res.set({ "content-type": "application/pdf", "content-disposition": `attachment; filename="${name("pdf")}"` });
   if (file.contentLength !== undefined) res.set("content-length", String(file.contentLength));

@@ -1,5 +1,6 @@
 import { Queue, type ConnectionOptions, type WorkerOptions } from "bullmq";
 import type { EMAIL_KINDS } from "../db/schema";
+import { count } from "../lib/metrics";
 import { redis } from "../lib/redis";
 
 /** Queue names. The worker service consumes all but `cloud-apply`, which the applier service consumes. */
@@ -37,7 +38,7 @@ export interface JobData {
   /** One email of the notify ledger (jobs/notify.ts); rendered from the database at send time. */
   notify: { kind: (typeof EMAIL_KINDS)[number]; entityId: string; userId: string | null };
   /** Ids only: the worker reads the document itself, so no resume text sits in Redis (jobs/render.ts). */
-  render: { kind: "snapshot"; applicationId: string; attemptNo: number } | { kind: "export"; userId: string; resumeId: string };
+  render: { kind: "snapshot"; applicationId: string; attemptNo: number; attemptId?: string; worker?: string } | { kind: "export"; userId: string; resumeId: string };
 }
 
 /** What a render job answers. `url` is a short presigned GET for a cloud send; null when there is nothing to attach or no one to hand it to. */
@@ -64,8 +65,8 @@ export type OutboxQueue = (typeof OUTBOX_QUEUES)[number];
  * and its 24 hours of job-id dedupe.
  */
 export const completedRetention = (name: QueueName): { age: number; count?: number } => {
-  // A render's result holds a presigned URL: it stays no longer than the URL lives, and whoever asked reads it at once.
-  if (name === "render") return { age: 300 };
+  // A render's result holds a presigned URL: the waiter removes it on reading, and this bounds one nobody read.
+  if (name === "render") return { age: 60 };
   return (OUTBOX_QUEUES as readonly QueueName[]).includes(name) ? { age: 2 * 3600 } : { age: 24 * 3600, count: 5000 };
 };
 
@@ -100,8 +101,10 @@ export const QUEUE_CONFIG: Record<QueueName, QueueConfig> = {
   "tailor-application": { ...STANDARD, concurrency: 4 },
   "parse-resume": { ...STANDARD, concurrency: 2 },
   "classify-email": { ...STANDARD, concurrency: 4 },
-  // 90 s waiting for the render + 45 s goto + 15 s load + 120 s fill, plus the claim and the result write.
-  "cloud-apply": { ...STANDARD, concurrency: 2, lockDurationMs: 5 * MINUTE },
+  // A run is up to 90 s waiting for the render + 20 s fetching it + 45 s goto + 15 s load + 15 s attach + 120 s fill, about
+  // 305 s with the claim and the result write. BullMQ renews the lock every half-lock while the run lives, so the lock needs
+  // only to outlast a missed renewal, not the run: a longer one only delays re-delivery after a crash.
+  "cloud-apply": { ...STANDARD, concurrency: 2, lockDurationMs: 4 * MINUTE },
   "cost-rollup": { ...STANDARD, concurrency: 1 },
   "ledger-watch": { ...STANDARD, concurrency: 1 },
   // Partitions, sweeps and reconcilers (jobs/schedules.ts); 4, so a slow daily task never holds up the minute ones.
@@ -110,7 +113,8 @@ export const QUEUE_CONFIG: Record<QueueName, QueueConfig> = {
   // 30 s, 60 s, 2 min... so a Postmark blip clears before the lease-only path matters (WP-44).
   notify: { concurrency: 8, attempts: 5, backoffMs: 30_000, lockDurationMs: 60_000 },
   // Typst children at once on this replica (RENDER_CONCURRENCY in the specs; QUEUE_CONCURRENCY overrides it). A compile is
-  // killed at 10 s and R2 calls end at 30 s. The three tries fit inside the applier's 90 s wait.
+  // killed at 10 s and an R2 call ends at 30 s. Quick tries fit three times in the applier's 90 s wait; a slow path does not,
+  // and the applier's wait ends first (RENDER_WAIT_MS in jobs/cloud-apply.ts).
   render: { concurrency: 2, attempts: 3, backoffMs: 2_000, lockDurationMs: 60_000 },
 };
 
@@ -187,12 +191,16 @@ export async function renderAndWait(data: JobData["render"], timeoutMs: number, 
     const state = await job.getState();
     if (state === "completed" || state === "failed") {
       const done = await q.getJob(job.id!);
+      // Read once, then gone: a presigned URL does not stay in Redis for anyone else to read.
+      await done?.remove().catch(() => {});
       if (state === "failed" || !done) throw new Error(done?.failedReason ?? "render_lost");
       return done.returnvalue as RenderResult;
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   await job.remove().catch(() => {});
+  // K5: a busy render queue shows here first (and in queue_waiting/queue_lag_s for "render", sampled every minute).
+  count("render.wait_timeout", 1, data.kind);
   throw new Error("render_wait_timeout");
 }
 

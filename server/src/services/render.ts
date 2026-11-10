@@ -110,6 +110,7 @@ export async function compileTypst(dataJson: string, o: CompileOptions = {}): Pr
       child.stderr?.on("data", (chunk: Buffer) => o.onStderr?.(chunk.toString()));
       child.on("error", () => {
         clearTimeout(timer);
+        stop("render_spawn"); // an error after a live spawn leaves nothing running
         reject(new RenderError("render_spawn"));
       });
       // After the pipes close, so stdout is complete. The group kill is what closes them if a grandchild holds one.
@@ -138,7 +139,9 @@ export const renderHash = (doc: ResumeInput): string => createHash("sha256").upd
 const squeeze = (s: string) => s.normalize("NFKC").replace(/[\s\p{Cf}]/gu, "");
 
 /**
- * The round trip (PRD 7.4): every line of the plain text appears in the text layer, in order. Whitespace goes on both sides,
+ * The round trip (PRD 7.4): every line of the plain text appears in the text layer, in order. A loss check (a glyph the fonts
+ * lack comes back as U+0000 and fails it; seen with CJK, Hangul, Devanagari and emoji), not the anti-injection control:
+ * that is sys.inputs and the template. Whitespace goes on both sides,
  * because a printed line wraps wherever the page says. List bullets may sit between lines.
  */
 export function textLayerHasLines(layer: string, plain: string): boolean {
@@ -163,7 +166,7 @@ const MAX_PAGES = 200;
  */
 export async function renderResumePdf(doc: ResumeInput, o: CompileOptions = {}): Promise<Buffer> {
   const pdf = await compileTypst(typstData(doc), o);
-  const { text } = await pdfText(pdf, MAX_PAGES);
+  const { text } = await pdfText(pdf, MAX_PAGES, 2_000_000);
   if (!textLayerHasLines(text, resumePlainText(doc))) {
     signal("render_text_mismatch");
     throw new RenderError("render_mismatch");

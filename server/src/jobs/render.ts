@@ -1,11 +1,11 @@
 import { UnrecoverableError, type Job } from "bullmq";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { resumeInputSchema, type ResumeInput } from "@auto-career/shared";
 import { db } from "../db/client";
-import { applications, resumes } from "../db/schema";
+import { applications, resumes, submissionAttempts } from "../db/schema";
 import { logger } from "../lib/logger";
 import { count } from "../lib/metrics";
-import { PRESIGN_MAX_SEC, storage, userKey } from "../lib/storage";
+import { storage, userKey } from "../lib/storage";
 import { DETERMINISTIC, exportFilename, renderHash, renderResumePdf, RenderError } from "../services/render";
 import { failExtensionRender } from "../services/settle";
 import type { JobData, RenderResult } from "./queues";
@@ -57,7 +57,7 @@ async function renderSnapshot(data: Extract<JobData["render"], { kind: "snapshot
     .select({ userId: applications.userId, status: applications.status, channel: applications.channel, attemptNo: applications.attemptNo, snapshot: applications.resumeSnapshot, key: applications.resumeFileKey })
     .from(applications)
     .where(eq(applications.id, data.applicationId));
-  const pending = app && app.attemptNo === data.attemptNo && (app.channel === "cloud" ? app.status === "submitting" : app.channel === "extension" && app.status === "approved");
+  const pending = app && app.attemptNo === data.attemptNo && (app.channel === "cloud" ? app.status === "submitting" && (await holdsAttempt(data)) : app.channel === "extension" && app.status === "approved");
   if (!pending) throw new UnrecoverableError("render_not_pending");
 
   const raw = (app.snapshot as { document?: unknown } | null)?.document ?? null;
@@ -71,8 +71,34 @@ async function renderSnapshot(data: Extract<JobData["render"], { kind: "snapshot
     await db().update(applications).set({ resumeFileKey: made }).where(and(eq(applications.id, data.applicationId), isNull(applications.resumeFileKey), inArray(applications.status, ["approved", "submitting"])));
     key = made;
   }
-  return { key, url: app.channel === "cloud" ? await storage().presignGet(key, PRESIGN_MAX_SEC) : null, filename: exportFilename(doc.contact.name, "pdf") };
+  return { key, url: app.channel === "cloud" ? await storage().presignGet(key, SNAPSHOT_LINK_SEC) : null, filename: exportFilename(doc.contact.name, "pdf") };
 }
+
+/**
+ * A cloud request comes from the delivery that holds the attempt: open, launched, and marked by that worker identity, the
+ * predicate of applier_needs_render and get_applier_payload. ponytail: the identity is a name, not a secret, so a replica
+ * that knows the holder's name passes here as it would at get_applier_payload; this stops the replica that asks blind.
+ */
+async function holdsAttempt(data: Extract<JobData["render"], { kind: "snapshot" }>): Promise<boolean> {
+  if (!data.attemptId || !data.worker) return false;
+  const [held] = await db()
+    .select({ id: submissionAttempts.id })
+    .from(submissionAttempts)
+    .where(
+      and(
+        eq(submissionAttempts.id, data.attemptId),
+        eq(submissionAttempts.applicationId, data.applicationId),
+        eq(submissionAttempts.state, "open"),
+        eq(submissionAttempts.channel, "cloud"),
+        isNotNull(submissionAttempts.browserLaunchedAt),
+        eq(submissionAttempts.workerIdentity, data.worker.slice(0, 100)),
+      ),
+    );
+  return Boolean(held);
+}
+
+/** The link lives a minute: the applier fetches it at once, and a copy that leaks is dead soon after. */
+const SNAPSHOT_LINK_SEC = 60;
 
 export async function processRender(job: Job<JobData["render"]>): Promise<RenderResult> {
   const data = job.data;

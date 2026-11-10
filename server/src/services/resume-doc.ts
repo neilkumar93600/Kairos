@@ -265,5 +265,16 @@ export function printView(doc: ResumeInput): PrintView {
 /** The document as plain text (resume-30): F1's resumeText, the txt export, and the lines the PDF's text layer must hold in order. */
 export function resumePlainText(doc: ResumeInput): string {
   const v = printView(doc);
-  return [v.name, v.headline, v.contact, ...v.sections.flatMap((s) => [s.title, ...s.entries.flatMap((e) => [e.heading, ...e.lines])])].filter(Boolean).join("\n");
+  return [v.name, v.headline, v.contact, ...sectionLines(v)].filter(Boolean).join("\n");
+}
+
+const sectionLines = (v: PrintView) => v.sections.flatMap((s) => [s.title, ...s.entries.flatMap((e) => [e.heading, ...e.lines])]);
+
+/**
+ * What F1 scores (routes/jobs.ts fitFor): the plain text without the name and contact line. A link such as
+ * github.com/x/react-kit is not a skill claim, and the old scoring text left contact out for that reason. The headline counts.
+ */
+export function resumeScoringText(doc: ResumeInput): string {
+  const v = printView(doc);
+  return [v.headline, ...sectionLines(v)].filter(Boolean).join("\n");
 }

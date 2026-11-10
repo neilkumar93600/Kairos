@@ -121,8 +121,10 @@ export interface FillInput {
   resumeLines: ResumeLine[];
   coverLetter: string | null;
   fillerSource: string;
-  /** The snapshot PDF; null when this send has none (a legacy row). */
+  /** The snapshot PDF; null when this send has none (a legacy row) or the render failed. */
   resumePdf?: ResumePdf | null;
+  /** Why the render failed, coded; only with no PDF. Decides what a resume input on the page does with the run. */
+  renderFailure?: string | null;
   /** Writes the phase, and commits before the page can see the click: a run that cannot record `filling` never fills. Rejects when the attempt is closed. */
   onPhase?: (phase: "navigating" | "filling") => Promise<void>;
 }
@@ -195,13 +197,20 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
     if (before) return fail("challenge", before);
 
     await page.evaluate(input.fillerSource);
-    // Before the mark of `filling`: an attach that fails, or a required input with no file, can still say nothing was sent.
+    // Before the mark of `filling` (phase `navigating`): an attach that fails, or a file the page wants and we lack, still
+    // means nothing was sent. A page with no resume input sends without a file whatever the render did, as before WP-19.
     const selector = detectAdapter(new URL(input.applyUrl))?.resumeInputSelector;
     const fileInput = selector ? await page.$(selector) : null;
     let attached = false;
     if (fileInput && input.resumePdf) {
-      await fileInput.setInputFiles({ name: input.resumePdf.name, mimeType: "application/pdf", buffer: input.resumePdf.buffer }, { timeout: 15_000 });
+      const ok = await fileInput
+        .setInputFiles({ name: input.resumePdf.name, mimeType: "application/pdf", buffer: input.resumePdf.buffer }, { timeout: 15_000 })
+        .then(() => true, () => false);
+      if (!ok) return fail("applier_error", "attach_failed");
       attached = true;
+    } else if (fileInput && input.renderFailure) {
+      // The document had a resume and we could not make the file: never send it without one, required or not.
+      return fail("render_failed", input.renderFailure);
     } else if (fileInput && (await fileInput.evaluate((e) => (e as HTMLInputElement).required))) {
       return fail("applier_error", "resume_missing");
     }
@@ -235,12 +244,23 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
   }
 }
 
-/** Longer than the render's three tries and a short queue; the heartbeat runs throughout, so the sweep leaves the attempt alone. */
+/**
+ * How long the run waits for its file. Three tries fit when each is quick (a render is about a second); a slow path (a 10 s
+ * kill, then a 30 s R2 put, three times, plus 2 s and 4 s of backoff) is about 130 s and does not fit, so the wait ends
+ * first as render_wait_timeout and the run goes on without the file. The heartbeat runs throughout.
+ */
 const RENDER_WAIT_MS = 90_000;
 const MAX_PDF_BYTES = 5 * 1024 * 1024;
 
 /** Reads the presigned link from Node, not from the page, so the employer's page never sees it. Bounded in size and time, and no redirect. */
 export async function fetchPdf(url: string, fetcher: typeof fetch = fetch): Promise<Buffer> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("pdf_url_rejected");
+  }
+  if (parsed.protocol !== "https:") throw new Error("pdf_url_rejected");
   const res = await fetcher(url, { redirect: "error", signal: AbortSignal.timeout(20_000) });
   if (!res.ok || !res.body) throw new Error("pdf_fetch_failed");
   const chunks: Uint8Array[] = [];
@@ -256,11 +276,12 @@ export async function fetchPdf(url: string, fetcher: typeof fetch = fetch): Prom
 }
 
 /**
- * The send's PDF, rendered on the worker at claim time (PRD 7.6). The applier holds no storage token and no Typst: it asks by
- * application id, and the worker answers with a 5-minute presigned link through the job's result. Rejects when it cannot be had.
+ * The send's PDF, rendered on the worker at claim time (PRD 7.6). The applier holds no storage token and no Typst: it asks for
+ * its own attempt, as the holder of the mark, and the worker answers with a 60-second presigned link through the job's result,
+ * which renderAndWait removes from Redis on reading. Rejects when it cannot be had.
  */
-export async function snapshotPdf(applicationId: string, attemptNo: number): Promise<ResumePdf | null> {
-  const rendered = await renderAndWait({ kind: "snapshot", applicationId, attemptNo }, RENDER_WAIT_MS);
+export async function snapshotPdf(applicationId: string, attemptNo: number, attemptId: string, worker: string): Promise<ResumePdf | null> {
+  const rendered = await renderAndWait({ kind: "snapshot", applicationId, attemptNo, attemptId, worker }, RENDER_WAIT_MS);
   return rendered.url ? { name: rendered.filename, buffer: await fetchPdf(rendered.url) } : null;
 }
 
@@ -348,19 +369,22 @@ export async function retryWhileHealable(write: () => Promise<unknown>, sleep = 
 }
 
 /**
- * The render step, after the mark and before the browser, with the page not yet opened: a failure here is "nothing was
- * sent", which closes as render_failed with no charge and can be resent. A row with no document skips the queue. A claim
- * moves attempt_no 0 to 1, so the number the render checks is at least 1.
+ * The render step, after the mark and before the browser. It never ends the run: a failure travels to the page as a coded
+ * reason, and only a page with a resume input fails on it (fillInBrowser), before `filling`. A row with no document skips
+ * the queue. A claim moves attempt_no 0 to 1, so the number the render checks is at least 1.
  */
-async function resumePdfFor(attemptId: string, worker: string, applicationId: string, attemptNo: number, getPdf: typeof snapshotPdf): Promise<ResumePdf | null | "failed"> {
+async function resumePdfFor(attemptId: string, worker: string, applicationId: string, attemptNo: number, getPdf: typeof snapshotPdf): Promise<{ pdf: ResumePdf | null; failure: string | null }> {
   const needs = await firstRow<{ needs: boolean }>(sql`select applier_needs_render(${attemptId}, ${worker}) as needs`);
-  if (!needs?.needs) return null;
+  if (!needs?.needs) return { pdf: null, failure: null };
   try {
-    return await getPdf(applicationId, Math.max(attemptNo, 1));
+    return { pdf: await getPdf(applicationId, Math.max(attemptNo, 1), attemptId, worker), failure: null };
   } catch (err) {
-    // Coded reasons only: renderAndWait and fetchPdf put no text from the document in an error, and the URL never leaves them.
-    logger.warn({ applicationId, attemptId, reason: (err as Error).message }, "snapshot render failed; nothing was sent");
-    return "failed";
+    // Coded reasons only. A message that is not one of ours (an R2 or network error) is folded to one code, so no text of
+    // the document or the URL can reach the evidence.
+    const message = (err as Error).message;
+    const failure = /^(render|pdf)_[a-z_]{1,40}$/.test(message) ? message : "render_unavailable";
+    logger.warn({ applicationId, attemptId, reason: failure }, "snapshot render failed; the page decides whether the run can go on");
+    return { pdf: null, failure };
   }
 }
 
@@ -397,26 +421,24 @@ async function claimAndApply(applicationId: string, row: AppliedJob, getPdf: typ
     else if (row.closed_at) outcome = fail("posting_closed", "closed_in_catalog");
     else if (!payload) outcome = fail("applier_error", "attempt_closed");
     else {
-      const resumePdf = await resumePdfFor(attemptId, worker, applicationId, row.attempt_no, getPdf);
-      if (resumePdf === "failed") outcome = fail("render_failed", "render_failed");
-      else {
-        const input: FillInput = {
-          applicationId,
-          applyUrl: row.apply_url,
-          answers: payload.answers,
-          resumeLines: payload.resume_lines,
-          coverLetter: payload.cover_letter,
-          resumePdf,
-          fillerSource: fillerSource(),
-          onPhase: async (p) => {
-            const marked = await firstRow<{ ok: boolean }>(sql`select mark_attempt_phase(${attemptId}, ${p}) as ok`);
-            // The sweep closed this attempt as "nothing was sent": it must stay true. The throw ends the run before the fill.
-            if (!marked?.ok) throw new Error("attempt closed");
-            phase = p;
-          },
-        };
+      const { pdf: resumePdf, failure: renderFailure } = await resumePdfFor(attemptId, worker, applicationId, row.attempt_no, getPdf);
+      const input: FillInput = {
+        applicationId,
+        applyUrl: row.apply_url,
+        answers: payload.answers,
+        resumeLines: payload.resume_lines,
+        coverLetter: payload.cover_letter,
+        resumePdf,
+        renderFailure,
+        fillerSource: fillerSource(),
+        onPhase: async (p) => {
+          const marked = await firstRow<{ ok: boolean }>(sql`select mark_attempt_phase(${attemptId}, ${p}) as ok`);
+          // The sweep closed this attempt as "nothing was sent": it must stay true. The throw ends the run before the fill.
+          if (!marked?.ok) throw new Error("attempt closed");
+          phase = p;
+        },
+      };
         outcome = await applierPool().run((browser) => fillInBrowser(browser, input));
-      }
     }
   } catch (err) {
     // fillInBrowser answers for its own page. What lands here came from around it: the launch, the filler bundle, the database,

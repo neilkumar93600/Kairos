@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { getDocumentProxy } from "unpdf";
 import { describe, expect, it } from "vitest";
-import { compileTypst, RENDER_LIMITS, renderResumePdf, TYPST_VERSION } from "../src/services/render";
+import { compileTypst, RENDER_LIMITS, renderResumePdf, TYPST_VERSION, typstData } from "../src/services/render";
 import { pdfText } from "../src/services/import/pdf";
 import { resumePlainText } from "../src/services/resume-doc";
 import { GOLDENS, INJECTION_LINES } from "./helpers/golden-resumes";
@@ -36,6 +36,26 @@ describe.skipIf(!hasTypst)("the renderer with the real Typst", () => {
       expect(squeeze(text).replaceAll("•", "")).toBe(squeeze(resumePlainText(doc)));
       expect(pages).toBe(golden.pages[paper]);
     });
+  });
+
+  // V1, observed with this binary: a glyph the embedded fonts lack comes out of the text layer as U+0000, so the round trip
+  // fails. Chinese, Japanese, Korean, Devanagari and emoji all do; dingbats such as ✓ and ★ print.
+  it.each([
+    ["Chinese", "王小明", true],
+    ["Japanese", "田中太郎", true],
+    ["Korean", "김민준", true],
+    ["emoji", "Ada 🚀 Lovelace", true],
+    // Shaped, and the layer comes back garbled (U+0003, U+0005) rather than as U+0000: still a mismatch.
+    ["Devanagari", "अनीता", false],
+  ])("%s the fonts cannot print fails the round trip instead of shipping blank boxes", async (_script, name, nul) => {
+    const doc = { ...GOLDENS[0]!.doc, contact: { ...GOLDENS[0]!.doc.contact, name } };
+    const { text } = await pdfText(await compileTypst(typstData(doc)), 5);
+    if (nul) expect(text).toContain("\u0000");
+    await expect(renderResumePdf(doc)).rejects.toMatchObject({ code: "render_mismatch" });
+  });
+
+  it("symbols the fonts do have print and pass", async () => {
+    await expect(renderResumePdf({ ...GOLDENS[0]!.doc, contact: { ...GOLDENS[0]!.doc.contact, name: "Ada ✓ ★ Lovelace" } })).resolves.toBeInstanceOf(Buffer);
   });
 
   it("prints on the paper the document asks for", async () => {

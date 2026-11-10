@@ -85,8 +85,8 @@ describe("the completed job the sweep reads", () => {
     }
   });
 
-  it("a render's result holds a presigned URL, so it stays no longer than the URL lives", () => {
-    expect(completedRetention("render")).toEqual({ age: 300 });
+  it("a render's result holds a presigned URL: the waiter removes it, and an unread one goes within the minute it lives", () => {
+    expect(completedRetention("render")).toEqual({ age: 60 });
   });
 });
 

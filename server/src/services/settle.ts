@@ -10,7 +10,7 @@ import { signal } from "../lib/sentry";
 import { chargeSubmission } from "./credits";
 import { recordEvent } from "./events";
 import { redactConfirmation } from "./sensitive";
-import { AMBIGUOUS, boundedEvidence, FAILURE_MESSAGES, RESENDABLE, type FailureCode } from "./submissions";
+import { AMBIGUOUS, boundedEvidence, CLOUD_DEAD_ENDS, FAILURE_MESSAGES, RESENDABLE, type FailureCode } from "./submissions";
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Attempt = typeof submissionAttempts.$inferSelect;
@@ -48,7 +48,8 @@ export function decideSettlement(attempt: Pick<Attempt, "state" | "failureCode" 
 
 function receiptSummary(filled: { fieldKey: string; value: string }[], app: Pick<App, "answers" | "questions">): { filled: number; total: number; skipped: number; generated: number } {
   const total = app.questions?.length ?? app.answers.length;
-  const done = filled.filter((f) => f.value !== "").length;
+  // The attached resume file is not one of the form's questions.
+  const done = filled.filter((f) => f.value !== "" && f.fieldKey !== "resume").length;
   const generated = new Set(app.answers.filter((a) => a.source === "generated").map((a) => a.fieldKey));
   return { filled: done, total, skipped: Math.max(0, total - done), generated: filled.filter((f) => generated.has(f.fieldKey)).length };
 }
@@ -58,6 +59,8 @@ function cloudReceipt(evidence: unknown, answers: ApplicationAnswer[]): Receipt 
   const e = (evidence ?? {}) as { filledFieldKeys?: string[]; confirmationText?: string };
   const stored = new Map(answers.map((a) => [a.fieldKey, a]));
   const filledFields = (e.filledFieldKeys ?? []).flatMap((key) => {
+    // The applier attached the snapshot PDF (WP-19): it has no stored answer, and its value is ours, not the page's.
+    if (key === "resume") return [{ fieldKey: "resume", label: "Resume", value: "PDF attached" }];
     const a = stored.get(key);
     return a ? [{ fieldKey: a.fieldKey, label: a.label, value: a.value }] : [];
   });
@@ -187,7 +190,11 @@ export async function settleAttempt(db: Db, attemptId: string): Promise<SettleRe
       if (sent) {
         charged = await recordSubmitted(tx, app, sent.id, { ...cloudReceipt(sent.evidence, app.answers), channel: sent.channel }, "system");
         result = "submitted";
-      } else entity = await recordFailed(tx, app, decision.code, "system");
+      } else {
+        // A dead end on the cloud gets its own copy (CLOUD_DEAD_ENDS): "resend it" would loop.
+        const detail = (attempt.evidence as { detail?: string } | null)?.detail;
+        entity = await recordFailed(tx, app, decision.code, "system", detail && detail in CLOUD_DEAD_ENDS ? CLOUD_DEAD_ENDS[detail] : undefined);
+      }
     } else {
       // An extension report already recorded it, or the previous release's sweep did. The application stays as it is.
       logger.warn({ attemptId, applicationId: app.id, status: app.status }, "settle_app_moved_on");

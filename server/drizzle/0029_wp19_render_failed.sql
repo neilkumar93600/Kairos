@@ -24,6 +24,7 @@ BEGIN
        ('challenge','posting_closed','required_missing','applier_error','unconfirmed','timeout','plan_lapsed','cloud_unavailable_for_ats','render_failed') THEN
       RAISE EXCEPTION 'failure code % is not one the applier may report', p_failure_code USING ERRCODE = '22023';
     END IF;
+    -- The submit_seen rewrite below never meets render_failed: the run reports it before `filling`, so submit_seen_at is null.
     UPDATE submission_attempts                          -- a no-op when the sweep already closed the attempt
        SET state = 'failed', phase = 'reported', evidence = p_evidence,
            failure_code = CASE WHEN submit_seen_at IS NOT NULL AND p_failure_code <> 'unconfirmed' THEN 'timeout' ELSE p_failure_code END
