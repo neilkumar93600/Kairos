@@ -352,7 +352,7 @@ async function look(browser, tag) {
   await heading(page, "What brings you to Kairos?");
   await page.getByRole("button", { name: "Skip setup", exact: true }).click();
   await page.waitForURL("**/dashboard", { timeout: 60_000 });
-  assert.deepEqual(puts.at(-1), { goals: ["look"], step: "done" });
+  assert.deepEqual(puts.at(-1), { step: "done" }, "Skip setup keeps the saved goal");
   await overview(page);
   assert.equal(await checklist(page).count(), 0, "look lists no setup items: no checklist");
   assert.equal(await interviewCard(page).count(), 0, "look: no interview card");
@@ -423,6 +423,15 @@ async function upload(browser, tag) {
   await toSource(page);
   assert.equal(await page.getByRole("button", { name: /^Use what you already added/ }).count(), 0, "no confirmed facts, no reuse choice");
   assert.equal(await next.isDisabled(), true, "Continue waits for a source");
+  assert.equal(await page.getByRole("button", { name: "Skip this step" }).count(), 0, "a Find user cannot skip the source");
+  // A Find user's form lists Work authorization (the rules step saves it); Back, then upload instead.
+  await option(page, "Fill it in with us").click();
+  await next.click();
+  await heading(page, "Fill in your resume");
+  await page.getByRole("heading", { level: 2, name: "Contact", exact: true }).waitFor();
+  assert.ok((await sectionNames(page)).includes("Work authorization"), "Find lists Work authorization");
+  await page.getByRole("button", { name: "Back" }).click();
+  await heading(page, "How do you want to add your resume?");
   await option(page, "Upload a file").click();
   assert.equal(await option(page, "Upload a file").getAttribute("aria-pressed"), "true");
   await noOverflow(page, "source");
@@ -465,12 +474,17 @@ async function upload(browser, tag) {
   assert.deepEqual(puts.slice(before), [{ step: "rules" }], "one save, to the rules step");
   assert.equal(await stored(page), null, "the import id is cleared once the base resume exists");
 
+  // Back: edits here would never reach the base resume, so the step says it is saved and points to the builder.
   await page.getByRole("button", { name: "Back" }).click();
-  await heading(page, "Upload your resume");
-  await page.getByText("Your resume is saved. Check its facts below.").waitFor();
+  await heading(page, "Your resume is saved");
+  assert.equal(await page.getByRole("link", { name: "Open the resume builder" }).getAttribute("href"), "/resume");
+  assert.equal(await page.getByRole("button", { name: /^Drop your file here/ }).count(), 0, "no drop zone once the base exists");
+  assert.equal(await next.isDisabled(), false, "Continue only moves on");
+  await noOverflow(page, "upload saved");
+  await snap("upload-saved", false);
   await next.click();
   await heading(page, RULES);
-  assert.equal(count(calls, "POST /resumes"), 1, "Back then Continue reuses the base resume");
+  assert.equal(count(calls, "POST /resumes"), 1, "Back then Continue makes nothing new");
 
   assert.deepEqual(report.unmocked, [], "every API call is mocked");
   assert.deepEqual(errors, [], "no console or page errors");
@@ -625,6 +639,10 @@ async function existing(browser, tag) {
   console.log(`ok existing ${tag} ${VIEWPORTS[tag].width}px: reuse choice goes straight to the rules`);
 }
 
+/** The form's sections as the rail and the phone select list them (read from the DOM: one of the two is hidden). */
+const sectionNames = (page) =>
+  page.evaluate(() => [[...document.querySelectorAll(".ob-rail button")], [...document.querySelectorAll("#ob-section option")]].map((l) => l.map((e) => e.textContent?.trim())).flat());
+
 /** Opens a form section through the rail (desktop) or the section select (phones), then waits for its heading. */
 async function section(page, name) {
   const rail = page.getByRole("navigation", { name: "Form sections" });
@@ -693,13 +711,14 @@ async function form(browser, tag) {
   await snap("form-links-error", false);
   await linkedin.fill("linkedin.example.com/in/sample-applicant");
   await nextSection.click();
-  await h2("Work authorization");
+  await h2("Experience");   // Work authorization is for Find; this is a Build user
+  assert.ok(!(await sectionNames(page)).includes("Work authorization"), "Build lists no Work authorization");
   assert.deepEqual(contacts[1], {
     phone: "555-0100", city: "Sample City", country: "Sample Country",
     linkedinUrl: "https://linkedin.example.com/in/sample-applicant", githubUrl: null, portfolioUrl: null,
   }, "links are saved with https and with the contact saved before");
 
-  await page.getByLabel("Where you can work").selectOption({ label: "Citizen or permanent resident" });
+  await section(page, "Contact");
   await next.click();
   await page.getByRole("alert").filter({ hasText: "Add at least one job or school before you continue." }).waitFor();
   await h2("Experience");
@@ -789,13 +808,24 @@ async function form(browser, tag) {
   assert.equal(await page.evaluate((k) => sessionStorage.getItem(k), "kairos.onboarding.form.u2.section"), null, "leaving the form forgets its section");
   assert.equal(await page.evaluate((k) => sessionStorage.getItem(k), "kairos.onboarding.resumeId"), null, "the pending base is cleared");
 
+  // Back to the form once the base exists: the saved note, not the sections; Continue makes nothing new.
+  await page.getByRole("button", { name: "Back" }).click();
+  await heading(page, "Your resume is saved");
+  assert.equal(await page.getByRole("heading", { level: 2, name: "Contact" }).count(), 0, "no form sections");
+  await noOverflow(page, "form saved");
+  await snap("form-saved", false);
+  await next.click();
+  await heading(page, "Your resume is ready to edit");
+  assert.equal(count(calls, "POST /resumes"), 1, "no second base resume");
+  assert.equal(jobs.length, 1, "and no second employment");
+
   assert.deepEqual(report.unmocked, [], "every API call is mocked");
   assert.deepEqual(errors.filter((e) => !e.includes("status of 500")), [], "no console or page errors beyond the refused /default");
   assert.deepEqual(warnings, [], "no next/image warnings");
   await ctx.close();
   console.log(
     `ok form ${tag} ${VIEWPORTS[tag].width}px: reload keeps the unsaved title; 1 employment with 2 results; re-save patches, ` +
-      "no duplicate fact; 1 base resume after it, a failed /default retried without a second",
+      "no duplicate fact; 1 base resume after it, a failed /default retried without a second; Back shows the saved note",
   );
 }
 
@@ -959,6 +989,7 @@ async function walk(browser, tag) {
   await roles.fill("frontend developer");
   await roles.press("Enter");
   assert.equal(await page.getByRole("button", { name: /^Remove / }).count(), 1, "a case duplicate is ignored");
+  await page.getByLabel("Companies you want to work at").fill("Company   101");   // no Enter
   await noOverflow(page, "target");
   await snap("target");
   await next.click();
@@ -966,12 +997,13 @@ async function walk(browser, tag) {
   await heading(page, "How do you want to add your resume?");
   assert.deepEqual(puts, [
     { goals: ["find"], step: "target" },
-    { targetRoles: ["Frontend Developer"], targetCompanies: [], step: "resume" },
-  ]);
+    { targetRoles: ["Frontend Developer"], targetCompanies: ["Company 101"], step: "resume" },
+  ], "a company typed without Enter is saved, single-spaced");
 
   await page.getByRole("button", { name: "Back" }).click();
   await heading(page, "Which job are you going for?");
   await page.getByRole("button", { name: "Remove Frontend Developer" }).waitFor();
+  await page.getByRole("button", { name: "Remove Company 101" }).waitFor();
 
   assert.deepEqual(report.unmocked, [], "every API call is mocked");
   assert.deepEqual(errors, [], "no console or page errors");
@@ -982,7 +1014,8 @@ async function walk(browser, tag) {
 
 /**
  * A refused save shows the server's message on screen (in the sticky footer) and stays put; the step is locked while a
- * save is in flight; Skip setup saves look + done and leaves for the Overview.
+ * save is in flight; Skip setup at Target keeps the Find goal (saves only the step), so the Overview checklist still
+ * lists the resume and the rules, now linked to Profile and Preferences (/onboarding would start over at Goals).
  */
 async function edges(browser, tag) {
   const vp = VIEWPORTS[tag];
@@ -1013,12 +1046,142 @@ async function edges(browser, tag) {
 
   await page.getByRole("button", { name: "Skip setup", exact: true }).click();
   await page.waitForURL("**/dashboard", { timeout: 60_000 });
-  assert.deepEqual(puts, [{ goals: ["find"], step: "target" }, { goals: ["look"], step: "done" }]);
+  assert.deepEqual(puts, [{ goals: ["find"], step: "target" }, { step: "done" }], "Skip setup keeps the goals");
+  await overview(page);
+  await checklist(page).waitFor();   // listed from the kept Find goal; "look" would list nothing
+  assert.equal(await page.getByRole("link", { name: "Add resume" }).getAttribute("href"), "/profile");
+  assert.equal(await page.getByRole("link", { name: "Set fit rules" }).getAttribute("href"), "/preferences");
+  assert.equal(await page.getByRole("link", { name: "Continue setup" }).count(), 0, "a done user is not sent back to Goals");
+  assert.equal(await interviewCard(page).count(), 0, "no interview goal, no interview card");
+  await noOverflow(page, "overview after Skip setup");
+  await snapper(page, tag)("overview-skipped");
   assert.deepEqual(report.unmocked, [], "every API call is mocked");
   assert.deepEqual(errors.filter((e) => !e.includes("status of 400")), [], "no console or page errors beyond the refused save");
   assert.deepEqual(warnings, [], "no next/image warnings");
   await ctx.close();
-  console.log(`ok edges ${tag} ${vp.width}px: refused save message on screen and stays; step locked while saving; Skip setup saves look + done`);
+  console.log(`ok edges ${tag} ${vp.width}px: refused save message on screen and stays; step locked while saving; Skip setup keeps Find, checklist links to /profile and /preferences`);
+}
+
+/** Skip setup before any goal is chosen saves look + done: nothing to keep. */
+async function skipFresh(browser, tag) {
+  const { ctx, page, report, errors, puts } = await open(browser, VIEWPORTS[tag]);
+  await heading(page, "What brings you to Kairos?");
+  await page.getByRole("button", { name: "Skip setup", exact: true }).click();
+  await page.waitForURL("**/dashboard", { timeout: 60_000 });
+  assert.deepEqual(puts, [{ goals: ["look"], step: "done" }]);
+  assert.deepEqual(report.unmocked, [], "every API call is mocked");
+  assert.deepEqual(errors, [], "no console or page errors");
+  await ctx.close();
+  console.log(`ok skip fresh ${tag} ${VIEWPORTS[tag].width}px: no goals chosen, Skip setup saves look + done`);
+}
+
+/** Spec 4: an interview-only user may skip the resume source; nothing is made and Done saves its step. */
+async function interviewSkipsSource(browser, tag) {
+  const { ctx, page, report, errors, warnings, puts, calls } = await open(browser, VIEWPORTS[tag]);
+  const next = page.getByRole("button", { name: "Continue" });
+  await heading(page, "What brings you to Kairos?");
+  await option(page, "Prepare for interviews").click();
+  await next.click();
+  await heading(page, "Which job are you going for?");
+  await page.getByLabel("Desired position").fill("Frontend Developer");
+  await page.getByLabel("Desired position").press("Enter");
+  await next.click();
+  await heading(page, "How do you want to add your resume?");
+  await option(page, "Upload a file").click();   // a choice made, then skipped: its upload step is skipped too
+  const finished = doneSaved(page);
+  await page.getByRole("button", { name: "Skip this step" }).click();
+  await heading(page, "Interview practice is coming");
+  await finished;
+  assert.deepEqual(puts, [
+    { goals: ["interview"], step: "target" },
+    { targetRoles: ["Frontend Developer"], targetCompanies: [], step: "resume" },
+    { step: "done" },
+  ]);
+  assert.equal(count(calls, "POST /resumes"), 0, "skipping the source makes no resume");
+  await page.getByRole("button", { name: "Back" }).click();
+  await heading(page, "How do you want to add your resume?");
+  assert.equal(await option(page, "Upload a file").getAttribute("aria-pressed"), "false", "the skipped choice is cleared");
+  await noOverflow(page, "interview source");
+  await snapper(page, tag)("source-interview", false);
+  assert.deepEqual(report.unmocked, [], "every API call is mocked");
+  assert.deepEqual(errors, [], "no console or page errors");
+  assert.deepEqual(warnings, [], "no next/image warnings");
+  await ctx.close();
+  console.log(`ok interview skips source ${tag} ${VIEWPORTS[tag].width}px: Skip this step on the source goes to Done, no resume made`);
+}
+
+/**
+ * A done Find user running setup again with saved rules: the upload step still takes a new file (spec 5.3a); the rules
+ * send the target roles then the saved ones (a case and spacing duplicate dropped), and a location typed without Enter
+ * is saved with them.
+ */
+async function rulesKeepRoles(browser, tag) {
+  const saved = {
+    roles: ["frontend  developer", "Data Analyst"], seniority: ["mid"], locations: [], remoteOk: true, workAuthorization: "citizen_or_pr",
+    salaryFloorUsd: null, excludedCompanies: [], excludedKeywords: [], fitThreshold: 75, maxApplicationsPerCompanyPer30Days: 2,
+  };
+  const seed = (data) => {
+    withFact(data);
+    for (const o of [data.me, data.profile]) Object.assign(o, { goals: ["find"], targetRoles: ["Frontend Developer"], onboardingStep: "done" });
+    data.profile.preferences = saved;
+  };
+  const { ctx, page, report, errors, warnings } = await open(browser, VIEWPORTS[tag], seed);
+  const next = page.getByRole("button", { name: "Continue" });
+  const prefs = prefsLog(page);
+  await heading(page, "What brings you to Kairos?");
+  await next.click();
+  await heading(page, "Which job are you going for?");
+  await next.click();
+  await heading(page, "How do you want to add your resume?");
+  // Spec 5.3a: running setup again may add a resume again, so a done user gets the drop zone, not the saved note.
+  await option(page, "Upload a file").click();
+  await next.click();
+  await heading(page, "Upload your resume");
+  await page.getByRole("button", { name: /^Drop your file here/ }).waitFor();
+  await page.getByRole("button", { name: "Back" }).click();
+  await heading(page, "How do you want to add your resume?");
+  await option(page, "Use what you already added").click();
+  await next.click();
+  await heading(page, RULES);
+  assert.equal(await page.getByRole("textbox", { name: "Roles" }).count(), 0, "roles come from the target step");
+  await page.getByLabel("Locations").fill("Austin, TX");   // no Enter
+  await snapper(page, tag)("rules-keep", false);
+  await next.click();
+  await heading(page, "Your first matches are on the way");
+  assert.deepEqual(prefs.at(-1)?.roles, ["Frontend Developer", "Data Analyst"], "target roles first, then the saved ones");
+  assert.deepEqual(prefs.at(-1)?.locations, ["Austin, TX"], "a location typed without Enter is saved");
+  assert.deepEqual(report.unmocked, [], "every API call is mocked");
+  assert.deepEqual(errors, [], "no console or page errors");
+  assert.deepEqual(warnings, [], "no next/image warnings");
+  await ctx.close();
+  console.log(`ok rules keep roles ${tag} ${VIEWPORTS[tag].width}px: target roles then saved roles; typed location kept`);
+}
+
+/** Sign-out from the account menu drops this tab's wizard keys, and only those. */
+async function signOutClears(browser, tag) {
+  const seed = (data) => Object.assign(data.me, { onboardingStep: "done", goals: ["look"] });
+  const { ctx, page, report, errors } = await open(browser, VIEWPORTS[tag], seed, "/dashboard");
+  await overview(page);
+  await page.evaluate(() => {
+    sessionStorage.setItem("kairos.onboarding.importId", "imp-1");
+    sessionStorage.setItem("kairos.onboarding.form.u2.contact", "{}");
+    sessionStorage.setItem("qa.other", "kept");
+  });
+  // As the server does: sign-out ends the session cookie, so the proxy lets /login render.
+  await page.route("**/api/auth/sign-out", async (route) => {
+    await ctx.clearCookies();
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true }) });
+  });
+  await page.getByRole("button", { name: /^Account menu/ }).filter({ visible: true }).first().click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+  await page.waitForURL("**/login", { timeout: 60_000 });
+  const keys = await page.evaluate(() => Object.keys(sessionStorage).sort());
+  assert.deepEqual(keys.filter((k) => k.startsWith("kairos.onboarding.")), [], "no wizard keys left");
+  assert.ok(keys.includes("qa.other"), "other keys stay");
+  assert.deepEqual(report.unmocked, [], "every API call is mocked");
+  assert.deepEqual(errors, [], "no console or page errors");
+  await ctx.close();
+  console.log(`ok sign-out ${tag} ${VIEWPORTS[tag].width}px: kairos.onboarding.* cleared, other keys kept`);
 }
 
 const browser = await chromium.launch();
@@ -1039,6 +1202,10 @@ try {
   await staleImport(browser, "d");
   for (const tag of Object.keys(VIEWPORTS)) await form(browser, tag);
   for (const tag of Object.keys(VIEWPORTS)) await formRefill(browser, tag);
+  for (const tag of ["d", "m"]) await skipFresh(browser, tag);
+  for (const tag of ["m", "d"]) await interviewSkipsSource(browser, tag);
+  for (const tag of ["m", "d"]) await rulesKeepRoles(browser, tag);
+  await signOutClears(browser, "d");
 } finally {
   await browser.close();
 }

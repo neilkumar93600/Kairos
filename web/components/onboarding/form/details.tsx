@@ -20,7 +20,7 @@ type Details = { notice: string; relocation: "" | "yes" | "no"; amount: string; 
 
 const digits = (v: string) => v.replace(/[\s,]/g, "");
 
-/** Notice period, relocation and expected salary: encrypted on the server, used only to fill application forms. */
+/** Notice period, relocation and expected salary (all optional): encrypted on the server, never sent to an AI model. */
 export function DetailsSection({ bind }: SectionProps) {
   const details = useApplicationDetails();
   if (details.error) return <ErrorNote error={details.error} onRetry={() => details.refetch()} />;
@@ -56,7 +56,7 @@ function DetailsForm({ bind, saved }: SectionProps & { saved: ApplicationDetails
   const currencies = CURRENCIES.includes(v.currency) ? CURRENCIES : [v.currency, ...CURRENCIES];
   return (
     <div className="ob-fields">
-      <p className="ob-help ob-wide">Kept encrypted and used only to fill in application forms. All optional.</p>
+      <p className="ob-help ob-wide">Kept encrypted. Never sent to an AI model.</p>
       <Field label="Notice period" htmlFor="ob-notice">
         <Select id="ob-notice" value={v.notice} onChange={(e) => s.set({ ...v, notice: e.target.value })}>
           <option value="">Not set</option>

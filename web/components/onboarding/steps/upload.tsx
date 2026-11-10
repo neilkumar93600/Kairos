@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { UploadSimple, WarningCircle } from "@phosphor-icons/react";
 import { FactList } from "@/components/dashboard/profile/fact-list";
@@ -12,7 +13,7 @@ import { nextAction } from "@/lib/onboarding/flow";
 import { basis, forgetPendingBase, keepPendingBase, pendingBase, readSession, writeSession } from "@/lib/onboarding/session";
 import { phaseLabel } from "@/lib/onboarding/upload-phase";
 import { cn } from "@/lib/utils";
-import { useWizard, type StepProps } from "../wizard";
+import { rank, useWizard, type StepProps } from "../wizard";
 
 const MAX_BYTES = 5 * 1024 * 1024; // the server's IMPORT_MAX_BYTES
 const TYPES = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
@@ -128,10 +129,54 @@ export function Reading({ phase, done, line, action }: { phase: string; done: bo
   );
 }
 
+/**
+ * Whether a base resume was made in this run: in wizard state, or (after a reload) a server step past confirm-facts.
+ * "done" is not: a done user running setup again may add a resume again (spec 5.3a), and one who skipped setup has none.
+ * Read once when the step opens, so making the base on Continue does not swap the screen during the save.
+ */
+function useResumeSaved(): boolean {
+  const { state } = useWizard();
+  const me = useMe();
+  const [saved] = useState(
+    () => state.baseResumeId !== null || (me.data?.onboardingStep !== "done" && rank(me.data?.onboardingStep ?? "") > rank("confirm-facts")),
+  );
+  return saved;
+}
+
+/**
+ * Upload, paste and the fill-in form once a base resume exists: edits there would never reach it (the base is reused,
+ * not rebuilt), so they point to the resume builder. Continue only moves on.
+ */
+function ResumeSaved({ onReady }: StepProps) {
+  useEffect(() => {
+    onReady(true);
+  }, [onReady]);
+  return (
+    <>
+      <h1 tabIndex={-1} className="ob-h1">
+        Your resume is saved
+      </h1>
+      <p className="ob-sub">Change it in the resume builder.</p>
+      <Link href="/resume" className="ob-link inline-flex items-center">
+        Open the resume builder
+      </Link>
+    </>
+  );
+}
+
+/** The resume steps' gate: their own inputs while no base resume exists, the saved note once one does. */
+export function savedOr(Editor: (props: StepProps) => ReactNode) {
+  return function ResumeStep(props: StepProps) {
+    return useResumeSaved() ? <ResumeSaved {...props} /> : <Editor {...props} />;
+  };
+}
+
 const kb = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
 /** Spec 5.3a: drop or choose a PDF or DOCX (checked for size here first), watch it read, check the facts it found. */
-export function UploadStep({ onReady }: StepProps) {
+export const UploadStep = savedOr(UploadForm);
+
+function UploadForm({ onReady }: StepProps) {
   const { switchTo } = useWizard();
   const { startImport } = useOnboarding();
   const me = useMe();

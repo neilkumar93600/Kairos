@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Goal } from "@auto-career/shared";
-import { addChip, countedSteps, endFor, nextAction, openAt, serverStepFor, stepsFor } from "@/lib/onboarding/flow";
+import { addChip, countedSteps, endFor, mergeRoles, nextAction, openAt, serverStepFor, stepsFor } from "@/lib/onboarding/flow";
 
 const base = {
   goals: [] as Goal[],
@@ -102,7 +102,15 @@ describe("addChip", () => {
     expect(addChip(full, "New", 5, 2, 80)).toEqual(full);
     expect(addChip(list, "A", 5, 2, 80)).toEqual(list);
     expect(addChip(list, "x".repeat(81), 5, 2, 80)).toEqual(list);
-    expect(addChip(list, "  Data   Analyst ", 5, 2, 80)).toEqual(["Frontend Developer", "Data   Analyst"]);
+    expect(addChip(list, "  Data   Analyst ", 5, 2, 80)).toEqual(["Frontend Developer", "Data Analyst"]);
+  });
+});
+
+describe("mergeRoles", () => {
+  it("keeps the first list first, then the saved roles, without case or spacing duplicates, up to 10", () => {
+    expect(mergeRoles(["Frontend Developer"], ["frontend  developer", "Data Analyst"])).toEqual(["Frontend Developer", "Data Analyst"]);
+    const saved = Array.from({ length: 10 }, (_, i) => `Saved Role ${i}`);
+    expect(mergeRoles(["Typed Role"], saved)).toEqual(["Typed Role", ...saved.slice(0, 9)]);
   });
 });
 

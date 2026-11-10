@@ -10,16 +10,18 @@ type Item = { title: string; hint: string; done: boolean; href: string; cta: str
  * Setup checklist from the goals (spec 7): the resume for Find or Build, done once a fact is confirmed; the fit rules for
  * Find, done once preferences are saved. Reply forwarding and the extension are left out: nothing the web receives can
  * mark them done. No goals before Done counts as Find: an account from before the wizard (spec 7) or one that has not
- * answered yet, which "Continue setup" sends back to the wizard. Look or Interview alone lists nothing, so no panel.
+ * answered yet, which "Continue setup" sends back to the wizard. Look or Interview alone lists nothing, so no panel. Once
+ * the step is done (setup finished or skipped), /onboarding would start over at Goals, so the items go to Profile and
+ * Preferences instead.
  */
 export function SetupChecklist({ me, hasFact, hasRules }: { me: Me; hasFact: boolean; hasRules: boolean }) {
   const step = me.onboardingStep;
   const find = me.goals.includes("find") || (me.goals.length === 0 && step !== "done");
   const items: Item[] = [
     find || me.goals.includes("build")
-      ? { title: "Add your resume", hint: "Upload it or fill it in. Tailoring only uses facts you confirmed.", done: hasFact, href: "/onboarding", cta: "Add resume" }
+      ? { title: "Add your resume", hint: "Upload it or fill it in. Tailoring only uses facts you confirmed.", done: hasFact, href: step === "done" ? "/profile" : "/onboarding", cta: "Add resume" }
       : null,
-    find ? { title: "Save your fit rules", hint: "Matches only arrive for jobs that pass your bar.", done: hasRules, href: "/onboarding", cta: "Set fit rules" } : null,
+    find ? { title: "Save your fit rules", hint: "Matches only arrive for jobs that pass your bar.", done: hasRules, href: step === "done" ? "/preferences" : "/onboarding", cta: "Set fit rules" } : null,
   ].filter((i) => i !== null);
   const done = items.filter((i) => i.done).length;
   if (done === items.length) return null;

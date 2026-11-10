@@ -38,3 +38,13 @@ export const keepPendingBase = (resumeId: string, from: string) => writeSession(
 
 /** A base resume exists now, or its basis changed (a new import, another file, a lost import): forget the pending one. */
 export const forgetPendingBase = () => writeSession(MADE, null);
+
+/** Sign-out: the wizard's drafts and ids in this tab belong to the account leaving, not to whoever signs in next. */
+export function forgetOnboarding() {
+  try {
+    const keys = Array.from({ length: sessionStorage.length }, (_, i) => sessionStorage.key(i) ?? "");
+    for (const k of keys) if (k.startsWith("kairos.onboarding.")) sessionStorage.removeItem(k);
+  } catch {
+    // no storage: nothing kept to forget
+  }
+}

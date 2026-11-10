@@ -26,8 +26,10 @@ import { ProjectsSection } from "../form/projects";
 import { SkillsSection } from "../form/skills";
 import { WorkAuthSection } from "../form/work-auth";
 import { StepError, useWizard, type StepProps } from "../wizard";
+import { savedOr } from "./upload";
 
-// Spec 5.3b's table order (no Headline: a resume headline must cite confirmed facts, and none holds a typed one).
+// Spec 5.3b's table order (no Headline: a resume headline must cite confirmed facts, and none holds a typed one). Work
+// authorization is for Find only: the rules step saves it, and nothing else reads it.
 const SECTIONS: Array<{ id: string; title: string; Body: ComponentType<SectionProps> }> = [
   { id: "contact", title: "Contact", Body: ContactSection },
   { id: "links", title: "Links", Body: LinksSection },
@@ -50,8 +52,11 @@ export const formInProgress = (userId: string) => readSession(sectionKey(userId)
  * the user leaves it (rail, select, Next section, Continue). Continue then needs a full name and one job or school,
  * and makes the base resume from the confirmed facts.
  */
-export function FormStep({ onReady }: StepProps) {
+export const FormStep = savedOr(FormEditor);
+
+function FormEditor({ onReady }: StepProps) {
   const { state, onNext, setBaseResumeId } = useWizard();
+  const sections = state.goals.includes("find") ? SECTIONS : SECTIONS.filter((s) => s.id !== "work-auth");
   const me = useMe();
   const profile = useProfile();
   const facts = useFacts();
@@ -59,15 +64,15 @@ export function FormStep({ onReady }: StepProps) {
   const qc = useQueryClient();
   const user = me.data?.user.id ?? "";
   const atKey = sectionKey(user);
-  const [current, setAt] = useState(() => SECTIONS.find((s) => s.id === readSession(atKey))?.id ?? "contact");
+  const [current, setAt] = useState(() => sections.find((s) => s.id === readSession(atKey))?.id ?? "contact");
   const [busy, setBusy] = useState(false);
   const saver = useRef<(() => Promise<boolean>) | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const moved = useRef(false);
   const loaded = !!(me.data && profile.data && facts.data && employments.data);
-  const index = SECTIONS.findIndex((s) => s.id === current);
-  const { title, Body } = SECTIONS[index];
-  const next = SECTIONS[index + 1];
+  const index = sections.findIndex((s) => s.id === current);
+  const { title, Body } = sections[index];
+  const next = sections[index + 1];
 
   useEffect(() => {
     onReady(loaded);
@@ -101,7 +106,7 @@ export function FormStep({ onReady }: StepProps) {
     onNext(async () => {
       if (!(await save())) throw new StepError("Fix this section before you continue.");
       // Changes left in another section (Back, then the form again) go into the base too, so they are saved first.
-      const unsaved = SECTIONS.find((x) => x.id !== current && readRecord(user, x.id)?.dirty);
+      const unsaved = sections.find((x) => x.id !== current && readRecord(user, x.id)?.dirty);
       if (unsaved) {
         moved.current = true;
         setAt(unsaved.id);
@@ -159,7 +164,7 @@ export function FormStep({ onReady }: StepProps) {
         <div className="ob-form">
           <nav className="ob-rail" aria-label="Form sections">
             <ol>
-              {SECTIONS.map((s) => (
+              {sections.map((s) => (
                 <li key={s.id}>
                   <button type="button" aria-current={s.id === current ? "step" : undefined} onClick={() => void go(s.id)}>
                     {s.title}
@@ -169,9 +174,9 @@ export function FormStep({ onReady }: StepProps) {
             </ol>
           </nav>
           <div className="ob-pick">
-            <Field label="Section" htmlFor="ob-section" hint={`${index + 1} of ${SECTIONS.length}`}>
+            <Field label="Section" htmlFor="ob-section" hint={`${index + 1} of ${sections.length}`}>
               <Select id="ob-section" value={current} onChange={(e) => void go(e.target.value)}>
-                {SECTIONS.map((s) => (
+                {sections.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.title}
                   </option>

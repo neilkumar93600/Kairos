@@ -1,7 +1,7 @@
 import type { ApplicationDetails } from "@auto-career/shared";
 import { decrypt, type Aad, type Keyring } from "../lib/crypto";
 import { HttpError } from "../lib/errors";
-import { logger } from "../lib/logger";
+import { logger, logUserHash } from "../lib/logger";
 
 /** AAD of profiles.sensitive_answers_enc: the profile row (keyed by user id) and the column (lib/crypto.ts). */
 export const detailsAad = (userId: string): Aad => ({ table: "profiles", id: userId, column: "sensitive_answers_enc" });
@@ -19,12 +19,12 @@ export function readDetailsStrict(envelope: Uint8Array | null, userId: string, k
   return parsed as Record<string, unknown>;
 }
 
-/** For reads: an unreadable envelope reads as empty (logged by user only, never by content) so the wizard still renders. */
+/** For reads: an unreadable envelope reads as empty (logged by user hash only, never by content) so the wizard still renders. */
 export function readDetails(envelope: Uint8Array | null, userId: string, keys?: Keyring): Record<string, unknown> | null {
   try {
     return readDetailsStrict(envelope, userId, keys);
   } catch {
-    logger.warn({ userId }, "application details unreadable; treated as empty");
+    logger.warn({ userHash: logUserHash(userId) }, "application details unreadable; treated as empty");
     return null;
   }
 }
@@ -34,7 +34,7 @@ export function readDetailsForWrite(envelope: Uint8Array | null, userId: string,
   try {
     return readDetailsStrict(envelope, userId, keys);
   } catch {
-    logger.warn({ userId }, "application details unreadable; write refused");
+    logger.warn({ userHash: logUserHash(userId) }, "application details unreadable; write refused");
     throw new HttpError(409, "details_unreadable", "Your saved details can't be read right now.");
   }
 }

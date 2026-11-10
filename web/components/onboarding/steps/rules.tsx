@@ -5,6 +5,7 @@ import { DEFAULT_PREFERENCES, preferencesSchema, SENIORITY_LEVELS, WORK_AUTHORIZ
 import { AUTH_LABEL } from "@/components/dashboard/preferences/preferences-form";
 import { Field, Input, Select } from "@/components/shared/field";
 import { useProfile, useProfileActions } from "@/hooks/use-profile";
+import { mergeRoles } from "@/lib/onboarding/flow";
 import { cn } from "@/lib/utils";
 import { ChipsInput } from "../chips-input";
 import { StepError, useWizard, type StepProps } from "../wizard";
@@ -21,7 +22,8 @@ type Problem = keyof typeof PROBLEMS;
 
 /**
  * Spec 5.4: locations with Remote OK, work authorization, seniority, salary floor and fit bar. Roles are the target
- * roles; with none (Target skipped) a roles field comes first. Everything else is the saved preferences or the
+ * roles, then the saved ones, so a returning user keeps theirs; with no target roles (Target skipped) a roles field comes
+ * first, opened with the saved roles, and what it holds is the list. Everything else is the saved preferences or the
  * defaults, so a returning user keeps their excluded lists and cap. Continue checks the whole set with the shared
  * schema, then saves it; a refusal from the server shows in the footer.
  */
@@ -61,7 +63,7 @@ export function RulesStep({ onReady }: StepProps) {
       const amount = salary.replace(/[\s,]/g, "");
       const parsed = preferencesSchema.safeParse({
         ...start,
-        roles: askRoles ? roles : state.targetRoles,
+        roles: askRoles ? roles : mergeRoles(state.targetRoles, start.roles ?? []),
         locations,
         remoteOk,
         workAuthorization: state.workAuthorization,

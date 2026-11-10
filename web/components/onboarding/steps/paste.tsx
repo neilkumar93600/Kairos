@@ -6,12 +6,14 @@ import { Field, Textarea } from "@/components/shared/field";
 import { useOnboarding } from "@/hooks/use-onboarding";
 import { forgetPendingBase } from "@/lib/onboarding/session";
 import type { StepProps } from "../wizard";
-import { failureOf, Reading, storedImport, storeImport, useImportCheck } from "./upload";
+import { failureOf, Reading, savedOr, storedImport, storeImport, useImportCheck } from "./upload";
 
 const MIN = 200; // the server's minimum for pasted text
 
 /** Spec 5.3c: pasted text goes through the same import as a file (POST /profile/imports as JSON), then the same fact check. */
-export function PasteStep({ onReady }: StepProps) {
+export const PasteStep = savedOr(PasteForm);
+
+function PasteForm({ onReady }: StepProps) {
   const { startImport } = useOnboarding();
   const [importId, setImportId] = useState(storedImport);
   const [text, setText] = useState("");

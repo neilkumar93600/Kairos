@@ -23,7 +23,10 @@ interface ChipsInputProps {
   autoComplete?: string;
 }
 
-/** Type and press Enter to add a chip; addChip drops blanks, case duplicates and anything past the cap. */
+/**
+ * Type and press Enter to add a chip; addChip drops blanks, case duplicates and anything past the cap. Text left typed
+ * without Enter is added when the field loses focus, which pressing Continue does before it saves.
+ */
 export function ChipsInput({ id, label, optional, placeholder, values, onChange, max, minLen, maxLen, options = [], help, error, autoComplete }: ChipsInputProps) {
   const [text, setText] = useState("");
   const input = useRef<HTMLInputElement>(null);
@@ -56,6 +59,7 @@ export function ChipsInput({ id, label, optional, placeholder, values, onChange,
         aria-describedby={[help && `${id}-help`, error && `${id}-error`].filter(Boolean).join(" ") || undefined}
         aria-invalid={error ? true : undefined}
         onChange={(e) => setText(e.target.value)}
+        onBlur={() => add(text)}
         onKeyDown={(e) => {
           if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
           e.preventDefault();
@@ -88,6 +92,8 @@ export function ChipsInput({ id, label, optional, placeholder, values, onChange,
               key={s}
               type="button"
               className="ob-chip"
+              // Keeps focus in the field, so half-typed text is replaced by the suggestion rather than added on blur.
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 add(s);
                 input.current?.focus();

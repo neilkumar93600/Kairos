@@ -7,6 +7,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Me } from "@/hooks/use-me";
 import { authClient } from "@/lib/auth-client";
+import { forgetOnboarding } from "@/lib/onboarding/session";
 import { cn } from "@/lib/utils";
 
 const TOP_PLAN = "max"; // last in shared/src/plans.ts; nothing to upgrade to
@@ -49,6 +50,7 @@ export function AccountMenu({ me, variant }: { me: Me; variant: "card" | "rail" 
 
   async function signOut() {
     await authClient.signOut();
+    forgetOnboarding();
     router.push("/login");
   }
 

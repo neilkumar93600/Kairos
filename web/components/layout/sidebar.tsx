@@ -7,6 +7,7 @@ import { CaretLeft, CaretRight, SignOut } from "@phosphor-icons/react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMe } from "@/hooks/use-me";
 import { authClient } from "@/lib/auth-client";
+import { forgetOnboarding } from "@/lib/onboarding/session";
 import { cn } from "@/lib/utils";
 import { Logo, LogoMark } from "../shared/logo";
 import { Skeleton } from "../shared/skeleton";
@@ -63,6 +64,7 @@ function SignOutRow({ collapsed }: { collapsed: boolean }) {
         type="button"
         onClick={async () => {
           await authClient.signOut();
+          forgetOnboarding();
           router.push("/login");
         }}
         className={cn(

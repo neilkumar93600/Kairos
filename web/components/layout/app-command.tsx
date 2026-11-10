@@ -7,6 +7,7 @@ import { LinkSimple, MagnifyingGlass, SignOut } from "@phosphor-icons/react";
 import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { authClient } from "@/lib/auth-client";
+import { forgetOnboarding } from "@/lib/onboarding/session";
 import { NAV_GROUPS, NAV_ICONS } from "./sidebar-nav";
 
 const OPEN = "kairos:command";
@@ -50,6 +51,7 @@ export function AppCommand() {
   async function signOut() {
     setOpen(false);
     await authClient.signOut();
+    forgetOnboarding();
     router.push("/login");
   }
 

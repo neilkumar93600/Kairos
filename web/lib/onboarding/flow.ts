@@ -53,13 +53,17 @@ export function endFor(goals: Goal[]): { href: "/resume" | "/matches" | "/dashbo
   return { href, others: goals.filter((g) => g !== primary && g !== "look") };
 }
 
+/** Adds the trimmed, single-spaced text unless it is too short or long, already there (any case) or past the cap. */
 export function addChip(list: string[], raw: string, max: number, minLen: number, maxLen: number): string[] {
-  const text = raw.trim();
+  const text = raw.trim().replace(/\s+/g, " ");
   const key = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
   if (list.length >= max || text.length < minLen || text.length > maxLen) return list;
   if (list.some((x) => key(x) === key(text))) return list;
   return [...list, text];
 }
+
+/** Preference roles from several lists, first list first: addChip's spacing, case dedupe and the schema's cap of 10. */
+export const mergeRoles = (...lists: string[][]): string[] => lists.flat().reduce<string[]>((list, r) => addChip(list, r, 10, 2, 80), []);
 
 export function nextAction(state: { baseResumeId: string | null }): "create" | "reuse" {
   return state.baseResumeId ? "reuse" : "create";

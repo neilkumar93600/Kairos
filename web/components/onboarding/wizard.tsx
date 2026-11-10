@@ -71,7 +71,10 @@ export function useWizard(): WizardApi {
 }
 
 const SKIPPABLE: WizardStep[] = ["target", "rules"];
-const rank = (step: string) => (ONBOARDING_STEPS as readonly string[]).indexOf(step);
+/** Spec 4: the resume source is skippable too when interview is the only goal. */
+const skippable = (step: WizardStep, goals: Goal[]) =>
+  SKIPPABLE.includes(step) || (step === "source" && goals.length === 1 && goals[0] === "interview");
+export const rank = (step: string) => (ONBOARDING_STEPS as readonly string[]).indexOf(step);
 /** A step's own refusal from onNext work (a required answer is missing): its message shows in the footer as it is. */
 export class StepError extends Error {}
 const failure = (e: unknown) =>
@@ -154,6 +157,7 @@ function Frame({ scene = 0, rows = [], action, children }: { scene?: number; row
 
 function Shell({ initial }: { initial: WizardState }) {
   const router = useRouter();
+  const me = useMe();
   const { save } = useOnboarding();
   const [state, setState] = useState(initial);
   const [dir, setDir] = useState<0 | 1 | -1>(0);
@@ -184,18 +188,31 @@ function Shell({ initial }: { initial: WizardState }) {
     setError(null);
   };
 
+  /**
+   * The wizard's goals when they differ from the saved ones, so the save after them carries them: a legacy account's
+   * implied Find (openAt), or goals picked and then skipped past with Skip setup.
+   */
+  const changedGoals = (): Pick<OnboardingUpdate, "goals"> => {
+    const saved = me.data?.goals ?? [];
+    const same = state.goals.length === saved.length && state.goals.every((g) => saved.includes(g));
+    return state.goals.length && !same ? { goals: state.goals } : {};
+  };
+
   /** Skipping a step leaves its work undone (Skip this step on the rules saves no preferences). */
   const advance = async (answers: Omit<OnboardingUpdate, "step">, skip = false) => {
-    if (!following || inFlight.current) return;
+    // Skipping the source skips the resume step it chose too.
+    const to = skip ? steps.slice(index + 1).find((s) => s !== state.source) : following;
+    if (!to || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError(null);
     try {
       if (!skip) await work.current?.();
       // Done saves its own step when it opens (the wizard can also open there), so going to it sends only the answers.
-      const body = following === "done" ? answers : { ...answers, step: serverStepFor(following) };
+      const body = { ...changedGoals(), ...answers, ...(to !== "done" && { step: serverStepFor(to) }) };
       if (Object.keys(body).length) await save.mutateAsync(body);
-      go(following, 1);
+      if (skip && step === "source") setState((s) => ({ ...s, source: null }));
+      go(to, 1);
     } catch (e) {
       setError(failure(e));
     } finally {
@@ -233,7 +250,9 @@ function Shell({ initial }: { initial: WizardState }) {
     skipSetup: async () => {
       setError(null);
       try {
-        await save.mutateAsync({ goals: ["look"], step: "done" });
+        // Goals chosen stay, so the Overview checklist and the interview card still follow them; "look" only when none were.
+        const goals = state.goals.length || me.data?.goals.length ? changedGoals() : { goals: ["look" as const] };
+        await save.mutateAsync({ ...goals, step: "done" });
         router.push("/dashboard");
       } catch (e) {
         setError(failure(e));
@@ -250,7 +269,7 @@ function Shell({ initial }: { initial: WizardState }) {
         scene={scene}
         rows={rows}
         action={
-          // Setup is finished on Done; skipping there would only replace the chosen goals with "look".
+          // Setup is finished on Done: nothing is left to skip.
           step === "done" ? null : (
             <button type="button" className="ob-text-btn" disabled={pending} onClick={api.skipSetup}>
               Skip setup
@@ -277,7 +296,7 @@ function Shell({ initial }: { initial: WizardState }) {
             Back
           </Button>
           <div className="ob-foot__end">
-            {SKIPPABLE.includes(step) ? (
+            {skippable(step, state.goals) ? (
               <button type="button" className="ob-text-btn" disabled={pending} onClick={api.skipStep}>
                 Skip this step
               </button>
