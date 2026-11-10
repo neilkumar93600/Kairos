@@ -11,7 +11,7 @@ import { FACT_COLUMNS, PROFILE_COLUMNS, RESUME_PROFILE_COLUMNS } from "../lib/se
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
 import { hit } from "../middleware/rate-limit";
-import { detailsAad, mergeDetails, publicDetails, readDetails } from "../services/application-details";
+import { detailsAad, mergeDetails, publicDetails, readDetails, readDetailsForWrite } from "../services/application-details";
 import { encrypt } from "../lib/crypto";
 import { citedFact } from "../services/fact-citations";
 import { countImport, createImport } from "../services/import/imports";
@@ -47,19 +47,19 @@ profileRouter.put("/contact", validateBody(contactSchema), async (req, res) => {
 });
 
 /** Notice period, relocation, expected salary: encrypted in profiles.sensitive_answers_enc, merged with what else is stored there. */
-const storedDetails = async (userId: string) => {
+const storedEnvelope = async (userId: string) => {
   const [row] = await db().select({ enc: profiles.sensitiveAnswersEnc }).from(profiles).where(eq(profiles.userId, userId));
   if (!row) throw notFound("Profile");
-  return readDetails(row.enc, userId);
+  return row.enc;
 };
 
 profileRouter.get("/application-details", async (req, res) => {
-  res.json({ details: publicDetails(await storedDetails(currentUser(req).id)) });
+  res.json({ details: publicDetails(readDetails(await storedEnvelope(currentUser(req).id), currentUser(req).id)) });
 });
 
 profileRouter.put("/application-details", validateBody(applicationDetailsSchema), async (req, res) => {
   const userId = currentUser(req).id;
-  const merged = mergeDetails(await storedDetails(userId), req.body as ApplicationDetails);
+  const merged = mergeDetails(readDetailsForWrite(await storedEnvelope(userId), userId), req.body as ApplicationDetails);
   await db()
     .update(profiles)
     .set({ sensitiveAnswersEnc: encrypt(JSON.stringify(merged), detailsAad(userId)), updatedAt: new Date() })

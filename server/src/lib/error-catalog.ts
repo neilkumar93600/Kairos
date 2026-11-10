@@ -22,6 +22,7 @@ export const ERROR_CATALOG: Record<string, readonly number[]> = {
   checkout_failed: [502],
   cloud_paused: [503],
   conflict: [409],
+  details_unreadable: [409],
   email_unverified: [403],
   exists: [409],
   extension_only: [409],

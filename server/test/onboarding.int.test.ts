@@ -130,4 +130,15 @@ describe.skipIf(!hasTestDb)("onboarding wizard columns", () => {
     expect((await request(app).get("/api/profile")).body.profile).not.toHaveProperty("sensitiveAnswersEnc");
     expect((await request(app).put("/api/profile/application-details").send({ noticePeriod: "soon" })).status).toBe(422);
   });
+
+  it("PUT application-details refuses to overwrite an unreadable envelope", async () => {
+    const junk = Buffer.from("not an envelope, but long enough to pass the size check");
+    await set({ sensitiveAnswersEnc: junk });
+    const res = await request(app).put("/api/profile/application-details").send({ noticePeriod: "immediate", openToRelocation: null, expectedSalary: null });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe("details_unreadable");
+    expect(Buffer.from((await row()).sensitiveAnswersEnc!).equals(junk)).toBe(true);
+    const get = await request(app).get("/api/profile/application-details");
+    expect(get.body.details).toEqual({ noticePeriod: null, openToRelocation: null, expectedSalary: null });
+  });
 });

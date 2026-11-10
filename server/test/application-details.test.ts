@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { decrypt, encrypt, parseKeks } from "../src/lib/crypto";
-import { detailsAad, mergeDetails, readDetails } from "../src/services/application-details";
+import { detailsAad, mergeDetails, readDetails, readDetailsForWrite } from "../src/services/application-details";
 
 const keys = parseKeks(`v1:${Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 7 + 3) % 256)).toString("base64")}`);
 const patch = { noticePeriod: "1_month" as const, openToRelocation: null, expectedSalary: null };
@@ -26,5 +26,14 @@ describe("application details (services/application-details.ts)", () => {
     expect(readDetails(foreign, "u1", keys)).toBeNull();
     expect(readDetails(Buffer.from("garbage"), "u1", keys)).toBeNull();
     expect(readDetails(null, "u1", keys)).toBeNull();
+  });
+
+  it("a write over an unreadable envelope is refused with 409, a missing one starts empty", () => {
+    const foreign = encrypt("{}", detailsAad("other"), keys);
+    for (const bad of [foreign, Buffer.from("garbage")]) {
+      expect(() => readDetailsForWrite(bad, "u1", keys)).toThrowError(expect.objectContaining({ status: 409, code: "details_unreadable" }));
+    }
+    expect(readDetailsForWrite(null, "u1", keys)).toBeNull();
+    expect(readDetailsForWrite(encrypt('{"gender":"F"}', detailsAad("u1"), keys), "u1", keys)).toEqual({ gender: "F" });
   });
 });
