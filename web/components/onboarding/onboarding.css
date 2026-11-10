@@ -12,7 +12,8 @@
     min-height: 100dvh;
     background: var(--canvas);
   }
-  .ob-col { display: flex; flex: 1; flex-direction: column; min-width: 0; padding: 0 16px; }
+  /* clip, not hidden: no scroll container, so the footer stays sticky; the entering step's 18px slide never scrolls the page sideways */
+  .ob-col { display: flex; flex: 1; flex-direction: column; min-width: 0; padding: 0 16px; overflow-x: clip; }
   .ob-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 60px; }
   .ob-main { display: flex; flex: 1; flex-direction: column; outline: none; }
 
@@ -85,6 +86,54 @@
   .ob-opt__tick svg { opacity: 0; transform: scale(0.6); transition: opacity 250ms var(--ob-ease), transform 250ms var(--ob-ease); }
   .ob-opt[aria-pressed="true"] .ob-opt__tick svg { opacity: 1; transform: none; }
 
+  /* ===== Resume source cards: one column until the step is wide enough for two ===== */
+  .ob-stage { container-type: inline-size; }
+  .ob-sources { display: grid; gap: 12px; }
+  .ob-src {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 12px; width: 100%; padding: 24px;
+    border: 0; border-radius: var(--r-card); background: var(--surface); box-shadow: inset 0 0 0 1px var(--ob-line);
+    color: var(--body); text-align: left; cursor: pointer;
+  }
+  .ob-src[aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px var(--ink); }
+  .ob-src__icon {
+    display: grid; place-items: center; width: 48px; height: 48px; border-radius: 14px; background: var(--sunk); color: var(--ink);
+    transition: background-color 250ms ease-out, color 250ms ease-out;
+  }
+  .ob-src[aria-pressed="true"] .ob-src__icon { background: var(--ink); color: var(--on-action); }
+  .ob-src__title { color: var(--ink); font-size: 19px; font-weight: 500; }
+  .ob-src__line { color: var(--faint); font-size: 15px; line-height: 1.4; }
+  .ob-src__tag { margin-top: auto; padding: 4px 10px; border-radius: var(--r-pill); background: var(--sunk); color: var(--ink); font-size: 13px; }
+  @container (min-width: 540px) {
+    .ob-sources { grid-template-columns: 1fr 1fr; }
+    .ob-src { min-height: 220px; }
+    .ob-src--wide { grid-column: 1 / -1; min-height: 0; }
+  }
+  .ob-link {
+    min-height: 44px; margin-top: 8px; padding: 0; border: 0; background: none; color: var(--ink); font-size: 15px; cursor: pointer;
+    text-decoration: underline; text-underline-offset: 4px;
+  }
+
+  /* ===== Upload: drop zone, then the reading card and the found facts ===== */
+  .ob-drop {
+    display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%; padding: 40px 24px;
+    border: 1.5px dashed var(--rule); border-radius: var(--r-card); background: var(--surface); color: var(--ink); text-align: center; cursor: pointer;
+    transition: border-color 200ms ease-out, background-color 200ms ease-out;
+  }
+  .ob-drop[data-over] { border-color: var(--ink); background: var(--sunk); }
+  .ob-drop__title { margin-top: 8px; font-size: 18px; font-weight: 500; }
+  .ob-drop__line { color: var(--faint); font-size: 15px; }
+  .ob-note { display: flex; flex-wrap: wrap; align-items: center; column-gap: 16px; margin-top: 12px; }
+  .ob-note__text { display: flex; align-items: flex-start; gap: 8px; margin: 0; color: var(--bad); font-size: 15px; }
+  .ob-note__text svg { flex: none; margin-top: 2px; }
+  .ob-note .ob-link { margin-top: 0; }
+  .ob-reading { padding: 20px 24px; border-radius: var(--r-card); background: var(--surface); box-shadow: inset 0 0 0 1px var(--ob-line); }
+  .ob-phase { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--ink); font-size: 17px; font-weight: 500; }
+  .ob-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--lime); box-shadow: 0 0 0 1px var(--ink); }
+  .ob-dot--live { animation: ob-pulse 1.4s ease-in-out infinite; }
+  .ob-reading__line { margin: 6px 0 0 18px; color: var(--faint); font-size: 15px; overflow-wrap: anywhere; }
+  .ob-facts { margin-top: 16px; }
+  .ob-paste { display: flex; flex-direction: column; gap: 16px; }
+
   /* ===== Fields and chips ===== */
   .ob-field + .ob-field { margin-top: 24px; }
   .ob-label { display: block; margin-bottom: 8px; color: var(--ink); font-size: 15px; font-weight: 500; }
@@ -121,6 +170,10 @@
     .ob-opt:hover { translate: 0 -1px; }
     .ob-opt:not([aria-pressed="true"]):hover { box-shadow: inset 0 0 0 1px var(--rule); }
     .ob-chip:not(.ob-chip--on):hover { box-shadow: inset 0 0 0 1px var(--rule); }
+    .ob-src:hover { translate: 0 -2px; }
+    .ob-src:not([aria-pressed="true"]):hover { box-shadow: inset 0 0 0 1px var(--rule); }
+    .ob-drop:hover { border-color: var(--ink); }
+    .ob-link:hover { text-decoration-thickness: 2px; }
     .ob-text-btn:hover { text-decoration-color: currentColor; }
     .ob-next:hover .ob-arrow { translate: 3px 0; }
     .ob-back:hover .ob-arrow { translate: -3px 0; }
@@ -146,6 +199,7 @@
   @keyframes ob-enter { from { opacity: 0; transform: translateX(18px); } }
   @keyframes ob-enter-back { from { opacity: 0; transform: translateX(-18px); } }
   @keyframes ob-settle { from { opacity: 0; transform: translateY(10px); } }
+  @keyframes ob-pulse { 50% { opacity: 0.35; } }
 
   /* The OS setting and the app's own switch (html[data-motion], lib/motion/preference.ts) both stop every move. */
   @media (prefers-reduced-motion: reduce) {

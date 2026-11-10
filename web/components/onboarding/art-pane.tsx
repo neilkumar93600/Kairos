@@ -39,8 +39,9 @@ export function ArtPane({ scene, rows }: { scene: number; rows: BriefRow[] }) {
       {/* next/image `fill` needs a positioned parent, and the pane itself is sticky from 900px. */}
       <div className="ob-art__paint">
         {SCENES.map((s, i) => (
-          // preload is Next 16's name for the deprecated `priority`: only the first painting is fetched early.
-          <Image key={s.src} src={s.src} alt="" fill preload={i === 0} sizes="(min-width: 900px) 42vw, 100vw" className={i === scene ? "is-on" : undefined} />
+          // preload is Next 16's name for the deprecated `priority`: only the painting on show is fetched early (a
+          // reload mid-flow, say on the upload step, opens on a later one).
+          <Image key={s.src} src={s.src} alt="" fill preload={i === scene} sizes="(min-width: 900px) 42vw, 100vw" className={i === scene ? "is-on" : undefined} />
         ))}
       </div>
       <span className="ob-hour glass-soft" aria-hidden>

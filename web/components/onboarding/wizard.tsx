@@ -17,7 +17,10 @@ import { cn } from "@/lib/utils";
 import { ArtPane, briefRows, type BriefRow } from "./art-pane";
 import { Progress, STEP_NAMES } from "./progress";
 import { GoalsStep } from "./steps/goals";
+import { PasteStep } from "./steps/paste";
+import { SourceStep } from "./steps/source";
 import { TargetStep } from "./steps/target";
+import { storedImport, UploadStep } from "./steps/upload";
 
 export interface WizardState {
   goals: Goal[];
@@ -36,6 +39,13 @@ export interface WizardApi {
   setBaseResumeId: (id: string | null) => void;
   /** Saves this step's answers with the next server step, then advances. A failed save stays put and shows why. */
   next: () => Promise<void>;
+  /**
+   * Work a step needs done when Continue is pressed, before the save (upload and paste make the base resume here).
+   * It runs inside next(): Continue stays disabled while it runs, and its failure shows in the footer like a failed save.
+   */
+  onNext: (work: (() => Promise<void>) | null) => void;
+  /** Goes straight to that source's own step (the "Paste the text instead" links). Source and its steps are all the server's resume step, so nothing is saved. */
+  switchTo: (source: "upload" | "form" | "paste") => void;
   /** Client side only: the server step is forward-only (D-30). */
   back: () => void;
   skipStep: () => Promise<void>;
@@ -74,8 +84,10 @@ export function Wizard() {
       hasBaseResume: rank(me.data.onboardingStep) > rank("confirm-facts"),
       hasPreferences: profile.data.preferences != null,
     });
+    // A reload mid-parse goes back to the import being read (spec 5.3a); the server step alone would reopen the source step.
+    const resumed = opened.step === "source" && storedImport() ? ({ step: "upload", source: "upload" } as const) : null;
     // Read once: the refetch after each save must not reset answers in progress.
-    return <Shell initial={{ ...opened, targetRoles: me.data.targetRoles, targetCompanies: me.data.targetCompanies, baseResumeId: null }} />;
+    return <Shell initial={{ ...opened, ...resumed, targetRoles: me.data.targetRoles, targetCompanies: me.data.targetCompanies, baseResumeId: null }} />;
   }
 
   const error = me.error ?? profile.error ?? facts.error;
@@ -124,13 +136,16 @@ function Shell({ initial }: { initial: WizardState }) {
   const [dir, setDir] = useState<0 | 1 | -1>(0);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false); // a double click lands before the disabled Continue renders
+  const work = useRef<(() => Promise<void>) | null>(null);
   const stage = useRef<HTMLDivElement>(null);
 
   const steps = stepsFor(state.goals, state.source);
   const index = Math.max(0, steps.indexOf(state.step));
   const step = steps[index];
   const following = steps[index + 1];
-  const pending = save.isPending;
+  const pending = busy || save.isPending;
 
   // Focus follows the step (not on first load): the heading, with the page back at the top.
   useEffect(() => {
@@ -147,13 +162,19 @@ function Shell({ initial }: { initial: WizardState }) {
   };
 
   const advance = async (answers: Omit<OnboardingUpdate, "step">) => {
-    if (!following) return;
+    if (!following || inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
     setError(null);
     try {
+      await work.current?.();
       await save.mutateAsync({ ...answers, step: serverStepFor(following) });
       go(following, 1);
     } catch (e) {
       setError(failure(e));
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
     }
   };
 
@@ -171,6 +192,13 @@ function Shell({ initial }: { initial: WizardState }) {
             ? { targetRoles: state.targetRoles, targetCompanies: state.targetCompanies }
             : {},
       ),
+    onNext: (fn) => {
+      work.current = fn;
+    },
+    switchTo: (source) => {
+      setState((s) => ({ ...s, source }));
+      go(source, 1);
+    },
     back: () => {
       if (index > 0) go(steps[index - 1], -1);
     },
@@ -240,10 +268,13 @@ function Shell({ initial }: { initial: WizardState }) {
 function StepBody({ step, onReady }: StepProps & { step: WizardStep }) {
   if (step === "goals") return <GoalsStep onReady={onReady} />;
   if (step === "target") return <TargetStep onReady={onReady} />;
+  if (step === "source") return <SourceStep onReady={onReady} />;
+  if (step === "upload") return <UploadStep onReady={onReady} />;
+  if (step === "paste") return <PasteStep onReady={onReady} />;
   return <StepPending step={step} onReady={onReady} />;
 }
 
-// ponytail: stands in for the steps Tasks 9 to 11 build (source, upload, paste, form, rules, done) so the shell runs end to end.
+// ponytail: stands in for the steps Tasks 10 and 11 build (form, rules, done) so the shell runs end to end.
 function StepPending({ step, onReady }: StepProps & { step: WizardStep }) {
   useEffect(() => {
     onReady(true);

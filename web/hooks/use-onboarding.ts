@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { ApplicationDetails, EmploymentInput, OnboardingUpdate } from "@auto-career/shared";
+import type { ApplicationDetails, EmploymentInput, ImportDetail, OnboardingUpdate } from "@auto-career/shared";
 import { useApiQuery } from "@/lib/use-api-query";
 import { api, patch, post, put } from "@/lib/api";
 
@@ -17,12 +17,8 @@ export interface Employment {
   results: Array<{ factId: string; text: string }>;
 }
 
-export interface ImportState {
-  importId: string;
-  parseStatus: "pending" | "parsing" | "parsed" | "failed";
-  progressText: string | null;
-  failureCode: string | null;
-}
+/** GET /profile/imports/:id as the server sends it: parseStatus, progressText, failureCode, fileName, the facts found. */
+export type ImportState = ImportDetail;
 
 /** Everything the onboarding wizard reads and writes. Each mutation refreshes me, profile and facts. */
 export function useOnboarding() {
