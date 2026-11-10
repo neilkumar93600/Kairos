@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { boolean, check, index, integer, jsonb, pgTable, smallint, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
-import type { ImportSourceKind, ParseStatus, Preferences, ResumeInput, ResumeKind, RevisionReason } from "@auto-career/shared";
+import type { Goal, ImportSourceKind, ParseStatus, Preferences, ResumeInput, ResumeKind, RevisionReason } from "@auto-career/shared";
 import { applications } from "./applications";
 import { user } from "./auth";
 import { jobs } from "./catalog";
@@ -29,7 +29,11 @@ export const profiles = pgTable(
     githubUrl: text("github_url"),
     portfolioUrl: text("portfolio_url"),
     preferences: jsonb("preferences").$type<Preferences>(),
-    onboardingStep: text("onboarding_step").notNull().default("resume"),
+    onboardingStep: text("onboarding_step").notNull().default("goals"),
+    /** What the user came for (onboarding step one); 'look' stands alone. */
+    goals: text("goals").array().$type<Goal[]>().notNull().default(sql`'{}'::text[]`),
+    targetRoles: text("target_roles").array().notNull().default(sql`'{}'::text[]`),
+    targetCompanies: text("target_companies").array().notNull().default(sql`'{}'::text[]`),
     forwardingAddress: text("forwarding_address").notNull().unique(),
     /** Reply-forwarding setup, owned by messaging (16.x). */
     forwardingState: text("forwarding_state").$type<(typeof FORWARDING_STATES)[number]>().notNull().default("not_started"),
@@ -49,7 +53,12 @@ export const profiles = pgTable(
   },
   (t) => [
     index("profiles_normalized_email_idx").on(t.normalizedEmailHash).where(sql`${t.normalizedEmailHash} is not null`),
-    check("profiles_onboarding_step_ck", sql`onboarding_step IN ('resume','confirm-facts','done')`),
+    check("profiles_onboarding_step_ck", sql`onboarding_step IN ('goals','target','resume','confirm-facts','rules','template','done')`),
+    check(
+      "profiles_goals_ck",
+      sql`goals <@ ARRAY['find','build','interview','look']::text[] AND cardinality(goals) <= 4 AND (NOT 'look' = ANY(goals) OR cardinality(goals) = 1)`,
+    ),
+    check("profiles_targets_ck", sql`cardinality(target_roles) <= 5 AND cardinality(target_companies) <= 10`),
     check(
       "profiles_forwarding_address_ck",
       sql`forwarding_address = lower(forwarding_address) AND forwarding_address ~ '^[a-z0-9._+-]+@[a-z0-9.-]+\\.[a-z]{2,}$'`,

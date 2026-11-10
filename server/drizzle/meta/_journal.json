@@ -134,6 +134,13 @@
       "when": 1793851007413,
       "tag": "0018_newsletter",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794293819140,
+      "tag": "0019_onboarding_wizard",
+      "breakpoints": true
     }
   ]
 }
