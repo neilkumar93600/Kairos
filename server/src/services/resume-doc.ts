@@ -1,5 +1,6 @@
 import type { FactKind, ResumeContact, ResumeEntry, ResumeInput, ResumeLine, ResumeSection, ResumeSectionKind } from "@auto-career/shared";
 import { checkClaims, type ClaimRule } from "../llm/claims";
+import { roleFactText } from "./employment-text";
 
 /** A profile fact as the API returns it (web/hooks/use-profile.ts `Fact`). */
 export interface ProfileFact {
@@ -40,7 +41,7 @@ const clip = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1).trim
  *
  * Employment-aware (resume-02, WP-17): a confirmed employment with confirmed facts under it becomes one Experience
  * entry, title, company and the dates as written, whose lines are its role, metric and project facts and whose heading
- * cites its first one. Facts under an employment leave their own sections; the rest behave as above.
+ * cites its first one (a typed job's own role fact heads it and is not a line). Facts under an employment leave their own sections; the rest behave as above.
  */
 export function defaultResume(
   facts: readonly (Pick<ProfileFact, "id" | "kind" | "text" | "confirmed"> & { employmentId?: string | null })[],
@@ -49,19 +50,24 @@ export function defaultResume(
 ): ResumeInput {
   const roles = employments
     .filter((e) => e.confirmed)
-    .map((e) => ({ e, lines: facts.filter((f) => f.confirmed && f.employmentId === e.id && LINE_KINDS.has(f.kind)) }))
-    .filter((r) => r.lines.length > 0);
-  const placed = new Set(roles.flatMap((r) => r.lines.map((f) => f.id)));
+    .map((e) => {
+      const under = facts.filter((f) => f.confirmed && f.employmentId === e.id && LINE_KINDS.has(f.kind));
+      // A job typed in the wizard has a role fact reading exactly roleFactText: that is its heading, never a bullet.
+      const heading = under.find((f) => f.kind === "role" && f.text === roleFactText(e));
+      return { e, heading, lines: under.filter((f) => f !== heading) };
+    })
+    .filter((r) => r.heading || r.lines.length > 0);
+  const placed = new Set(roles.flatMap((r) => [...(r.heading ? [r.heading] : []), ...r.lines].map((f) => f.id)));
   const confirmed = facts.filter((f) => f.confirmed && !placed.has(f.id));
   const sections = DEFAULT_SECTIONS.map(([kind, title, factKind]): ResumeSection => {
     const mine = confirmed.filter((f) => f.kind === factKind);
     if (kind === "experience" && roles.length) {
-      const fromRoles: ResumeEntry[] = roles.map(({ e, lines }) => ({
+      const fromRoles: ResumeEntry[] = roles.map(({ e, heading, lines }) => ({
         id: `entry-emp-${e.id}`,
         heading: clip(e.title, 200),
         subheading: clip(e.company, 200),
         meta: e.datesText ? clip(e.datesText, 120) : null,
-        headingFactId: (lines.find((f) => f.kind === "role") ?? lines[0]!).id,
+        headingFactId: (heading ?? lines.find((f) => f.kind === "role") ?? lines[0]!).id,
         hidden: false,
         lines: lines.slice(0, 40).map((f) => ({ id: `line-${f.id}`, section: title, text: clip(f.text, 400), factIds: [f.id] })),
       }));

@@ -47,24 +47,46 @@ async function load(tx: Pick<Db, "select">, userId: string, where?: SQL) {
   });
 }
 
-/** Removes an employment's facts (its role fact only when `roleOnly`). A fact a resume or application cites is kept and unlinked. */
-async function dropFacts(tx: Tx, userId: string, employmentId: string, roleOnly: boolean) {
-  const own = and(eq(facts.userId, userId), eq(facts.employmentId, employmentId), roleOnly ? eq(facts.kind, "role") : undefined);
-  await tx.delete(facts).where(and(own, not(citedFact(userId))));
-  await tx.update(facts).set({ employmentId: null }).where(own);
+const KINDS = ["role", "metric"] as const;
+
+/** Removes facts (ids), except ones a resume or application cites: those are kept and unlinked from the job. */
+async function dropFacts(tx: Tx, userId: string, ids: string[]) {
+  if (ids.length === 0) return;
+  await tx.delete(facts).where(and(eq(facts.userId, userId), inArray(facts.id, ids), not(citedFact(userId))));
+  await tx.update(facts).set({ employmentId: null }).where(and(eq(facts.userId, userId), inArray(facts.id, ids)));
 }
 
-/** Replaces the role fact, and the result facts when `withResults`. */
-async function writeFacts(tx: Tx, userId: string, profileId: string, employmentId: string, e: EmploymentInput, withResults: boolean) {
-  await dropFacts(tx, userId, employmentId, !withResults);
+/** The job's own role and result facts; a fact the user re-kinded is not the job's to touch. */
+const ownFacts = (tx: Tx, userId: string, employmentId: string) =>
+  tx.select({ id: facts.id, kind: facts.kind, text: facts.text }).from(facts)
+    .where(and(eq(facts.userId, userId), eq(facts.employmentId, employmentId), inArray(facts.kind, [...KINDS])))
+    .orderBy(asc(facts.createdAt), asc(facts.id));
+
+/**
+ * Brings the role fact, and the result facts when `results` is given, to `e`. A fact whose text is unchanged stays (so a
+ * resume citing it keeps pointing at it); anything else is replaced, or unlinked when cited. Results keep the sent order.
+ */
+async function syncFacts(tx: Tx, userId: string, profileId: string, employmentId: string, e: EmploymentInput, results: string[] | undefined) {
+  const have = await ownFacts(tx, userId, employmentId);
   const base = { userId, resumeProfileId: profileId, employmentId, assertedBy: "user" as const, confirmed: true };
   // Distinct created_at (one transaction shares now()), so the results keep the order they were typed in.
   const at = Date.now();
-  const lines = withResults ? e.results : [];
-  await tx.insert(facts).values([
-    { ...base, kind: "role", text: roleFactText(e.title, e.company, datesText(e.startMonth, e.endMonth, e.isCurrent)), createdAt: new Date(at) },
-    ...lines.map((text, i) => ({ ...base, kind: "metric" as const, text, createdAt: new Date(at + i + 1) })),
-  ]);
+  const wanted = [
+    { kind: "role" as const, text: roleFactText({ title: e.title, company: e.company, datesText: datesText(e.startMonth, e.endMonth, e.isCurrent) }) },
+    ...(results ?? []).map((text) => ({ kind: "metric" as const, text })),
+  ];
+  const pool = have.filter((f) => results !== undefined || f.kind === "role");
+  const keep: { id: string; createdAt: Date }[] = [];
+  const add: (typeof base & { kind: "role" | "metric"; text: string; createdAt: Date })[] = [];
+  wanted.forEach((w, i) => {
+    const createdAt = new Date(at + i);
+    const hit = pool.findIndex((f) => f.kind === w.kind && f.text === w.text);
+    if (hit < 0) add.push({ ...base, ...w, createdAt });
+    else keep.push({ id: pool.splice(hit, 1)[0]!.id, createdAt });
+  });
+  await dropFacts(tx, userId, pool.map((f) => f.id));
+  for (const k of keep) await tx.update(facts).set({ createdAt: k.createdAt }).where(eq(facts.id, k.id));
+  if (add.length) await tx.insert(facts).values(add);
 }
 
 const columns = (e: EmploymentInput) => ({
@@ -92,7 +114,7 @@ employmentsRouter.post("/", validateBody(employmentInputSchema), async (req, res
       .insert(employments)
       .values({ ...columns(input), userId: me.id, resumeProfileId: profileId, assertedBy: "user", confirmed: true })
       .returning({ id: employments.id });
-    await writeFacts(tx, me.id, profileId, row!.id, input, true);
+    await syncFacts(tx, me.id, profileId, row!.id, input, input.results);
     return (await load(tx, me.id, eq(employments.id, row!.id)))[0]!;
   });
   res.status(201).json({ employment });
@@ -110,7 +132,7 @@ employmentsRouter.patch("/:id", validateBody(fieldsPatchSchema), async (req, res
     if (!merged.success) throw new HttpError(422, "invalid_body", "Some fields are invalid", merged.error.issues);
     const [row] = await tx.update(employments).set(columns(merged.data)).where(eq(employments.id, id)).returning({ profileId: employments.resumeProfileId });
     const profileId = row!.profileId ?? (await profileFor(tx, me.id, await planFor(db(), me.id)));
-    await writeFacts(tx, me.id, profileId, id, merged.data, patch.results !== undefined);
+    await syncFacts(tx, me.id, profileId, id, merged.data, patch.results);
     return (await load(tx, me.id, eq(employments.id, id)))[0]!;
   });
   res.json({ employment });
@@ -122,7 +144,7 @@ employmentsRouter.delete("/:id", async (req, res) => {
   await db().transaction(async (tx) => {
     await asActor(tx, "user");
     if (!(await load(tx, me.id, eq(employments.id, id)))[0]) throw notFound("Employment");
-    await dropFacts(tx, me.id, id, false);
+    await dropFacts(tx, me.id, (await ownFacts(tx, me.id, id)).map((f) => f.id));
     await tx.delete(employments).where(eq(employments.id, id));
   });
   res.status(204).end();

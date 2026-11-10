@@ -86,6 +86,13 @@ describe.skipIf(!hasTestDb)("employments typed by the user", () => {
     expect(list.body.employments[0].results).toHaveLength(1);
   });
 
+  it("PATCH of an unchanged role keeps the same role fact", async () => {
+    const created = await request(app).post("/api/profile/employments").send(job());
+    const res = await request(app).patch(`/api/profile/employments/${created.body.employment.id}`).send({ location: "X" });
+    expect(res.body.employment.roleFactId).toBe(created.body.employment.roleFactId);
+    expect(res.body.employment.results).toEqual(created.body.employment.results);
+  });
+
   it("PATCH keeps a result a resume cites, unlinked", async () => {
     const created = await request(app).post("/api/profile/employments").send(job());
     const cited = created.body.employment.results[0].factId as string;

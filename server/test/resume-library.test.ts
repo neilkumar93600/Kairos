@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resumeInputSchema } from "@auto-career/shared";
 import { defaultResume, truthLockViolations } from "../src/services/resume-doc";
+import { roleFactText } from "../src/services/employment-text";
 import { bestBaseFor } from "../src/services/resume-library";
 
 const contact = { name: "A", email: "a@x.io", phone: "", location: "", links: [] };
@@ -31,6 +32,31 @@ describe("defaultResume: employment-aware (resume-02)", () => {
 
   it("is today's document without employments", () => {
     expect(defaultResume(facts, contact)).toEqual(defaultResume(facts.map(({ employmentId: _, ...f }) => f), contact));
+  });
+});
+
+describe("defaultResume: a job typed in the wizard", () => {
+  const job = { id: "j1", title: "Engineer", company: "Acme", datesText: "Mar 2021 to now", confirmed: true };
+  const head = { id: "h", kind: "role" as const, text: roleFactText(job), confirmed: true, employmentId: "j1" };
+  const metric = (id: string) => ({ id, kind: "metric" as const, text: `Result ${id}`, confirmed: true, employmentId: "j1" });
+  const entry = (facts: Parameters<typeof defaultResume>[0]) => defaultResume(facts, contact, [job]).sections.find((s) => s.kind === "experience")!.entries;
+
+  it("heads the entry with its role fact and lists only the results", () => {
+    const entries = entry([head, metric("m1"), metric("m2")]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ heading: "Engineer", headingFactId: "h" });
+    expect(entries[0]!.lines.map((l) => l.factIds[0])).toEqual(["m1", "m2"]);
+  });
+
+  it("still renders a job with a heading fact and no results", () => {
+    const entries = entry([head]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ headingFactId: "h", lines: [] });
+  });
+
+  it("keeps an imported role fact with other text as a line", () => {
+    const entries = entry([head, { ...metric("d"), kind: "role" as const, text: "Ran the on-call rota" }]);
+    expect(entries[0]!.lines.map((l) => l.text)).toEqual(["Ran the on-call rota"]);
   });
 });
 

@@ -8,7 +8,7 @@ export function datesText(startMonth: string | null, endMonth: string | null, is
   return endMonth ? `${label(startMonth)} to ${label(endMonth)}` : label(startMonth);
 }
 
-/** The role fact's text; capped at the 400 characters a fact allows. */
-export function roleFactText(title: string, company: string, dates: string | null): string {
-  return `${title} at ${company}${dates ? `, ${dates}` : ""}`.slice(0, 400);
+/** The role fact's text, which is also how the default resume tells a typed job's heading fact from a duty bullet; capped at the 400 characters a fact allows. */
+export function roleFactText(e: { title: string; company: string; datesText: string | null }): string {
+  return `${e.title} at ${e.company}${e.datesText ? `, ${e.datesText}` : ""}`.slice(0, 400);
 }

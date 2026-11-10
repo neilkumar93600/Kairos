@@ -11,8 +11,8 @@ describe("employment text", () => {
   });
 
   it("builds the role fact text", () => {
-    expect(roleFactText("Engineer", "Acme", "Mar 2021 to now")).toBe("Engineer at Acme, Mar 2021 to now");
-    expect(roleFactText("Engineer", "Acme", null)).toBe("Engineer at Acme");
-    expect(roleFactText("E".repeat(200), "A".repeat(200), "Mar 2021 to now").length).toBeLessThanOrEqual(400);
+    expect(roleFactText({ title: "Engineer", company: "Acme", datesText: "Mar 2021 to now" })).toBe("Engineer at Acme, Mar 2021 to now");
+    expect(roleFactText({ title: "Engineer", company: "Acme", datesText: null })).toBe("Engineer at Acme");
+    expect(roleFactText({ title: "E".repeat(200), company: "A".repeat(200), datesText: "Mar 2021 to now" }).length).toBeLessThanOrEqual(400);
   });
 });
