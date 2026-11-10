@@ -2,7 +2,8 @@ import { Router } from "express";
 import { and, eq, exists, inArray, not, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { z } from "zod";
-import { FACT_KINDS, confirmFactsRequestSchema, getPlan, httpUrl, preferencesSchema } from "@auto-career/shared";
+import type { OnboardingUpdate } from "@auto-career/shared";
+import { FACT_KINDS, confirmFactsRequestSchema, getPlan, httpUrl, onboardingUpdateSchema, preferencesSchema } from "@auto-career/shared";
 import { db } from "../db/client";
 import { applications, employments, facts, profiles, resumeProfiles, resumes, savedAnswers } from "../db/schema";
 import { asActor } from "../lib/actor";
@@ -43,10 +44,27 @@ profileRouter.put("/contact", validateBody(contactSchema), async (req, res) => {
   res.json({ profile });
 });
 
+/** Wizard answers; only the keys sent are written. A step that would move backwards is kept by profiles_guard (no error). */
+profileRouter.put("/onboarding", validateBody(onboardingUpdateSchema), async (req, res) => {
+  const { goals, targetRoles, targetCompanies, step } = req.body as OnboardingUpdate;
+  const [profile] = await db()
+    .update(profiles)
+    .set({
+      ...(goals !== undefined && { goals }),
+      ...(targetRoles !== undefined && { targetRoles }),
+      ...(targetCompanies !== undefined && { targetCompanies }),
+      ...(step !== undefined && { onboardingStep: step }),
+      updatedAt: new Date(),
+    })
+    .where(eq(profiles.userId, currentUser(req).id))
+    .returning(PROFILE_COLUMNS);
+  res.json({ profile });
+});
+
 profileRouter.put("/preferences", validateBody(preferencesSchema), async (req, res) => {
   const [profile] = await db()
     .update(profiles)
-    .set({ preferences: req.body, onboardingStep: "done", updatedAt: new Date() })
+    .set({ preferences: req.body, updatedAt: new Date() })
     .where(eq(profiles.userId, currentUser(req).id))
     .returning({ preferences: profiles.preferences });
   res.json({ preferences: profile?.preferences ?? null });

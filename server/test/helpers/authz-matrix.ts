@@ -65,6 +65,7 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "PUT /api/profile/contact": own("/api/profile/contact", {
     phone: "555-0100", city: "Austin", country: null, linkedinUrl: null, githubUrl: null, portfolioUrl: null,
   }),
+  "PUT /api/profile/onboarding": own("/api/profile/onboarding", { goals: ["find"], targetRoles: ["Software Engineer"] }),
   "PUT /api/profile/preferences": own("/api/profile/preferences", {
     ...DEFAULT_PREFERENCES, roles: ["Software Engineer"], workAuthorization: "citizen_or_pr",
   }),

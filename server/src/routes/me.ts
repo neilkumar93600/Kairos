@@ -16,7 +16,14 @@ meRouter.get("/", async (req, res) => {
   const me = currentUser(req);
   // Independent reads, in parallel (each takes its own pooled connection).
   const [[profile], [subscription], planId, balance, inFlight, unread] = await Promise.all([
-    db().select({ onboardingStep: profiles.onboardingStep, forwardingAddress: profiles.forwardingAddress }).from(profiles).where(eq(profiles.userId, me.id)),
+    db()
+      .select({
+        onboardingStep: profiles.onboardingStep,
+        forwardingAddress: profiles.forwardingAddress,
+        goals: profiles.goals,
+        targetRoles: profiles.targetRoles,
+        targetCompanies: profiles.targetCompanies,
+      }).from(profiles).where(eq(profiles.userId, me.id)),
     db().select(SUBSCRIPTION_COLUMNS).from(subscriptions).where(eq(subscriptions.userId, me.id)),
     planFor(db(), me.id),
     getBalance(db(), me.id),
@@ -28,7 +35,10 @@ meRouter.get("/", async (req, res) => {
     plan: publicPlan(getPlan(planId)),
     subscription: subscription ?? null,
     credits: { balance, inFlight, available: availableCredits(balance, inFlight) },
-    onboardingStep: profile?.onboardingStep ?? "resume",
+    onboardingStep: profile?.onboardingStep ?? "goals",
+    goals: profile?.goals ?? [],
+    targetRoles: profile?.targetRoles ?? [],
+    targetCompanies: profile?.targetCompanies ?? [],
     forwardingAddress: profile?.forwardingAddress ?? null,
     // Additive (05-api 12.1): the bell's badge without a second request.
     unreadNotifications: unread,

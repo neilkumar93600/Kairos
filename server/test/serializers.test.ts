@@ -57,6 +57,6 @@ describe("response pick-lists", () => {
     expect(keys(FACT_COLUMNS)).toEqual(["assertedBy", "confirmed", "confirmedAt", "createdAt", "id", "kind", "sourceSpan", "text", "updatedAt"]);
     expect(keys(PROFILE_COLUMNS)).not.toContain("sensitiveAnswersEnc");
     expect(keys(PROFILE_COLUMNS)).not.toContain("normalizedEmailHash");
-    expect(keys(PROFILE_COLUMNS)).toHaveLength(12);
+    expect(keys(PROFILE_COLUMNS)).toHaveLength(15);
   });
 });

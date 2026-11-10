@@ -306,7 +306,7 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       .update(schema.profiles)
       .set({ sensitiveAnswersEnc: Buffer.alloc(40, 1), normalizedEmailHash: "a".repeat(64) })
       .where(eq(schema.profiles.userId, me.id));
-    const keys = ["userId", "phone", "city", "country", "linkedinUrl", "githubUrl", "portfolioUrl", "preferences", "onboardingStep", "forwardingAddress", "createdAt", "updatedAt"];
+    const keys = ["userId", "phone", "city", "country", "linkedinUrl", "githubUrl", "portfolioUrl", "preferences", "goals", "targetRoles", "targetCompanies", "onboardingStep", "forwardingAddress", "createdAt", "updatedAt"];
     const got = await request(app).get("/api/profile");
     expect(Object.keys(got.body.profile).sort()).toEqual([...keys].sort());
     const contact = { phone: null, city: "Austin", country: null, linkedinUrl: "javascript:alert(1)", githubUrl: null, portfolioUrl: null };
