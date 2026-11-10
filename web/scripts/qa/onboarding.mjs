@@ -204,9 +204,11 @@ async function uploadErrors(browser, tag) {
 
 /**
  * Spec 7: a user at confirm-facts in a new tab (no stored import) gets the fact check, not an empty drop zone. Continue
- * builds the base from the facts; a failed /default is retried without a second POST /resumes.
+ * builds the base from the facts, and /default fails once. Then either:
+ * - "retry": Continue again repeats only /default (one POST /resumes);
+ * - "another": "Upload a different file" and a new upload make a new base from the new import, which becomes the default.
  */
-async function earlierFacts(browser, tag) {
+async function earlierFacts(browser, tag, then) {
   const seed = (data) => {
     for (const o of [data.me, data.profile]) o.onboardingStep = "confirm-facts";
     data.facts.push(
@@ -232,17 +234,38 @@ async function earlierFacts(browser, tag) {
   assert.equal(body.name, "Main resume");
   assert.equal(body.importId, undefined, "built from the facts, with no import");
   await page.getByRole("alert").filter({ hasText: refusal.error.message }).waitFor();
-  await next.click();
-  await heading(page, "Your rules");
-  assert.equal(count(calls, "POST /resumes"), 1, "a retry after a failed /default makes no second base resume");
-  assert.equal(calls.filter((c) => /^POST \/resumes\/[^/]+\/default$/.test(c)).length, 2, "the retry repeats only /default");
-  assert.equal(await page.evaluate(() => sessionStorage.getItem("kairos.onboarding.resumeId")), null, "the half-made id is cleared");
+  const defaults = () => calls.filter((c) => /^POST \/resumes\/[^/]+\/default$/.test(c));
+
+  if (then === "retry") {
+    await next.click();
+    await heading(page, "Your rules");
+    assert.equal(count(calls, "POST /resumes"), 1, "a retry after a failed /default makes no second base resume");
+    assert.equal(defaults().length, 2, "the retry repeats only /default");
+  } else {
+    await page.getByRole("button", { name: "Upload a different file" }).click();
+    const imported = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/api/profile/imports"));
+    await page.locator('input[type="file"]').setInputFiles(pdf("newer-resume.pdf"));
+    const { importId } = await (await imported).json();
+    await page.getByText(/facts? found\. Check each one\./).waitFor({ timeout: 15_000 });
+    const remade = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/api/resumes"));
+    await next.click();
+    const res = await remade;
+    const newId = (await res.json()).resume.id;
+    await heading(page, "Your rules");
+    assert.equal(count(calls, "POST /resumes"), 2, "a new import makes a new base resume, not the pending one");
+    assert.equal(res.request().postDataJSON().importId, importId, "built from the new import");
+    assert.equal(defaults().at(-1), `POST /resumes/${newId}/default`, "and the new one becomes the default");
+  }
+  assert.equal(await page.evaluate(() => sessionStorage.getItem("kairos.onboarding.resumeId")), null, "the pending base is cleared");
 
   assert.deepEqual(report.unmocked, [], "every API call is mocked");
   assert.deepEqual(errors.filter((e) => !e.includes("status of 500")), [], "no console or page errors beyond the refused /default");
   assert.deepEqual(warnings, [], "no next/image warnings");
   await ctx.close();
-  console.log(`ok earlier facts ${tag} ${VIEWPORTS[tag].width}px: confirm-facts reopens the fact check; failed /default retried with 1 POST /resumes`);
+  console.log(
+    `ok earlier facts ${then} ${tag} ${VIEWPORTS[tag].width}px: confirm-facts reopens the fact check; after a failed /default, ` +
+      (then === "retry" ? "the retry makes 1 POST /resumes" : "a new upload makes a new base that becomes the default"),
+  );
 }
 
 /** A stored id the server no longer knows (404): polling stops, the id is forgotten, the drop zone comes back. */
@@ -373,7 +396,8 @@ try {
   for (const tag of Object.keys(VIEWPORTS)) await upload(browser, tag);
   await uploadErrors(browser, "m");
   await existing(browser, "d");
-  for (const tag of ["m", "d"]) await earlierFacts(browser, tag);
+  for (const tag of ["m", "d"]) await earlierFacts(browser, tag, "retry");
+  for (const tag of ["m", "s"]) await earlierFacts(browser, tag, "another");
   await staleImport(browser, "d");
 } finally {
   await browser.close();

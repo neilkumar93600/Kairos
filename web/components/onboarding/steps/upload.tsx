@@ -19,7 +19,7 @@ const ACCEPT = [".pdf", ".docx", ...TYPES].join(",");
 
 // sessionStorage, so a reload or a retry picks up where it was. Storage can throw (blocked, private mode); then it starts over.
 const IMPORT = "kairos.onboarding.importId"; // the import being read
-const MADE = "kairos.onboarding.resumeId"; // a base resume made whose /default call failed: the retry only repeats /default
+const MADE = "kairos.onboarding.resumeId"; // { resumeId, from }: a base made whose /default failed; a retry from the same basis only repeats /default
 function read(key: string): string | null {
   try {
     return sessionStorage.getItem(key);
@@ -37,6 +37,19 @@ function write(key: string, value: string | null) {
 }
 export const storedImport = () => read(IMPORT);
 export const storeImport = (id: string | null) => write(IMPORT, id);
+
+// A pending base is reused only for what it was built from (the same import and target roles); anything else makes a new one.
+const basis = (importId: string | null, roles: string[]) => JSON.stringify([importId, roles]);
+function pendingBase(from: string): string | undefined {
+  try {
+    const p = JSON.parse(read(MADE) ?? "null") as { resumeId: string; from: string } | null;
+    return p?.from === from ? p.resumeId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+/** A new import, another file, or a lost import: a base pending from before must not become the default. */
+export const forgetPendingBase = () => write(MADE, null);
 
 export const failureOf = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
@@ -71,7 +84,9 @@ export function useImportCheck(importId: string | null, onReady: StepProps["onRe
           : null;
 
   useEffect(() => {
-    if (gone) storeImport(null);
+    if (!gone) return;
+    storeImport(null);
+    forgetPendingBase();
   }, [gone]);
 
   useEffect(() => {
@@ -89,8 +104,14 @@ export function useImportCheck(importId: string | null, onReady: StepProps["onRe
     onNext(async () => {
       if (nextAction(state) === "create") {
         const name = (old ? null : data?.fileName?.replace(/\.[^.]+$/, "").trim().slice(0, 80)) || "Main resume";
-        const made = read(MADE) ?? undefined;
-        const { id } = await createBase.mutateAsync({ name, targetRoles: state.targetRoles, importId: live ?? undefined, resumeId: made, onCreated: (x) => write(MADE, x) });
+        const from = basis(live, state.targetRoles);
+        const { id } = await createBase.mutateAsync({
+          name,
+          targetRoles: state.targetRoles,
+          importId: live ?? undefined,
+          resumeId: pendingBase(from),
+          onCreated: (resumeId) => write(MADE, JSON.stringify({ resumeId, from })),
+        });
         setBaseResumeId(id);
       }
       // A base resume exists now, so a later visit must not reopen this import or reuse that id.
@@ -166,6 +187,7 @@ export function UploadStep({ onReady }: StepProps) {
     if (f.size > MAX_BYTES) return setError("This file is over 5 MB. Upload a smaller one or paste the text.");
     setError(null);
     setFile({ name: f.name, size: f.size });
+    forgetPendingBase();
     startImport.mutate(
       { file: f, name: f.name },
       {
@@ -191,7 +213,14 @@ export function UploadStep({ onReady }: StepProps) {
           line={file ? `${file.name}, ${kb(file.size)}` : check.fileName}
           action={
             check.old ? (
-              <button type="button" className="ob-link" onClick={() => setAnother(true)}>
+              <button
+                type="button"
+                className="ob-link"
+                onClick={() => {
+                  forgetPendingBase();
+                  setAnother(true);
+                }}
+              >
                 Upload a different file
               </button>
             ) : null

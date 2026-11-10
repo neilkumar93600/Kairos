@@ -5,7 +5,7 @@ import { Button } from "@/components/shared/button";
 import { Field, Textarea } from "@/components/shared/field";
 import { useOnboarding } from "@/hooks/use-onboarding";
 import type { StepProps } from "../wizard";
-import { failureOf, Reading, storedImport, storeImport, useImportCheck } from "./upload";
+import { failureOf, forgetPendingBase, Reading, storedImport, storeImport, useImportCheck } from "./upload";
 
 const MIN = 200; // the server's minimum for pasted text
 
@@ -22,6 +22,7 @@ export function PasteStep({ onReady }: StepProps) {
     e.preventDefault();
     if (n < MIN) return setError(`Paste the whole resume: at least ${MIN} characters, and this has ${n}.`);
     setError(null);
+    forgetPendingBase();
     startImport.mutate(
       { text, name: "Main resume" },
       {
