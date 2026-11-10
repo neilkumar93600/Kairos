@@ -20,6 +20,8 @@ export interface TenantIds {
   resumeId: string;
   revisionId: string;
   importId: string;
+  /** The wizard's typed job (WP onboarding-wizard). */
+  employmentId: string;
 }
 
 /** Exempt from the two-user check, with the reason: no session user, or a credential of its own. */
@@ -127,6 +129,10 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "POST /api/profile/imports": own("/api/profile/imports", { text: `${"Built and ran billing services in TypeScript. ".repeat(6)}` }),
   "GET /api/profile/imports/:id": { request: (t) => ({ path: `/api/profile/imports/${t.importId}` }) },
   "POST /api/profile/facts/confirm": { request: (t) => ({ path: "/api/profile/facts/confirm", body: { ids: [t.factId] } }) },
+  "GET /api/profile/employments": own("/api/profile/employments"),
+  "POST /api/profile/employments": own("/api/profile/employments", { title: "Engineer", company: "Acme", location: null, startMonth: "2021-03", endMonth: null, isCurrent: true, results: ["Cut billing latency by 40%."] }),
+  "PATCH /api/profile/employments/:id": { request: (t) => ({ path: `/api/profile/employments/${t.employmentId}`, body: { title: "Staff Engineer" } }) },
+  "DELETE /api/profile/employments/:id": { request: (t) => ({ path: `/api/profile/employments/${t.employmentId}` }) },
   "GET /api/resumes": own("/api/resumes"),
   "POST /api/resumes": { request: (t) => ({ path: "/api/resumes", body: { from: "duplicate", sourceId: t.resumeId, name: "Copy" } }) },
   "POST /api/resumes/tailor": { request: (t) => ({ path: "/api/resumes/tailor", body: { jobId: t.jobId } }) },

@@ -12,6 +12,7 @@ import { contactRouter } from "./contact";
 import { creditsRouter } from "./credits";
 import { extensionRouter } from "./extension";
 import { filesRouter } from "./files";
+import { employmentsRouter } from "./employments";
 import { importsRouter } from "./imports";
 import { inboxRouter } from "./inbox";
 import { jobsRouter } from "./jobs";
@@ -54,6 +55,7 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   router.use("/me", authed, meRouter);
   // Before /profile, so an import meets requireAuth and the limits once (WP-17).
   router.use("/profile/imports", authed, limits.upload, importsRouter);
+  router.use("/profile/employments", authed, employmentsRouter);
   router.use("/profile", authed, profileRouter);
   router.use("/matches", authed, matchesRouter);
   router.use("/jobs", authed, jobsRouter);
