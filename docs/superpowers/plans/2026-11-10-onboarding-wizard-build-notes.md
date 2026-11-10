@@ -1,0 +1,101 @@
+# Onboarding wizard: build notes
+
+Decisions made while building docs/superpowers/plans/2026-11-10-onboarding-wizard.md (branch feat/onboarding-wizard, 7d5c2ec..58dcbf2). Each ruling names what it costs if wrong. Deferred minors are known, accepted gaps for later.
+
+## Rulings
+
+- Ruling: work on a branch in place in Downloads/Kairos, not a separate worktree — the owner views UI only in this folder (memory: kairos-ui-work-where-owner-looks) — cost if wrong: unrelated uncommitted UI edits share the tree; mitigated by staging only named paths.
+- Ruling: T1 exports both `employmentFieldsSchema` (plain object) and `employmentInputSchema` (fields + refinements); T4 PATCH validates `employmentFieldsSchema.partial()` and re-applies the same two refinements to the merged row — zod 4 forbids .partial() on refined objects — cost if wrong: one extra export.
+- Ruling: T6 `openAt` returns `{ goals, step, source }`; old confirm-facts users get `source: "upload"`, so `stepsFor(goals, source)` contains the step it opens at; the T6 test asserts `{ goals: ["find"], step: "upload", source: "upload" }` — the spec says they resume at 3a's fact check — cost if wrong: a field the shell ignores.
+- Ruling: T8's (onboarding) layout wraps children in the existing `<Providers>` (web/components/layout/providers.tsx) and `<Toaster>` — hooks need the QueryClient — cost if wrong: none.
+- Ruling: pure web helpers live in `web/lib/onboarding/`: `phaseLabel` in `upload-phase.ts` (T9), `educationFact`, `skillFacts`, `languagesFact`, `draftKey` in `form-facts.ts` (T10); components import them — unit tests must not import client components — cost if wrong: two small files.
+- Ruling: Task 2 does not edit the profiles_guard comment in 0007_profiles.sql — applied migrations are immutable (INV-21, lint-migrations --base) — the new rank order is documented in 0019 instead — cost if wrong: a stale comment in 0007.
+- Ruling: parse job moves a profile to confirm-facts from goals|target|resume (was resume only) — new default 'goals' would otherwise strand parsed users and break parse-resume.int.test.ts:118; profiles_guard still blocks backward moves — cost if wrong: a user who never reached the resume step jumps to confirm-facts after a parse, which matches having a resume.
+- Ruling: 0019 re-adds profiles_onboarding_step_ck NOT VALID, as 0006 did — re-adding it validated would scan pre-0006 rows and could stop the deploy — cost if wrong: old rows stay unvalidated, as today.
+- Ruling: Task 4 PATCH/DELETE keep (and unlink from the employment) any fact the `cited` predicate in profile.ts DELETE /facts/:id flags — cited by a resume OR an application — not only sent applications; the wizard's own base resume cites these facts, deleting them would break its truth lock — cost if wrong: orphan confirmed facts stay in the fact bank after an edit.
+- Ruling: Task 4 Important (plan-mandated conflict: a kind:"role" fact AND "2 lines") — defaultResume treats the role fact whose text === roleFactText(employment) as the entry's heading fact only, never a line; an employment with that heading fact and no result lines still renders (0 lines); imported role facts (any other text) stay lines as today — duplicate heading bullet is worse than one exact-text rule — cost if wrong: a user who imports a duty bullet word-for-word equal to "Title at Company, dates" loses it as a line.
+- Ruling: Task 4 minors 1 and 2 promoted into fix round 1 — PATCH keeps the role fact and result facts whose text is unchanged (no orphan copies that would surface as loose Experience entries); dropFacts scoped to role+metric facts of the employment (no silent delete of a fact whose kind the user changed) — both change resume output or lose data — cost if wrong: a slightly larger fix diff.
+- Ruling: Task 6 openAt rule (plan gave only tests) — done → goals (answers kept); no goals + old step resume → find/source, confirm-facts → find/upload(source upload); look-only → done; else first missing of: target (no roles), upload (step confirm-facts and no base resume), source (no base resume and (find|build, or interview with furthest step ≤ resume)), rules (find and no preferences), else done — spec 7 "opens at the first step whose data is missing" — cost if wrong: a returning user lands one step early or late.
+- Ruling: Task 7 pollImport is a standalone hook usePollImport(importId), not a member of useOnboarding() — rules of hooks forbid returning a hook factory result conditionally — cost if wrong: one extra import in Task 9.
+- Ruling: Task 8 renders a minimal pending placeholder for wizard steps built by Tasks 9-11 (source, upload, paste, form, rules, done) so the shell is testable on its own — branch is unreleased between tasks — cost if wrong: none, later tasks replace it.
+- Ruling: Task 8 renders <main> in the wizard (not the layout) with the layout's skip link targeting it — a layout-level main would wrap the art aside — cost if wrong: none for a11y.
+- Ruling: Task 8 uses next/image `preload` instead of deprecated `priority` (Next 16) — same effect — cost if wrong: none.
+- Ruling: carry to Task 11: change the Build goal line so it does not promise a template step until project 2 (e.g. "Upload or fill it in, then shape it in the resume builder.") — spec 2 puts the template step in project 2 — cost if wrong: copy differs from the prototype.
+- Ruling: Task 8 minors 1-3 promoted into fix round 1 — (1) disable step inputs while a save is pending (else go(following) can fall back to index 0), (2) wrap next/image fill images in an absolute container (sticky parent warns 3x per load), (3) hasBaseResume from GET /api/resumes (any base resume) instead of "confirmed fact exists" (spec 5.3 separates facts from a resume; heuristic skips the source step) — each is a correctness or console-noise defect in code this task owns — cost if wrong: a larger fix diff.
+- Ruling (revises promoted minor 3): hasBaseResume = rank(onboardingStep) > rank(confirm-facts) only, dropping the confirmed-facts disjunct; NOT GET /api/resumes, which calls library.defaultBase and creates a base resume as a side effect (server/src/routes/resumes.ts:37) — cost if wrong: a user who made a base resume but left before the next save is offered the source step again (nextAction/createBase still reuse via wizard state within a session).
+- Ruling: Task 9 Back + upload of a different file reuses the base resume made from the first file (nextAction reuse) — Review Focus 2 asks for reuse within a session; the second file's facts still land in the fact bank and the builder — cost if wrong: the base resume lacks the second file's section order.
+- Ruling: Task 10 drops the form's Headline field — a resume headline must cite confirmed facts (truth rule 10, shared/src/schemas.ts:159-164) and no fact kind holds a typed headline; the target position from step 2 covers it — cost if wrong: one field fewer than the spec table.
+- Ruling: Task 10 saves the full name via Better Auth `authClient.updateUser({ name })` (web/lib/auth-client) — the account owns the name; no server route needed — cost if wrong: none.
+- Ruling: Task 9 paste goes through POST /profile/imports with JSON text (plan Task 9), not ResumeForm/POST /profile/resumes (spec 5.3c) — spec section 11 left this choice to the builder; imports return an import id and avoid the Free plan profile limit — cost if wrong: none.
+- Ruling: Task 9 minors 1, 2 and 5 promoted into fix round 1 — (1) 404 on poll clears the stored id and stops polling, (2) createBase records the id after POST /resumes so a retry only repeats /default (Review Focus 1: one base resume), (5) the "Paste the text instead" escape stays visible at 390 px — endless poll, duplicate base and a hidden escape route are defects in paths this task owns — cost if wrong: a larger fix diff.
+- Ruling: Task 10 fact-section drafts are kept after save (not cleared, as the brief said) — facts cannot refill structured fields; the draft is the refill source within a tab — cost if wrong: stale drafts linger in sessionStorage until the tab closes.
+- Ruling: Task 10 minors 1, 2, 3 and 5 promoted into fix round 1 — (1) Continue checks every section for unsaved changes and jumps to the first, (2) forgetPendingBase() when a form section saves a change, (3) track fact ids per entry key instead of pairing by text (a PATCH could rewrite a cited fact with unrelated text: truth lock), (5) scope drafts to the user id (shared-device leak of another user's entries and expected salary) — truth lock, privacy and lost input — cost if wrong: a larger fix diff.
+- Ruling: Task 11 hides "Skip setup" on the Done step — pressing it there would overwrite the user's goals with ["look"]; spec 4's "every step" means steps with something to skip — cost if wrong: one fewer exit on a screen that already has its primary exit.
+- Ruling: Task 11 Skip on the rules step saves no preferences — a skipped step saves nothing — cost if wrong: a Find user has no rules until Preferences.
+- Ruling: Task 11 keeps the title "Interview practice is coming" (spec 4 and calls list 10.7, owner-approved; F9 is planned) but drops "We will tell you when practice opens" (no notification exists) — owner rule: never promise behaviour the product lacks — cost if wrong: slightly less reassuring copy.
+- Ruling: Task 11 minors 4 and 5 promoted into fix round 1 — (4) rules step waits for useProfile() data before freezing `start` (else a returning user's excluded lists and cap reset to defaults), (5) Rules and Done hint copy must match existing product copy verbatim (PreferencesForm, Settings) or be removed — data loss and owner no-invented-facts rule — cost if wrong: a slightly larger fix diff.
+- Ruling: Task 12 drops the reply-forwarding item from the setup checklist — the web never receives forwardingState and `me.forwardingAddress` exists for every profile, so the item is always "done" (false) — same reasoning as the extension item (spec 7) — cost if wrong: forwarding is only nudged from the Done screen and Settings.
+- Ruling: Task 12 changes the goals "Just look around" line to point at "Run setup again" on Profile instead of the Overview checklist (which shows nothing for look users) — owner rule: no false claims — cost if wrong: copy differs from the prototype.
+- Ruling: Task 12 treats a user with no goals who has not reached done as Find in the checklist (shows Continue setup) — spec 7 maps old-step users to find; a brand-new user who lands on /dashboard would otherwise have no way back to the wizard — cost if wrong: an extra checklist for someone who never chose Find.
+- Ruling: Skip setup keeps the user's goals — sends { step: "done" }, plus goals ["look"] only when no goals were chosen (revises the Task 8 ruling) — spec 4 says the checklist offers to resume; erasing goals hides it — cost if wrong: none.
+- Ruling: interview-only users may skip the resume-source step (spec 4 table) — cost if wrong: none.
+- Ruling: checklist items for done users link to /preferences (rules) and /profile (resume) instead of /onboarding — a done user would restart at Goals — cost if wrong: none.
+- Ruling: rules step roles = target roles then saved preference roles, case-insensitive dedupe, cap 10 — overwriting silently drops a returning user's roles — cost if wrong: a returning user keeps roles they may have wanted gone (editable in Preferences).
+- Ruling: once a base resume exists in this run (state.baseResumeId or server step past confirm-facts), the resume steps (upload, paste, form) show a saved state with a link to the resume builder instead of editable inputs — edits after Back never reach the reused base and leave duplicate role facts (revises Review Focus 2 / Task 9-10 reuse rulings) — cost if wrong: a user fixing a typo does it in the builder, not the wizard.
+- Ruling: details note becomes "Kept encrypted. Never sent to an AI model."; the work authorization section shows only when goals include find — owner rule, nothing reads details yet; the value is saved only by the Find rules step — cost if wrong: Build users are not asked work authorization.
+- Ruling: also fixed before merge — application-details logs use logUserHash; chip text typed without Enter is committed on Continue and blur; legacy users' implied Find goal is sent on the first save; addChip stores normalized spacing; sign-out clears kairos.onboarding.* keys in the three signOut handlers — owner/process rules and cheap — cost if wrong: none.
+- Ruling: the resume "saved" state does not treat server step `done` as having a base — spec 5.3a lets "Run setup again" add a resume again, and skippers have none — cost if wrong: a done user can make another base resume through the wizard.
+- Ruling: with no target roles, the rules roles field opens prefilled with the saved roles and saves exactly what it holds (no merge-back) — merging would re-add roles the user just removed in a visible field — cost if wrong: none.
+- Ruling: after Skip setup the step is done, so the checklist shows its items (links to /profile, /preferences) without a "Continue setup" button — consistent with the done-user link ruling — cost if wrong: none.
+
+## Deferred minors
+
+- Task 1: minor (deferred): refinement tests assert only success===false, not issue path (onboarding.test.ts:123,126)
+- Task 1: minor (deferred): no test for look-only accepted, duplicate goals, company cap
+- Task 2: minor (deferred): goals int tests assert only rejections; no positive {"look"} / 3-goal update; no profiles_targets_ck test
+- Task 2: minor (deferred): profile.ts onboardingStep column not typed $type<OnboardingStep>()
+- Task 3: minor (deferred): no int test for me.ts no-profile fallback (goals, [], [])
+- Task 3: minor (deferred): PUT /onboarding with no profile row returns 200 {profile: undefined} (same as /contact)
+- Task 4: minor (deferred): PATCH/DELETE write by id without userId in WHERE; concurrent delete → 500 (employments.ts:111,126)
+- Task 4: minor (deferred): PATCH fallback when employment has no profile uses second pool connection and moves facts but not the employment (employments.ts:112)
+- Task 4: minor (deferred): no test for DELETE with a cited fact, nor 404 on imported employment
+- Task 4: minor (deferred): PATCH rewrites created_at on every kept fact (ordering key) even when order unchanged; kept role fact jumps to "now" in profile lists (employments.ts:82)
+- Task 4: minor (deferred): no test for cited role fact whose text changes (unlink + insert)
+- Task 5: minor (deferred): int test name claims "merged with other stored answers" but seeds no other key; no route-level test that an existing key survives and stays hidden (onboarding.int.test.ts:117)
+- Task 5: minor (deferred): publicDetails casts noticePeriod/expectedSalary without shape check (application-details.ts:32,34)
+- Task 5: minor (deferred): read-modify-write not atomic; needs tx + FOR UPDATE when a second writer of sensitive_answers_enc lands (profile.ts:51-66)
+- Task 5: minor (deferred): readDetails / readDetailsForWrite near-identical wrappers (could take a mode)
+- Task 6: minor (deferred): rest param named `any` in flow.ts:23
+- Task 6: minor (deferred): endFor `others` untested for 3 goals / look exclusion; serverStepFor form/paste/target/done untested; unknown onboardingStep path implicit
+- Task 6: minor (deferred): hasConfirmedFacts accepted but unused by openAt (brief-mandated input)
+- Task 7: minor (deferred): usePollImport refetchInterval has no backoff/cap on repeated errors (use-onboarding.ts:123)
+- Task 7: minor (deferred): mock never returns 409 details_unreadable; mock PUT /profile/onboarding does not validate body
+- Task 7: minor (deferred): NOT_FOUND const declared after use site in mock-api.mjs (readability)
+- Task 8: minor (deferred): placeholder steps advance the forward-only server step (temporary until Tasks 9-11)
+- Task 8: minor (deferred): loading/error frame has no h1; phone aside is an empty "Your brief" landmark
+- Task 8: minor (deferred): rejected chip (duplicate/short/cap) gives no message; Skip this step on target leaves unsaved positions in the brief
+- Task 8: minor (deferred): useOnboarding() fires GET /profile/employments on every wizard load; Continue waits for invalidation refetches
+- Task 8: minor (deferred): check mock-suite.mjs unused `facts` lint warning origin (Task 7?)
+- Task 8: minor (deferred): inert during save blurs a focused field inside the stage; after a failed save focus is on body (wizard.tsx inert line)
+- Task 8: minor (deferred): refused-save viewport assertion runs at 390/1440, not 360
+- Task 9: minor (deferred): reload mid-paste reopens as "Upload your resume"; ImportDetail.sourceKind "text" could select paste
+- Task 9: minor (deferred): no way to replace a wrong file within one run after Back (saved state hides drop zone)
+- Task 9: minor (deferred): .ob-src__icon and .ob-drop transition colour/border (paint-only, off under reduced motion)
+- Task 9: minor (deferred): orphan base after failed /default stays in library and counts toward cap; "Upload a different file" without uploading clears the pending base (extra resume)
+- Task 10: minor (deferred): project link not validated (projects.tsx:17)
+- Task 10: minor (deferred): details rule repeats applicationDetailsSchema by hand (details.tsx:42-45)
+- Task 10: minor (deferred): mock POST /profile/facts returns fixed id f-added and does not persist; server-education branch of the required check unexercised
+- Task 10: minor (deferred): chip text not added with Enter dropped on leave; focus lands on body after required-check jump
+- Task 10: minor (deferred): kit.tsx imports failureOf from steps/upload; work-auth imports a dashboard constant
+- Task 10: minor (deferred): session record wins over server facts; a fact deleted elsewhere while a record is open makes a PATCH fail (single-tab)
+- Task 10: minor (deferred): removing an early skills chip regroups later chips and PATCHes those groups' facts
+- Task 10: minor (deferred): identical typed entries become two POSTs (no client dedupe)
+- Task 10: minor (deferred): no QA check for forgetPendingBase after edits; new unit tests had no RED run
+- Task 10: minor (deferred): kairos.onboarding.importId and .resumeId keys stay unscoped by user (resumeId basis now form:<userId>)
+- Task 11: minor (deferred): Done links stay live while the done save is pending or failed (done.tsx:505-530)
+- Task 11: minor (deferred): stale "Fix the rules marked above." footer error until next Continue; rules edits (except work auth) lost on Back
+- Task 11: minor (deferred): brief card has no Rules row (spec 8)
+- Task 11: minor (deferred): rules.tsx and done.tsx covered only by the Playwright QA script, no unit tests
+- Task 11: minor (deferred): FORWARDING Done item paraphrases settings/page.tsx:24 instead of quoting; look line "Nothing more to answer now. Start from the Overview." has no shipped source (no product claim)
+- Task 12: minor (deferred): a failed facts or profile query silently omits the checklist incl. "Continue setup" (overview-panel.tsx:110-112); Overview now also waits on facts and profile
+- Task 12: minor (deferred): interview card shows forever for interview users; a company without a role is dropped
