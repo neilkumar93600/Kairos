@@ -8,6 +8,7 @@ import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from ".
 
 /** Migration 0019: new profiles start at goals, the forward-only guard uses the seven-step order, goals and targets are checked. CI only (no local Postgres). */
 if (hasTestDb) process.env.DATABASE_URL = testDbUrl("onboarding");
+process.env.DATA_KEKS ??= `v1:${Buffer.from([...Array(32).keys()]).toString("base64")}`;
 
 const { createApp } = await import("../src/app");
 const { closeDb } = await import("../src/db/client");
@@ -112,5 +113,21 @@ describe.skipIf(!hasTestDb)("onboarding wizard columns", () => {
     await set({ goals: ["find"], targetRoles: ["Designer"], targetCompanies: ["Acme"] });
     const res = await request(app).get("/api/me");
     expect(res.body).toMatchObject({ goals: ["find"], targetRoles: ["Designer"], targetCompanies: ["Acme"], onboardingStep: "goals" });
+  });
+  it("application details round trip, encrypted at rest and merged with other stored answers", async () => {
+    const empty = await request(app).get("/api/profile/application-details");
+    expect(empty.body.details).toEqual({ noticePeriod: null, openToRelocation: null, expectedSalary: null });
+    const body = { noticePeriod: "1_month", openToRelocation: true, expectedSalary: { amount: 90000, currency: "USD" } };
+    const put = await request(app).put("/api/profile/application-details").send(body);
+    expect(put.status).toBe(200);
+    expect(put.body.details).toEqual(body);
+    expect((await request(app).get("/api/profile/application-details")).body.details).toEqual(body);
+    const enc = (await row()).sensitiveAnswersEnc!;
+    expect(() => JSON.parse(Buffer.from(enc).toString("utf8"))).toThrow();
+    const { decrypt } = await import("../src/lib/crypto");
+    const { detailsAad } = await import("../src/services/application-details");
+    expect(JSON.parse(decrypt(enc, detailsAad(userId)).toString("utf8"))).toEqual(body);
+    expect((await request(app).get("/api/profile")).body.profile).not.toHaveProperty("sensitiveAnswersEnc");
+    expect((await request(app).put("/api/profile/application-details").send({ noticePeriod: "soon" })).status).toBe(422);
   });
 });

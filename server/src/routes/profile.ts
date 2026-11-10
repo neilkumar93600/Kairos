@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { and, eq, inArray, not } from "drizzle-orm";
 import { z } from "zod";
-import type { OnboardingUpdate } from "@auto-career/shared";
-import { FACT_KINDS, confirmFactsRequestSchema, getPlan, httpUrl, onboardingUpdateSchema, preferencesSchema } from "@auto-career/shared";
+import type { ApplicationDetails, OnboardingUpdate } from "@auto-career/shared";
+import { FACT_KINDS, applicationDetailsSchema, confirmFactsRequestSchema, getPlan, httpUrl, onboardingUpdateSchema, preferencesSchema } from "@auto-career/shared";
 import { db } from "../db/client";
 import { employments, facts, profiles, resumeProfiles, savedAnswers } from "../db/schema";
 import { asActor } from "../lib/actor";
@@ -11,6 +11,8 @@ import { FACT_COLUMNS, PROFILE_COLUMNS, RESUME_PROFILE_COLUMNS } from "../lib/se
 import { currentUser } from "../middleware/require-auth";
 import { parseParam, validateBody } from "../middleware/validate";
 import { hit } from "../middleware/rate-limit";
+import { detailsAad, mergeDetails, publicDetails, readDetails } from "../services/application-details";
+import { encrypt } from "../lib/crypto";
 import { citedFact } from "../services/fact-citations";
 import { countImport, createImport } from "../services/import/imports";
 import { planFor } from "../services/submissions";
@@ -42,6 +44,27 @@ profileRouter.put("/contact", validateBody(contactSchema), async (req, res) => {
     .where(eq(profiles.userId, currentUser(req).id))
     .returning(PROFILE_COLUMNS);
   res.json({ profile });
+});
+
+/** Notice period, relocation, expected salary: encrypted in profiles.sensitive_answers_enc, merged with what else is stored there. */
+const storedDetails = async (userId: string) => {
+  const [row] = await db().select({ enc: profiles.sensitiveAnswersEnc }).from(profiles).where(eq(profiles.userId, userId));
+  if (!row) throw notFound("Profile");
+  return readDetails(row.enc, userId);
+};
+
+profileRouter.get("/application-details", async (req, res) => {
+  res.json({ details: publicDetails(await storedDetails(currentUser(req).id)) });
+});
+
+profileRouter.put("/application-details", validateBody(applicationDetailsSchema), async (req, res) => {
+  const userId = currentUser(req).id;
+  const merged = mergeDetails(await storedDetails(userId), req.body as ApplicationDetails);
+  await db()
+    .update(profiles)
+    .set({ sensitiveAnswersEnc: encrypt(JSON.stringify(merged), detailsAad(userId)), updatedAt: new Date() })
+    .where(eq(profiles.userId, userId));
+  res.json({ details: publicDetails(merged) });
 });
 
 /** Wizard answers; only the keys sent are written. A step that would move backwards is kept by profiles_guard (no error). */
