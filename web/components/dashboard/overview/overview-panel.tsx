@@ -5,12 +5,14 @@ import { ArrowUpRight } from "@phosphor-icons/react";
 import { useApplications } from "@/hooks/use-applications";
 import { useMatches } from "@/hooks/use-matches";
 import { useMe } from "@/hooks/use-me";
+import { useFacts, useProfile } from "@/hooks/use-profile";
 import { formatDate } from "@/lib/utils";
 import { Button, ButtonLink } from "../../shared/button";
 import { ErrorNote } from "../../shared/error-note";
 import { DataRow, Panel } from "../../shared/panel";
 import { Skeleton } from "../../shared/skeleton";
 import { EmptyEm, EmptyState } from "../../shared/empty-state";
+import { InterviewCard } from "./interview-card";
 import { SetupChecklist } from "./setup-checklist";
 import { SubmittedChart } from "./submitted-chart";
 
@@ -53,12 +55,15 @@ function Retry({ error, onRetry }: { error: unknown; onRetry: () => void }) {
 /** Where the search stands today. */
 export function OverviewPanel() {
   const me = useMe();
+  const facts = useFacts();
+  const profile = useProfile();
   const matches = useMatches();
   const drafts = useApplications("draft");
   const submitted = useApplications("submitted");
 
   if (me.error) return <Retry error={me.error} onRetry={() => me.refetch()} />;
-  if (!me.data)
+  // The checklist waits for facts and rules inside the skeleton, so it never pops in above loaded figures.
+  if (!me.data || facts.isPending || profile.isPending)
     return (
       <div className="flex max-w-5xl flex-col gap-6" aria-busy="true" aria-label="Loading">
         <Skeleton className="h-74 w-full rounded-card lg:h-42" />
@@ -74,7 +79,11 @@ export function OverviewPanel() {
   // The next step now lives in GreetingHeader, beside the page title.
   return (
     <div className="flex max-w-5xl flex-col gap-6">
-      <SetupChecklist me={me.data} />
+      {/* If either query failed, done is unknown: leave the checklist out rather than nag about finished steps. */}
+      {facts.data && profile.data ? (
+        <SetupChecklist me={me.data} hasFact={facts.data.some((f) => f.confirmed)} hasRules={profile.data.preferences != null} />
+      ) : null}
+      <InterviewCard me={me.data} />
 
       <div className="glass-panel grid grid-cols-2 gap-1 rounded-card p-3 lg:grid-cols-4">
         <Figure label="Credits available" value={me.data.credits.available} href="/billing" />

@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { EnvelopeSimple, PencilSimple } from "@phosphor-icons/react";
 import { useApplications } from "@/hooks/use-applications";
 import { useMe } from "@/hooks/use-me";
@@ -99,6 +100,15 @@ export function ProfileHeader() {
                 <EnvelopeSimple size={16} weight="light" aria-hidden className="shrink-0 text-icon" />
                 <span className="min-w-0 wrap-anywhere">{user.email}</span>
               </p>
+              {/* Spec 7: the wizard opens at step 1 with the saved answers; it never resets the server's step. */}
+              {me.data?.onboardingStep === "done" ? (
+                <Link
+                  href="/onboarding"
+                  className="inline-flex min-h-11 items-center self-start text-sm font-medium text-ink underline underline-offset-4 hover:no-underline focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-ink"
+                >
+                  Run setup again
+                </Link>
+              ) : null}
             </>
           ) : (
             <>

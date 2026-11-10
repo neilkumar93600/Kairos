@@ -26,7 +26,7 @@ const hideDevIndicator = (page) => page.addStyleTag({ content: "nextjs-portal { 
  * `setup(data, ctx)` may change the fixtures (or the context) before the first request. `calls` logs every API request
  * as "METHOD /path", including those a later page.route answers itself.
  */
-async function open(browser, viewport, setup = () => {}) {
+async function open(browser, viewport, setup = () => {}, start = "/onboarding") {
   const ctx = await browser.newContext({ viewport });
   await ctx.addCookies([{ name: "better-auth.session_token", value: "mock", url: base }]);
   const page = await ctx.newPage();
@@ -51,10 +51,16 @@ async function open(browser, viewport, setup = () => {}) {
     if (req.method() === "PUT" && new URL(req.url()).pathname === "/api/profile/onboarding") puts.push(req.postDataJSON());
     return handleApi(route, data, report);
   });
-  await page.goto(`${base}/onboarding`, { waitUntil: "networkidle", timeout: 120_000 });
+  await page.goto(`${base}${start}`, { waitUntil: "networkidle", timeout: 120_000 });
   await hideDevIndicator(page);
   return { ctx, page, report, errors, warnings, puts, calls };
 }
+
+/** The Overview has rendered past its skeleton: the checklist and the interview card are decided by then. */
+const overview = (page) => page.getByRole("heading", { level: 2, name: "Recent activity" }).waitFor({ timeout: 60_000 });
+const checklist = (page) => page.getByRole("heading", { level: 2, name: "Finish setting up" });
+const interviewCard = (page) => page.getByRole("heading", { level: 2, name: "Interview practice is coming" });
+const runAgain = (page) => page.getByRole("link", { name: "Run setup again" });
 
 const heading = (page, name) => page.getByRole("heading", { level: 1, name }).waitFor({ timeout: 15_000 });
 const option = (page, name) => page.getByRole("button", { name: new RegExp(`^${name}`) });
@@ -173,6 +179,12 @@ async function findBuild(browser, tag) {
   await snap("done");
   await primary.click();
   await page.waitForURL("**/resume", { timeout: 60_000 });
+
+  // A confirmed fact and saved rules: nothing is left to set up, so the Overview shows no checklist.
+  await page.goto(`${base}/dashboard`, { waitUntil: "networkidle", timeout: 120_000 });
+  await overview(page);
+  assert.equal(await checklist(page).count(), 0, "find+build with everything done: no checklist");
+  assert.equal(await interviewCard(page).count(), 0, "no interview goal, no interview card");
 
   assert.equal(count(calls, "POST /resumes"), 0, "the reused facts make no base resume");
   assert.deepEqual(report.unmocked, [], "every API call is mocked");
@@ -294,11 +306,19 @@ async function interviewOnly(browser, tag) {
   await snapper(page, tag)("done-interview");
   await primary.click();
   await page.waitForURL("**/dashboard", { timeout: 60_000 });
+  await interviewCard(page).waitFor({ timeout: 60_000 });
+  // Scoped to the card: the Done screen can stay in the DOM, hidden, after the client-side navigation.
+  const card = page.locator("section").filter({ has: interviewCard(page) });
+  await card.getByText("Your target is saved: Frontend Developer at Company 101.", { exact: true }).waitFor();
+  assert.equal(await card.getByText(/tell you|notify|let you know/i).count(), 0, "the card promises no notification either");
+  assert.equal(await checklist(page).count(), 0, "interview only lists no setup items: no checklist");
+  await noOverflow(page, "overview with the interview card");
+  await snapper(page, tag)("overview-interview");
   assert.deepEqual(report.unmocked, [], "every API call is mocked");
   assert.deepEqual(errors, [], "no console or page errors");
   assert.deepEqual(warnings, [], "no next/image warnings");
   await ctx.close();
-  console.log(`ok interview only ${tag} ${VIEWPORTS[tag].width}px: no rules; Done primary /dashboard, no other links`);
+  console.log(`ok interview only ${tag} ${VIEWPORTS[tag].width}px: no rules; Done primary /dashboard, no other links; Overview card names the role, no checklist`);
 }
 
 /**
@@ -333,11 +353,53 @@ async function look(browser, tag) {
   await page.getByRole("button", { name: "Skip setup", exact: true }).click();
   await page.waitForURL("**/dashboard", { timeout: 60_000 });
   assert.deepEqual(puts.at(-1), { goals: ["look"], step: "done" });
+  await overview(page);
+  assert.equal(await checklist(page).count(), 0, "look lists no setup items: no checklist");
+  assert.equal(await interviewCard(page).count(), 0, "look: no interview card");
+
+  // The goals step points look users at the Profile to run setup again.
+  await page.goto(`${base}/profile`, { waitUntil: "networkidle", timeout: 120_000 });
+  await runAgain(page).waitFor({ timeout: 60_000 });
+  assert.equal(await runAgain(page).getAttribute("href"), "/onboarding");
+  await noOverflow(page, "profile with Run setup again");
+  await snapper(page, tag)("profile-done");
   assert.deepEqual(report.unmocked, [], "every API call is mocked");
   assert.deepEqual(errors.filter((e) => !e.includes("status of 500")), [], "no console or page errors beyond the refused save");
   assert.deepEqual(warnings, [], "no next/image warnings");
   await ctx.close();
-  console.log(`ok look ${tag} ${VIEWPORTS[tag].width}px: Done to /dashboard; failed save shows Try again and stays; Skip setup lands on /dashboard`);
+  console.log(`ok look ${tag} ${VIEWPORTS[tag].width}px: Done to /dashboard; failed save shows Try again and stays; Skip setup lands on /dashboard; no checklist; Profile has Run setup again`);
+}
+
+/**
+ * A Find user who left mid-setup (a confirmed fact, no rules yet, step rules) opening the Overview: the checklist shows
+ * "Continue setup", the resume done and the rules open, both to /onboarding; the Profile has no "Run setup again".
+ */
+async function midSetup(browser, tag) {
+  const seed = (data) => {
+    withFact(data);
+    for (const o of [data.me, data.profile]) Object.assign(o, { goals: ["find"], targetRoles: ["Frontend Developer"], onboardingStep: "rules" });
+  };
+  const { ctx, page, report, errors, warnings } = await open(browser, VIEWPORTS[tag], seed, "/dashboard");
+  await overview(page);
+  await checklist(page).waitFor();
+  assert.equal(await page.getByRole("link", { name: "Continue setup" }).getAttribute("href"), "/onboarding");
+  const row = (name) => page.locator("li", { hasText: name });
+  assert.match(await row("Add your resume").textContent(), /, done$/, "a confirmed fact marks the resume done");
+  assert.match(await row("Save your fit rules").textContent(), /, to do/, "no preferences: the rules are open");
+  assert.equal(await page.getByRole("link", { name: "Set fit rules" }).getAttribute("href"), "/onboarding");
+  assert.equal(await page.getByRole("link", { name: /^(Open settings|Connect)/ }).count(), 0, "no forwarding or extension item");
+  assert.equal(await interviewCard(page).count(), 0, "no interview goal, no interview card");
+  await noOverflow(page, "overview mid-setup");
+  await snapper(page, tag)("overview-mid");
+
+  await page.goto(`${base}/profile`, { waitUntil: "networkidle", timeout: 120_000 });
+  await page.getByRole("heading", { level: 1, name: "New User" }).waitFor({ timeout: 60_000 });
+  assert.equal(await runAgain(page).count(), 0, "Run setup again waits for Done");
+  assert.deepEqual(report.unmocked, [], "every API call is mocked");
+  assert.deepEqual(errors, [], "no console or page errors");
+  assert.deepEqual(warnings, [], "no next/image warnings");
+  await ctx.close();
+  console.log(`ok mid-setup ${tag} ${VIEWPORTS[tag].width}px: checklist with Continue setup, resume done, rules open; no Run setup again on Profile`);
 }
 
 // A one-page PDF with no text; the mock reads only the file name.
@@ -961,6 +1023,7 @@ async function edges(browser, tag) {
 
 const browser = await chromium.launch();
 try {
+  for (const tag of Object.keys(VIEWPORTS)) await midSetup(browser, tag);
   for (const tag of Object.keys(VIEWPORTS)) await walk(browser, tag);
   for (const tag of ["m", "d"]) await edges(browser, tag);
   for (const tag of Object.keys(VIEWPORTS)) await findBuild(browser, tag);

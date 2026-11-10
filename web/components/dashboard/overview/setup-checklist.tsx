@@ -1,24 +1,31 @@
 import Link from "next/link";
 import type { Me } from "@/hooks/use-me";
+import { ButtonLink } from "../../shared/button";
 import { Panel } from "../../shared/panel";
 import { cn } from "@/lib/utils";
 
 type Item = { title: string; hint: string; done: boolean; href: string; cta: string };
 
-/** Setup checklist from state /me already returns. The extension is left out: it exposes no connected state. */
-export function SetupChecklist({ me }: { me: Me }) {
+/**
+ * Setup checklist from the goals (spec 7): the resume for Find or Build, done once a fact is confirmed; the fit rules for
+ * Find, done once preferences are saved. Reply forwarding and the extension are left out: nothing the web receives can
+ * mark them done. No goals before Done counts as Find: an account from before the wizard (spec 7) or one that has not
+ * answered yet, which "Continue setup" sends back to the wizard. Look or Interview alone lists nothing, so no panel.
+ */
+export function SetupChecklist({ me, hasFact, hasRules }: { me: Me; hasFact: boolean; hasRules: boolean }) {
   const step = me.onboardingStep;
+  const find = me.goals.includes("find") || (me.goals.length === 0 && step !== "done");
   const items: Item[] = [
-    { title: "Add your resume", hint: "Upload it so Kairos can read the facts in it.", done: step !== "resume", href: "/onboarding", cta: "Add resume" },
-    { title: "Confirm your facts", hint: "Tailoring only uses facts you confirmed.", done: step === "done", href: "/onboarding", cta: "Confirm facts" },
-    { title: "Save your fit rules", hint: "Matches only arrive for jobs that pass your bar.", done: step === "done", href: "/onboarding", cta: "Set fit rules" },
-    { title: "Set up reply forwarding", hint: "Forward employer replies to your private address.", done: Boolean(me.forwardingAddress), href: "/settings", cta: "Open settings" },
-  ];
+    find || me.goals.includes("build")
+      ? { title: "Add your resume", hint: "Upload it or fill it in. Tailoring only uses facts you confirmed.", done: hasFact, href: "/onboarding", cta: "Add resume" }
+      : null,
+    find ? { title: "Save your fit rules", hint: "Matches only arrive for jobs that pass your bar.", done: hasRules, href: "/onboarding", cta: "Set fit rules" } : null,
+  ].filter((i) => i !== null);
   const done = items.filter((i) => i.done).length;
   if (done === items.length) return null;
 
   return (
-    <Panel title="Finish setting up" flush>
+    <Panel title="Finish setting up" flush action={step === "done" ? null : <ButtonLink href="/onboarding" variant="secondary">Continue setup</ButtonLink>}>
       <div className="flex flex-col gap-2 px-6 pb-5">
         <p className="text-sm text-body tabular-nums">{done} of {items.length} done</p>
         <div role="progressbar" aria-label="Setup progress" aria-valuemin={0} aria-valuemax={items.length} aria-valuenow={done} className="h-1 w-full overflow-hidden rounded-pill bg-sunk">
