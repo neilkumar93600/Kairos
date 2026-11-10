@@ -64,14 +64,14 @@ export function Wizard() {
   const facts = useFacts();
 
   if (me.data && profile.data && facts.data) {
-    const confirmed = facts.data.some((f) => f.confirmed);
     const opened = openAt({
       goals: me.data.goals,
       targetRoles: me.data.targetRoles,
       onboardingStep: me.data.onboardingStep,
-      hasConfirmedFacts: confirmed,
-      // No resume list hook yet: a base resume counts as made once the server step is past confirm-facts or a fact is confirmed.
-      hasBaseResume: confirmed || rank(me.data.onboardingStep) > rank("confirm-facts"),
+      hasConfirmedFacts: facts.data.some((f) => f.confirmed),
+      // Confirmed facts are not a resume (spec 5.3), and GET /resumes would create a default base as a side effect,
+      // so a base resume counts as made only once the server step is past confirm-facts.
+      hasBaseResume: rank(me.data.onboardingStep) > rank("confirm-facts"),
       hasPreferences: profile.data.preferences != null,
     });
     // Read once: the refetch after each save must not reset answers in progress.
@@ -202,16 +202,18 @@ function Shell({ initial }: { initial: WizardState }) {
       >
         <Progress steps={steps} step={step} />
         {rows.length ? <p className="ob-phone-brief">Your brief: {rows.map((r) => r[1]).join(" · ")}</p> : null}
-        <div ref={stage} key={step} className="ob-stage" data-dir={dir === 0 ? undefined : dir > 0 ? "next" : "back"}>
+        {/* inert while saving: next() already captured this step's answers, so they must not change under it. */}
+        <div ref={stage} key={step} className="ob-stage" inert={pending} data-dir={dir === 0 ? undefined : dir > 0 ? "next" : "back"}>
           <StepBody step={step} onReady={setReady} />
         </div>
-        {error ? (
-          <p role="alert" className="ob-error">
-            <WarningCircle size={18} aria-hidden />
-            {error}
-          </p>
-        ) : null}
         <div className="ob-foot">
+          {/* In the sticky footer, beside Continue, so a phone shows it without scrolling. */}
+          {error ? (
+            <p role="alert" className="ob-error">
+              <WarningCircle size={18} aria-hidden />
+              {error}
+            </p>
+          ) : null}
           <Button variant="secondary" className={cn("ob-back h-12 px-6 text-base", index === 0 && "invisible")} disabled={pending} onClick={api.back}>
             <ArrowLeft size={18} aria-hidden className="ob-arrow" />
             Back

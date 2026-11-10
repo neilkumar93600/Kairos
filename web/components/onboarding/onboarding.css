@@ -22,6 +22,7 @@
     border-radius: 0 0 var(--r-media) var(--r-media);
     background: linear-gradient(180deg, var(--art-sky), var(--art-haze) 55%, var(--art-meadow));
   }
+  .ob-art__paint { position: absolute; inset: 0; }
   .ob-art img { object-fit: cover; opacity: 0; transform: scale(1.04); transition: opacity 900ms var(--ob-ease), transform 1.6s var(--ob-ease); }
   .ob-art img.is-on { opacity: 1; transform: none; }
   .ob-hour {
@@ -100,10 +101,11 @@
   .ob-chip svg { flex: none; }
 
   /* ===== Footer and text buttons ===== */
-  .ob-error { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px; color: var(--bad); font-size: 15px; }
+  /* A failed save's message takes the footer's first line, above Back and Continue. */
+  .ob-error { display: flex; flex-basis: 100%; align-items: flex-start; gap: 8px; margin: 0; color: var(--bad); font-size: 15px; }
   .ob-error svg { flex: none; margin-top: 2px; }
   .ob-foot {
-    position: sticky; bottom: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    position: sticky; bottom: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
     padding: 16px 0 max(16px, env(safe-area-inset-bottom)); border-top: 1px solid var(--ob-line);
     background: var(--canvas);   /* solid, so its hairline never crosses the content scrolling under it */
   }
