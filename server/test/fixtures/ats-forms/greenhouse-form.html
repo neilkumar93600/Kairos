@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>{{TITLE}} - Acme</title></head>
+<body>
+<main id="main">
+<h1>{{TITLE}}</h1>
+<form id="application_form" method="post" enctype="multipart/form-data" action="">
+  <div class="field"><label for="first_name">First Name *</label><input type="text" id="first_name" name="first_name" required></div>
+  <div class="field"><label for="last_name">Last Name *</label><input type="text" id="last_name" name="last_name" required></div>
+  <div class="field"><label for="email">Email *</label><input type="email" id="email" name="email" required></div>
+  <div class="field"><label for="phone">Phone</label><input type="tel" id="phone" name="phone"></div>
+  <div class="field"><label for="resume">Resume/CV *</label><input type="file" id="resume" name="resume" required></div>
+  <div class="field"><label for="linkedin_profile">LinkedIn Profile</label><input type="text" id="linkedin_profile" name="linkedin_profile"></div>
+  <div class="field"><label for="why_acme">Why do you want to work at Acme? *</label><textarea id="why_acme" name="job_application[answers_attributes][1][text_value]" required></textarea></div>
+  <div class="field"><label for="authorized">Are you legally authorized to work in the United States? *</label>
+    <select id="authorized" name="job_application[answers_attributes][2][boolean_value]" required><option value="">--</option><option value="1">Yes</option><option value="0">No</option></select></div>
+  <div class="field"><label for="sponsor">Will you now or in the future require visa sponsorship? *</label>
+    <select id="sponsor" name="job_application[answers_attributes][3][boolean_value]" required><option value="">--</option><option value="1">Yes</option><option value="0">No</option></select></div>
+  <fieldset id="eeoc"><legend>Voluntary Self-Identification</legend>
+    <div class="field"><label for="gender">Gender</label><select id="gender" name="job_application[gender]"><option value="">--</option><option value="1">Male</option><option value="2">Female</option><option value="3">Decline To Self Identify</option></select></div>
+    <div class="field"><label for="hispanic">Are you Hispanic/Latino?</label><select id="hispanic" name="job_application[hispanic_ethnicity]"><option value="">--</option><option value="1">Yes</option><option value="2">No</option><option value="3">Decline To Self Identify</option></select></div>
+    <div class="field"><label for="veteran">Veteran Status</label><select id="veteran" name="job_application[veteran_status]"><option value="">--</option><option value="1">I am a veteran</option><option value="3">Decline To Self Identify</option></select></div>
+    <div class="field"><label for="disability">Disability Status</label><select id="disability" name="job_application[disability_status]"><option value="">--</option><option value="1">Yes</option><option value="3">I do not want to answer</option></select></div>
+  </fieldset>
+  <button type="submit" id="submit_app">Submit Application</button>
+</form>
+</main>
+</body></html>
