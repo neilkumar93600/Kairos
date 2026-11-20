@@ -6,6 +6,7 @@ import type { DraftRequest } from "@auto-career/shared";
 import { useDraftText } from "@/hooks/use-drafts";
 import type { Fact } from "@/hooks/use-profile";
 import { ApiError } from "@/lib/api";
+import { AiStatus } from "../../shared/ai-status";
 import { Button } from "../../shared/button";
 import { Textarea } from "../../shared/field";
 import { apiMessage, inlineLink } from "./send-controls";
@@ -41,6 +42,8 @@ export function DraftAssist({
   const draft = useDraftText(applicationId);
   const [text, setText] = useState<string | null>(null); // null = no proposal open
   const [editing, setEditing] = useState(false);
+  // When the last request settled; the start is the mutation's own submittedAt, set as `ask` fires.
+  const [endedAt, setEndedAt] = useState(0);
   const id = useId();
 
   const refused = draft.error instanceof ApiError && draft.error.code === "profile_only";
@@ -57,19 +60,31 @@ export function DraftAssist({
         setText(r.text);
         setEditing(false);
       },
+      // Runs before the observer re-renders with the outcome, so "done" and "failed" always have their end time.
+      onSettled: () => setEndedAt(Date.now()),
     });
   const factIds = draft.data?.factIds ?? [];
+  const status = draft.isPending ? "working" : draft.isSuccess ? "done" : draft.isError ? "failed" : null;
 
   return (
     <div className="flex flex-col gap-3">
-      {text === null ? (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      {/* The status stays mounted across the swap from button to draft, so its states animate into each other. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {text === null ? (
           <Button variant="secondary" size="sm" onClick={ask} disabled={draft.isPending} className="min-h-11">
             {draft.isPending ? "Drafting…" : request.kind === "cover_letter" ? "Draft cover letter" : "Draft from my facts"}
           </Button>
-          {draft.isPending ? <span className="text-sm text-faint">Writing from your confirmed facts.</span> : null}
-        </div>
-      ) : (
+        ) : null}
+        <AiStatus
+          state={status}
+          startedAt={draft.submittedAt}
+          endedAt={endedAt}
+          working="Writing from your confirmed facts"
+          done="Drafted"
+          detail={factIds.length ? `from ${factIds.length} ${factIds.length === 1 ? "fact" : "facts"}` : undefined}
+        />
+      </div>
+      {text === null ? null : (
         <section aria-label={`Draft for ${label}`} className="flex flex-col gap-4 rounded-input border border-line bg-sunk/40 p-4">
           <div className="grid gap-4 @2xl:grid-cols-2">
             <div className="flex min-w-0 flex-col gap-1.5">

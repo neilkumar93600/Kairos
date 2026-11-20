@@ -1,0 +1,107 @@
+/* App toasts (components/ui/sonner.tsx). Sonner runs unstyled: it keeps position, stacking, swipe and timers;
+   everything visual is here. Selectors carry an extra class or attribute so they outrank Sonner's injected sheet.
+   Motion (owner-approved app exception): ease-out only, no springs, transform / opacity / stroke-dashoffset only,
+   all of it inside the no-preference block below and off under html[data-motion="reduced"], so reduced motion
+   shows the end state at once. */
+
+ol.kx-toaster {
+  --kx-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  font-family: inherit;
+}
+
+/* Card: Paper White, 16px radius, the --edge ring plus a small two-layer shadow. */
+.kx-toaster .kx-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 16px;
+  box-shadow: var(--edge), 0 1px 2px rgb(0 0 0 / 0.04), 0 3px 10px rgb(0 0 0 / 0.06);
+  transition-timing-function: var(--kx-ease);
+}
+@media (min-width: 601px) {
+  /* At 600px and below Sonner sizes toasts to the viewport minus the mobile offset. */
+  .kx-toaster .kx-toast { width: var(--width); }
+}
+.kx-toaster .kx-toast:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+/* Collapsed stack: cards behind the front one show as plain paper (Sonner does this only for styled toasts). */
+.kx-toaster .kx-toast[data-expanded="false"][data-front="false"] > * { opacity: 0; }
+
+.kx-toaster .kx-toast__content { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.kx-toaster .kx-toast__title { font-size: 14px; font-weight: 500; line-height: 1.35; letter-spacing: -0.01em; color: var(--ink); }
+.kx-toaster .kx-toast__description { font-size: 13px; line-height: 1.4; color: var(--body); }
+
+/* Status tile: 28px Bone disc, glyph in Ink (Error Red for errors). Children share one grid cell so the
+   spinner and the result glyph swap in place. */
+.kx-toaster .kx-toast__icon {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9999px;
+  background: var(--sunk);
+  color: var(--ink);
+}
+.kx-toaster .kx-toast__icon > * { grid-area: 1 / 1; }
+.kx-toaster .kx-toast[data-type="error"] .kx-toast__icon { color: var(--bad); }
+.kx-toaster .kx-toast__glyph { display: grid; place-items: center; }
+.kx-toaster .kx-toast__check { stroke-dasharray: 1; }
+
+/* Sonner wraps the custom spinner in .sonner-loader (absolutely centred, its own transition). Put it in the grid. */
+.kx-toaster .kx-toast__loader { position: static; display: grid; place-items: center; transform: none; transition: none; }
+.kx-toaster .kx-toast .kx-toast__loader[data-visible="false"] { opacity: 0; transform: scale(0.5); }
+
+/* Close: 20px disc on the top-left corner, shown on hover and focus, always on touch. 32px hit area. */
+.kx-toaster .kx-toast__close {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--surface);
+  color: var(--icon);
+  box-shadow: var(--edge), 0 1px 2px rgb(0 0 0 / 0.06);
+  transform: translate(-35%, -35%);
+  opacity: 0;
+  cursor: pointer;
+}
+.kx-toaster .kx-toast__close::after { content: ""; position: absolute; inset: -6px; border-radius: 9999px; }
+.kx-toaster .kx-toast__close:hover { background: var(--sunk); color: var(--ink); }
+.kx-toaster .kx-toast:is(:hover, :focus-within) .kx-toast__close { opacity: 1; }
+.kx-toaster .kx-toast__close:focus-visible { opacity: 1; outline: 2px solid var(--ink); outline-offset: 3px; }
+@media (hover: none) {
+  .kx-toaster .kx-toast__close { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Tile: scale 0.85 to 1 and fade, 240ms after a 120ms delay. A plain success check draws once the tile is in. */
+  html:not([data-motion="reduced"]) .kx-toaster .kx-toast__icon { animation: kx-toast-tile 240ms var(--kx-ease) 120ms both; }
+  html:not([data-motion="reduced"]) .kx-toaster .kx-toast__check { animation: kx-toast-draw 300ms var(--kx-ease) 200ms both; }
+  html:not([data-motion="reduced"]) .kx-toaster .kx-toast__spin { animation: kx-toast-spin 700ms linear infinite; }
+
+  /* Promise resolved: spinner out (scale 0.5, fade, 140ms), result in (scale 0.4 to 1, 260ms), check draws (300ms). */
+  html:not([data-motion="reduced"]) .kx-toaster .kx-toast__loader { transition: opacity 140ms var(--kx-ease), transform 140ms var(--kx-ease); }
+  html:not([data-motion="reduced"]) .kx-toaster .kx-toast[data-promise="true"] .kx-toast__glyph { animation: kx-toast-pop 260ms var(--kx-ease) both; }
+  html:not([data-motion="reduced"]) .kx-toaster .kx-toast[data-promise="true"] .kx-toast__check { animation-delay: 80ms; }
+
+  html:not([data-motion="reduced"]) .kx-toaster .kx-toast__close { transition: opacity 150ms var(--kx-ease), background-color 150ms var(--kx-ease); }
+}
+
+/* Sonner turns its own slide and stack transitions off for the OS setting only; the site switch turns them off too. */
+html[data-motion="reduced"] .kx-toaster .kx-toast,
+html[data-motion="reduced"] .kx-toaster .kx-toast > * { transition: none !important; animation: none !important; }
+
+@keyframes kx-toast-tile { from { opacity: 0; transform: scale(0.85); } }
+@keyframes kx-toast-pop { from { opacity: 0; transform: scale(0.4); } }
+@keyframes kx-toast-draw { from { stroke-dashoffset: 1; } }
+@keyframes kx-toast-spin { to { transform: rotate(1turn); } }

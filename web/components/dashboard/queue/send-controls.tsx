@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { toast } from "sonner";
 import type { SubmitChannel } from "@auto-career/shared";
 import { useApplicationActions } from "@/hooks/use-applications";
 import { ApiError } from "@/lib/api";
@@ -81,6 +82,25 @@ export function ApproveError({ error }: { error: unknown }) {
   );
 }
 
+/**
+ * Success toast for an approve. Pass what the server moved (`approved.length`), not what was asked for; drafts it
+ * left behind are still being prepared, so 0 shows nothing. Errors stay inline in ApproveError.
+ */
+export function toastApproved(count: number, channel: SubmitChannel) {
+  if (!count) return;
+  const one = count === 1;
+  toast.success(one ? "Draft approved" : `${count} drafts approved`, {
+    description:
+      channel === "cloud"
+        ? one
+          ? "The cloud applier sends it, and the receipt appears in Applications."
+          : "The cloud applier sends them, and each receipt appears in Applications."
+        : one
+          ? "It waits in the extension side panel until you press Send."
+          : "They wait in the extension side panel until you press Send.",
+  });
+}
+
 /** Withdraw with a second press to confirm. Drafts and approved applications can be withdrawn until they are sent. */
 export function WithdrawButton({ id, noun }: { id: string; noun: string }) {
   const { withdraw } = useApplicationActions();
@@ -97,7 +117,19 @@ export function WithdrawButton({ id, noun }: { id: string; noun: string }) {
     <div className="flex flex-col items-start gap-3">
       <p className="text-sm text-ink">Withdraw this {noun}? It will not be sent, and no credit is used.</p>
       <div className="flex flex-wrap gap-3">
-        <Button variant="secondary" className="text-bad" disabled={withdraw.isPending} onClick={() => withdraw.mutate(id)}>
+        <Button
+          variant="secondary"
+          className="text-bad"
+          disabled={withdraw.isPending}
+          // mutateAsync, not mutate callbacks: the refetch after a withdraw can unmount this button first, and
+          // per-call callbacks then never run. A failure is ignored here because withdraw.error shows it below.
+          onClick={() =>
+            withdraw.mutateAsync(id).then(
+              () => toast.success("Withdrawn", { description: `This ${noun} will not be sent, and no credit is used.` }),
+              () => {},
+            )
+          }
+        >
           {withdraw.isPending ? "Withdrawing…" : "Yes, withdraw"}
         </Button>
         <Button variant="ghost" disabled={withdraw.isPending} onClick={() => setAsking(false)}>

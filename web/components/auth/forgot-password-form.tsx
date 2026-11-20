@@ -6,12 +6,13 @@ import { useState, type FormEvent } from "react";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "../shared/button";
 import { Field, Input } from "../shared/field";
-import { EMAIL_RE, INPUT, useFieldErrors } from "./fields";
+import { EMAIL_RE, FormError, INPUT, useFieldErrors } from "./fields";
 
 export function ForgotPasswordForm() {
   const router = useRouter();
   const { errors, check, clear } = useFieldErrors();
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -21,8 +22,14 @@ export function ForgotPasswordForm() {
     });
     if (!ok) return;
     setPending(true);
-    // Same response whether or not the account exists, so this form cannot be used to probe emails.
-    await authClient.emailOtp.sendVerificationOtp({ email, type: "forget-password" });
+    setError(null);
+    // The API answers the same whether or not the account exists, so this form cannot be used to probe emails. An
+    // error here is a real failure (the API down, or too many codes), so say it instead of moving on as if one was sent.
+    const { error: err } = await authClient.emailOtp.sendVerificationOtp({ email, type: "forget-password" });
+    if (err) {
+      setPending(false);
+      return setError(err.status === 429 ? "Too many codes for now. Wait a little, then try again." : "Could not send the code right now. Try again in a moment.");
+    }
     router.push(`/reset-password?email=${encodeURIComponent(email)}`);
   }
 
@@ -32,6 +39,7 @@ export function ForgotPasswordForm() {
         <Field label="Email" htmlFor="email" hint="We will send a 6-digit code if an account exists." error={errors.email}>
           <Input id="email" name="email" type="email" autoComplete="email" required aria-invalid={Boolean(errors.email) || undefined} className={INPUT} />
         </Field>
+        <FormError>{error}</FormError>
         <Button type="submit" disabled={pending} className="w-full">
           {pending ? "Sending…" : "Send reset code"}
         </Button>

@@ -1,7 +1,7 @@
 /*
  * Landing motion vocabulary M1 to M12 (07 8; 08 9.3). Transform and opacity only; CSS only, no Lenis, no GSAP.
  * Three rules kept from Drop 1 (08 7):
- *   (a) the kt-odometer rules and the --dur-* token swap on .lp, which odometer.tsx relies on for reduced motion;
+ *   (a) the --dur-* token swap on .lp, which every timed move here relies on for reduced motion;
  *   (b) hidden start states exist only under a JavaScript-written attribute: html[data-motion="full"] (written by
  *       the head script and MotionPreference) or data-post="pending", so everything is visible with scripts off;
  *   (c) html[data-motion="reduced"] is the single reduced-motion switch, with the media query as the first-paint
@@ -28,17 +28,6 @@
     --stagger: 70ms;
     --dist-rise: 12px;
     --dist-reveal: 16px;
-    /* Older names still read by the navbar, odometer and citation demo. */
-    --ease-post: var(--ease-out);
-    --ease-utility: cubic-bezier(0, 0, 0.58, 1);
-    --ease-retract: var(--ease-in);
-    --ease-linear: linear;
-    --dur-swap: 120ms;
-    --dur-row: 240ms;
-    --dur-fall: 320ms;
-    --dur-ink: 360ms;
-    --stagger-char: 18ms;
-    --dist-fall: 14px;
   }
 
   /* M1 soft float: hero card, spotlight floating card, step chips. Offset siblings with --float-delay (-1.75s). */
@@ -82,20 +71,11 @@
   }
   @keyframes lp-reveal { from { opacity: 0; translate: 0 var(--dist-reveal); } to { opacity: 1; translate: none; } }
 
-  /* M6 connector draw, scrubbed by scroll across the gap. Fully drawn unless scroll-driven animations exist,
-     the viewport is 1024 or wider and motion is full.
-     ponytail: a top-to-bottom clip reveal, not stroke-dashoffset; every segment runs downward, so it reads the
-     same, and dash offsets are unreliable with vector-effect: non-scaling-stroke. */
-  @supports (animation-timeline: view()) {
-    @media (min-width: 1024px) {
-      html[data-motion="full"] .lp .lp-joint > svg {
-        animation: lp-draw linear both; animation-timeline: view(); animation-range: entry 20% cover 60%;
-      }
-    }
-  }
+  /* A top-to-bottom clip reveal, read by the M13 trace below.
+     ponytail: not stroke-dashoffset; dash offsets are unreliable with vector-effect: non-scaling-stroke. */
   @keyframes lp-draw { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0 0 0 0); } }
 
-  /* M7 gradient drift: the ::before field of .lp-glow-dusk, .lp-dark-card or a tone panel's art layer.
+  /* M7 gradient drift: the ::before field of .lp-dark-card or a tone panel's art layer.
      At most two drifting fields per viewport. */
   .lp .lp-drift::before { animation: lp-drift 48s var(--ease-in-out) infinite alternate both; }
   @keyframes lp-drift {
@@ -103,8 +83,7 @@
     to { transform: translate(2%, 1%) rotate(1.5deg); }
   }
 
-  /* M8 toggle slide: .lp-seg transitions use --dur-toggle (landing.css). Swapped copy cross-fades. */
-  .lp .lp-crossfade { transition: opacity var(--dur-fade) var(--ease-out); }
+  /* M8 toggle slide: .lp-seg transitions use --dur-toggle (landing.css). */
 
   /* M9 accordion: the shadcn Accordion in entry-09 (panel timing on --dur-acc there). The icon is
      <span class="lp-plus" aria-hidden="true"> in the trigger: its vertical bar turns to make a minus when expanded. */
@@ -176,29 +155,14 @@
       transform var(--dur-rise) var(--ease-out) calc(var(--i, 0) * var(--stagger));
   }
 
-  /* Refusal line fall (step 2): glyphs drop and fade, 18ms apart. citation-demo.tsx also skips it when reduced. */
-  .lp [data-cite-state="refused"] .kt-letter-fall [style*="--i"] {
-    display: inline-block; transform: translateY(var(--dist-fall)); opacity: 0;
-    transition: transform var(--dur-fall) var(--ease-retract) calc(var(--i) * var(--stagger-char)),
-      opacity var(--dur-fall) var(--ease-retract) calc(var(--i) * var(--stagger-char));
-  }
-
-  /* (a) kt-odometer, kt-odometer-price: digit columns translate to their digit; never wrap or spin. */
-  .lp .kt-odometer__col { display: inline-block; width: 1ch; height: 1lh; overflow: clip; vertical-align: top; }
-  .lp .kt-odometer__stack {
-    display: flex; flex-direction: column; transform: translateY(calc(var(--d, 0) * -1lh));
-    transition: transform var(--dur-row) var(--ease-post);
-  }
-  .lp .kt-odometer-price .kt-odometer__stack { transition-duration: var(--dur-ink); }
-
   /* ===== Reduced motion (c): the footer control or the OS setting unless the visitor chose Full. =====
      0.01ms, not 0, so transitionend and animationend still fire. Loops and scroll-linked moves stop outright. */
   html[data-motion="reduced"] .lp {
     --dur-fade: 0.01ms; --dur-lift: 0.01ms; --dur-toggle: 0.01ms; --dur-acc: 0.01ms; --dur-art: 0.01ms;
-    --dur-sign: 0.01ms; --dur-rise: 0.01ms; --dur-swap: 0.01ms; --dur-row: 0.01ms; --dur-fall: 0.01ms; --dur-ink: 0.01ms;
-    --stagger: 0ms; --stagger-char: 0ms; --dist-rise: 0px; --dist-reveal: 0px; --dist-fall: 0px;
+    --dur-sign: 0.01ms; --dur-rise: 0.01ms;
+    --stagger: 0ms; --dist-rise: 0px; --dist-reveal: 0px;
   }
-  html[data-motion="reduced"] .lp :is(.lp-float, .lp-parallax, .lp-enter, .lp-reveal, .lp-sign, .lp-joint > svg, .lp-trace),
+  html[data-motion="reduced"] .lp :is(.lp-float, .lp-parallax, .lp-enter, .lp-reveal, .lp-sign, .lp-trace),
   html[data-motion="reduced"] .lp .lp-drift::before {
     animation: none !important; translate: none;
   }
@@ -208,10 +172,10 @@
   @media (prefers-reduced-motion: reduce) {
     html:not([data-motion="full"]) .lp {
       --dur-fade: 0.01ms; --dur-lift: 0.01ms; --dur-toggle: 0.01ms; --dur-acc: 0.01ms; --dur-art: 0.01ms;
-      --dur-sign: 0.01ms; --dur-rise: 0.01ms; --dur-swap: 0.01ms; --dur-row: 0.01ms; --dur-fall: 0.01ms; --dur-ink: 0.01ms;
-      --stagger: 0ms; --stagger-char: 0ms; --dist-rise: 0px; --dist-reveal: 0px; --dist-fall: 0px;
+      --dur-sign: 0.01ms; --dur-rise: 0.01ms;
+      --stagger: 0ms; --dist-rise: 0px; --dist-reveal: 0px;
     }
-    html:not([data-motion="full"]) .lp :is(.lp-float, .lp-parallax, .lp-enter, .lp-reveal, .lp-sign, .lp-joint > svg, .lp-trace),
+    html:not([data-motion="full"]) .lp :is(.lp-float, .lp-parallax, .lp-enter, .lp-reveal, .lp-sign, .lp-trace),
     html:not([data-motion="full"]) .lp .lp-drift::before {
       animation: none !important; translate: none;
     }

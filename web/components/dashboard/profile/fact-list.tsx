@@ -6,6 +6,7 @@ import { FACT_KINDS, type FactKind } from "@auto-career/shared";
 import { useFacts, useProfileActions, type Fact } from "@/hooks/use-profile";
 import { ApiError } from "@/lib/api";
 import { Button } from "../../shared/button";
+import { DeleteConfirm } from "../../shared/delete-confirm";
 import { EmptyEm, EmptyState } from "../../shared/empty-state";
 import { ErrorNote } from "../../shared/error-note";
 import { Field, Select, Textarea } from "../../shared/field";
@@ -145,7 +146,7 @@ export function FactList({ emptyAction }: { emptyAction?: ReactNode }) {
                 confirming={updateFact.isPending && updateFact.variables?.id === f.id && updateFact.variables.confirmed === true}
                 removing={deleteFact.isPending && deleteFact.variables === f.id}
                 onConfirm={() => updateFact.mutate({ id: f.id, confirmed: true })}
-                onRemove={() => deleteFact.mutate(f.id)}
+                onRemove={() => deleteFact.mutateAsync(f.id)}
                 onEdit={() => setEditing(f.id)}
                 onCancel={() => setEditing(null)}
                 // Editing never changes `confirmed`: the server keeps the flag, so a confirmed fact stays confirmed in the user's own words.
@@ -209,7 +210,7 @@ function FactCell({
   confirming: boolean;
   removing: boolean;
   onConfirm: () => void;
-  onRemove: () => void;
+  onRemove: () => Promise<unknown>;
   onEdit: () => void;
   onCancel: () => void;
   onSave: (text: string) => void;
@@ -242,9 +243,8 @@ function FactCell({
           <Button size="sm" variant="ghost" className={`${HIT} first:-ml-4`} disabled={busy} aria-describedby={textId} onClick={onEdit}>
             Edit
           </Button>
-          <Button size="sm" variant="ghost" className={HIT} disabled={busy} aria-describedby={textId} onClick={onRemove}>
-            {removing ? "Removing…" : "Remove"}
-          </Button>
+          {/* Tailored lines cite confirmed facts, so removing one asks first (inline, no modal). */}
+          <DeleteConfirm thing="fact" describedBy={textId} pending={removing} disabled={busy} onConfirm={onRemove} />
         </>
       }
     >

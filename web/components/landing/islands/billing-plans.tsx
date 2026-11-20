@@ -6,6 +6,7 @@ import Link from "next/link";
 import { CheckCircle } from "@phosphor-icons/react";
 import { PLANS, type BillingInterval, type PlanId } from "@auto-career/shared/plans"; // not the barrel: it pulls in zod
 import { landingCopy } from "@/content/landing-copy";
+import { GooMarker } from "@/components/pricing/goo-marker";
 import { quarterlySaving } from "@/components/shared/pricing-plans";
 import { computeReceipt, type CalcPlanId } from "@/lib/landing/calculator";
 import { formatCredits, formatPerApp } from "@/lib/landing/format";
@@ -49,6 +50,7 @@ export function BillingPlans() {
         </div>
         <fieldset className="lp-seg glass bp-seg">
           <legend>{c.intervalLegend}</legend>
+          <GooMarker />
           {INTERVALS.map((v, k) => (
             <label key={v}>
               <input

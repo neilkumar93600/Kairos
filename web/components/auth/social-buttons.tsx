@@ -72,11 +72,12 @@ const PROVIDERS: { id: Provider; name: string; mark: ReactNode }[] = [
  * for a label, so the name lives in aria-label and the tooltip. Each provider needs its OAuth app on the API (server/src/lib/auth.ts socialProviders);
  * until one is set up, a click says so inline instead of failing silently.
  */
-export function SocialButtons({ next = "/dashboard" }: { next?: string }) {
+export function SocialButtons({ next = "/dashboard", beforeStart }: { next?: string; beforeStart?: () => boolean }) {
   const [pending, setPending] = useState<Provider | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function start(p: (typeof PROVIDERS)[number]) {
+    if (beforeStart && !beforeStart()) return;
     setError(null);
     setPending(p.id);
     // Success leaves the page for the provider; only a failure comes back here.

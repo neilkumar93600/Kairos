@@ -2,6 +2,7 @@ import "./entry-00-hero.css";
 import { getImageProps } from "next/image";
 import { landingCopy } from "@/content/landing-copy";
 import { RainbowButton } from "@/components/shared/rainbow-button";
+import { ServerHtmlOnly } from "@/components/shared/server-html-only";
 import { ENTRIES } from "@/lib/landing/sections";
 import { FloatingCard } from "../floating-card";
 import { AppMockup } from "../hero/app-mockup";
@@ -69,8 +70,11 @@ export function Entry00Hero() {
                 {/* Plain <img>: props come from next/image getImageProps. */}
                 <img {...landscape} id={ART_ID} alt="" suppressHydrationWarning />
               </picture>
-              {/* Static constant from this module, no user input (same pattern as the motion head script). */}
-              <script dangerouslySetInnerHTML={{ __html: DECODE_SCRIPT }} />
+              {/* Static constant from this module, no user input (same pattern as the motion head script). Server HTML
+                  only: it must run while the page parses, and React warns about a script it creates on the client. */}
+              <ServerHtmlOnly>
+                <script dangerouslySetInnerHTML={{ __html: DECODE_SCRIPT }} />
+              </ServerHtmlOnly>
             </div>
           </div>
 

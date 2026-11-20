@@ -1,0 +1,66 @@
+/*
+ * AI status line (ai-status.tsx). RareUI's inline status mechanics, re-implemented from a description (no RareUI code):
+ * the working label shimmers, its icon pulses, the done check draws in, and rows swap by rising 6px. An owner-approved
+ * exception to "no motion in the app": house ease-out, no springs, no overshoot, transform, opacity, stroke-dashoffset
+ * and the shimmer's background-position only (paint, never layout). Reduced motion (html[data-motion], with the OS
+ * query as the first-paint backstop, as in rainbow-button.css) shows each end state at once.
+ */
+@layer theme, base, components, utilities;
+
+@layer components {
+  /* One grid cell: the leaving row sits over the arriving one, so nothing below moves during the swap. */
+  .kx-ai { display: inline-grid; align-items: center; }
+  .kx-ai__row {
+    grid-area: 1 / 1;
+    display: inline-flex; align-items: center; gap: 8px; height: 32px;
+    font-size: 14px; line-height: 20px; white-space: nowrap;
+  }
+  .kx-ai__icon { flex: none; color: var(--icon); }
+  .kx-ai__icon--done { color: var(--ink); }
+  .kx-ai__icon--failed { color: var(--bad); }
+  .kx-ai__label { font-weight: 500; color: var(--ink); }
+  .kx-ai__label--failed { color: var(--bad); }
+  .kx-ai__detail { color: var(--body); }
+  .kx-ai__time { color: var(--faint); font-variant-numeric: tabular-nums; }
+  /* pathLength is 1, so a dash of 1 is the whole check; the draw only moves the offset. */
+  .kx-ai__icon--done path { stroke-dasharray: 1; }
+
+  /* The swap, 260ms. Inner motion runs on the arriving row only; the leaving snapshot stays still as it goes. */
+  .kx-ai__row--in { animation: kx-ai-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .kx-ai__row--out { animation: kx-ai-out 260ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+  /* Graphite to Ink and back across the label, 1.6s, only while working. Both stops are AA on Paper and Linen
+     (9.1:1 and 17.8:1 on Linen), so every frame of the text passes. */
+  .kx-ai__row--in .kx-ai__label--working {
+    background: linear-gradient(90deg, var(--body) 30%, var(--ink) 50%, var(--body) 70%) 0 0 / 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: kx-ai-shimmer 1.6s linear infinite;
+  }
+  .kx-ai__row--in .kx-ai__icon--working { animation: kx-ai-pulse 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+  .kx-ai__row--in .kx-ai__icon--done path { animation: kx-ai-draw 300ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+  @keyframes kx-ai-in { from { opacity: 0; transform: translateY(6px); } }
+  @keyframes kx-ai-out { to { opacity: 0; transform: translateY(-6px); } }
+  /* One full 200% period, so the loop has no seam. */
+  @keyframes kx-ai-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+  @keyframes kx-ai-pulse { 50% { opacity: 0.4; } }
+  @keyframes kx-ai-draw { from { stroke-dashoffset: 1; } }
+
+  /* Reduced motion: plain static text, the check already drawn, no leaving row. */
+  html[data-motion="reduced"] .kx-ai__row--in,
+  html[data-motion="reduced"] .kx-ai__row--in * { animation: none; }
+  html[data-motion="reduced"] .kx-ai__row--in .kx-ai__label--working { background: none; color: var(--ink); }
+  html[data-motion="reduced"] .kx-ai__row--out { display: none; }
+  @media (prefers-reduced-motion: reduce) {
+    html:not([data-motion="full"]) .kx-ai__row--in,
+    html:not([data-motion="full"]) .kx-ai__row--in * { animation: none; }
+    html:not([data-motion="full"]) .kx-ai__row--in .kx-ai__label--working { background: none; color: var(--ink); }
+    html:not([data-motion="full"]) .kx-ai__row--out { display: none; }
+  }
+
+  @media (forced-colors: active) {
+    .kx-ai__row--in .kx-ai__label--working { background: none; color: CanvasText; }
+  }
+}

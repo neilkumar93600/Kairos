@@ -1,5 +1,3 @@
-import { useSyncExternalStore } from "react";
-
 export type MotionMode = "full" | "reduced";
 
 export interface EnvState {
@@ -79,12 +77,3 @@ export const envStore: EnvStore = {
     set({ ...state, ...env });
   },
 };
-
-/** `select` must return a primitive or a stored reference. */
-export function useEnv<T>(select: (s: EnvState) => T): T {
-  return useSyncExternalStore(
-    envStore.subscribe,
-    () => select(envStore.getSnapshot()),
-    () => select(envStore.getServerSnapshot()),
-  );
-}

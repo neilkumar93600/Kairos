@@ -10,6 +10,7 @@ import { INTERVAL_LABEL, PricingPlans, quarterlySaving } from "@/components/shar
 import { computeReceipt, creditsPerInvoice, type CalcPlanId } from "@/lib/landing/calculator";
 import { formatCredits, formatPerApp } from "@/lib/landing/format";
 import { useHydrated } from "@/lib/landing/use-hydrated";
+import { GooMarker } from "./goo-marker";
 import { pricingCopy } from "./pricing-copy";
 
 const p = pricingCopy.plans;
@@ -79,6 +80,7 @@ export function PricingBoard() {
             {/* Below 1024 the saving chip hangs under the Quarterly segment, so the toggle reserves room for it. */}
             <fieldset className="lp-seg pr-seg glass-panel max-lg:mb-[30px]">
               <legend>{landingCopy.pricing.intervalLegend}</legend>
+              <GooMarker />
               {INTERVALS.map((i) => (
                 <label key={i}>
                   <input

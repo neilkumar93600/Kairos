@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, type ComponentProps, type ReactNode } from "react";
+import { useId, useState, type ComponentProps, type ReactNode } from "react";
+import { Tooltip } from "@base-ui/react/tooltip";
 import type { Fact } from "@/hooks/use-profile";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "../shared/button";
 import { StatusWord } from "../shared/status";
 import { useWs } from "./workspace";
+import "./citation.css";
 
 /** shadcn Tabs (Base UI) themed to the Bone-track toggle: white active pill with the ring, 44px targets. */
 export const tabList = "w-full rounded-pill bg-sunk p-1 group-data-horizontal/tabs:h-11";
@@ -97,6 +99,53 @@ export function FactChips({ ids, className }: { ids: string[]; className?: strin
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * Inline citations for a suggested line: one numbered chip per cited fact that is loaded on the page. The number is
+ * the fact's place in your fact list, so the same fact carries the same number everywhere on the page.
+ */
+export function Citations({ ids }: { ids: string[] }) {
+  const { facts, factList } = useWs();
+  if (!facts) return null;
+  // ponytail: linear lookup per chip; fine at profile scale (tens of facts), index once if lists reach thousands.
+  const cited = ids.flatMap((id) => {
+    const fact = facts.get(id);
+    return fact ? [{ fact, n: factList.findIndex((f) => f.id === id) + 1 }] : [];
+  });
+  if (!cited.length) return null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1 align-middle">
+      {cited.map(({ fact, n }) => (
+        <Citation key={fact.id} n={n} fact={fact} />
+      ))}
+    </span>
+  );
+}
+
+/**
+ * A citation chip (a real button) and the fact it cites. Opens after 300 ms of hover, at once on keyboard focus or a
+ * click or tap; closes 150 ms after the pointer leaves (the card itself is hoverable), on Escape, or on a press
+ * elsewhere. Focus never leaves the chip. The card stays mounted while hidden so the chip is always described by it.
+ */
+function Citation({ n, fact }: { n: number; fact: Fact }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <Tooltip.Root open={open} onOpenChange={setOpen}>
+      <Tooltip.Trigger delay={300} closeDelay={150} closeOnClick={false} onClick={() => setOpen(true)} aria-describedby={id} className="kx-cite">
+        Fact {n}
+      </Tooltip.Trigger>
+      <Tooltip.Portal keepMounted>
+        <Tooltip.Positioner side="top" sideOffset={6} collisionPadding={16} className="z-50">
+          <Tooltip.Popup id={id} role="tooltip" className="kx-cite-card">
+            <span className="kx-cite-label">{fact.confirmed ? "Confirmed fact" : "Unconfirmed fact"}</span>
+            <span className="kx-cite-text">{fact.text}</span>
+          </Tooltip.Popup>
+        </Tooltip.Positioner>
+      </Tooltip.Portal>
+    </Tooltip.Root>
   );
 }
 

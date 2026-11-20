@@ -7,6 +7,7 @@ import { Badge } from "../shared/badge";
 import { Skeleton } from "../shared/skeleton";
 import { Logo } from "../shared/logo";
 import { AccountMenu } from "./app-account";
+import { InboxBell } from "./inbox-bell";
 
 // ponytail: one fixed threshold for every plan; make it plan-relative if paid users find 5 too late a warning.
 const LOW_CREDITS = 5;
@@ -32,19 +33,22 @@ export function Header() {
             isError && "lg:hidden", // nothing to show from lg without /api/me
           )}
         >
-          <div className="lg:hidden">
-            <Logo href="/dashboard" className="h-11 rounded-input px-2.5" />
+          {/* Phones show the mark only, and under 375px no logo: credits, the Replies bell and the account fit to 320px. */}
+          <div className="max-[375px]:hidden lg:hidden">
+            <Logo href="/dashboard" className="h-11 rounded-input px-2.5 max-sm:min-w-11 max-sm:justify-center max-sm:[&>span]:hidden" />
           </div>
           {data ? (
-            <div className="flex items-center gap-1 sm:gap-2">
+            <div className="ml-auto flex items-center gap-1 sm:gap-2">
               <CreditsLink me={data} />
+              <InboxBell />
               <div className="lg:hidden">
                 <AccountMenu me={data} variant="compact" />
               </div>
             </div>
           ) : isError ? null : (
-            <div className="flex items-center gap-3 px-3" aria-hidden>
+            <div className="ml-auto flex items-center gap-3 px-3" aria-hidden>
               <Skeleton className="h-5 w-32" />
+              <Skeleton className="size-8 rounded-pill" />
               <Skeleton className="size-8 rounded-pill lg:hidden" />
             </div>
           )}
@@ -65,11 +69,11 @@ function CreditsLink({ me }: { me: Me }) {
       <span className={cn("font-medium tabular-nums slashed-zero", low ? "text-warn" : "text-ink")}>{n.toLocaleString("en-US")}</span>
       <span className="-ml-1">{n === 1 ? "credit" : "credits"}</span>
       {low ? <Badge tone="warn">{n === 0 ? "None left" : "Low"}</Badge> : null}
-      {/* Phones: when the warning badge needs the room, the plan stays in the link's name but leaves the bar. */}
-      <span aria-hidden className={cn("text-faint", low && "max-sm:hidden")}>
+      {/* Phones: the plan stays in the link's name but leaves the bar, to make room for the bell and the warning badge. */}
+      <span aria-hidden className="text-faint max-sm:hidden">
         ·
       </span>
-      <span className={cn(low && "max-sm:sr-only")}>
+      <span className="max-sm:sr-only">
         {me.plan.name}
         <span className="sr-only"> plan</span>
       </span>

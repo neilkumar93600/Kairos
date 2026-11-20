@@ -1,4 +1,4 @@
-/** The page's one h1 and its lead line. Inter Tight 400 (auth.css), never the serif. */
+/** The page's one h1 and its lead line, in the shared Urbanist family. */
 export function AuthHeading({ title, body }: { title: string; body?: string }) {
   return (
     <div className="auth__heading">

@@ -47,11 +47,13 @@ export function LoginForm() {
         <Field label="Email" htmlFor="email" error={errors.email}>
           <Input id="email" name="email" type="email" autoComplete="email" required aria-invalid={Boolean(errors.email) || undefined} className={INPUT} />
         </Field>
-        <div className="flex flex-col">
+        {/* "Forgot password?" sits on the Password label's line, but after the field in the DOM, so Tab still goes
+            password, then this link, then Sign in. */}
+        <div className="relative">
           <Field label="Password" htmlFor="password" error={errors.password}>
             <PasswordInput id="password" name="password" autoComplete="current-password" required aria-invalid={Boolean(errors.password) || undefined} />
           </Field>
-          <Link href="/forgot-password" className="auth-link mt-3 self-end text-sm">
+          <Link href="/forgot-password" className="auth-link absolute -top-0.5 right-0 text-sm">
             Forgot password?
           </Link>
         </div>
