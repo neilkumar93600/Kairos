@@ -4,3 +4,9 @@ declare module "*.md" {
   const text: string;
   export default text;
 }
+
+// Typst templates, embedded the same way (build.mjs, vitest.config.ts).
+declare module "*.typ" {
+  const text: string;
+  export default text;
+}

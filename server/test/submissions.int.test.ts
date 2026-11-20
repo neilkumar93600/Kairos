@@ -1,11 +1,13 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Db } from "../src/db/client";
 import { applications, companies, creditLedger, jobs } from "../src/db/schema";
-import { approveApplications, claimForCloud, recordSubmission } from "../src/services/submissions";
+import { recordExtensionReport } from "../src/services/settle";
+import { approveApplications } from "../src/services/submissions";
+import { settleAll } from "./helpers/settle";
 import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb } from "./helpers/test-db";
 
-const LINE = { id: "l1", section: "Experience", text: "Built the billing service", factIds: ["f1"] };
+const LINE = { id: "l1", section: "Experience", text: "Built the billing service", factIds: [] };
 const ANSWER = { fieldKey: "first_name", label: "First name", value: "Test", source: "profile" as const };
 
 describe.skipIf(!hasTestDb)("submissions against Postgres", () => {
@@ -46,6 +48,8 @@ describe.skipIf(!hasTestDb)("submissions against Postgres", () => {
     return app!.id;
   }
 
+  /** The applier's claim, as its definer function; the attempt's id, or null when there is nothing to send. */
+  const claim = async (id: string, attemptNo = 0) => (await db.execute<{ id: string | null }>(sql`select claim_cloud_attempt(${id}, ${attemptNo}::int, 'w') as id`)).rows[0]!.id;
   const statusOf = async (id: string) => (await db.select({ s: applications.status }).from(applications).where(eq(applications.id, id)))[0]?.s;
 
   it("only tailored drafts are approved", async () => {
@@ -100,18 +104,22 @@ describe.skipIf(!hasTestDb)("submissions against Postgres", () => {
     for (const r of results.filter((r): r is PromiseRejectedResult => r.status === "rejected")) expect(r.reason).toMatchObject({ status: 402 });
   });
 
-  it("claims an approved cloud application once", async () => {
+  it("claims an approved cloud application once: a replay gets the same attempt, and only one launch mark", async () => {
     const userId = await seedUser(db, { credits: 5 });
     const id = await draft(userId, "a", { status: "approved", channel: "cloud" });
-    await expect(claimForCloud(db, id)).resolves.toBe(true);
+    const attempt = await claim(id);
+    expect(attempt).not.toBeNull();
     expect(await statusOf(id)).toBe("submitting");
-    await expect(claimForCloud(db, id)).resolves.toBe(false);
+    expect(await claim(id, 1)).toBe(attempt);
+    const mark = async () => (await db.execute<{ ok: boolean }>(sql`select mark_browser_launched(${attempt}, 'w') as ok`)).rows[0]!.ok;
+    expect(await mark()).toBe(true);
+    expect(await mark()).toBe(false);
   });
 
   it("never claims a withdrawn application", async () => {
     const userId = await seedUser(db, { credits: 5 });
     const id = await draft(userId, "a", { status: "withdrawn", channel: "cloud" });
-    await expect(claimForCloud(db, id)).resolves.toBe(false);
+    expect(await claim(id)).toBeNull();
     expect(await statusOf(id)).toBe("withdrawn");
   });
 
@@ -128,11 +136,12 @@ describe.skipIf(!hasTestDb)("submissions against Postgres", () => {
     it("an extension 'failed' report cannot settle a cloud application the applier is sending (applications-v07)", async () => {
       const userId = await seedUser(db, { credits: 5 });
       const id = await draft(userId, "a", { status: "approved", channel: "cloud" });
-      await claimForCloud(db, id);
-      await expect(recordSubmission(db, userId, report(id, "failed"), "extension")).rejects.toMatchObject({ status: 409 });
+      const attempt = await claim(id);
+      await expect(recordExtensionReport(db, userId, "s1", report(id, "failed"))).rejects.toMatchObject({ status: 409 });
       expect(await statusOf(id)).toBe("submitting");
       // The applier's own result still lands.
-      await recordSubmission(db, userId, report(id, "submitted"), "cloud");
+      await db.execute(sql`select record_attempt_result(${attempt}, 'submitted', null, '{}')`);
+      await settleAll(db);
       expect(await statusOf(id)).toBe("submitted");
       expect(await ledger(userId)).toHaveLength(1);
     });
@@ -140,9 +149,10 @@ describe.skipIf(!hasTestDb)("submissions against Postgres", () => {
     it("an extension 'submitted' report on a cloud send in progress is still recorded, and charged once", async () => {
       const userId = await seedUser(db, { credits: 5 });
       const id = await draft(userId, "a", { status: "approved", channel: "cloud" });
-      await claimForCloud(db, id);
-      await recordSubmission(db, userId, report(id, "submitted"), "extension");
-      await recordSubmission(db, userId, report(id, "submitted"), "cloud");
+      const attempt = await claim(id);
+      await recordExtensionReport(db, userId, "s1", report(id, "submitted"));
+      await db.execute(sql`select record_attempt_result(${attempt}, 'submitted', null, '{}')`);
+      await settleAll(db);
       expect(await statusOf(id)).toBe("submitted");
       expect(await ledger(userId)).toHaveLength(1);
     });
@@ -151,7 +161,7 @@ describe.skipIf(!hasTestDb)("submissions against Postgres", () => {
       const userId = await seedUser(db, { credits: 5 });
       const id = await draft(userId, "a", { status: "approved", channel: "extension" });
       const before = Date.now();
-      await recordSubmission(db, userId, report(id, "submitted"), "extension");
+      await recordExtensionReport(db, userId, "s1", report(id, "submitted"));
       const [row] = await db.select({ at: applications.submittedAt }).from(applications).where(eq(applications.id, id));
       expect(row!.at!.getTime()).toBeGreaterThanOrEqual(before - 1000);
     });

@@ -14,6 +14,8 @@ import { closeTestDbs, hasTestDb, resetDb, testDb, testDbUrl } from "./helpers/t
 // The erasure drill (T-DB-5, WP-25) against Postgres: a user with rows in every user-owned table is erased, and no
 // text, jsonb or bytea column of the schema still holds their id, address or a planted marker once the worker is done.
 process.env.DATABASE_URL = testDbUrl("erasure");
+// seedEverything stores an import's source encrypted (WP-17).
+process.env.DATA_KEKS = `v1:${Buffer.from([...Array(32).keys()]).toString("base64")}`;
 
 describe.skipIf(!hasTestDb)("erasure against Postgres (WP-25)", () => {
   let db: Db;

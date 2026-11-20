@@ -1,16 +1,24 @@
 import { Router } from "express";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { z } from "zod";
 import { db, type Db } from "../db/client";
 import { inboundEmails } from "../db/schema";
+import { decrypt } from "../lib/crypto";
+import { HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
 import { keysetBefore, pageParams, slicePage, tsKey } from "../lib/pagination";
 import type { After } from "../lib/pagination";
 import { currentUser } from "../middleware/require-auth";
+import { previewAad } from "../services/inbound";
 
 /** Forwarded replies, newest first, with the kind and application they were tagged to. Mounted at /api/inbox. */
 export const inboxRouter = Router();
 
-/** The preview is cut in SQL, so a list of 100 replies never loads 100 full bodies. */
-export function recentInbox(database: Db, userId: string, page: { limit: number; after?: After } = { limit: 100 }) {
+/**
+ * Visible replies only (no Gmail confirmation, no hidden spam). The list never loads a body: it decrypts the 280-character
+ * preview_enc, or cuts the legacy plaintext in SQL for a row from before the backfill (S-12).
+ */
+export function recentInbox(database: Db, userId: string, page: { limit: number; after?: After; applicationId?: string } = { limit: 100 }) {
   return database
     .select({
       id: inboundEmails.id,
@@ -20,12 +28,15 @@ export function recentInbox(database: Db, userId: string, page: { limit: number;
       applicationId: inboundEmails.applicationId,
       receivedAt: inboundEmails.receivedAt,
       cursorTs: tsKey(inboundEmails.receivedAt),
-      preview: sql<string>`left(${inboundEmails.textBody}, 280)`,
+      previewEnc: inboundEmails.previewEnc,
+      legacyPreview: sql<string | null>`CASE WHEN ${inboundEmails.previewEnc} IS NULL THEN left(${inboundEmails.textBody}, 280) END`,
     })
     .from(inboundEmails)
     .where(
       and(
         eq(inboundEmails.userId, userId),
+        isNull(inboundEmails.hiddenReason),
+        page.applicationId ? eq(inboundEmails.applicationId, page.applicationId) : undefined,
         page.after && keysetBefore([inboundEmails.receivedAt], ["timestamptz"], inboundEmails.id, page.after),
       ),
     )
@@ -33,8 +44,30 @@ export function recentInbox(database: Db, userId: string, page: { limit: number;
     .limit(page.limit + 1);
 }
 
+/** One row's preview. A row that cannot be decrypted shows an empty preview, so it never takes the whole inbox down. */
+export function readPreview(id: string, previewEnc: Buffer | null, legacyPreview: string | null): string {
+  if (!previewEnc) return legacyPreview ?? "";
+  try {
+    return decrypt(previewEnc, previewAad(id)).toString("utf8");
+  } catch {
+    logger.error({ inboundEmailId: id }, "inbox preview did not decrypt");
+    return "";
+  }
+}
+
+const inboxQuery = z.object({ applicationId: z.uuid().optional() });
+
 inboxRouter.get("/", async (req, res) => {
   const { limit, after } = pageParams(req.query, 100, "inbox", ["ts"]);
-  const page = slicePage(await recentInbox(db(), currentUser(req).id, { limit, after }), limit, "inbox", (r) => [r.cursorTs], (r) => r.id);
-  res.json({ emails: page.rows.map(({ cursorTs: _, ...row }) => row), nextCursor: page.nextCursor });
+  const q = inboxQuery.safeParse(req.query);
+  if (!q.success) throw new HttpError(400, "invalid_param", "Invalid path or query parameter", q.error.issues);
+  const rows = await recentInbox(db(), currentUser(req).id, { limit, after, applicationId: q.data.applicationId });
+  const page = slicePage(rows, limit, "inbox", (r) => [r.cursorTs], (r) => r.id);
+  res.json({
+    emails: page.rows.map(({ cursorTs: _, previewEnc, legacyPreview, ...row }) => ({
+      ...row,
+      preview: readPreview(row.id, previewEnc, legacyPreview),
+    })),
+    nextCursor: page.nextCursor,
+  });
 });

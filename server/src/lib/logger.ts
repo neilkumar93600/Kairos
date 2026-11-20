@@ -22,12 +22,20 @@ const REDACT_PATHS = [
   "res.headers.location",
   'req.headers["stripe-signature"]',
   "*.password",
+  "*.evidence",
   "*.otp",
   "*.token",
   // Free text from a resume, an email, an application or a prompt. pino's `*` covers one level, so these catch
   // `{ job: { text } }` but not a bare top-level `text`: never log such a value by name.
   "*.text",
   "*.textBody",
+  "*.preview",
+  "*.notes",
+  "*.salaryText",
+  "*.salary_text",
+  "*.phone",
+  "*.email",
+  "*.location",
   "*.sourceText",
   "*.answers",
   "*.resumeLines",
@@ -81,10 +89,16 @@ export function createLogger(destination?: DestinationStream, level = process.en
 
 export const logger = createLogger();
 
-/** Cuts the query string (the inbound webhook's ?token=, OAuth ?code=, anything a client put there) before a URL reaches the logs. */
+/** The Postmark inbound route's path secret (05-api 14.3): a path segment, so it is cut like a query string. */
+const INBOUND_PATH_SECRET = /(\/postmark\/inbound\/)[^/]*/i;
+
+/**
+ * Cuts the query string (the inbound webhook's ?token=, OAuth ?code=, anything a client put there) and the inbound
+ * route's path secret before a URL or path reaches the logs, Sentry or a metric label.
+ */
 export function redactUrl(url: string): string {
   const q = url.indexOf("?");
-  return q === -1 ? url : url.slice(0, q);
+  return (q === -1 ? url : url.slice(0, q)).replace(INBOUND_PATH_SECRET, "$1:pathSecret");
 }
 
 /**
@@ -122,7 +136,7 @@ export function httpLogger(target: Logger = logger) {
     // pino-http builds its own child logger, so it needs the err serializer too; the parsed query is dropped whole.
     serializers: {
       err: serializeErr,
-      req: (req: { url: string }) => Object.assign(req, { url: redactUrl(req.url), query: undefined }),
+      req: (req: { url: string }) => Object.assign(req, { url: redactUrl(req.url), query: undefined, params: undefined }),
     },
   });
 }

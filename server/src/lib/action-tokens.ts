@@ -125,14 +125,24 @@ export interface LinkTarget {
   userId: string;
 }
 
-/** The target of a live, unused link, for the GET page: reads only, so a mail scanner's GET changes nothing. */
-export async function peekActionToken(tx: Db | Tx, token: string, purpose: StoredPurpose, keys: Keyring = linkKeys()): Promise<LinkTarget | null> {
+/**
+ * The target of a live link, for the GET page: reads only, so a mail scanner's GET changes nothing. Unused only, unless
+ * `reusable` (an idempotent action such as unsubscribe, whose second click must still work): then a used link counts too.
+ */
+export async function peekActionToken(tx: Db | Tx, token: string, purpose: StoredPurpose, keys: Keyring = linkKeys(), reusable = false): Promise<LinkTarget | null> {
   const claims = verifyLink(token, purpose, keys);
   if (!claims) return null;
   const [row] = await tx
     .select({ entityId: actionTokens.entityId, userId: actionTokens.userId })
     .from(actionTokens)
-    .where(and(eq(actionTokens.tokenHash, tokenHash(token)), eq(actionTokens.purpose, purpose), isNull(actionTokens.usedAt), gt(actionTokens.expiresAt, sql`now()`)));
+    .where(
+      and(
+        eq(actionTokens.tokenHash, tokenHash(token)),
+        eq(actionTokens.purpose, purpose),
+        reusable ? undefined : isNull(actionTokens.usedAt),
+        gt(actionTokens.expiresAt, sql`now()`),
+      ),
+    );
   return row && matches(row, claims) ? row : null;
 }
 

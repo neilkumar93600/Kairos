@@ -102,10 +102,10 @@ This settles the `before` conflict of gap-map specGaps: B.9.2 lists `before` as 
 |---|---|
 | Model | `claude-sonnet-5-5`; tier-up none; `onFailure: "fail_closed"` |
 | Thinking, effort | `between_tools`; effort `low` for line, entry and **headline** (v2), `medium` otherwise |
-| `max_tokens` | 800 for line, entry and headline; 2,600 otherwise |
+| `max_tokens` | 800 for line and headline; 2,600 for entry, section, summary and skills; 4,000 for resume (WP-31: 8 suggestions do not fit in 800, 20 do not fit in 2,600, and a cut reply loses them all) |
 | `maxInputTokens` | 12,000. Check: 12,000 x 2 + 2,600 x 10 = $0.050, equal to the $0.05 max |
 | Timeout | 60 s |
-| Expected, max per call | $0.0112 blended / $0.05 |
+| Expected, max per call | $0.0112 blended / $0.065 (12,000 x 2 + 4,000 x 10 = $0.064; WP-31) |
 | Envelope | $50 a day |
 | Workspace, budget class, batch | `interactive`, `interactive`, `never` |
 | Cache | static 5m, user 5m |
@@ -127,7 +127,7 @@ This settles the `before` conflict of gap-map specGaps: B.9.2 lists `before` as 
 | RW7 | No bracket placeholder (`[X]`, `[number]`) in `after` | `placeholder` |
 | RW8 | Echo canary | `injection_echo` |
 
-Service checks in `verify()` (a failing suggestion is dropped, not repaired): ids exist in the document (v1); citable facts (v1); `checkClaims` against the cited facts (v1 uses `inventedDetails`; WP-07 moves it to `llm/claims.ts`); refine compliance for every mode (`shorter` shorter than `before`, `longer` longer, `use_numbers` contains a number from a cited `metric` fact, `result_first` and `natural` judged in evals only); `fix_spelling` keeps the line's own fact ids and changes at most 15% of characters (normalized edit distance) with no new number, entity or skill; `after` at most 300 characters for lines and 160 for headlines. Then `claim-verifier` on every suggestion with text (WP-26).
+Service checks in `verify()` (a failing suggestion is dropped, not repaired): ids exist in the document (v1); citable facts (v1); `checkClaims` against the cited facts (v1 uses `inventedDetails`; WP-07 moves it to `llm/claims.ts`); refine compliance for every mode (`shorter` shorter than `before`, `longer` longer, `use_numbers` contains a number from a cited `metric` fact, `result_first` a number or result verb in the first clause, `natural` no buzzword from a fixed list and no first person; WP-31 follows `workers/05` 3.4 here so every mode has a code check); `fix_spelling` keeps the line's own fact ids and changes at most 15% of characters (normalized edit distance) with no new number, entity or skill; `after` at most 300 characters for lines and 160 for headlines. Then `claim-verifier` on every suggestion with text (WP-26).
 
 ---
 

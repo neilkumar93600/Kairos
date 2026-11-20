@@ -1,11 +1,13 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { applications, creditLedger, erasedEmails, inboundEmails, profiles, session, subscriptions, user, verification } from "../db/schema";
+import { cloudApplyKey } from "../durable/outbox";
+import { applications, creditLedger, erasedEmails, inboundEmails, outbox, profiles, session, subscriptions, user, verification } from "../db/schema";
+import { closeStaleAttempts, expireDrafts, lostReturnNotices, repairLegacyRows, returnStaleApprovals, settleAttempt, unsettledAttempts } from "../services/settle";
 import { logger } from "../lib/logger";
 import { signal } from "../lib/sentry";
 import { bootstrapUser } from "../services/bootstrap";
 import { archiveLedger } from "../services/erasure";
-import { sweepStuckSubmitting } from "../services/submissions";
+import { enqueueNotify } from "./notify";
 import { redrive } from "./queues";
 
 /**
@@ -30,32 +32,70 @@ async function each(task: string, ids: string[], fn: (id: string) => Promise<boo
   return done;
 }
 
-/** Every 30 seconds, so a claim leaves submitting within 10.5 minutes (the acceptance allows 11). */
-export async function processSweepSubmitting(): Promise<{ swept: number }> {
-  const swept = await sweepStuckSubmitting(db());
-  if (swept.length) {
-    logger.warn({ applicationIds: swept }, "stuck cloud sends settled as unconfirmed");
-    signal("submitting_swept", swept.length);
+/**
+ * Every 30 seconds, the lease sweeper (WP-29, applications-74): closes stale attempts by phase, then settles every closed
+ * attempt, the applier's results included. A dead run is therefore terminal within about 2.5 minutes of its last heartbeat
+ * (90 s, plus this tick, plus a tick of slack), and a run at the 8-minute bound inside WP-22's 10. The applier does not
+ * enqueue settlement: an unsettled row is the work item, so a send's outcome shows within 30 s of the run's end.
+ */
+export async function processSweepSubmitting(): Promise<{ swept: number; closed: number; settled: number }> {
+  const legacy = await repairLegacyRows(db());
+  const closed = await closeStaleAttempts(db());
+  if (legacy.length + closed) {
+    logger.warn({ applicationIds: legacy, closed }, "stuck sends closed by the lease sweeper");
+    signal("submitting_swept", legacy.length + closed);
   }
-  return { swept: swept.length };
+  const settled = await each("settle", await unsettledAttempts(db()), async (id) => (await settleAttempt(db(), id)).result !== "noop");
+  return { swept: legacy.length, closed, settled };
+}
+
+/** Hourly (applications-43): extension approvals unsent for 14 days go back to draft, each with its email, and lost emails come back. */
+export async function processReturnToDraft(): Promise<{ returned: number; redriven: number }> {
+  const returned = await returnStaleApprovals(db());
+  const redriven = await lostReturnNotices(db());
+  const owners = new Map([...returned, ...redriven].map((r) => [`${r.id}:${r.attemptNo}`, r.userId]));
+  await each("return-to-draft", [...owners.keys()], async (entityId) => {
+    await enqueueNotify("return_to_draft", entityId, owners.get(entityId)!);
+    return true;
+  });
+  if (returned.length) logger.info({ returned: returned.length }, "return to draft");
+  return { returned: returned.length, redriven: redriven.length };
+}
+
+/** Daily (applications-44): drafts not approved within 30 days. */
+export async function processDraftExpiry(): Promise<{ expired: number }> {
+  const expired = await expireDrafts(db());
+  if (expired) logger.info({ expired }, "draft expiry");
+  return { expired };
 }
 
 /**
- * Every minute: an approved cloud application with no live cloud-apply job (the approve route enqueues after its
- * commit, so a Redis blip or a lost job leaves the credit reserved and nothing sending). Two minutes old first, so the
- * route's own enqueue lands. The job goes through the applier's claim and its plan and posting prechecks, which are
- * what decide; a finished job is replaced, since an approved row was never claimed and so nothing was sent.
- * ponytail: the oldest 200 per tick, one Redis lookup each; a backlog larger than that hides newer losses. Add an
- * enqueued_at column, or WP-22's outbox, when the applier queue runs that deep.
+ * Every minute: the safety net under the outbox (WP-22). An approved cloud application whose outbox row is finished or
+ * was never written (approved before the outbox, or by the previous release mid-deploy) and has no live cloud-apply job.
+ * A live or dead row is the outbox's to move or to show an operator, so it is left alone. Two minutes old first, so a
+ * job on its way lands. The job goes through the applier's claim and its plan and posting prechecks, which are what
+ * decide; a finished job is replaced, since an approved row was never claimed and so nothing was sent.
+ * ponytail: the oldest 200 per tick, one Redis lookup each; a backlog larger than that hides newer losses.
  */
 export async function processReconcileApply(): Promise<{ checked: number; added: number }> {
   const rows = await db()
-    .select({ id: applications.id })
+    .select({ id: applications.id, attemptNo: applications.attemptNo })
     .from(applications)
-    .where(and(eq(applications.status, "approved"), eq(applications.channel, "cloud"), sql`${applications.approvedAt} < now() - interval '2 minutes'`))
+    .where(
+      and(
+        eq(applications.status, "approved"),
+        eq(applications.channel, "cloud"),
+        sql`${applications.approvedAt} < now() - interval '2 minutes'`,
+        // Either key: a row of the previous release is apply-<id>, and it is still that application's only send.
+        sql`not exists (select 1 from ${outbox} where ${outbox.dedupeKey} in ('apply-' || ${applications.id}::text, 'apply-' || ${applications.id}::text || '-' || ${applications.attemptNo}) and ${outbox.status} <> 'done')`,
+      ),
+    )
     .orderBy(asc(applications.approvedAt))
     .limit(200);
-  const added = await each("reconcile-apply", rows.map((r) => r.id), (id) => redrive("cloud-apply", { applicationId: id }, `apply-${id}`, true));
+  const added = await each("reconcile-apply", rows.map((r) => `${r.id}:${r.attemptNo}`), (ref) => {
+    const [id, no] = ref.split(":");
+    return redrive("cloud-apply", { applicationId: id!, attemptNo: Number(no) }, cloudApplyKey(id!, Number(no)), true);
+  });
   if (added) logger.warn({ added }, "lost cloud-apply jobs re-added");
   return { checked: rows.length, added };
 }
@@ -92,7 +132,15 @@ export async function processRedriveInbox(): Promise<{ checked: number; added: n
   const rows = await db()
     .select({ id: inboundEmails.id })
     .from(inboundEmails)
-    .where(and(isNull(inboundEmails.kind), sql`${inboundEmails.receivedAt} between now() - interval '7 days' and now() - interval '5 minutes'`))
+    // Unclassified and visible (inbound_emails_unclassified_idx); kind IS NULL skips rows the previous release tagged.
+    .where(
+      and(
+        isNull(inboundEmails.classifiedAt),
+        isNull(inboundEmails.kind),
+        isNull(inboundEmails.hiddenReason),
+        sql`${inboundEmails.receivedAt} between now() - interval '7 days' and now() - interval '5 minutes'`,
+      ),
+    )
     .limit(500);
   const added = await each("redrive-inbox", rows.map((r) => r.id), (id) => redrive("classify-email", { inboundEmailId: id }, `classify-${id}`, true));
   if (added) logger.warn({ added }, "lost classify jobs re-added");

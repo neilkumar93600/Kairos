@@ -6,6 +6,7 @@ export * from "./matching";
 export * from "./applications";
 export * from "./billing";
 export * from "./messaging";
+export * from "./engagement";
 export * from "./rate-limits";
 export * from "./privacy";
 export * from "./ops";

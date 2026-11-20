@@ -1,4 +1,5 @@
 import type { AtsProvider } from "@auto-career/shared";
+import { MiB, safeFetchJson, type SafeFetchOptions, type SafeFetchResult } from "../safe-fetch";
 
 /** A posting in one shape, whatever board it came from. */
 export interface NormalizedJob {
@@ -15,14 +16,27 @@ export interface NormalizedJob {
   raw: unknown;
 }
 
-export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+export type Region = "us" | "eu";
+
+/** The guarded fetch (services/safe-fetch.ts). Adapters take it as a parameter so tests can stand in for the network. */
+export type Fetcher = (url: string, opts: SafeFetchOptions) => Promise<SafeFetchResult>;
+
+export interface BoardRequest {
+  /** Lever only: api.eu.lever.co for an EU board (companies.api_region). */
+  region?: Region;
+  /** companies.etag: a 304 answers not_modified. */
+  etag?: string | null;
+  fetcher?: Fetcher;
+}
+
+export type BoardResult = { kind: "not_modified" } | { kind: "listing"; postings: NormalizedJob[]; etag: string | null };
 
 export interface AtsAdapter {
   provider: AtsProvider;
-  /** Reads every open posting on a public board. Throws BoardNotFoundError on 404. */
-  fetchBoard(boardToken: string, fetchImpl?: FetchLike): Promise<NormalizedJob[]>;
+  /** Reads every open posting on a public board. Throws BoardNotFoundError on 404 and SafeFetchError on a refused fetch. */
+  fetchBoard(boardToken: string, req?: BoardRequest): Promise<BoardResult>;
   /** Reads one posting by its board id, or null when it is missing or closed. Only calls the provider's public API. */
-  fetchPosting(boardToken: string, postingId: string, fetchImpl?: FetchLike): Promise<NormalizedJob | null>;
+  fetchPosting(boardToken: string, postingId: string, req?: Omit<BoardRequest, "etag">): Promise<NormalizedJob | null>;
 }
 
 export class BoardNotFoundError extends Error {
@@ -60,13 +74,13 @@ export function looksRemote(...values: (string | null | undefined)[]): boolean {
   return values.some((v) => (v ? /\bremote\b/i.test(v) : false));
 }
 
-/** Every board request goes through here. A board that hangs fails after 15 s instead of holding an import or a poll. */
-export async function getJson(url: string, fetchImpl: FetchLike): Promise<{ status: number; body: unknown }> {
-  const res = await fetchImpl(url, {
-    headers: { accept: "application/json", "user-agent": "KairosBot/1.0 (+https://kairos.app/bot)" },
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (res.status === 404) return { status: 404, body: null };
-  if (!res.ok) throw new Error(`GET ${url} failed with ${res.status}`);
-  return { status: res.status, body: await res.json() };
+/** One posting: well under 2 MiB on every board. */
+export const POSTING_MAX_BYTES = 2 * MiB;
+
+/**
+ * Every board request goes through here and through safeFetchJson: the exact API host of the adapter, a byte cap, and a
+ * timeout, so a board that hangs fails instead of holding an import or a poll.
+ */
+export async function getJson(url: string, opts: { host: string; maxBytes: number; timeoutMs?: number; etag?: string | null; fetcher?: Fetcher }): Promise<SafeFetchResult> {
+  return (opts.fetcher ?? safeFetchJson)(url, { allowedHosts: [opts.host], maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs ?? 15_000, etag: opts.etag ?? null });
 }

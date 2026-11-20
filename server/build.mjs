@@ -21,6 +21,8 @@ await build({
     // Prompt files are bundled as text so the running service holds every retained version
     // (03-agent-runtime.md 4.4); the vitest side is the markdown-text plugin in vitest.config.ts.
     ".md": "text",
+    // Typst templates likewise: the worker holds the template, and no path to one ever reaches the renderer.
+    ".typ": "text",
   },
   banner: {
     // Lets bundled CommonJS dependencies call require() inside the ESM output.

@@ -10,6 +10,7 @@ import { clientIpResolver } from "../src/middleware/client-ip";
 import { createLimiters } from "../src/middleware/rate-limit";
 import { pollErrorCode } from "../src/jobs/poll-boards";
 import { BoardNotFoundError } from "../src/services/ats";
+import { SafeFetchError } from "../src/services/safe-fetch";
 
 const signedOut: AuthGateway = {
   handler: async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
@@ -89,7 +90,9 @@ describe("rate limit 429", () => {
 describe("pollErrorCode", () => {
   it("stores short codes, never raw exception text", () => {
     expect(pollErrorCode(new BoardNotFoundError("greenhouse", "acme"))).toBe("board_not_found");
-    expect(pollErrorCode(new Error("GET https://x/jobs?token=s failed with 503"))).toBe("http_503");
+    expect(pollErrorCode(new SafeFetchError("http_error", 503))).toBe("http_503");
+    expect(pollErrorCode(new SafeFetchError("response_too_large"))).toBe("response_too_large");
+    expect(pollErrorCode(new SafeFetchError("ssrf_redirect", 302))).toBe("ssrf_redirect");
     expect(pollErrorCode(Object.assign(new Error("aborted"), { name: "TimeoutError" }))).toBe("timeout");
     expect(pollErrorCode(new SyntaxError("Unexpected token <"))).toBe("bad_payload");
     expect(pollErrorCode(new Error("connect ECONNREFUSED 1.2.3.4"))).toBe("poll_failed");

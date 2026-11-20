@@ -2,9 +2,12 @@ import { randomUUID } from "node:crypto";
 import { and, count, desc, eq } from "drizzle-orm";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ApplicationAnswer, ResumeInput, ResumeLine } from "@auto-career/shared";
+import { DEFAULT_PREFERENCES, type ApplicationAnswer, type ResumeInput, type ResumeLine } from "@auto-career/shared";
 import type { Db } from "../src/db/client";
 import type { SessionUser } from "../src/lib/auth";
+import { userDailyUsage } from "../src/db/schema/platform";
+import { AgentError } from "../src/llm/errors";
+import { SafeFetchError } from "../src/services/safe-fetch";
 import { closeTestDbs, hasTestDb, resetDb, seedUser, testDb, testDbUrl } from "./helpers/test-db";
 
 /**
@@ -19,6 +22,8 @@ delete process.env.ANTHROPIC_API_KEY;
 
 const tailorResume = vi.hoisted(() => vi.fn());
 vi.mock("../src/services/tailor", async (orig) => ({ ...(await orig<typeof import("../src/services/tailor")>()), tailorResume }));
+const scoreFit = vi.hoisted(() => vi.fn());
+vi.mock("../src/services/fit", async (orig) => ({ ...(await orig<typeof import("../src/services/fit")>()), scoreFit }));
 const fetchPostingFromBoard = vi.hoisted(() => vi.fn());
 vi.mock("../src/services/job-import", async (orig) => ({ ...(await orig<typeof import("../src/services/job-import")>()), fetchPostingFromBoard }));
 
@@ -407,7 +412,7 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       expect(fetchPostingFromBoard).not.toHaveBeenCalled();
     });
 
-    it("creates the company inactive, so a pasted board is never polled or scored", async () => {
+    it("creates the company inactive, so a pasted board is never scored for anyone else", async () => {
       fetchPostingFromBoard.mockResolvedValue({
         externalId: "4012345",
         title: "Software Engineer",
@@ -423,9 +428,141 @@ describe.skipIf(!hasTestDb)("routes and workers against Postgres", () => {
       });
       const res = await request(app).post("/api/jobs/import").send({ url: "https://boards.greenhouse.io/newco/jobs/4012345" });
       expect(res.status).toBe(200);
-      expect(fetchPostingFromBoard).toHaveBeenCalledWith("greenhouse", "newco", "4012345");
+      expect(fetchPostingFromBoard).toHaveBeenCalledWith("greenhouse", "newco", "4012345", undefined);
       const [company] = await tdb.select().from(schema.companies).where(and(eq(schema.companies.ats, "greenhouse"), eq(schema.companies.boardToken, "newco")));
       expect(company!.active).toBe(false);
+    });
+  });
+
+  describe("POST /api/jobs/import, WP-23", () => {
+    const posting = { externalId: "4012345", title: "Software Engineer", location: "Remote", remote: true, department: null, descriptionText: "Build APIs.", applyUrl: "https://job-boards.greenhouse.io/embed/job_app?for=newco&token=4012345", postedAt: null, salaryMinUsd: null, salaryMaxUsd: null, raw: {} };
+    const URL_OK = "https://boards.greenhouse.io/newco/jobs/4012345";
+    const prefs = { ...DEFAULT_PREFERENCES, roles: ["Software Engineer"], workAuthorization: "citizen_or_pr" };
+    const importIt = (url = URL_OK) => request(app).post("/api/jobs/import").send({ url });
+
+    it("stores a gate failure as below_bar, server-only, and Tailor anyway still queues it, marked an override", async () => {
+      await tdb.update(schema.profiles).set({ preferences: { ...prefs, excludedKeywords: ["APIs"] } as never }).where(eq(schema.profiles.userId, me.id));
+      fetchPostingFromBoard.mockResolvedValue(posting);
+      const res = await importIt();
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ matchId: null, fit: { passed: false, reasons: ['Mentions excluded keyword "APIs"'] } });
+      const [m] = await tdb.select().from(schema.matches).where(eq(schema.matches.userId, me.id));
+      expect(m).toMatchObject({ status: "below_bar", passedFilters: false, source: "manual_url", selection: "import" });
+
+      const fit = await request(app).get(`/api/jobs/${res.body.jobId}/fit`);
+      expect(fit.status).toBe(200);
+      expect(fit.body.matchId).toBe(m!.id);
+      const queued = await request(app).post(`/api/matches/${m!.id}/queue`);
+      expect(queued.status).toBe(201);
+      const [a] = await tdb.select().from(schema.applications).where(eq(schema.applications.userId, me.id));
+      expect(a!.gateOverride).toBe(true);
+    });
+
+    // Contract round 1: refused call, then re-import, then scored and in the feed.
+    it("an import the gateway refused is scored by the next import, and reaches the feed", async () => {
+      await tdb.update(schema.profiles).set({ preferences: prefs as never }).where(eq(schema.profiles.userId, me.id));
+      await fact("Build APIs", true);
+      fetchPostingFromBoard.mockResolvedValue(posting);
+      scoreFit.mockRejectedValueOnce(new AgentError("llm_paused", "all model calls are paused", false));
+
+      const first = await importIt();
+      expect(first.status).toBe(200);
+      expect(first.body.fit).toEqual({ passed: true, reasons: [] });
+      const [stored] = await tdb.select().from(schema.matches).where(eq(schema.matches.userId, me.id));
+      expect(stored).toMatchObject({ status: "new", score: null, id: first.body.matchId });
+      const empty = await request(app).get("/api/matches");
+      expect(empty.status).toBe(200);
+      expect(empty.body.matches).toEqual([]);
+      // The refused call took no slot.
+      const usage = await tdb.select().from(userDailyUsage).where(eq(userDailyUsage.userId, me.id));
+      expect(usage.reduce((n, u) => n + u.scored, 0)).toBe(0);
+
+      scoreFit.mockResolvedValueOnce({ score: 90, reasons: ["Strong match"], promptVersion: 3 });
+      const second = await importIt();
+      expect(second.status).toBe(200);
+      expect(second.body).toMatchObject({ matchId: stored!.id, fit: { passed: true, reasons: [] } });
+      const [after] = await tdb.select().from(schema.matches).where(eq(schema.matches.userId, me.id));
+      expect(after).toMatchObject({ status: "new", score: 90, reasons: ["Strong match"], scorerVersion: "fit-scorer@v3", source: "manual_url", selection: "import" });
+      expect(after!.prerankScore).not.toBeNull();
+      const feed = await request(app).get("/api/matches");
+      expect(feed.status).toBe(200);
+      expect(feed.body.matches.map((m: { id: string }) => m.id)).toEqual([stored!.id]);
+      expect(scoreFit).toHaveBeenCalledTimes(2);
+
+      // Scored now: a third import pays nothing.
+      await importIt();
+      expect(scoreFit).toHaveBeenCalledTimes(2);
+    });
+
+    it("a re-import under the bar stores below_bar, out of the feed", async () => {
+      await tdb.update(schema.profiles).set({ preferences: prefs as never }).where(eq(schema.profiles.userId, me.id));
+      await fact("Build APIs", true);
+      fetchPostingFromBoard.mockResolvedValue(posting);
+      scoreFit.mockRejectedValueOnce(new AgentError("llm_paused", "all model calls are paused", false));
+      await importIt();
+      scoreFit.mockResolvedValueOnce({ score: 60, reasons: ["Thin"] });
+      const second = await importIt();
+      expect(second.status).toBe(200);
+      expect(second.body).toMatchObject({ matchId: null, fit: { passed: false } });
+      const [after] = await tdb.select().from(schema.matches).where(eq(schema.matches.userId, me.id));
+      expect(after).toMatchObject({ status: "below_bar", score: 60 });
+    });
+
+    it("keeps an import when the scorer cannot run, unscored and out of the feed", async () => {
+      await tdb.update(schema.profiles).set({ preferences: prefs as never }).where(eq(schema.profiles.userId, me.id));
+      fetchPostingFromBoard.mockResolvedValue(posting);
+      const res = await importIt(); // no confirmed fact, so no model call
+      expect(res.status).toBe(200);
+      expect(res.body.fit).toEqual({ passed: true, reasons: [] });
+      const [m] = await tdb.select().from(schema.matches).where(eq(schema.matches.userId, me.id));
+      expect(m).toMatchObject({ status: "new", score: null, id: res.body.matchId });
+      const feed = await request(app).get("/api/matches");
+      expect(feed.status).toBe(200);
+      expect(feed.body.matches).toEqual([]);
+    });
+
+    it("a refused board fetch is a 503 with no URL in it, and refunds the allowance", async () => {
+      fetchPostingFromBoard.mockRejectedValue(new SafeFetchError("ssrf_redirect", 302));
+      const res = await importIt();
+      expect(res.status).toBe(503);
+      expect(res.body.error).toMatchObject({ code: "service_unavailable", details: { reason: "board_unavailable" } });
+      expect(JSON.stringify(res.body)).not.toContain("greenhouse.io");
+      expect(await tdb.select().from(schema.companies)).toEqual([]);
+    });
+
+    it("queues an unreadable link as host and path only, counts repeats, and never fetches it", async () => {
+      const url = "https://careers.example.com/jobs/1?token=secret&name=ann";
+      expect((await importIt(url)).status).toBe(422);
+      expect((await importIt(url)).status).toBe(422);
+      const rows = await tdb.select().from(schema.boardRequests);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ userId: me.id, host: "careers.example.com", path: "/jobs/1", timesSeen: 2, status: "open", detectedAts: null });
+      expect(JSON.stringify(rows[0])).not.toContain("secret");
+      expect(fetchPostingFromBoard).not.toHaveBeenCalled();
+    });
+
+    it("stops queueing at 50 open links for one user, and still answers 422", async () => {
+      await tdb.insert(schema.boardRequests).values(Array.from({ length: 50 }, (_, n) => ({ userId: me.id, host: "a.example", path: `/${n}` })));
+      expect((await importIt("https://b.example/new")).status).toBe(422);
+      expect(await tdb.select().from(schema.boardRequests)).toHaveLength(50);
+    });
+
+    it("reads a gh_jid link through the company on that domain, without fetching the page", async () => {
+      await tdb.insert(schema.companies).values({ name: "Stripe", ats: "greenhouse", boardToken: "stripe", domains: ["stripe.com"] });
+      fetchPostingFromBoard.mockResolvedValue(posting);
+      const res = await importIt("https://www.stripe.com/jobs/search?gh_jid=4012345");
+      expect(res.status).toBe(200);
+      expect(fetchPostingFromBoard).toHaveBeenCalledWith("greenhouse", "stripe", "4012345", undefined);
+      expect(await tdb.select().from(schema.boardRequests)).toEqual([]);
+    });
+
+    it("stores a Lever EU board in its region", async () => {
+      const id = "0f6c1a3e-2b4d-4c5e-8f9a-1b2c3d4e5f60";
+      fetchPostingFromBoard.mockResolvedValue({ ...posting, externalId: id, applyUrl: `https://jobs.eu.lever.co/acme/${id}/apply` });
+      const res = await importIt(`https://jobs.eu.lever.co/acme/${id}`);
+      expect(res.status).toBe(200);
+      const [c] = await tdb.select().from(schema.companies).where(eq(schema.companies.boardToken, "acme"));
+      expect(c).toMatchObject({ apiRegion: "eu", apiHost: "api.eu.lever.co", applyHost: "jobs.eu.lever.co", active: false });
     });
   });
 

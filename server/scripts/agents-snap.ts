@@ -3,11 +3,12 @@ import { join } from "node:path";
 import { z } from "zod";
 import { toStrictJsonSchema } from "../src/llm/schema";
 import { AnswerDrafterOutput } from "../src/agents/answer-drafter/schema";
+import { ClaimVerifierOutput } from "../src/agents/claim-verifier/schema";
 import { CoverLetterOutput } from "../src/agents/cover-letter-writer/schema";
 import { FitScorerOutput } from "../src/agents/fit-scorer/schema";
 import { ResumeParserOutput } from "../src/agents/resume-parser/schema";
 import { ResumeTailorOutput } from "../src/agents/resume-tailor/schema";
-import { ResumeWriterOutput } from "../src/agents/resume-writer/schema";
+import { ResumeWriterOutput, ResumeWriterOutputV2 } from "../src/agents/resume-writer/schema";
 
 /**
  * Writes agents/<id>/schema.snap.json for every registered agent (03-agent-runtime.md 2.4 step 4).
@@ -28,6 +29,8 @@ const outputs: Record<string, z.ZodType> = {
   "resume-writer": ResumeWriterOutput,
   "answer-drafter": AnswerDrafterOutput,
   "cover-letter-writer": CoverLetterOutput,
+  "claim-verifier": ClaimVerifierOutput,
+  "claim-verifier-escalation": ClaimVerifierOutput,
 };
 
 for (const [id, schema] of Object.entries(outputs)) {
@@ -36,3 +39,8 @@ for (const [id, schema] of Object.entries(outputs)) {
   writeFileSync(file, snap);
   console.log(`wrote ${file}`);
 }
+
+// A version whose input or output changes is a second object with its own snapshot (agents/03-fit-scorer.md 9).
+const v2 = join(here, "..", "src", "agents", "resume-writer", "schema.v2.snap.json");
+writeFileSync(v2, JSON.stringify(toStrictJsonSchema(ResumeWriterOutputV2), null, 2) + String.fromCharCode(10));
+console.log(`wrote ${v2}`);

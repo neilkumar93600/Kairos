@@ -12,6 +12,7 @@ import { encrypt } from "../src/lib/crypto";
 import { userKey } from "../src/lib/storage";
 import { PRIVACY_REGISTRY } from "../src/services/privacy-registry";
 import { fakeR2 } from "./helpers/fake-r2";
+import { encryptBody } from "../src/services/inbound";
 import { MARK, seedEverything } from "./helpers/privacy-seed";
 import { closeTestDbs, hasTestDb, resetDb, testDb, testDbUrl } from "./helpers/test-db";
 
@@ -38,6 +39,9 @@ describe.skipIf(!hasTestDb)("privacy scripts against Postgres (WP-25)", () => {
     const bob = await seedEverything(db, "bob@example.com", "bobmarker");
     const sensitive = encrypt(JSON.stringify({ gender: "Female" }), { table: "profiles", id: ann.id, column: "sensitive_answers_enc" });
     await db.update(schema.profiles).set({ sensitiveAnswersEnc: sensitive }).where(eq(schema.profiles.userId, ann.id));
+    // WP-24: a reply stored encrypted, the export decrypts it under its own AAD.
+    const [mail] = await db.select({ id: schema.inboundEmails.id }).from(schema.inboundEmails).where(eq(schema.inboundEmails.userId, ann.id));
+    await db.update(schema.inboundEmails).set({ textBody: null, ...encryptBody(mail!.id, "an encrypted reply") }).where(eq(schema.inboundEmails.id, mail!.id));
     const r2 = fakeR2();
     for (const id of [ann.id, bob.id]) await r2.storage.put(userKey("uploads", id, "cv.pdf"), `cv of ${id}`, "application/pdf");
     const out = await mkdtemp(join(tmpdir(), "export-"));
@@ -49,6 +53,8 @@ describe.skipIf(!hasTestDb)("privacy scripts against Postgres (WP-25)", () => {
       expect(result.tables.session![0]).not.toHaveProperty("token");
       expect(result.tables.profiles![0]).toMatchObject({ sensitive_answers_enc: JSON.stringify({ gender: "Female" }) });
       expect(result.tables.profiles![0]).not.toHaveProperty("normalized_email_hash");
+      expect(result.tables.inbound_emails![0]).toMatchObject({ text_body_enc: "an encrypted reply", preview_enc: "an encrypted reply" });
+      expect(result.tables.forwarding_verifications![0]).toMatchObject({ code: "123456" });
       expect(result.files).toEqual([{ bucket: "uploads", name: "cv.pdf" }]);
       const json = await readFile(join(out, "export.json"), "utf8");
       expect(json).toContain(MARK);

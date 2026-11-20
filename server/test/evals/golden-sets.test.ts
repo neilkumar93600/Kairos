@@ -16,11 +16,30 @@ describe("the committed golden sets", () => {
     const report = await runEval({ mode: "fixtures" });
     expect(report.passed, formatReport(report)).toBe(true);
     // Each drafting agent seeds injection cases; the answer drafter covers every kind of protected question.
-    for (const id of ["resume-tailor", "resume-writer", "answer-drafter", "cover-letter-writer", "fit-scorer", "resume-parser"]) {
+    for (const id of ["resume-tailor", "resume-writer", "answer-drafter", "cover-letter-writer", "fit-scorer", "resume-parser", "claim-verifier", "claim-verifier-escalation"]) {
       expect(report.results.some((r) => r.agentId === id && r.tags.includes("injection")), id).toBe(true);
       expect(report.results.some((r) => r.agentId === id && r.negative), id).toBe(true);
     }
     expect(report.results.filter((r) => r.agentId === "answer-drafter" && r.tags.includes("sensitive")).length).toBeGreaterThanOrEqual(8);
+  });
+
+  it("run resume-writer v2 at all four levels, with zero invented detail at each, and catch an invention at each (WP-31)", async () => {
+    const report = await runEval({ mode: "fixtures", agents: ["resume-writer"] });
+    expect(report.levelBars.map((b) => b.level)).toEqual(["early_career", "lead", "mid", "senior"]);
+    for (const b of report.levelBars) {
+      expect(b.invented, b.level).toBe(0);
+      expect(b.cases, b.level).toBeGreaterThanOrEqual(10);
+    }
+    expect(report.tagAccuracy).toBeGreaterThanOrEqual(0.8);
+    for (const level of report.levelBars.map((b) => b.level)) {
+      const injection = report.results.filter((r) => r.level === level && r.tags.includes("injection") && !r.negative);
+      expect(injection.length, level).toBeGreaterThanOrEqual(3);
+      // An invention planted at this level was caught: a negative's failures are the graders that missed it.
+      const planted = report.results.filter((r) => r.level === level && r.negative);
+      expect(planted.length, level).toBeGreaterThanOrEqual(3);
+      expect(planted.flatMap((r) => r.failures), level).toEqual([]);
+    }
+    expect(formatReport(report)).toContain("prove the plumbing only");
   });
 
   it("hold no real-looking contact data: emails and links on example.com, phones in the fictional 555 range (13.2)", () => {

@@ -161,8 +161,23 @@ describe.skipIf(!hasChromium)("fillInBrowser in Chromium", () => {
       { fieldKey: "first_name", label: "First name", value: "Ada", source: "profile" as const },
       { fieldKey: "email", label: "Email", value: "ada@example.com", source: "profile" as const },
     ];
-    const runReal = (body: string) =>
-      fillInBrowser(fixtureBrowser({ [APPLY]: { body } }), { applicationId: APP_ID, applyUrl: APPLY, answers, resumeLines: [], coverLetter: null, fillerSource: realFiller });
+    const runReal = (body: string, extra: Partial<FillInput> = {}) =>
+      fillInBrowser(fixtureBrowser({ [APPLY]: { body } }), { applicationId: APP_ID, applyUrl: APPLY, answers, resumeLines: [], coverLetter: null, fillerSource: realFiller, ...extra });
+    const resumeInput = `<input type=file id=resume name=resume required>`;
+
+    it("attaches the PDF to the form's resume input before the filler submits, and the page really holds the file", async () => {
+      const page = `<!doctype html><form onsubmit="event.preventDefault(); const f = document.getElementById('resume').files[0]; document.body.textContent = 'Thank you for applying! ' + f.name + ' ' + f.size + ' ' + f.type">${resumeInput}${fields}</form>`;
+      const outcome = await runReal(page, { resumePdf: { name: "Ada Lovelace - Resume.pdf", buffer: Buffer.from("%PDF-1.7 test") } });
+      expect(outcome.submitted).toBe(true);
+      if (outcome.submitted) {
+        expect(outcome.report.confirmationText).toContain("Ada Lovelace - Resume.pdf 13 application/pdf");
+        expect(outcome.report.filledFields.map((f) => f.fieldKey)).toContain("resume");
+      }
+    });
+
+    it("a required resume input with no PDF stops before the fill: nothing was sent", async () => {
+      expect(await runReal(`<!doctype html><form>${resumeInput}${fields}</form>`)).toMatchObject({ submitted: false, code: "applier_error", detail: "resume_missing" });
+    });
 
     it("fills and submits a form that confirms in the page", async () => {
       const outcome = await runReal(`<!doctype html><form onsubmit="event.preventDefault(); document.body.textContent = 'Thank you for applying!'">${fields}</form>`);

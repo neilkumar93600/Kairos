@@ -6,6 +6,7 @@ import { fakeAnthropic, type FakeAnthropic } from "../src/llm/testing";
 import { resetBreakers } from "../src/llm/breaker";
 import { resetLimiter } from "../src/llm/limiter";
 import { draftAnswer } from "../src/services/draft-writer";
+import { configureVerify } from "../src/services/verify";
 
 /**
  * The gateway spy of 03-agent-runtime 15.3 (INV-9): a sensitive or profile question never reaches the model, on the
@@ -18,7 +19,9 @@ describe("gateway spy", () => {
     resetLimiter();
     fake = fakeAnthropic([
       { content: [{ type: "text", text: JSON.stringify({ text: "I built it.", factIds: ["f1"] }) }], stop_reason: "end_turn", usage: { input_tokens: 100, output_tokens: 20 } },
+      { content: [{ type: "text", text: JSON.stringify({ verdicts: [{ claimId: "c01", verdict: "supported", factRef: "f1" }] }) }], stop_reason: "end_turn", usage: { input_tokens: 100, output_tokens: 20 } },
     ]);
+    configureVerify({ mode: async () => "shadow", cacheGet: async () => new Map(), cachePut: async () => {} });
     configureGateway({
       client: () => fake,
       budget: new Budget(memorySpendStore()),
@@ -27,7 +30,10 @@ describe("gateway spy", () => {
       flags: () => ({ llmPaused: false, batchPaused: false, disabled: {}, promptPin: {} }),
     });
   });
-  afterEach(() => configureGateway({ writeRow: async () => null }));
+  afterEach(() => {
+    configureVerify();
+    configureGateway({ writeRow: async () => null });
+  });
 
   const job = { title: "Engineer", company: "Acme", descriptionText: "Build APIs." };
   const facts = [{ id: "f1", kind: "role", text: "Built the billing API at Initech" }];
@@ -50,7 +56,7 @@ describe("gateway spy", () => {
 
   it("positive control: an ordinary question does reach the model, with the user's hash", async () => {
     await draftAnswer({ label: "Why do you want this job?", job, facts }, { callCtx: ctx });
-    expect(fake.requests).toHaveLength(1);
-    expect((fake.requests[0]!.metadata as { user_id?: string }).user_id).toMatch(/^[0-9a-f]{32}$/);
+    expect(fake.requests).toHaveLength(2); // the drafter, then the verifier in shadow; both carry the hash
+    for (const r of fake.requests) expect((r.metadata as { user_id?: string }).user_id).toMatch(/^[0-9a-f]{32}$/);
   });
 });

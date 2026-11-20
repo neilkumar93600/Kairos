@@ -8,6 +8,7 @@ import { finalizeFacts, normalizeForHash } from "../services/import/finalize";
 import { sourceAad } from "../services/import/imports";
 import { parseResumeToFacts, parserInput } from "../services/resume-parser";
 import { planFor } from "../services/submissions";
+import { isKillSwitch } from "../llm/errors";
 import { gatewayCtx } from "../llm/wire";
 import type { JobData } from "./queues";
 
@@ -63,9 +64,11 @@ export async function processParseResume(job: Job<JobData["parse-resume"]>) {
         return !id;
       });
       if (fresh.length) {
+        // Facts list by created_at, then id: one transaction's now() would leave file order to random ids.
+        const at = Date.now();
         await tx
           .insert(facts)
-          .values(fresh.map((f) => ({ ...f, userId: claimed.userId, resumeProfileId: claimed.resumeProfileId, importId: claimed.id, confirmed: false, assertedBy: "import" as const })))
+          .values(fresh.map((f, i) => ({ ...f, userId: claimed.userId, resumeProfileId: claimed.resumeProfileId, importId: claimed.id, confirmed: false, assertedBy: "import" as const, createdAt: new Date(at + i) })))
           .onConflictDoNothing({ target: [facts.resumeProfileId, facts.sourceSpanHash] });
       }
       await tx
@@ -83,6 +86,16 @@ export async function processParseResume(job: Job<JobData["parse-resume"]>) {
     logger.info({ metric: "resume_parse", outcome: "parsed", importId, sourceKind: claimed.sourceKind, ms: Date.now() - started, ...added, ...counts }, "resume parsed");
     return added;
   } catch (err) {
+    // A pause outlasts BullMQ's retries, and must not cost the user their import: the attempt is given back and the row
+    // waits as pending. The stuck-parse reconciler tries it again every 10 minutes until the switch is lifted.
+    if (isKillSwitch(err)) {
+      await db()
+        .update(resumeImports)
+        .set({ parseStatus: "pending", parseAttempts: claimed.parseAttempts - 1, updatedAt: new Date() })
+        .where(and(eq(resumeImports.id, importId), ne(resumeImports.parseStatus, "parsed")));
+      logger.info({ metric: "resume_parse", outcome: "deferred", importId }, "resume parse held by a kill switch");
+      return { deferred: true };
+    }
     const last = claimed.parseAttempts >= MAX_PARSE_ATTEMPTS;
     await db()
       .update(resumeImports)

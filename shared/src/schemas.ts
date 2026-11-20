@@ -71,6 +71,14 @@ export const approveApplicationsSchema = z.object({
 });
 export type ApproveApplicationsInput = z.infer<typeof approveApplicationsSchema>;
 
+/** POST /api/applications/:id/resend (05-api 10.4): the extension by default; an ambiguous failure needs the acknowledgement. */
+export const resendRequestSchema = z.strictObject({
+  channel: z.enum(["extension", "cloud"]).default("extension"),
+  acknowledgeUnconfirmed: z.boolean().default(false),
+});
+/** POST /api/extension/claim and /release (05-api 13.3). */
+export const extensionClaimSchema = z.strictObject({ applicationId: z.uuid() });
+
 /** What the extension or cloud applier reports back after trying to submit. */
 export const submissionReportSchema = z.object({
   applicationId: z.uuid(),
@@ -297,3 +305,69 @@ export const notificationsResponseSchema = z.object({
 });
 export const notificationsReadSchema = z.union([z.strictObject({ ids: z.array(z.uuid()).min(1).max(100) }), z.strictObject({ all: z.literal(true) })]);
 export type NotificationsRead = z.infer<typeof notificationsReadSchema>;
+
+// Reply forwarding setup (WP-24, 05-api 12.x "Forwarding"). Informational: no product gate depends on the state.
+export const FORWARDING_STATES = ["not_started", "awaiting_verification", "verified_pending_first_mail", "active", "stale"] as const;
+export type ForwardingState = (typeof FORWARDING_STATES)[number];
+export const forwardingStatusSchema = z.object({
+  state: z.enum(FORWARDING_STATES),
+  address: z.string(),
+  lastMailAt: z.string().nullable(),
+  /** The Gmail code and confirmation link Kairos received for the user, for 3 days, or null. */
+  verification: z
+    .object({ provider: z.literal("gmail"), code: z.string().nullable(), confirmUrl: z.url().nullable(), expiresAt: z.string() })
+    .nullable(),
+});
+export type ForwardingStatus = z.infer<typeof forwardingStatusSchema>;
+/** "I have set it up": the only signal Gmail or Outlook gives. */
+export const forwardingConfirmSchema = z.strictObject({ provider: z.enum(["gmail", "outlook", "other"]) });
+export type ForwardingConfirm = z.infer<typeof forwardingConfirmSchema>;
+
+/* ---- Email preferences and saved searches (WP-35, 05-api 10.8 and 12.1) ---- */
+
+/** The optional mail kinds a person can turn on or off; true means "send me this". Account mail (codes, receipts, resend links, billing notices) is not here: it cannot be turned off. */
+export const emailPreferencesSchema = z.strictObject({
+  digest: z.boolean(),
+  outcomeReport: z.boolean(),
+  autopilotSummary: z.boolean(),
+  reminders: z.boolean(),
+});
+export type EmailPreferences = z.infer<typeof emailPreferencesSchema>;
+export const emailPreferencesPatchSchema = emailPreferencesSchema.partial().refine((o) => Object.keys(o).length > 0, "Send at least one preference");
+export type EmailPreferencesPatch = z.infer<typeof emailPreferencesPatchSchema>;
+export const emailPreferencesResponseSchema = z.object({ emailPreferences: emailPreferencesSchema });
+
+/** Filters over the user's own matches; they add no scoring. Mirrors saved_search_filters_valid() in the database. */
+export const savedSearchFiltersSchema = z.strictObject({
+  minScore: z.number().int().min(0).max(100).optional(),
+  roles: z.array(z.string().trim().min(2).max(80)).max(10).optional(),
+  companies: z.array(z.string().trim().min(1).max(120)).max(20).optional(),
+  remoteOnly: z.boolean().optional(),
+});
+export type SavedSearchFilters = z.infer<typeof savedSearchFiltersSchema>;
+export const SAVED_SEARCH_FREQUENCY_VALUES = ["off", "daily", "weekly"] as const;
+export const savedSearchInputSchema = z.strictObject({
+  name: z.string().trim().min(1).max(60),
+  filters: savedSearchFiltersSchema.default({}),
+  frequency: z.enum(SAVED_SEARCH_FREQUENCY_VALUES).default("daily"),
+});
+export type SavedSearchInput = z.infer<typeof savedSearchInputSchema>;
+export const savedSearchPatchSchema = z
+  .strictObject({
+    name: z.string().trim().min(1).max(60),
+    filters: savedSearchFiltersSchema,
+    frequency: z.enum(SAVED_SEARCH_FREQUENCY_VALUES),
+  })
+  .partial()
+  .refine((o) => Object.keys(o).length > 0, "Send at least one field");
+export type SavedSearchPatch = z.infer<typeof savedSearchPatchSchema>;
+export const savedSearchSchema = z.object({
+  id: z.uuid(),
+  name: z.string(),
+  filters: savedSearchFiltersSchema,
+  frequency: z.enum(SAVED_SEARCH_FREQUENCY_VALUES),
+  /** When the next digest is due; null while frequency is off. */
+  nextDigestAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type SavedSearch = z.infer<typeof savedSearchSchema>;

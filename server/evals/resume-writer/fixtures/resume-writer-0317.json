@@ -1,0 +1,31 @@
+{
+  "caseId": "resume-writer-0317",
+  "promptVersion": 2,
+  "promptSha256": "606e076c399bb43ebf29377c97f98508070772ea210ba8e73e00287d15d07db0",
+  "inputHash": "4e6e2a837dd68b975c1e3e30740288ffc05e4f28e9796116fe6d0c7fa2e891b0",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "headline",
+            "entryId": null,
+            "lineId": null,
+            "action": "add",
+            "after": null,
+            "why": "States the result the fact gives",
+            "factIds": [],
+            "needsFact": {
+              "kind": "role",
+              "question": "What is your most recent job title?"
+            },
+            "tag": "show_scope",
+            "priority": "high",
+            "appendYears": false
+          }
+        ]
+      }
+    }
+  ]
+}

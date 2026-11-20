@@ -9,10 +9,13 @@ import type { AgentCallContext } from "../agents/types";
 import { checkClaims, type ClaimRule } from "../llm/claims";
 import { redactContact } from "../llm/redact";
 import { chatJson } from "./llm";
+import type { VerifierPath } from "../lib/flags";
+import { logger } from "../lib/logger";
+import { requireVerifierOrShadow, verifyClaims } from "./verify";
 
 export interface TruthLockResult {
   kept: ResumeLine[];
-  rejected: { line: ResumeLine; reason: string; rule: ClaimRule | "no_fact" | "unknown_fact" }[];
+  rejected: { line: ResumeLine; reason: string; rule: ClaimRule | "no_fact" | "unknown_fact" | "unverified" }[];
 }
 
 /**
@@ -56,12 +59,39 @@ export interface FactForTailoring {
 
 const tailoredSchema = z.object({ lines: z.array(resumeLineSchema).min(1).max(60) });
 
-/** Rewrites resume lines for one job, then drops any line the truth lock rejects. Contact details never reach the model. */
+/** Layers 1 and 2, then layer 3 on what survived them. In shadow layer 3 only counts; in enforce it drops. */
+async function lockAndVerify(lines: ResumeLine[], facts: ReadonlyMap<string, string>, path: VerifierPath, ctx: AgentCallContext): Promise<TruthLockResult> {
+  const lock = enforceTruthLock(lines, facts);
+  const { dropped } = await verifyClaims(
+    lock.kept.map((l, i) => ({ key: String(i), kind: "resume_line" as const, text: l.text, factIds: l.factIds })),
+    facts,
+    { path, target: null, ctx, escalate: true },
+  );
+  const rule = new Map(dropped.map((d) => [d.key, d.rule]));
+  return {
+    kept: lock.kept.filter((_, i) => !rule.has(String(i))),
+    rejected: [
+      ...lock.rejected,
+      ...lock.kept.flatMap((line, i) => {
+        const r = rule.get(String(i));
+        return r ? [{ line, reason: "not verified against the cited facts", rule: r }] : [];
+      }),
+    ],
+  };
+}
+
+/**
+ * Rewrites resume lines for one job, then drops any line the truth lock rejects (layers 1 to 3), with one truth repair
+ * for what was dropped. Contact details never reach the model. `path` names the verifier_mode flag; prepare's job passes
+ * its own.
+ */
 export async function tailorResume(
   facts: FactForTailoring[],
   job: { title: string; companyName: string; descriptionText: string },
   callCtx?: AgentCallContext,
+  opts: { path?: VerifierPath } = {},
 ) {
+  const path = opts.path ?? "tailor";
   const factTexts = new Map(facts.map((f) => [f.id, f.text]));
   if (facts.length === 0) return { kept: [], rejected: [] }; // nothing a line could cite, so no model call
   if (callCtx ?? gatewayEnabled()) {
@@ -71,9 +101,25 @@ export async function tailorResume(
       facts: facts.slice(0, 60),
       job: { title: job.title.slice(0, 200), companyName: job.companyName.slice(0, 200), descriptionText: job.descriptionText.slice(0, 20_000) },
     };
-    const out = await runAgent(resumeTailor, input, callCtx ?? {});
-    return enforceTruthLock(out.data.lines, factTexts);
+    const ctx = callCtx ?? {};
+    const out = await runAgent(resumeTailor, input, ctx);
+    const first = await lockAndVerify(out.data.lines, factTexts, path, ctx);
+    if (!first.rejected.length) return first;
+    // The truth repair (B.9.6): one more call told what failed; its new lines pass all three layers too. It only ever
+    // adds lines, so a failed repair leaves the verified first result standing.
+    try {
+      const doNotClaim = first.rejected.slice(0, 20).map((r) => ({ text: r.line.text.slice(0, 400), rule: r.rule }));
+      const repaired = await runAgent(resumeTailor, { ...input, doNotClaim }, ctx, { callKind: "truth_repair" });
+      const seen = new Set([...first.kept.map((l) => l.text.trim()), ...first.rejected.map((r) => r.line.text.trim())]);
+      const fresh = repaired.data.lines.filter((l) => !seen.has(l.text.trim())).map((l, i) => ({ ...l, id: `r${i + 1}` }));
+      const second = await lockAndVerify(fresh, factTexts, path, ctx);
+      return { kept: [...first.kept, ...second.kept].slice(0, 60), rejected: [...first.rejected, ...second.rejected] };
+    } catch (err) {
+      logger.warn({ path, code: (err as { code?: string }).code ?? null }, "truth repair failed; keeping the verified lines");
+      return first;
+    }
   }
+  await requireVerifierOrShadow(path); // the legacy client has no layer 3; enforce refuses before any spend
   const factList = facts.map((f) => `[${f.id}] (${f.kind}) ${redactContact(f.text)}`).join("\n");
   const result = await chatJson({
     tier: "fast",

@@ -1,8 +1,9 @@
 import type { NextFunction, Request, Response } from "express";
+import { redactUrl } from "../lib/logger";
 import { count, observeLatency, slo } from "../lib/metrics";
 
 /** The money and inbound routes held to 99.9% (README Reliability, S1), by "METHOD /path". */
-const CRITICAL = new Set(["POST /api/applications/approve", "POST /api/extension/report", "POST /api/webhooks/stripe", "POST /api/webhooks/inbound-email"]);
+const CRITICAL = new Set(["POST /api/applications/approve", "POST /api/extension/report", "POST /api/webhooks/stripe", "POST /api/webhooks/inbound-email", "POST /api/webhooks/postmark/inbound/:pathSecret"]);
 
 /** The route groups worth a series. Anything else, 404s included, is "other", so a client's invented path cannot create a series. */
 const GROUPS = new Set(["auth", "auth-providers", "contact", "me", "profile", "matches", "jobs", "resume", "applications", "credits", "inbox", "billing", "extension", "files", "admin", "webhooks"]);
@@ -31,7 +32,7 @@ export function requestMetrics(now: () => number = Date.now) {
   return (req: Request, res: Response, next: NextFunction) => {
     const start = now();
     res.on("finish", () => {
-      const path = req.originalUrl.split("?")[0]!;
+      const path = redactUrl(req.originalUrl);
       const c = classify(req.method, path);
       if (!c) return;
       const ms = now() - start;

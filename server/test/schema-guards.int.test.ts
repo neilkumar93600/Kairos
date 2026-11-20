@@ -209,7 +209,7 @@ describe.skipIf(!hasTestDb)("database backstops", () => {
         timezone: "UTC",
         preferencesVersion: 0,
         factsVersion: 0,
-        mailOptOut: [],
+        mailOptOut: ["digest", "outcome_report", "autopilot_summary", "reminders"], // off until asked for (0023, WP-35)
         applicationsPausedAt: null,
       });
     });

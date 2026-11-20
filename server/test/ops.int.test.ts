@@ -28,7 +28,7 @@ const { approveApplications } = await import("../src/services/submissions");
 const { processInvariantsHourly } = await import("../src/jobs/invariants");
 const { processCloudApply } = await import("../src/jobs/cloud-apply");
 
-const LINE = { id: "l1", section: "Experience", text: "Built the billing service", factIds: ["f1"] };
+const LINE = { id: "l1", section: "Experience", text: "Built the billing service", factIds: [] };
 const ANSWER = { fieldKey: "first_name", label: "First name", value: "Test", source: "profile" as const };
 
 const users = new Map<string, SessionUser>();
@@ -120,17 +120,37 @@ describe.skipIf(!hasTestDb)("ops flags, admin routes and invariants against Post
       expect((await request(app).get("/api/admin/companies?active=maybe").set(as(owner))).status).toBe(400);
       expect((await request(app).put("/api/admin/flags/nope").set(as(owner)).send({ value: true })).status).toBe(422);
       expect((await request(app).put("/api/admin/flags/llm_shed_level").set(as(owner)).send({ value: 9 })).status).toBe(422);
+      // A pin to a version the agent has not loaded would stop the agent (WP-26).
+      expect((await request(app).put("/api/admin/flags/prompt_pin:fit-scorer").set(as(owner)).send({ value: 7 })).status).toBe(422);
       expect(await audit()).toHaveLength(1);
     });
 
+    it("lists the open board requests, host and path only, and pages them", async () => {
+      const userId = await seedUser(db);
+      await db.insert(schema.boardRequests).values([
+        { userId, host: "a.example", path: "/1", lastSeenAt: new Date(Date.now() - 1000) },
+        { userId, host: "b.example", path: "/2" },
+        { userId, host: "c.example", path: "/3", status: "rejected", resolvedAt: new Date() },
+      ]);
+      const first = await request(app).get("/api/admin/board-requests?limit=1").set(as(owner));
+      expect(first.status).toBe(200);
+      expect(first.body.boardRequests).toMatchObject([{ host: "b.example", path: "/2", timesSeen: 1 }]);
+      expect(first.body.boardRequests[0]).not.toHaveProperty("userId");
+      const second = await request(app).get(`/api/admin/board-requests?limit=1&cursor=${encodeURIComponent(first.body.nextCursor)}`).set(as(owner));
+      expect(second.status).toBe(200);
+      expect(second.body.boardRequests).toMatchObject([{ host: "a.example" }]);
+      expect(second.body).not.toHaveProperty("nextCursor"); // the last page has none (lib/pagination.ts slicePage)
+    });
+
     it("activates an imported company, writes the audit row, and is a no-op the second time", async () => {
-      const [company] = await db.insert(schema.companies).values({ name: "Imported Co", ats: "lever", boardToken: "imported", active: false, inactiveReason: "import_pending", discoveredBy: "import" }).returning();
+      // WP-23: a close-only poll stored this ETag. Activation forgets it, or the first real poll would get a 304 and read nothing.
+      const [company] = await db.insert(schema.companies).values({ name: "Imported Co", ats: "lever", boardToken: "imported", active: false, inactiveReason: "import_pending", discoveredBy: "import", etag: 'W/"close-only"' }).returning();
       const listed = await request(app).get("/api/admin/companies?active=false").set(as(owner));
       expect(listed.body.companies.map((c: { id: string }) => c.id)).toEqual([company!.id]);
 
       const first = await request(app).post(`/api/admin/companies/${company!.id}/activate`).set(as(owner));
       expect(first.body).toMatchObject({ active: true, changed: true });
-      expect((await db.select().from(schema.companies).where(eq(schema.companies.id, company!.id)))[0]?.active).toBe(true);
+      expect((await db.select().from(schema.companies).where(eq(schema.companies.id, company!.id)))[0]).toMatchObject({ active: true, etag: null });
       expect(await audit()).toMatchObject([{ actor: owner, action: "company_activate", target: `company:${company!.id}`, before: { active: false, inactiveReason: "import_pending" }, after: { active: true, inactiveReason: null } }]);
 
       expect((await request(app).post(`/api/admin/companies/${company!.id}/activate`).set(as(owner))).body.changed).toBe(false);
@@ -215,7 +235,7 @@ describe.skipIf(!hasTestDb)("ops flags, admin routes and invariants against Post
         requestedBy: "user",
       });
       await db.update(schema.opsAudit).set({ actor: erased }).where(eq(schema.opsAudit.actor, owner));
-      expect((await audit())[0]?.actor).toBe(erased);
+      expect((await audit()).map((r) => r.actor)).toContain(erased);
       await expect(db.update(schema.opsAudit).set({ actor: `erased:${"cd".repeat(16)}` })).rejects.toThrow();
     });
 

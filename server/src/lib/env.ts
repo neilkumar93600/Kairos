@@ -94,6 +94,11 @@ export const APPLIER_FORBIDDEN = [
   // Outbound mail (WP-44): the broadcast stream's token and the Postmark delivery-event webhook's secret.
   "POSTMARK_BROADCAST_TOKEN",
   "POSTMARK_EVENTS_SECRET",
+  // Inbound mail (WP-24): the new route's path secret and Basic password, current and previous.
+  "POSTMARK_INBOUND_PATH_SECRET",
+  "POSTMARK_INBOUND_PATH_SECRET_PREVIOUS",
+  "POSTMARK_INBOUND_BASIC_PASSWORD",
+  "POSTMARK_INBOUND_BASIC_PASSWORD_PREVIOUS",
 ] as const;
 
 const applierSchema = z.object(applierShape);
@@ -126,8 +131,26 @@ const envSchema = z.object({
 
   POSTMARK_SERVER_TOKEN: z.preprocess(emptyToUndefined, z.string().optional()),
   EMAIL_FROM: z.string().default("Kairos <hello@kairos.app>"),
+  /** The forwarding addresses' domain, which Postmark's inbound server receives (owner-actions/WP-24.md: replies vs reply). */
   INBOUND_EMAIL_DOMAIN: z.string().default("replies.kairos.app"),
+  /** The legacy ?token= inbound route's secret (05-api 14.4); removed a week after Postmark points at the new route. */
   INBOUND_WEBHOOK_SECRET: z.string().min(16),
+  /**
+   * api only. POST /api/webhooks/postmark/inbound/:pathSecret (05-api 14.3): the path secret and the HTTP Basic pair
+   * embedded in Postmark's webhook URL. The _PREVIOUS values are accepted too while a rotation is in progress. Unset
+   * path secret or password: the route answers every call as a route that does not exist.
+   */
+  POSTMARK_INBOUND_PATH_SECRET: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
+  POSTMARK_INBOUND_PATH_SECRET_PREVIOUS: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
+  POSTMARK_INBOUND_BASIC_USER: z.preprocess(emptyToUndefined, z.string().min(1).max(100).optional()),
+  POSTMARK_INBOUND_BASIC_PASSWORD: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
+  POSTMARK_INBOUND_BASIC_PASSWORD_PREVIOUS: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
+  /**
+   * api only. Also write the reply body in clear to inbound_emails.text_body, for the previous release, which reads only
+   * that column (expand/contract, owner-actions/WP-24.md). Turn off one release after this one is live everywhere, then
+   * run `backfill-inbound --null-plaintext`. Without DATA_KEKS (development) the body is always written in clear.
+   */
+  INBOUND_PLAINTEXT_DUAL_WRITE: flag("1"),
   /** Dev and test only: the mailer appends each email as a JSON line here instead of sending it (scripts/smoke.mjs reads the code). */
   MAIL_SINK_FILE: z.preprocess(emptyToUndefined, z.string().optional()),
   // Outbound mail core (WP-44, messaging-44): two Postmark streams, so a digest burst never queues behind OTPs.
@@ -141,6 +164,19 @@ const envSchema = z.object({
   ALERT_EMAIL_TO: z.preprocess(emptyToUndefined, z.string().email().optional()),
   /** Where the public contact form's messages are sent. */
   CONTACT_ALERT_TO: z.string().email().default("hello@kairos.app"),
+  // Unsubscribe, digests and consent (WP-35, owner-actions/WP-35.md).
+  /**
+   * What a new account starts with for the four optional mail kinds (digest, outcome_report, autopilot_summary,
+   * reminders). `opt_out` (the safe default): none until the person turns it on in Settings, which records their
+   * consent. `opt_in`: all on, and each is recorded as consent at sign-up: only after counsel confirms the sign-up form's wording.
+   */
+  MAIL_CONSENT_DEFAULT: z.enum(["opt_out", "opt_in"]).default("opt_out"),
+  /**
+   * The sender's postal address, which CAN-SPAM requires in the footer of every broadcast email. Unset: no digest,
+   * report or summary is sent in production (the digest tick holds back and the send path refuses); in development a
+   * placeholder is printed.
+   */
+  MAIL_POSTAL_ADDRESS: z.preprocess(emptyToUndefined, z.string().min(10).max(300).optional()),
   /**
    * The public api origin for emailed links and the signed-link forms (05-api 5.1); not BETTER_AUTH_URL, which is the
    * web origin. ponytail: optional until the first signed link is mailed (WP-29, WP-35); issuing one fails without it.
@@ -227,6 +263,11 @@ const envSchema = z.object({
   /** Kill switch for the scoring loop (true, 1, on): new postings are not scored while set. */
   PAUSE_SCORING: z.preprocess(emptyToUndefined, z.stringbool().default(false)),
   /**
+   * A ceiling on every plan's dailyScoringCap until the owner pins the per-plan caps (owner-actions/WP-23.md). Default: Pro's
+   * cap, so only Max (350 in plans.ts) runs under its plan number. Lower it to cut spend at once; 0 stops pipeline scoring.
+   */
+  MATCHING_DAILY_CAP_MAX: z.coerce.number().int().min(0).max(1000).default(140),
+  /**
    * Comma-separated user ids that may use /api/admin (WP-27), on top of a verified email and a session under 15 minutes
    * old. Empty: the admin routes answer 404 to everyone. PAUSE_SCORING above stays a pause-only override of ops_flags.
    */
@@ -267,6 +308,11 @@ const envSchema = z.object({
   // opens one bucket. A bucket is on when its name and both key halves are set; lib/storage.ts refuses the others.
   /** https://<account id>.r2.cloudflarestorage.com */
   R2_ENDPOINT: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  /**
+   * Gives the extension's queue items a presigned link to the snapshot PDF (WP-19). Off until the snapshots bucket has its
+   * CORS rule (owner-actions/WP-19.md): the frozen filler fetches the link from the employer's page, and a refused fetch throws there.
+   */
+  EXTENSION_RESUME_PDF: flag("0"),
   R2_BUCKET_UPLOADS: z.preprocess(emptyToUndefined, z.string().optional()),
   R2_UPLOADS_ACCESS_KEY_ID: z.preprocess(emptyToUndefined, z.string().optional()),
   R2_UPLOADS_SECRET_ACCESS_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
@@ -316,7 +362,10 @@ const envSchema = z.object({
   // Privacy (WP-25). Defaults are the spec's; counsel signs off the values (owner-actions/WP-25.md).
   /** The terms and privacy notice version a sign-up agrees to, stored in consent_records. Bump it with each new notice. */
   PRIVACY_NOTICE_VERSION: z.string().regex(/^[A-Za-z0-9._-]{1,40}$/).default("2026-10-30"),
-  /** Retention overrides in days, as "inbound_body=180,contact_messages=365" (rule names: jobs/retention.ts RETENTION_RULES). */
+  /**
+   * Retention overrides in days, as "inbound_body=180,contact_messages=365" (rule names: jobs/retention.ts RETENTION_RULES).
+   * verified_claims takes the key but ignores it: that rule goes by each row's own expires_at.
+   */
   RETENTION_DAYS: z
     .string()
     .default("")

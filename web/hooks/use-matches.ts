@@ -3,6 +3,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useApiQuery } from "@/lib/use-api-query";
 import { api, post } from "@/lib/api";
+import type { QueueResult } from "@/lib/queue-outcome";
 
 export interface Match {
   id: string;
@@ -22,7 +23,7 @@ export function useMatchActions() {
   const qc = useQueryClient();
   const refresh = () => Promise.all([qc.invalidateQueries({ queryKey: ["matches"] }), qc.invalidateQueries({ queryKey: ["applications"] })]);
   return {
-    queue: useMutation({ mutationFn: (id: string) => post<{ applicationId: string | null }>(`/matches/${id}/queue`), onSuccess: refresh }),
+    queue: useMutation({ mutationFn: (id: string) => post<QueueResult>(`/matches/${id}/queue`), onSuccess: refresh }),
     skip: useMutation({ mutationFn: (id: string) => post(`/matches/${id}/skip`), onSuccess: refresh }),
   };
 }

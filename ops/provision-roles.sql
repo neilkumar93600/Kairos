@@ -143,22 +143,18 @@ GRANT SELECT, INSERT ON credit_ledger, llm_calls TO kairos_worker;
 GRANT UPDATE (user_hash) ON llm_calls TO kairos_worker;
 GRANT USAGE ON SEQUENCE llm_calls_id_seq TO kairos_worker;
 
--- kairos_applier: the cloud applier's interim role (CISO mustFix 1(4), WP-04). The definer functions of
--- 02-database.md 8.3 replace these table grants in P5. What jobs/cloud-apply.ts and services/submissions.ts run:
---   read the application with its job's apply_url and closed_at, and the owner's effective plan (plan, status and
---   the past_due grace anchor of WP-10: planFor reads all three) for the claim prechecks;
---   claim it (approved -> submitting) and record the result (status, submitted_at, receipt, failure_reason);
---   for a submit only, insert the one ledger debit and read back its id.
--- Nothing else: no user, session, account, profiles, facts, resumes, inbound_emails or llm_* table, no other
--- column of jobs, subscriptions or credit_ledger, no UPDATE of answers or channel, no DELETE anywhere.
--- ponytail: it can still SELECT every user's applications (answers included) until the P5 definer functions
--- scope reads to the attempt it claimed.
-GRANT SELECT ON applications TO kairos_applier;
-GRANT UPDATE (status, submitted_at, receipt, failure_reason, updated_at) ON applications TO kairos_applier;
-GRANT SELECT (id, apply_url, closed_at) ON jobs TO kairos_applier;
+-- kairos_applier: the cloud applier (CISO mustFix 1(4), WP-04; WP-29 replaced the interim table grants). It reaches
+-- applications, jobs and submission_attempts only through the definer functions of migration 0027 (_db/applications.md
+-- 5.7): read a pending send's URL and owner, claim it, read the content of the attempt it holds, move the phase and record
+-- the result. It never writes a status after the claim and never writes the ledger: settlement does, in the worker.
+-- It keeps the owner's effective plan (planFor reads these three columns, and the flags below) for the claim precheck.
+-- Nothing else: no user, session, account, profiles, facts, resumes, inbound_emails or llm_* table, no credit_ledger,
+-- no DELETE anywhere.
 GRANT SELECT (user_id, plan, status, past_due_since) ON subscriptions TO kairos_applier;
-GRANT INSERT ON credit_ledger TO kairos_applier;
-GRANT SELECT (id) ON credit_ledger TO kairos_applier;
+REVOKE EXECUTE ON FUNCTION applier_job(uuid), claim_cloud_attempt(uuid, int, text), get_applier_payload(uuid, text), mark_browser_launched(uuid, text),
+  mark_attempt_phase(uuid, text), record_attempt_result(uuid, text, text, jsonb), applier_needs_render(uuid, text) FROM PUBLIC, kairos_api, kairos_worker;
+GRANT EXECUTE ON FUNCTION applier_job(uuid), claim_cloud_attempt(uuid, int, text), get_applier_payload(uuid, text), mark_browser_launched(uuid, text),
+  mark_attempt_phase(uuid, text), record_attempt_result(uuid, text, text, jsonb), applier_needs_render(uuid, text) TO kairos_applier;
 
 -- kairos_readonly (analytics and support, 06 H3): no message bodies, answers, tokens or free text; column lists are
 -- filtered by what exists, so the script runs before and after the columns later migrations add.
@@ -209,14 +205,24 @@ GRANT SELECT, INSERT, UPDATE ON metrics_minute TO kairos_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON metrics_minute TO kairos_worker;
 GRANT SELECT ON ops_flags TO kairos_applier;
 GRANT SELECT ON metrics_minute TO kairos_metrics;
+-- WP-23: the review queue of unreadable pasted links (02-database 4.2: api S/I/U, worker S/D for retention).
+GRANT SELECT, INSERT, UPDATE ON board_requests TO kairos_api;
+GRANT SELECT, DELETE ON board_requests TO kairos_worker;
 -- WP-42: the lifecycle tables (_db/applications.md 2.3, 02-database 7.7). No runtime role updates or deletes
 -- application_events (its trigger stops the owner too) or deletes submission_attempts. The worker holds INSERT and
 -- UPDATE of the link and stage columns on tracker_items, not 7.7's SELECT: recordEvent creates or links an
 -- application's item when a worker records its first event, and WP-21's projector moves stages. Never the user's notes,
--- salary text or saved posting. The applier gets nothing here; WP-29's attempt functions give it its rows.
+-- salary text or saved posting. The applier gets nothing here; the attempt functions of 0027 give it its rows.
 GRANT SELECT, INSERT, UPDATE, DELETE ON tracker_items TO kairos_api;
-GRANT SELECT, INSERT ON tracker_items TO kairos_worker;
-GRANT UPDATE (application_id, stage, stage_set_by, closed_reason, updated_at) ON tracker_items TO kairos_worker;
+GRANT INSERT ON tracker_items TO kairos_worker;
+-- WP-21, rule 12: the role that runs agents cannot read notes, salary_text or job_snapshot at all. recordEvent's conflict target, the
+-- retention check on job_id and the projector read these columns; the projector writes the floor beside the stage.
+GRANT SELECT (id, user_id, job_id, application_id, stage, stage_set_by, closed_reason, user_moved_at, created_at, updated_at) ON tracker_items TO kairos_worker;
+GRANT UPDATE (application_id, stage, stage_set_by, closed_reason, user_moved_at, updated_at) ON tracker_items TO kairos_worker;
+GRANT SELECT, INSERT, UPDATE ON tracker_projector_state TO kairos_worker;
+-- WP-21: contacts and interviews are the api's. The worker holds what erasure's zero-row check reads (jobs/erasure.ts), nothing else; readonly nothing.
+GRANT SELECT, INSERT, UPDATE, DELETE ON contacts, contact_jobs, interviews, interview_contacts TO kairos_api;
+GRANT SELECT (id, user_id) ON contacts, interviews TO kairos_worker;
 GRANT SELECT, INSERT ON application_events TO kairos_api, kairos_worker;
 GRANT SELECT, INSERT, UPDATE ON submission_attempts TO kairos_api, kairos_worker;
 GRANT SELECT ON application_events TO kairos_readonly;
@@ -236,6 +242,14 @@ GRANT UPDATE (read_at) ON notifications TO kairos_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON email_suppressions TO kairos_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON email_sends, notifications, action_tokens TO kairos_worker;
 GRANT SELECT, INSERT ON email_suppressions TO kairos_worker;
+-- Inbound mail v2 (WP-24, _db/messaging.md 7). The api stores a Gmail forwarding code at ingest and marks it acknowledged
+-- (POST /api/forwarding/confirm); the worker reads it to send the forwarding_code email and deletes it when the first
+-- real mail arrives or it expires. No runtime role but these two, and the readonly role sees nothing of it.
+GRANT SELECT, INSERT, UPDATE ON forwarding_verifications TO kairos_api;
+GRANT SELECT, DELETE ON forwarding_verifications TO kairos_worker;
+-- The user's undo of a mail-set stage (POST /api/applications/:id/stage/clear) detaches the replies that set it: these two
+-- columns only, so the api still cannot rewrite what a mail said, its tag or when it arrived.
+GRANT UPDATE (application_id, linked_by) ON inbound_emails TO kairos_api;
 
 -- Privacy (WP-25, migration 0015). The api runs the erasure transaction of Settings > Delete account
 -- (services/erasure.ts): it writes the task, the ledger archive and the erased-address hash, deletes the user's contact
@@ -251,9 +265,38 @@ GRANT DELETE ON contact_messages TO kairos_api;
 -- The erasure worker pseudonymises an erased admin's id in feature_flags.updated_by too (WP-25); nothing else changes.
 GRANT UPDATE (updated_by) ON feature_flags TO kairos_worker;
 
+-- Unsubscribe, digests and reminders (WP-35, migration 0023). The api serves the saved-search routes and the signed
+-- unsubscribe link, so it reads and writes saved_searches (the person's own rows, by the route's WHERE) and keeps
+-- mail_opt_outs, the objection to optional mail by address hash, which outlives the account on purpose (the api writes
+-- and deletes it; the worker only reads it, in bootstrapUser). The worker claims searches for the digest tick (SELECT
+-- and UPDATE) and inserts the default "My matches" when its bootstrap-users reconciler creates a profile (INSERT); it
+-- never deletes one. Reminders are the worker's alone: it creates them, cancels or marks them as the digest decides,
+-- and deletes the finished ones after 90 days. The api has no grant on reminders (the cascades from "user" and
+-- applications need none); kairos_readonly sees none of the three tables.
+GRANT SELECT, INSERT, UPDATE, DELETE ON saved_searches TO kairos_api;
+GRANT SELECT, INSERT, UPDATE ON saved_searches TO kairos_worker;
+GRANT SELECT, INSERT, UPDATE, DELETE ON reminders TO kairos_worker;
+GRANT SELECT, INSERT, DELETE ON mail_opt_outs TO kairos_api;
+GRANT SELECT ON mail_opt_outs TO kairos_worker;
+-- A time-zone change (api, PUT /api/profile/contact) fires profiles_timezone_digest, which updates saved_searches as the
+-- caller; saved_searches_guard locks the owner's profiles row, which both roles may update.
+
+-- WP-26 (migration 0019, 02-database 4.2): the verified_claims memo holds hashes and verdicts, no text and no user id.
+-- Both processes run the verifier (the routes on the api, prepare's tailor job on the worker) and read and write it;
+-- only the worker's retention job deletes expired rows. kairos_readonly and kairos_metrics read nothing here.
+GRANT SELECT, INSERT, UPDATE ON verified_claims TO kairos_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON verified_claims TO kairos_worker;
+
 -- Newsletter sign-ups (WP-50, migration 0018). The api takes a sign-up (insert or the upsert's update), confirms and
 -- unsubscribes by token hash, and deletes an erased account's rows in the erasure transaction. The worker sets the token
 -- hashes when it renders the confirm email and runs the 30-day retention delete; it never inserts a sign-up.
 -- kairos_readonly gets nothing: the table is addresses.
 GRANT SELECT, INSERT, UPDATE, DELETE ON newsletter_subscribers TO kairos_api;
 GRANT SELECT, UPDATE, DELETE ON newsletter_subscribers TO kairos_worker;
+
+-- The durable seam (WP-22, migration 0026). The api writes a row in the approval's transaction and resumes dead rows from
+-- /api/admin/outbox, so it reads and updates too. The worker drains and sweeps (S, U) and runs the retention delete; it
+-- inserts nothing: settlement needs no outbox row, because an attempt with settled_at NULL is its own durable record (the sweep reads it every 30 s). The applier has no grant at all: the
+-- sweep reads completion from BullMQ, so the process that opens hostile pages cannot touch a row. Nobody else reads it.
+GRANT SELECT, INSERT, UPDATE ON outbox TO kairos_api;
+GRANT SELECT, UPDATE, DELETE ON outbox TO kairos_worker;

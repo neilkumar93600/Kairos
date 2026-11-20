@@ -2,6 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, type Db } from "../db/client";
 import { featureFlags, opsAudit, opsFlags } from "../db/schema";
+import { AGENT_IDS, CLAUDE_MODELS, type ClaudeModel } from "../agents/types";
 import { baseEnv } from "./env";
 import { logger } from "./logger";
 import { signal } from "./sentry";
@@ -28,10 +29,39 @@ export type FlagKey = keyof typeof FLAG_SCHEMAS;
 const ATS = ["greenhouse", "lever", "ashby"] as const;
 export const EXTENSION_ONLY_PREFIX = "extension_only:";
 
+/** Where verification runs (agents/08 8). WP-26 owns suggestions, tailor and drafts; WP-41 prepare and patch. */
+export const VERIFIER_PATHS = ["suggestions", "tailor", "drafts", "prepare", "patch"] as const;
+export type VerifierPath = (typeof VERIFIER_PATHS)[number];
+export type VerifierMode = "shadow" | "enforce";
+
+const rollout = (maxPercent: number) => z.object({ version: z.number().int().min(1), percent: z.number().int().min(0).max(maxPercent) }).strict();
+
+/**
+ * Per-agent families (03-agent-runtime 4.5, 14.2), keyed `<family>:<agentId>`. prompt_canary and prompt_shadow live
+ * here rather than in feature_flags as the spec says: feature_flags holds a boolean, these need a version and a share.
+ * A shadow is at most 5% (it doubles cost).
+ */
+const AGENT_FAMILIES = {
+  agent_disabled: z.boolean(),
+  prompt_pin: z.number().int().min(1),
+  model_pin: z.enum(CLAUDE_MODELS),
+  prompt_canary: rollout(100),
+  prompt_shadow: rollout(5),
+} as const;
+type AgentFamily = keyof typeof AGENT_FAMILIES;
+export const VERIFIER_MODE_PREFIX = "verifier_mode:";
+
 /** The schema for a settable key, or undefined for a key nobody may set. */
 export function schemaFor(key: string): z.ZodType | undefined {
   if (key in FLAG_SCHEMAS) return FLAG_SCHEMAS[key as FlagKey];
   if (key.startsWith(EXTENSION_ONLY_PREFIX) && (ATS as readonly string[]).includes(key.slice(EXTENSION_ONLY_PREFIX.length))) return z.boolean();
+  if (key.startsWith(VERIFIER_MODE_PREFIX) && (VERIFIER_PATHS as readonly string[]).includes(key.slice(VERIFIER_MODE_PREFIX.length))) {
+    return z.enum(["shadow", "enforce"]);
+  }
+  const [family, agentId, extra] = key.split(":");
+  if (extra === undefined && family && family in AGENT_FAMILIES && (AGENT_IDS as readonly string[]).includes(agentId ?? "")) {
+    return AGENT_FAMILIES[family as AgentFamily];
+  }
   return undefined;
 }
 
@@ -45,6 +75,14 @@ export interface Flags {
   /** ATS names whose cloud runs are off; those applications go through the extension. */
   extensionOnly: ReadonlySet<string>;
   features: ReadonlyMap<string, boolean>;
+  /** Agent ids with agent_disabled set: calls fail before any spend. */
+  agentDisabled: ReadonlySet<string>;
+  promptPin: ReadonlyMap<string, number>;
+  modelPin: ReadonlyMap<string, ClaudeModel>;
+  promptCanary: ReadonlyMap<string, { version: number; percent: number }>;
+  promptShadow: ReadonlyMap<string, { version: number; percent: number }>;
+  /** Per path; a path with no row is in shadow (agents/08 8). */
+  verifierMode: ReadonlyMap<VerifierPath, VerifierMode>;
   /** False while the latest attempt to read the table failed: these are the last answer (or the env's alone), possibly stale. */
   loaded: boolean;
 }
@@ -60,6 +98,16 @@ export function resolveFlags(
   const bool = (k: FlagKey): boolean => FLAG_SCHEMAS[k].safeParse(rows.get(k)).data === true;
   const shed = FLAG_SCHEMAS.llm_shed_level.safeParse(rows.get("llm_shed_level")).data ?? 0;
   const open = FLAG_SCHEMAS.cloud_applier_open.safeParse(rows.get("cloud_applier_open"));
+  // A row whose value fails its schema (written by hand past the API) is ignored, as for the scalar flags.
+  const family = <T>(name: AgentFamily | "verifier_mode"): Map<string, T> => {
+    const out = new Map<string, T>();
+    for (const [key, value] of rows) {
+      if (!key.startsWith(`${name}:`)) continue;
+      const parsed = schemaFor(key)?.safeParse(value);
+      if (parsed?.success) out.set(key.slice(name.length + 1), parsed.data as T);
+    }
+    return out;
+  };
   return {
     pauseCloudApply: bool("pause_cloud_apply"),
     pauseScoring: e.PAUSE_SCORING === true || bool("pause_scoring"),
@@ -71,12 +119,20 @@ export function resolveFlags(
     llmShedLevel: Math.max(shed, e.LLM_SHED_LEVEL ?? 0) as 0 | 1 | 2 | 3,
     extensionOnly: new Set([...rows].filter(([k, v]) => k.startsWith(EXTENSION_ONLY_PREFIX) && v === true).map(([k]) => k.slice(EXTENSION_ONLY_PREFIX.length))),
     features,
+    agentDisabled: new Set([...family<boolean>("agent_disabled")].filter(([, v]) => v).map(([k]) => k)),
+    promptPin: family<number>("prompt_pin"),
+    modelPin: family<ClaudeModel>("model_pin"),
+    promptCanary: family<{ version: number; percent: number }>("prompt_canary"),
+    promptShadow: family<{ version: number; percent: number }>("prompt_shadow"),
+    verifierMode: family<VerifierMode>("verifier_mode") as Map<VerifierPath, VerifierMode>,
     loaded: true,
   };
 }
 
 let cache: { at: number; flags: Flags } | undefined;
 let inflight: Promise<Flags> | undefined;
+/** Whether any load has succeeded in this process: until then `verifierMode` is not the owner's answer, only an empty map. */
+let everLoaded = false;
 
 async function load(from: Db): Promise<Flags> {
   const [flagRows, featureRows] = await Promise.all([from.select().from(opsFlags), from.select().from(featureFlags)]);
@@ -89,6 +145,7 @@ export async function getFlags(from: Db = db()): Promise<Flags> {
   inflight ??= load(from)
     .then((flags) => {
       cache = { at: Date.now(), flags };
+      everLoaded = true;
       return flags;
     })
     .catch((err: unknown) => {
@@ -106,9 +163,50 @@ export async function getFlags(from: Db = db()): Promise<Flags> {
   return inflight;
 }
 
-/** Forgets the cache: the next read loads. A write calls it so its own process sees the change at once. */
+/**
+ * A path's verifier mode: its row, else shadow. A process that has never read the table does not know the owner's answer
+ * (a boot-time database blip, an exhausted pool, a lost grant), so it enforces: a dropped line costs an edit, an unverified
+ * one could reach an employer. Once a load has succeeded the last answer stands through later failures.
+ */
+export function verifierModeOf(flags: Flags, path: VerifierPath, loadedOnce: boolean = everLoaded): VerifierMode {
+  if (!flags.loaded && !loadedOnce) return "enforce";
+  return flags.verifierMode.get(path) ?? "shadow";
+}
+
+/**
+ * The flags without waiting, for synchronous readers (the gateway's kill switches, 03-agent-runtime 4.5): the cached
+ * answer, starting a load when it is stale. Before the first load completes this is the env's answer alone.
+ */
+export function flagsNow(): Flags {
+  if (!cache || Date.now() - cache.at >= CACHE_MS) void getFlags().catch(() => {});
+  return cache?.flags ?? resolveFlags(new Map(), new Map(), baseEnv());
+}
+
+/** The gateway's flag view (llm/gateway.ts GatewayDeps.flags), wired at process start by api.ts and worker.ts. */
+export function gatewayFlags() {
+  const f = flagsNow();
+  return {
+    // Until a load has succeeded the owner's kill switches are unknown, so model calls stay refused. Boot waits for that
+    // load (api.ts, worker.ts); only a database down at boot leaves this on, and the next read retries it.
+    llmPaused: f.llmPaused || !everLoaded,
+    batchPaused: false, // ponytail: llm_batch_paused is not a key yet; no batch agent exists (10.5)
+    disabled: Object.fromEntries([...f.agentDisabled].map((id) => [id, true])),
+    promptPin: Object.fromEntries(f.promptPin),
+    modelPin: Object.fromEntries(f.modelPin),
+    promptCanary: Object.fromEntries(f.promptCanary),
+    promptShadow: Object.fromEntries(f.promptShadow),
+  };
+}
+
+/** Forgets everything, as at process start. For tests; a write uses expireFlagCache. */
 export function resetFlagCache(): void {
   cache = undefined;
+  everLoaded = false;
+}
+
+/** The next read loads, so a write's own process sees the change at once; a load that fails still has the last answer. */
+function expireFlagCache(): void {
+  if (cache) cache = { ...cache, at: 0 };
 }
 
 type Tx = Pick<Db, "select" | "insert">;
@@ -132,6 +230,6 @@ export async function setFlag(key: string, value: unknown, actor: string, tx?: T
     return { before: prev?.value ?? null, after: parsed.data, changed: true };
   };
   const result = tx ? await run(tx) : await db().transaction((t) => run(t));
-  resetFlagCache();
+  expireFlagCache();
   return result;
 }

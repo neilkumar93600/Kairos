@@ -37,7 +37,7 @@ export async function processTailorApplication(job: Job<JobData["tailor-applicat
     const posting = { title: row.job.title, companyName: row.companyName, descriptionText: row.job.descriptionText };
     const ctx = gatewayCtx({ userId: row.app.userId, plan: await planFor(db(), row.app.userId), applicationId: row.app.id, jobId: row.job.id });
     // The 60 confirmed facts the posting needs most (llm-agents-59), never the whole fact bank.
-    const tailored = await tailorResume(topFacts(userFacts, `${posting.title}\n${posting.descriptionText}`, 60), posting, ctx);
+    const tailored = await tailorResume(topFacts(userFacts, `${posting.title}\n${posting.descriptionText}`, 60), posting, ctx, { path: "prepare" });
     kept = tailored.kept;
     if (tailored.rejected.length) logger.info({ applicationId: row.app.id, rejected: tailored.rejected.length }, "truth lock dropped lines");
   }

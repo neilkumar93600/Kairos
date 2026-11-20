@@ -17,6 +17,7 @@
     "db:check": "drizzle-kit check",
     "db:lint": "node scripts/lint-migrations.mjs",
     "db:studio": "drizzle-kit studio",
+    "db:seed": "tsx --env-file=.env scripts/seed-companies.ts",
     "agents:snap": "node --import tsx --import ./scripts/md-register.mjs scripts/agents-snap.ts",
     "agents:lock": "node --import tsx --import ./scripts/md-register.mjs scripts/agents-lock.ts",
     "llm:smoke": "node --import tsx --import ./scripts/md-register.mjs scripts/llm-smoke.ts",

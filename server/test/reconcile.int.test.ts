@@ -16,7 +16,7 @@ const signal = vi.fn();
 vi.mock("../src/lib/sentry", async (orig) => ({ ...(await orig<typeof import("../src/lib/sentry")>()), signal }));
 
 const MINUTE = 60_000;
-const LINE = { id: "l1", section: "Experience", text: "Built the billing service", factIds: ["f1"] };
+const LINE = { id: "l1", section: "Experience", text: "Built the billing service", factIds: [] };
 const ANSWER = { fieldKey: "first_name", label: "First name", value: "Test", source: "profile" as const };
 
 describe.skipIf(!hasTestDb)("reconcilers against Postgres", () => {
@@ -57,16 +57,15 @@ describe.skipIf(!hasTestDb)("reconcilers against Postgres", () => {
     application(userId, { status: "approved", channel: "cloud", approvedAt: new Date(Date.now() - approvedAgoMs) });
   const row = async (id: string) => (await db.select().from(schema.applications).where(eq(schema.applications.id, id)))[0]!;
 
-  describe("stuck-submitting sweep (ops-18 interim)", () => {
-    /** An applier that claimed `id` and died `agoMs` ago. */
+  describe("stuck-submitting sweep: claims of the previous release, which have no attempt row", () => {
+    /** An applier of the previous release that claimed `id` and died `agoMs` ago. */
     async function claimed(id: string, agoMs: number) {
-      const { claimForCloud } = await import("../src/services/submissions");
-      expect(await claimForCloud(db, id)).toBe(true);
+      await db.update(schema.applications).set({ status: "submitting" }).where(eq(schema.applications.id, id));
       await db.update(schema.applications).set({ updatedAt: sql`now() - make_interval(secs => ${agoMs / 1000})` }).where(eq(schema.applications.id, id));
     }
 
-    it("a claim older than 10 minutes settles as failed and unconfirmed, frees the credit, and is never resent", async () => {
-      const { FAILURE_MESSAGES, recordSubmission } = await import("../src/services/submissions");
+    it("a claim older than 8 minutes settles as failed and unconfirmed, frees the credit, and is never resent", async () => {
+      const { FAILURE_MESSAGES } = await import("../src/services/submissions");
       const { availableCreditsNow } = await import("../src/services/credits");
       const { processCloudApply } = await import("../src/jobs/cloud-apply");
       const userId = await seedUser(db, { credits: 1 });
@@ -74,25 +73,23 @@ describe.skipIf(!hasTestDb)("reconcilers against Postgres", () => {
       await claimed(id, 11 * MINUTE);
       expect(await availableCreditsNow(db, userId)).toBe(0);
 
-      await expect(reconcile.processSweepSubmitting()).resolves.toEqual({ swept: 1 });
-      expect(await row(id)).toMatchObject({ status: "failed", failureReason: FAILURE_MESSAGES.unconfirmed });
+      await expect(reconcile.processSweepSubmitting()).resolves.toMatchObject({ swept: 1 });
+      expect(await row(id)).toMatchObject({ status: "failed", failureCode: "unconfirmed", failureReason: FAILURE_MESSAGES.unconfirmed });
       expect(await availableCreditsNow(db, userId)).toBe(1);
       expect(signal).toHaveBeenCalledWith("submitting_swept", 1);
 
-      // BullMQ's stalled redelivery skips it, and a late result from an applier that was alive after all changes nothing.
+      // BullMQ's stalled redelivery skips it: nothing is approved any more.
       await expect(processCloudApply({ data: { applicationId: id } } as never)).resolves.toEqual({ skipped: true });
-      const late = { applicationId: id, outcome: "submitted" as const, filledFields: [], submittedAt: new Date().toISOString() };
-      await expect(recordSubmission(db, userId, late, "cloud")).rejects.toMatchObject({ status: 409 });
       expect((await row(id)).status).toBe("failed");
       expect(await db.select().from(schema.creditLedger).where(eq(schema.creditLedger.reason, "submission"))).toEqual([]);
     });
 
-    it("leaves a claim younger than 10 minutes and every other status alone", async () => {
+    it("leaves a claim younger than 8 minutes and every other status alone", async () => {
       const userId = await seedUser(db, { credits: 5 });
       const running = await approvedCloud(userId);
       await claimed(running, 5 * MINUTE);
       const approved = await approvedCloud(userId);
-      await expect(reconcile.processSweepSubmitting()).resolves.toEqual({ swept: 0 });
+      await expect(reconcile.processSweepSubmitting()).resolves.toEqual({ swept: 0, closed: 0, settled: 0 });
       expect((await row(running)).status).toBe("submitting");
       expect((await row(approved)).status).toBe("approved");
       expect(signal).not.toHaveBeenCalled();
@@ -104,7 +101,7 @@ describe.skipIf(!hasTestDb)("reconcilers against Postgres", () => {
       for (const id of ids) await claimed(id, 11 * MINUTE);
       const results = await Promise.all([reconcile.processSweepSubmitting(), reconcile.processSweepSubmitting()]);
       expect(results[0]!.swept + results[1]!.swept).toBe(2);
-      await expect(reconcile.processSweepSubmitting()).resolves.toEqual({ swept: 0 });
+      await expect(reconcile.processSweepSubmitting()).resolves.toEqual({ swept: 0, closed: 0, settled: 0 });
     });
   });
 
@@ -117,15 +114,35 @@ describe.skipIf(!hasTestDb)("reconcilers against Postgres", () => {
       await application(userId, { status: "withdrawn", channel: "cloud", approvedAt: new Date(Date.now() - 3 * MINUTE) });
 
       await expect(reconcile.processReconcileApply()).resolves.toEqual({ checked: 1, added: 1 });
-      expect(redrive).toHaveBeenCalledExactlyOnceWith("cloud-apply", { applicationId: lost }, `apply-${lost}`, true);
+      expect(redrive).toHaveBeenCalledExactlyOnceWith("cloud-apply", { applicationId: lost, attemptNo: 0 }, `apply-${lost}-0`, true);
+    });
+
+    it("leaves an application whose outbox row is live or dead to the outbox, and nets one whose row finished", async () => {
+      const userId = await seedUser(db, { credits: 5 });
+      const row = async (status: "pending" | "enqueued" | "dead" | "done") => {
+        const id = await approvedCloud(userId, 3 * MINUTE);
+        await db.insert(schema.outbox).values({ queue: "cloud-apply", dedupeKey: `apply-${id}`, payload: { applicationId: id }, status });
+        return id;
+      };
+      await row("pending");
+      await row("enqueued");
+      await row("dead");
+      const finished = await row("done");
+
+      await expect(reconcile.processReconcileApply()).resolves.toEqual({ checked: 1, added: 1 });
+      expect(redrive).toHaveBeenCalledExactlyOnceWith("cloud-apply", { applicationId: finished, attemptNo: 0 }, `apply-${finished}-0`, true);
     });
 
     it("the healed job still goes through the claim, so a doubled job sends once", async () => {
-      const { claimForCloud } = await import("../src/services/submissions");
       const userId = await seedUser(db, { credits: 5 });
       const id = await approvedCloud(userId, 3 * MINUTE);
       await Promise.all([reconcile.processReconcileApply(), reconcile.processReconcileApply()]);
-      expect(await Promise.all([claimForCloud(db, id), claimForCloud(db, id)])).toEqual(expect.arrayContaining([true, false]));
+      const claim = () => db.execute<{ id: string }>(sql`select claim_cloud_attempt(${id}, 0, 'w') as id`);
+      const [one, two] = await Promise.all([claim(), claim()]);
+      expect(one.rows[0]!.id).toBe(two.rows[0]!.id);
+      const launch = () => db.execute<{ ok: boolean }>(sql`select mark_browser_launched(${one.rows[0]!.id}, 'w') as ok`);
+      const marks = await Promise.all([launch(), launch()]);
+      expect(marks.map((m) => m.rows[0]!.ok).sort()).toEqual([false, true]);
     });
   });
 

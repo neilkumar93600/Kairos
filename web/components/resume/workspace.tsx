@@ -1,5 +1,6 @@
 "use client";
 
+import { queueRefusal } from "@/lib/queue-outcome";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
@@ -276,8 +277,11 @@ function Workspace({ initial, jobId = null, initialSuggestions = [], initialFit 
     if (!matchId) return;
     setDraft({ pending: true, error: null });
     try {
-      let { applicationId } = await queue.mutateAsync(matchId);
-      // null: an application for this job already exists. Find it and update that draft.
+      const result = await queue.mutateAsync(matchId);
+      // A refusal other than "it already exists" made no draft, and there is none to update.
+      if (result.reason && result.reason !== "already_queued") throw new Error(queueRefusal(result) ?? "Kairos could not create the draft.");
+      let applicationId = result.applicationId ?? result.existingApplicationId ?? null;
+      // null with no reason, from an api that gives none: an application for this job already exists. Find it and update that draft.
       if (!applicationId) applicationId = (await api<{ applications: ApplicationRow[] }>("/applications")).applications.find((a) => a.job.id === jobId)?.id ?? null;
       if (!applicationId) throw new Error("Kairos could not find the application for this job. Try again from Matches.");
       await update.mutateAsync({ id: applicationId, input: { resumeLines: lines } });

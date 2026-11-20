@@ -1,12 +1,12 @@
 import { readFileSync } from "node:fs";
 import { defineConfig, type Plugin } from "vitest/config";
 
-// Embeds prompt files as text (the esbuild side is the ".md": "text" loader in build.mjs), so
+// Embeds prompt files and Typst templates as text (the esbuild side is the "text" loaders in build.mjs), so
 // agent specs import prompts/v<N>.md and the gateway sends them byte for byte.
 const markdownText: Plugin = {
   name: "markdown-text",
   transform(_code, id) {
-    if (id.endsWith(".md")) {
+    if (id.endsWith(".md") || id.endsWith(".typ")) {
       const text = readFileSync(id.split("?")[0]!, "utf8");
       return `export default ${JSON.stringify(text)};`;
     }

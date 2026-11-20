@@ -172,7 +172,7 @@ The pgbackup service encrypts each dump to the public keys in `BACKUP_AGE_RECIPI
 
 ## 10. `USER_HASH_KEY`: never rotate (WP-25)
 
-`USER_HASH_KEY` (api and worker, sealed, one value per environment, in the emergency kit with `DATA_KEKS`) is a single unversioned HMAC key. It keys the user hash of `deletion_tasks`, `credit_ledger_archive` and the R2 tombstones, the erased-address hashes of `erased_emails` and `contact_messages.email_hash`, `llm_calls.user_hash`, the per-email auth limits in `rate_limits`, and the `erased:<hash>` pseudonyms in `ops_audit`.
+`USER_HASH_KEY` (api and worker, sealed, one value per environment, in the emergency kit with `DATA_KEKS`) is a single unversioned HMAC key. It keys the user hash of `deletion_tasks`, `credit_ledger_archive` and the R2 tombstones, the erased-address hashes of `erased_emails` and `contact_messages.email_hash`, the kept opt-outs of `mail_opt_outs` (WP-35: a rotation would make every address that unsubscribed look new, and they would be mailed again), `llm_calls.user_hash`, the per-email auth limits in `rate_limits`, and the `erased:<hash>` pseudonyms in `ops_audit`.
 
 **Do not rotate it.** A new value silently breaks all of these at once:
 

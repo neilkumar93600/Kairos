@@ -1,0 +1,123 @@
+{
+  "type": "object",
+  "properties": {
+    "suggestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sectionId": {
+            "type": "string"
+          },
+          "entryId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lineId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "rewrite",
+              "add",
+              "remove"
+            ]
+          },
+          "after": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "why": {
+            "type": "string"
+          },
+          "factIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "needsFact": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "role",
+                      "project",
+                      "skill",
+                      "metric",
+                      "education",
+                      "certification"
+                    ]
+                  },
+                  "question": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "question"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tag": {
+            "type": "string",
+            "enum": [
+              "lead_with_result",
+              "be_concise",
+              "stay_relevant",
+              "show_scope",
+              "use_your_numbers",
+              "fix_spelling",
+              "remove_filler"
+            ]
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "appendYears": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sectionId",
+          "entryId",
+          "lineId",
+          "action",
+          "after",
+          "why",
+          "factIds",
+          "needsFact",
+          "tag",
+          "priority",
+          "appendYears"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "suggestions"
+  ],
+  "additionalProperties": false
+}

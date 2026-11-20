@@ -23,6 +23,7 @@ describe("AgentError over HTTP", () => {
     ["overloaded after retries", new AgentError("overloaded", "x", true)],
     ["limiter timeout", new AgentError("limiter_timeout", "x", true)],
     ["circuit open", new AgentError("circuit_open", "x", false)],
+    ["the verifier over its time budget", new AgentError("verifier_budget", "x", true)],
     ["auth", new AgentError("auth", "x", false)],
     ["schema invalid after repair", new AgentError("schema_invalid", "x", false)],
     ["a per-call cost refusal", budget("call")],

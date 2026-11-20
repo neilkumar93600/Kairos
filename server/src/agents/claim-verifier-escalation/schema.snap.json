@@ -1,0 +1,42 @@
+{
+  "type": "object",
+  "properties": {
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claimId": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "supported",
+              "unsupported",
+              "contradicted",
+              "uncertain"
+            ]
+          },
+          "factRef": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "claimId",
+          "verdict",
+          "factRef"
+        ],
+        "additionalProperties": false
+      },
+      "description": "At most 40 items."
+    }
+  },
+  "required": [
+    "verdicts"
+  ],
+  "additionalProperties": false
+}

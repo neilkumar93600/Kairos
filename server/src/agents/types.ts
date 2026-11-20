@@ -8,13 +8,17 @@ import type { AiFeature, PlanId } from "@auto-career/shared";
  * makes "static means static" structural rather than a convention.
  */
 
-export type AgentId =
-  | "resume-parser" | "jd-analyst" | "fit-scorer" | "resume-tailor" | "resume-writer" | "answer-drafter"
-  | "cover-letter-writer" | "claim-verifier" | "claim-verifier-escalation" | "reply-classifier"
-  | "outcome-analyst" | "interview-coach";
+/** Every agent id, as a value so ops flag keys (`prompt_pin:<agentId>`, lib/flags.ts) can be checked at runtime. */
+export const AGENT_IDS = [
+  "resume-parser", "jd-analyst", "fit-scorer", "resume-tailor", "resume-writer", "answer-drafter",
+  "cover-letter-writer", "claim-verifier", "claim-verifier-escalation", "reply-classifier",
+  "outcome-analyst", "interview-coach",
+] as const;
+export type AgentId = (typeof AGENT_IDS)[number];
 
-/** Production models. Opus 5.5 appears only in evals/judge config, never in this union. */
-export type ClaudeModel = "claude-haiku-5-5" | "claude-sonnet-5-5";
+/** Production models. Opus 5.5 appears only in evals/judge config, never in this list. */
+export const CLAUDE_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5"] as const;
+export type ClaudeModel = (typeof CLAUDE_MODELS)[number];
 export type Effort = "low" | "medium" | "high";
 export type ThinkingMode = "disabled" | "between_tools" | "adaptive";
 export type Stakes = "high" | "medium" | "low";

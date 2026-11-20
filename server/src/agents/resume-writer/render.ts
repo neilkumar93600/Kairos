@@ -1,4 +1,5 @@
-import type { ResumeWriterInput } from "./schema";
+import type { ResumeWriterInput, ResumeWriterInputV2 } from "./schema";
+import { renderDoNotClaim } from "../truth-repair";
 import type { RenderedPrompt } from "../types";
 import { fenceUserBlock } from "../../llm/fence";
 
@@ -59,5 +60,41 @@ export function renderResumeWriter(input: ResumeWriterInput, ctx: { userId?: str
     userBlock: fenceUserBlock("facts", factsBlock, "resume-writer", ctx),
     task,
     untrusted: blocks,
+  };
+}
+
+/** PRD 8.1: the level changes what the review favours, written here by Kairos, never what may be claimed. */
+const LEVEL_TEXT: Record<ResumeWriterInputV2["level"], string> = {
+  early_career: "Level: early career. Favour projects, coursework and skills shown in use.",
+  mid: "Level: mid-level. Favour outcomes per role.",
+  senior: "Level: senior. Favour scope, ownership and outcomes.",
+  lead: "Level: lead or executive. Favour scope, teams, outcomes and leadership facts.",
+};
+
+const SCOPE_TEXT_V2: Record<ResumeWriterInputV2["scope"], string> = {
+  ...SCOPE_TEXT,
+  headline: "Write headline options for the line under the user's name.",
+};
+
+/** v2: the v1 blocks, plus the level in the task, the current headline inside the view's fence and the failed claims fenced. */
+export function renderResumeWriterV2(input: ResumeWriterInputV2, ctx: { userId?: string }): RenderedPrompt {
+  const { level: _level, headline, derived, doNotClaim, ...shared } = input;
+  const base = renderResumeWriter({ ...shared, scope: shared.scope === "headline" ? "resume" : shared.scope, maxSuggestions: Math.min(shared.maxSuggestions, 15) }, ctx);
+  const repair = renderDoNotClaim(doNotClaim);
+  const task = [
+    `Task: ${SCOPE_TEXT_V2[input.scope]} At most ${input.maxSuggestions} suggestions.`,
+    LEVEL_TEXT[input.level],
+    input.refine ? `Style: ${REFINE_TEXT[input.refine]}` : "",
+    // The value itself is never rendered: the model cannot copy or alter what it never saw.
+    input.scope === "headline" ? (derived.length ? "A years-of-experience value is available." : "No years-of-experience value is available.") : "",
+    repair.task ? "Truth repair: apply rule 9 to the claims block." : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const view = headline === null ? input.resumeView : `Current headline: ${headline}\n${input.resumeView}`;
+  return {
+    ...base,
+    task,
+    untrusted: [{ label: "resume_lines", text: `Resume view:\n${view}`, maxTokens: 2_000 }, ...base.untrusted.slice(1), ...repair.untrusted],
   };
 }

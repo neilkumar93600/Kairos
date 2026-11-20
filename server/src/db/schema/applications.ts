@@ -11,6 +11,8 @@ export interface Receipt {
   filledFields: { fieldKey: string; label: string; value: string }[];
   confirmationText?: string;
   channel: "extension" | "cloud";
+  /** The extension's own clock, kept here only: applications.submitted_at is server time (applications-v01). */
+  clientSubmittedAt?: string;
 }
 
 /** The failure codes (_db/applications.md 4.8): which charge, which are resendable, which are ambiguous (needs_check). */

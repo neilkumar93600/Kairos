@@ -1,0 +1,30 @@
+{
+  "caseId": "resume-writer-0336",
+  "promptVersion": 2,
+  "promptSha256": "606e076c399bb43ebf29377c97f98508070772ea210ba8e73e00287d15d07db0",
+  "inputHash": "3454cfb4c8f465686b6eb0bf61012f23cf8ff88aebebe0093b47b4d6be85a9ca",
+  "source": "hand_written",
+  "responses": [
+    {
+      "text": {
+        "suggestions": [
+          {
+            "sectionId": "exp",
+            "entryId": "e1",
+            "lineId": "l1",
+            "action": "rewrite",
+            "after": "Improved crash-free sessions by 9%",
+            "why": "States the result the fact gives",
+            "factIds": [
+              "f2"
+            ],
+            "needsFact": null,
+            "tag": "fix_spelling",
+            "priority": "low",
+            "appendYears": false
+          }
+        ]
+      }
+    }
+  ]
+}

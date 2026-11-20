@@ -10,7 +10,7 @@ import { captureJobFailure, initSentry } from "./lib/sentry";
 import { applierPool, closeBrowser, warmBrowser, watchMemory } from "./jobs/browser-pool";
 import { applyGate, redisGateStore } from "./jobs/apply-gate";
 import { processCloudApply } from "./jobs/cloud-apply";
-import { QUEUES, workerOptions } from "./jobs/queues";
+import { closeQueues, QUEUES, workerOptions } from "./jobs/queues";
 
 // The applier opens hostile employer pages, so it runs on its own schema (envFor("applier")): no auth, Stripe,
 // model, mail or webhook secret, and env() throws here. Production refuses to boot when one of them is set.
@@ -54,5 +54,7 @@ startHeartbeat(e.HEARTBEAT_URL, checks);
 const stopMetrics = startMetricsFlush(redisSink);
 onShutdown("applier", 170_000, () => worker.close(), async () => {
   await stopMetrics();
+  // The render queue it adds to; before the Redis client they share.
+  await closeQueues().catch(() => {});
   await Promise.allSettled([closeServer(health), closeBrowser(), closeDb(), redis().quit()]);
 });
