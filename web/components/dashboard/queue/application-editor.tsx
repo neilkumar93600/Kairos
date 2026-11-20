@@ -16,7 +16,7 @@ import { Panel } from "../../shared/panel";
 import { Skeleton } from "../../shared/skeleton";
 import { StatusWord } from "../../shared/status";
 import { DraftAssist, isProfileOnly } from "./draft-assist";
-import { ApproveError, CHANNEL_LABEL, ChannelSelect, WithdrawButton, apiMessage, inlineLink } from "./send-controls";
+import { ApproveError, CHANNEL_LABEL, ChannelSelect, WithdrawButton, apiMessage, inlineLink, toastApproved } from "./send-controls";
 
 const KIND: Record<string, string> = {
   role: "Role",
@@ -361,7 +361,18 @@ export function ApplicationEditor({ detail }: { detail: ApplicationDetail }) {
               aria-describedby="draft-status"
               disabled={dirty || !ready || update.isPending || approve.isPending}
               // An id missing from `approved` means not ready yet, not a failure (the server leaves it a draft).
-              onClick={() => approve.mutate({ applicationIds: [app.id], channel: via }, { onSuccess: (r) => setNotReady(!r.approved.includes(app.id)) })}
+              onClick={() =>
+                approve.mutate(
+                  { applicationIds: [app.id], channel: via },
+                  {
+                    onSuccess: (r) => {
+                      const ok = r.approved.includes(app.id);
+                      setNotReady(!ok);
+                      if (ok) toastApproved(1, via);
+                    },
+                  },
+                )
+              }
             >
               {approve.isPending ? (
                 "Approving…"

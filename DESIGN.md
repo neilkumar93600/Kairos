@@ -1,4 +1,49 @@
 # Design System: Kairos
+
+## Auth and legal refinement, 2026-11-09
+
+**Brief.** Help job seekers enter their account and understand the agreement behind an application. Scope: existing five auth routes, four legal documents, and a legal index. Keep the existing Next.js App Router, Better Auth, CSS tokens, Urbanist font and painted assets. The newer Urbanist direction in `docs/DESIGN.md` supersedes the older type inventory below.
+
+**Concept exploration.** Scores are originality / fit / feasibility / portability (lower portability is better).
+
+| Territory | Concept and anchor | Signature, emotion and screenshot | Scores |
+| --- | --- | --- | --- |
+| Identity | A considered next step: the Kairos open-door mark becomes an invitation into a search the applicant controls. | A landscape beside a precise form; reassuring, with the approval promise anchoring the scene. | 4 / 5 / 5 / 2 |
+| Material | An application dossier: legal documents and forms borrow the clarity of the candidate's own records. | Numbered clauses beside a compact document index; clear, with a large title over a narrow reading column. | 3 / 5 / 5 / 3 |
+| Process | Review before release: every screen is arranged around the next explicit decision. | An approval checkpoint before registration; deliberate, with a single action framed by its terms. | 3 / 5 / 5 / 2 |
+
+**Choice.** A considered next step carries the established door and landscape identity; the legal dossier supplies its practical reading structure.
+
+```text
+Idea:        Your next chapter stays on your terms.
+Metaphor:    A doorway into a considered career decision.
+Signature:   The painted threshold beside an unhurried form; clear agreement before entry.
+Emotion:     Calm, agency and clarity.
+Motion verb: Settle, then advance (small button lift and directional arrows).
+Screenshot:  A pale form column beside the dawn valley and the approval promise.
+```
+
+**System.** Reuse Linen `#f7f7f5`, Paper `#ffffff`, Ink `#1b0624`, Deep Ash `#5e5566`, Stone `#898683`, Espresso `#160f0c`. Urbanist is the only font used on these pages, already supplied by `next/font`. Form type 16px, reading type 17–18px at 1.6 leading, fluid display with negative tracking. Form max width 400px; legal copy max 36rem, with a 240px document rail. Existing 8px input, 20px card, 24px art and pill button radii remain. Interactions use existing ease-out, 180–300ms; no new animation dependency.
+
+```text
+Auth desktop                  Auth phone
+[logo             ][painting] [logo      home]
+[                  ][        ] [short painted threshold]
+[ heading + form   ][promise ] [heading + form]
+[ legal utilities  ][        ] [legal utilities]
+
+Legal document                Legal index
+[breadcrumb / document nav ]  [Legal / title               ]
+[sticky contents][title     ]  [purpose      ][four document rows]
+[               ][summary   ] [contact + draft status      ]
+[               ][clauses   ]
+[               ][contact   ]
+```
+
+**Restraint.** These are reading and account-entry surfaces: still at rest, no loader, scroll choreography or WebGL. Existing site navigation and footer remain. Reduced motion removes new transforms. No invented metrics, credentials or imagery. The genericness pass removed the floating form-card accessory and uses Kairos's actual approval boundary as the visual anchor.
+
+**Facts and review.** Legal documents remain clearly labelled drafts. Gray Matter Labs and the contact address come from `siteConfig`; governing jurisdiction, registered address, liability cap, processor agreements and refund decisions remain unresolved, not fabricated. Last revised dates are draft editorial dates, not a change to the backend consent version. No new discounts, auth providers, payment behavior or consent-storage protocol is introduced.
+
 **Project ID:** `kairos-frontend-production`  
 **System Name:** Duna with Frosted Glass (Editorial Precision & Painted Atmosphere)  
 **Governing Source:** [`docs/DESIGN.md`](docs/DESIGN.md) & [`docs/superpowers/specs/2026-10-15-kairos-landing-design/09-style-direction.md`](docs/superpowers/specs/2026-10-15-kairos-landing-design/09-style-direction.md)

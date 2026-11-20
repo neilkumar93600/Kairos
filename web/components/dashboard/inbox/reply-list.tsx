@@ -1,9 +1,10 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import Link from "next/link";
 import type { EmailKind } from "@auto-career/shared";
 import { useInbox } from "@/hooks/use-inbox";
+import { markInboxSeen } from "@/hooks/use-inbox-seen";
 import { formatRelative } from "@/lib/utils";
 import { ButtonLink } from "../../shared/button";
 import { EmptyEm, EmptyState } from "../../shared/empty-state";
@@ -50,6 +51,10 @@ function List() {
   const [kind, setKind] = useUrlParam("kind", present.map((k) => k.kind));
   const [date, setDate] = useUrlParam("date", DATE_OPTIONS.map((o) => o.value));
   const clearAll = useClearFilters();
+  // Opening Replies marks every loaded reply as seen on this device, which clears the header bell's count.
+  useEffect(() => {
+    if (data) markInboxSeen(data);
+  }, [data]);
 
   if (isLoading) return <RowsSkeleton />;
   if (error)

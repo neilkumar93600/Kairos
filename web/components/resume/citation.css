@@ -1,0 +1,47 @@
+/*
+ * Citation chip and fact preview (Suggested edits). Owner-approved exception to "app has no motion": the card fades
+ * and scales 0.97 to 1 from the chip in 200 ms and leaves in 120 ms, ease-out, no overshoot. Under reduced motion
+ * (OS setting or html[data-motion="reduced"]) there is no transition: the card shows and hides at once.
+ */
+.kx-cite {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--sunk);
+  color: var(--faint);
+  font: 500 12px/1 var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* 24px hit area on a 20px chip. */
+.kx-cite::after { content: ""; position: absolute; inset: -2px 0; }
+.kx-cite:hover, .kx-cite[data-popup-open] { color: var(--ink); }
+.kx-cite:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+.kx-cite-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 320px;
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--edge), 0 12px 32px -8px rgb(0 0 0 / 0.18);
+  transform-origin: var(--transform-origin);
+  outline: none;
+}
+.kx-cite-label { font-size: 12px; line-height: 16px; color: var(--faint); }
+.kx-cite-text { font-size: 14px; line-height: 20px; color: var(--ink); overflow-wrap: anywhere; }
+
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-motion="reduced"]) .kx-cite-card {
+    transition: opacity 200ms cubic-bezier(0.22, 1, 0.36, 1), transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  html:not([data-motion="reduced"]) .kx-cite-card:is([data-starting-style], [data-ending-style]) { opacity: 0; transform: scale(0.97); }
+  html:not([data-motion="reduced"]) .kx-cite-card[data-ending-style] { transition-duration: 120ms; }
+}

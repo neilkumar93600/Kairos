@@ -3,7 +3,7 @@
 import { BILLING_INTERVALS, PLANS, type BillingInterval } from "@auto-career/shared";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState, type FormEvent } from "react";
+import { Suspense, useRef, useState, type FormEvent } from "react";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "../shared/button";
 import { Field, Input } from "../shared/field";
@@ -42,6 +42,15 @@ export function SignUpForm() {
   const { errors, check, clear } = useFieldErrors();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const agreement = useRef<HTMLInputElement>(null);
+  const [agreementError, setAgreementError] = useState(false);
+
+  function checkAgreement() {
+    const accepted = Boolean(agreement.current?.checked);
+    setAgreementError(!accepted);
+    if (!accepted) agreement.current?.focus();
+    return accepted;
+  }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -55,7 +64,7 @@ export function SignUpForm() {
       email: !email ? "Enter your email." : EMAIL_RE.test(email) ? undefined : "Enter an email like name@example.com.",
       password: password.length < 10 ? "Use at least 10 characters for your password." : undefined,
     });
-    if (!ok) return;
+    if (!checkAgreement() || !ok) return;
     setPending(true);
     const { error: err } = await authClient.signUp.email({ name, email, password });
     setPending(false);
@@ -71,7 +80,7 @@ export function SignUpForm() {
       <Suspense>
         <PlanNote />
       </Suspense>
-      <SocialButtons next="/onboarding" />
+      <SocialButtons next="/onboarding" beforeStart={checkAgreement} />
       <OrDivider />
       <form noValidate onSubmit={onSubmit} onInput={clear} className="flex flex-col gap-4">
         <Field label="Full name" htmlFor="name" hint="As it should appear on applications." error={errors.name}>
@@ -83,21 +92,28 @@ export function SignUpForm() {
         <Field label="Password" htmlFor="password" hint="At least 10 characters." error={errors.password}>
           <PasswordInput id="password" name="password" autoComplete="new-password" required minLength={10} aria-invalid={Boolean(errors.password) || undefined} />
         </Field>
+        <div>
+          <div className="auth__agreement">
+            <input
+              ref={agreement}
+              id="agreement"
+              name="agreement"
+              type="checkbox"
+              required
+              aria-invalid={agreementError || undefined}
+              aria-describedby={agreementError ? "agreement-error" : undefined}
+              onChange={() => setAgreementError(false)}
+            />
+            <label htmlFor="agreement">
+              I agree to the <Link href="/terms">Terms of service</Link> and have read the <Link href="/privacy">Privacy policy</Link>.
+            </label>
+          </div>
+          {agreementError ? <p id="agreement-error" role="alert" className="text-sm text-bad">Accept the terms before creating your account.</p> : null}
+        </div>
         <FormError>{error}</FormError>
         <Button type="submit" disabled={pending} className="w-full">
           {pending ? "Creating account…" : "Create account"}
         </Button>
-        <p className="text-sm text-faint">
-          By creating an account you agree to the{" "}
-          <Link href="/terms" className="lp-link">
-            terms
-          </Link>{" "}
-          and{" "}
-          <Link href="/privacy" className="lp-link">
-            privacy policy
-          </Link>
-          .
-        </p>
       </form>
       <p className="auth__switch">
         Already have an account?{" "}

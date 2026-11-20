@@ -1,0 +1,37 @@
+/*
+ * Setup checklist task mechanic (owner-approved exception to "app has no motion"). An item that turns done while the
+ * panel is mounted runs tick -> strike -> settle; setup-checklist.tsx starts each stage from the previous one's
+ * animationend and runs the settle (FLIP, 320ms) with the Web Animations API. Transform, background-size and
+ * stroke-dashoffset only; ease-out cubic-bezier(0.22, 1, 0.36, 1), the strike on cubic-bezier(0.65, 0, 0.35, 1).
+ * The motion gate below must match motionOK() in the component, or a stage would wait for an animation that never runs.
+ */
+
+/* Pending: 13 Stone dots on r=11 (pathLength 13, so each dash period is one dot). */
+.kx-check__ring { fill: none; stroke: var(--rule); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 0 1; }
+/* Done: a solid Ink disc with an On Dark check. */
+.kx-check__disc { fill: var(--ink); transform-box: fill-box; transform-origin: center; }
+.kx-check__tick { fill: none; stroke: var(--on-dark); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; }
+
+/* The strike: a 1px Ink line at y 52%, full width once done, held at 0 until the strike stage. */
+.kx-check__title { background: linear-gradient(var(--ink), var(--ink)) no-repeat 0 52% / 0% 1px; }
+.kx-check[data-done] .kx-check__title { background-size: 100% 1px; }
+.kx-check[data-stage="tick"] .kx-check__title { background-size: 0% 1px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-motion="reduced"]) .kx-check[data-stage="tick"] .kx-check__disc { animation: kx-check-fill 240ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+  html:not([data-motion="reduced"]) .kx-check[data-stage="tick"] .kx-check__tick { animation: kx-check-draw 220ms cubic-bezier(0.22, 1, 0.36, 1) 120ms both; }
+  html:not([data-motion="reduced"]) .kx-check[data-stage="strike"] .kx-check__title { animation: kx-check-strike 380ms cubic-bezier(0.65, 0, 0.35, 1) both; }
+  html:not([data-motion="reduced"]) .kx-check__bar { transition: scale 400ms cubic-bezier(0.22, 1, 0.36, 1); }
+}
+
+@keyframes kx-check-fill { from { transform: scale(0); } to { transform: scale(1); } }
+@keyframes kx-check-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes kx-check-strike { from { background-size: 0% 1px; } to { background-size: 100% 1px; } }
+
+/* Forced colours drop background images, so the strike falls back to a real line-through. */
+@media (forced-colors: active) {
+  .kx-check__ring { stroke: CanvasText; }
+  .kx-check__disc { fill: CanvasText; }
+  .kx-check__tick { stroke: Canvas; }
+  .kx-check[data-done] .kx-check__title { background: none; text-decoration: line-through; }
+}

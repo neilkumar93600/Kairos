@@ -1,0 +1,32 @@
+/* Liquid marker for the billing interval toggle (goo-marker.tsx). Prefixed kx-. Unlayered on purpose, so it beats the
+   .lp-seg rules in landing.css (components layer); every selector is scoped to a toggle that holds a marker. */
+
+.lp-seg:has(> .kx-goo) { position: relative; }
+.kx-goo { position: absolute; inset: 0; pointer-events: none; visibility: hidden; }
+.kx-goo[data-ready] { visibility: visible; }
+.kx-goo > svg { position: absolute; }
+
+/* The goo filter sits on this layer only. The drop-shadow after it keeps the pill edge visible on the track. */
+.kx-goo__layer {
+  position: absolute; inset: 0;
+  filter: var(--kx-goo) drop-shadow(0 0 0.6px color-mix(in srgb, var(--ink) 30%, transparent));
+}
+/* Both pills cover the track and are clipped to the checked label (--kx-clip, measured). At rest they coincide. */
+.kx-goo__pill { position: absolute; inset: 0; background: var(--surface); clip-path: var(--kx-clip); }
+
+/* Once the marker is placed, the checked label hands it its Paper White fill and edge. */
+.lp-seg:has(> .kx-goo[data-ready]) > label:has(input:checked) { background: transparent; box-shadow: none; }
+
+/* Motion only under the site switch (motion.css rule c: the head script maps the OS setting to data-motion, and a
+   visitor's explicit choice wins). Reduced motion has no transition, so the marker jumps. Ease-out, no overshoot. */
+html[data-motion="full"] .kx-goo__pill { transition: clip-path 300ms cubic-bezier(0.22, 1, 0.36, 1); }
+html[data-motion="full"] .kx-goo__pill + .kx-goo__pill { transition-duration: 520ms; }
+.kx-goo[data-instant] .kx-goo__pill { transition: none; }
+
+/* Forced colours: no marker; the checked option gets an outline unless the focus ring already marks it. */
+@media (forced-colors: active) {
+  .kx-goo { display: none; }
+  .lp-seg:has(> .kx-goo) > label:has(input:checked):not(:has(input:focus-visible)) {
+    outline: 2px solid CanvasText; outline-offset: -2px;
+  }
+}

@@ -1,0 +1,57 @@
+/*
+ * DeleteConfirm (delete-confirm.tsx). Mechanics after RareUI's Delete Button, rebuilt from the description, no code.
+ * The pair is a Paper White pill floating over the actions to the bin's left (no reserved room, so nothing reflows or
+ * wraps); it wipes out from the bin's side.
+ * Motion is opt-in: only when the OS allows it and the site switch (html[data-motion]) is not "reduced". Otherwise
+ * the lid stays shut and the pair shows and hides at once.
+ */
+.kx-del { --kx-ease: cubic-bezier(0.22, 1, 0.36, 1); }
+.kx-del:not([data-open]) .kx-del__group { visibility: hidden; }
+/* Without this, the app's OS reduced-motion rule (every transition at 0.01ms) turns the visibility flip into a
+   transition that stays hidden for a frame (on the group and on each item, which inherits it), and Cancel cannot
+   take focus. */
+.kx-del__group,
+.kx-del__item { transition-property: none; }
+
+@media (prefers-reduced-motion: no-preference) {
+  /* The lid swings on its hinge, the left end of the lid bar: 300 ms open, 220 ms shut. */
+  html:not([data-motion="reduced"]) .kx-del__lid {
+    transform-box: fill-box;
+    transform-origin: left bottom;
+    transition: transform 220ms var(--kx-ease);
+  }
+  html:not([data-motion="reduced"]) .kx-del[data-open] .kx-del__lid {
+    transform: rotate(-30deg);
+    transition-duration: 300ms;
+  }
+
+  /* The pair wipes in from the bin's side over 320 ms and back over 220 ms; visibility flips only after the wipe-out. */
+  html:not([data-motion="reduced"]) .kx-del__group {
+    clip-path: inset(0 0 0 100% round 999px);
+    transition: clip-path 220ms var(--kx-ease), visibility 0s linear 220ms;
+  }
+  html:not([data-motion="reduced"]) .kx-del[data-open] .kx-del__group {
+    clip-path: inset(0 round 999px);
+    transition: clip-path 320ms var(--kx-ease), visibility 0s;
+  }
+
+  /* Each button settles 4 px into place, Cancel 70 ms after Confirm. */
+  html:not([data-motion="reduced"]) .kx-del__item {
+    opacity: 0;
+    transform: translateX(4px);
+    transition: opacity 220ms var(--kx-ease), transform 220ms var(--kx-ease);
+  }
+  html:not([data-motion="reduced"]) .kx-del[data-open] .kx-del__item {
+    opacity: 1;
+    transform: none;
+    transition-duration: 320ms;
+  }
+  html:not([data-motion="reduced"]) .kx-del[data-open] .kx-del__item + .kx-del__item { transition-delay: 70ms; }
+
+  /* The one loop: the pending spinner. Under reduced motion it holds still. */
+  html:not([data-motion="reduced"]) .kx-del__spin { animation: kx-del-spin 800ms linear infinite; }
+}
+
+@keyframes kx-del-spin {
+  to { transform: rotate(360deg); }
+}

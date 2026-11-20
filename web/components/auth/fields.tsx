@@ -3,7 +3,7 @@
 import { EyeIcon, EyeSlashIcon } from "@phosphor-icons/react";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
 import { useState, type ComponentProps, type FormEvent, type ReactNode } from "react";
-import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
+import { InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot } from "@/components/ui/input-otp";
 import { cn } from "@/lib/utils";
 import { Input } from "../shared/field";
 
@@ -60,14 +60,23 @@ export function PasswordInput({ className, ...props }: Omit<ComponentProps<"inpu
   );
 }
 
+// 36px boxes fit six, a dash and their gaps (268px) in a 320px phone's 272px column; 40px from 375, 48px from 640.
 const SLOT =
-  "size-12 rounded-input border border-body bg-field text-xl text-ink first:rounded-l-input first:border-l last:rounded-r-input data-[active=true]:border-action data-[active=true]:ring-0 data-[active=true]:outline-2 data-[active=true]:outline-offset-2 data-[active=true]:outline-ink";
+  "size-9 min-[375px]:size-10 sm:size-12 rounded-input border border-body bg-field text-xl text-ink first:rounded-l-input first:border-l last:rounded-r-input data-[active=true]:border-action data-[active=true]:ring-0 data-[active=true]:outline-2 data-[active=true]:outline-offset-2 data-[active=true]:outline-ink";
 
 /**
- * The 6-digit email code as six boxes (shadcn InputOTP). One real input underneath, named "otp", so paste, the
- * one-time-code autofill and FormData all work. `autoSubmit` sends the form when the sixth digit lands.
+ * The 6-digit email code as two groups of three boxes, centred (shadcn InputOTP). One real input underneath, named
+ * "otp", so paste, the one-time-code autofill and FormData all work. `autoSubmit` sends the form when the sixth digit
+ * lands.
  */
-export function CodeInput({ invalid, autoSubmit }: { invalid?: boolean; autoSubmit?: boolean }) {
+export function CodeInput({ invalid, autoSubmit, ...props }: { invalid?: boolean; autoSubmit?: boolean; "aria-describedby"?: string }) {
+  const group = (from: number) => (
+    <InputOTPGroup className="gap-1.5 sm:gap-2">
+      {[from, from + 1, from + 2].map((i) => (
+        <InputOTPSlot key={i} index={i} className={cn(SLOT, invalid && "border-bad")} />
+      ))}
+    </InputOTPGroup>
+  );
   return (
     <InputOTP
       id="otp"
@@ -78,13 +87,13 @@ export function CodeInput({ invalid, autoSubmit }: { invalid?: boolean; autoSubm
       autoComplete="one-time-code"
       required
       aria-invalid={invalid || undefined}
+      aria-describedby={props["aria-describedby"]}
+      containerClassName="w-full justify-center gap-1.5 sm:gap-3"
       onComplete={autoSubmit ? () => (document.getElementById("otp") as HTMLInputElement | null)?.form?.requestSubmit() : undefined}
     >
-      <InputOTPGroup className="gap-2">
-        {Array.from({ length: 6 }, (_, i) => (
-          <InputOTPSlot key={i} index={i} className={cn(SLOT, invalid && "border-bad")} />
-        ))}
-      </InputOTPGroup>
+      {group(0)}
+      <InputOTPSeparator className="text-faint" />
+      {group(3)}
     </InputOTP>
   );
 }

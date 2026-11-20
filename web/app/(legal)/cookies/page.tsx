@@ -56,6 +56,7 @@ export default function CookiesPage() {
                   ["kairos.popup.newsletter", "When the newsletter popup last opened, so it shows at most once in 30 days", "Local storage"],
                   ["kairos.newsletter.subscribed", "That you signed up for the newsletter here, so the popup stops", "Local storage"],
                   ["kairos.sidebar", "That you collapsed the dashboard sidebar", "Local storage"],
+                  ["kairos.inbox.seen", "When you last opened Replies on this device, so the bell counts only newer replies", "Local storage"],
                   ["kairos:landing:ledger:v1", "Your place in the sample application on the home page", "Session storage"],
                   ["kairos:overview:sent-tile-hidden", "That you hid a tile on the dashboard", "Session storage"],
                 ],

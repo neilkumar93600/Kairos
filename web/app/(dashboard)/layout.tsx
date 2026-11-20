@@ -5,6 +5,7 @@ import { AppTabBar, AppTabBarStatic } from "@/components/layout/app-tab-bar";
 import { Header } from "@/components/layout/header";
 import { Providers } from "@/components/layout/providers";
 import { Sidebar } from "@/components/layout/sidebar";
+import { Toaster } from "@/components/ui/sonner";
 
 /**
  * Signed-in area. proxy.ts redirects visitors without a session cookie to /login; the Express API
@@ -47,6 +48,8 @@ export default function DashboardLayout({ children }: LayoutProps<"/">) {
           <AppRouteFocus />
         </Suspense>
         <AppCommand />
+        {/* Inside the wrapper so the toasts read --app-tabbar-h and clear the phone tab bar. */}
+        <Toaster />
       </div>
     </Providers>
   );

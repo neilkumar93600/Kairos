@@ -1,0 +1,54 @@
+/* Header Replies bell (inbox-bell.tsx). Owner-approved exception to the app's no-motion rule: transform and opacity only,
+   ease-out, no springs. Motion is added only when the OS allows it AND the site switch (html[data-motion]) is not
+   "reduced"; otherwise the end state shows at once: no swing, no roll, the badge simply appears and disappears. */
+
+.kx-bell__badge {
+  transform: scale(0.6);
+  opacity: 0;
+}
+.kx-bell__badge[data-on] {
+  transform: scale(1);
+  opacity: 1;
+}
+.kx-bell__badge > * {
+  grid-area: 1 / 1;
+}
+.kx-bell__out {
+  visibility: hidden;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-motion="reduced"]) .kx-bell__badge {
+    transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  html:not([data-motion="reduced"]) .kx-bell__badge[data-on] {
+    transition-duration: 240ms;
+  }
+  /* Swings from a point near the bell's crown and settles: 650ms, each swing about 0.7 of the last, the first 14deg
+     (18deg for a jump of 3 or more, set inline as --kx-bell-angle). */
+  html:not([data-motion="reduced"]) .kx-bell__icon[data-swing] {
+    transform-origin: 50% 12%;
+    animation: kx-bell-swing 650ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  /* The number rolls: the old one up and out, the new one up from below, 280ms. */
+  html:not([data-motion="reduced"]) .kx-bell__out {
+    visibility: visible;
+    animation: kx-bell-out 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  html:not([data-motion="reduced"]) .kx-bell__in {
+    animation: kx-bell-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+
+@keyframes kx-bell-swing {
+  15% { transform: rotate(var(--kx-bell-angle)); }
+  35% { transform: rotate(calc(var(--kx-bell-angle) * -0.7)); }
+  55% { transform: rotate(calc(var(--kx-bell-angle) * 0.42)); }
+  75% { transform: rotate(calc(var(--kx-bell-angle) * -0.2)); }
+}
+@keyframes kx-bell-out {
+  to { transform: translateY(-100%); opacity: 0; }
+}
+@keyframes kx-bell-in {
+  from { transform: translateY(100%); opacity: 0; }
+}

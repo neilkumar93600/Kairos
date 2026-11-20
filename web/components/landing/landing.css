@@ -24,9 +24,6 @@
     --gap-closing: 88px;
     --gap-intro: 40px;
     --pad-card: 24px;
-    --row-gap: 72px;               /* between step rows; the connector lives in it */
-    --text-gap: 20px;              /* panel to text when steps stack */
-    --line-x: 12px;                /* stacked connector line and badge centre */
 
     /* Type (09 5) */
     --font-serif: var(--font-instrument-serif), "Instrument Serif", ui-serif, Georgia, serif;
@@ -63,7 +60,6 @@
   @media (min-width: 768px) {
     .lp {
       --gutter: 32px; --gap-section: 80px; --gap-closing: 112px; --gap-intro: 56px;
-      --row-gap: 96px; --text-gap: 24px; --line-x: 20px;
       --t-closing: 62px; --t-hero: 52px; --t-serif-h2: 40px; --t-numeral: 56px;
       --t-h2: 36px; --t-h3: 28px;
     }
@@ -71,14 +67,14 @@
   @media (min-width: 1024px) {
     .lp {
       --gutter: 48px; --gap-section: 96px; --gap-closing: 128px; --gap-intro: 64px;
-      --pad-card: 32px; --row-gap: 128px;
+      --pad-card: 32px;
       --t-closing: 75px; --t-hero: 63px; --t-serif-h2: 46px; --t-numeral: 64px;
       --t-h2: 40px; --t-h3: 30px; --t-h4: 22px; --t-lead: 20px; --t-body: 18px;
     }
   }
   @media (min-width: 1280px) {
     .lp {
-      --gutter: 80px; --gap-section: 120px; --gap-closing: 160px; --gap-intro: 72px; --row-gap: 144px;
+      --gutter: 80px; --gap-section: 120px; --gap-closing: 160px; --gap-intro: 72px;
       --t-closing: 96px; --t-hero: 80px; --t-serif-h2: 52px; --t-numeral: 72px;
       --t-h2: 44px; --t-h3: 32px; --t-h4: 24px;
     }
@@ -104,8 +100,6 @@
   .lp-body-sm { font: 400 var(--t-body-sm) / 1.6 var(--font-ui); color: var(--body); }
   .lp-caption { font: 400 var(--t-caption) / 1.5 var(--font-ui); color: var(--faint); }
   .lp-micro { font: 500 var(--t-micro) / 1.2 var(--font-ui); letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); }
-  .lp-nav { font: 400 15px / 1.4 var(--font-ui); color: var(--icon); }
-  .lp-faq-q { font: 500 18px / 1.4 var(--font-ui); color: var(--ink); }
   .lp-sr-only {
     position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
     clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
@@ -118,10 +112,8 @@
   .lp-wrap--main { --c: var(--c-main); }
   .lp-wrap--narrow { --c: var(--c-narrow); }
   .lp-wrap--copy { --c: var(--c-copy); }
-  .lp-container { width: min(100% - 2 * var(--gutter), var(--c-wide)); margin-inline: auto; }  /* = .lp-wrap, older name */
   /* Spacing is padding on the section, never margins on children, so art bands can extend into it. */
   .lp-section { position: relative; padding-block-start: var(--gap-section); scroll-margin-top: var(--nav-h); }
-  .lp-section--closing { padding-block-start: var(--gap-closing); }
 
   /* ===== A4 section intro ===== */
   .lp-intro {
@@ -146,7 +138,7 @@
   .lp-btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
     min-height: 52px; padding: 12px 28px; border: 1px solid transparent; border-radius: var(--r-pill);
-    background: var(--action); color: #ffffff; cursor: pointer; text-decoration: none; text-align: center; text-wrap: balance;
+    background: var(--action); color: var(--on-action); cursor: pointer; text-decoration: none; text-align: center; text-wrap: balance;
     font: 500 16px / 1.25 var(--font-ui); letter-spacing: -0.01em;
     transition: background-color var(--dur-fade) var(--ease-out), color var(--dur-fade) var(--ease-out);
   }
@@ -154,14 +146,11 @@
   .lp-btn--inverse { background: var(--surface); color: var(--action); }
   .lp-btn--ghost { background: transparent; color: var(--ink); }
   .lp-btn--outlined { background: transparent; color: var(--ink); border-color: var(--rule); }
-  /* Ghost over art: use with .glass (light glass, no Stone border, which is 2.5:1 there). Off art use --outlined. */
-  .lp-btn--frost { color: var(--ink); }
   .lp-btn:disabled, .lp-btn[aria-disabled="true"] { opacity: 0.5; cursor: default; }
   @media (hover: hover) and (pointer: fine) {
     .lp-btn:hover { background: var(--action-hover); }
     .lp-btn--inverse:hover { background: var(--sunk); }   /* Bone, Espresso label 16.0:1 */
     :is(.lp-btn--ghost, .lp-btn--outlined):hover { background: var(--sunk); }
-    .lp .lp-btn--frost:hover { background: var(--glass-strong); }
   }
 
   /* ===== Pills, dots, chips ===== */
@@ -257,20 +246,7 @@
   .lp-panel__art { position: absolute; inset: 0; z-index: -1; border-radius: inherit; overflow: clip; background: var(--art-placeholder); }
   .lp-panel__art > img { object-fit: cover; }
   .lp-panel__art::before { content: ""; position: absolute; inset: -8%; }
-  .lp-panel--cool .lp-panel__art::before {
-    background:
-      radial-gradient(60% 70% at 18% 25%, rgb(170 182 242 / 0.95), transparent 70%),
-      radial-gradient(55% 65% at 85% 80%, rgb(235 169 180 / 0.9), transparent 70%),
-      linear-gradient(160deg, var(--art-lilac), #f8f1ea);
-  }
-  .lp-panel--warm .lp-panel__art::before {
-    background:
-      radial-gradient(60% 70% at 20% 20%, rgb(216 200 232 / 0.95), transparent 70%),
-      radial-gradient(55% 65% at 82% 85%, rgb(242 184 102 / 0.85), transparent 70%),
-      linear-gradient(200deg, #f8f1ea, var(--art-haze));
-  }
   .lp-panel__card { width: 86%; }
-  .lp-panel__chip { position: absolute; z-index: 1; inset-inline-end: 16px; bottom: -16px; }
   @media (min-width: 768px) {
     .lp-panel { aspect-ratio: 16 / 10; }
     .lp-panel__card { width: 64%; }
@@ -278,55 +254,6 @@
   @media (min-width: 1024px) {
     .lp-panel { aspect-ratio: 4 / 3; }
     .lp-panel__card { width: 72%; }
-    .lp-panel__chip { inset-inline-end: -20px; }
-  }
-
-  /* ===== A5 step rows ===== */
-  .lp-step { position: relative; }
-  .lp-step__text { position: relative; margin-block-start: var(--text-gap); padding-inline-start: calc(var(--line-x) + 28px); }
-  .lp-step__badge {
-    position: absolute; inset-inline-start: calc(var(--line-x) - 16px); top: 0;
-    display: grid; place-items: center; width: 32px; height: 32px; border-radius: var(--r-pill);
-    background: var(--surface); box-shadow: inset 0 0 0 1px var(--ink); color: var(--ink);
-    font: 500 14px / 1 var(--font-ui); font-variant-numeric: tabular-nums;
-  }
-  .lp-step__text > .lp-h3 { max-width: 360px; padding-block-start: 2px; }
-  .lp-step__text > .lp-body { max-width: 340px; margin-block-start: 12px; }
-  /* Stacked connector (below 1024): a straight line at --line-x from the panel's bottom edge through the badge;
-     the gap segments come from .lp-joint. The first row starts at its badge, the last row ends at its badge. */
-  .lp-step__text::before {
-    content: ""; position: absolute; z-index: 0; inset-inline-start: calc(var(--line-x) - 0.75px);
-    top: calc(-1 * var(--text-gap)); bottom: 0; width: 1.5px; background: var(--icon);
-  }
-  .lp-step[data-first] .lp-step__text::before { top: 16px; }
-  .lp-step[data-last] .lp-step__text::before { bottom: auto; height: calc(var(--text-gap) + 16px); }
-  .lp-step__badge { z-index: 1; }
-
-  @media (min-width: 1024px) {
-    .lp-step { display: grid; grid-template-columns: 1fr 1fr; column-gap: 48px; align-items: center; }
-    .lp-step__text { margin: 0; padding-inline: 48px 0; }
-    .lp-step__text::before { content: none; }
-    .lp-step__badge { position: static; margin-block-end: 20px; }
-    .lp-step[data-flip] > .lp-panel { order: 2; }
-    .lp-step[data-flip] > .lp-step__text { padding-inline: 0 48px; }
-  }
-  @media (min-width: 1280px) {
-    .lp-step__text { padding-inline-start: 56px; }
-    .lp-step[data-flip] > .lp-step__text { padding-inline: 0 56px; }
-  }
-
-  /* The joint between two rows of the chapter: it is the row gap. 1024 and up it holds the S-curve SVG
-     (1.25 px Charcoal pen line, round caps, no gradient: 09 L15); below 1024 a straight line at --line-x. */
-  .lp-joint { position: relative; height: var(--row-gap); pointer-events: none; }
-  .lp-joint::before {
-    content: ""; position: absolute; inset-block: 0; inset-inline-start: calc(var(--line-x) - 0.75px);
-    width: 1.5px; background: var(--icon);
-  }
-  .lp-joint > svg { display: none; position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-  .lp-joint path { fill: none; stroke: var(--icon); stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-  @media (min-width: 1024px) {
-    .lp-joint::before { content: none; }
-    .lp-joint > svg { display: block; }
   }
 
   /* ===== A7 dark grain card (deviation V2): the page's only dark surface ===== */
@@ -361,31 +288,6 @@
   }
   @media (min-width: 1280px) {
     .lp-dark-card { padding-block: 96px; }
-  }
-
-  /* ===== A10 closing dusk glow (08 3.4): full bleed, clipped, open into the footer ===== */
-  .lp-glow-dusk { position: relative; isolation: isolate; overflow: clip; --grain-o: 0.08; }
-  .lp-glow-dusk::before {
-    content: ""; position: absolute; inset: -8%; z-index: -2;
-    background:
-      radial-gradient(45% 40% at 50% 40%, var(--canvas), transparent 80%),
-      radial-gradient(40% 70% at 12% 70%, rgb(170 182 242 / 0.9), transparent 70%),
-      radial-gradient(38% 65% at 88% 65%, rgb(240 138 93 / 0.85), transparent 70%),
-      radial-gradient(30% 50% at 72% 90%, rgb(242 184 102 / 0.8), transparent 70%);
-  }
-  .lp-glow-dusk::after {
-    content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
-    background: var(--grain) 0 0 / 240px 240px; mix-blend-mode: soft-light; opacity: var(--grain-o);
-  }
-  /* Below 1024 the side room is too small: hot colours move below the text (07 A10). */
-  @media (max-width: 1023px) {
-    .lp-glow-dusk::before {
-      background:
-        radial-gradient(70% 45% at 50% 35%, var(--canvas), transparent 80%),
-        radial-gradient(55% 35% at 15% 100%, rgb(170 182 242 / 0.9), transparent 70%),
-        radial-gradient(55% 35% at 85% 98%, rgb(240 138 93 / 0.85), transparent 70%),
-        radial-gradient(45% 30% at 55% 110%, rgb(242 184 102 / 0.8), transparent 70%);
-    }
   }
 
   /* ===== Segmented toggle (M8; 09 A8): Bone track, active segment Paper White with ring ===== */

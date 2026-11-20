@@ -6,7 +6,7 @@ import type { Resume, ResumeEntry, ResumeLine, ResumeSection, ResumeSuggestion }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { EmptyEm, EmptyState } from "../shared/empty-state";
-import { IconButton, tabList, tabTrigger } from "./bits";
+import { Citations, IconButton, tabList, tabTrigger } from "./bits";
 import { PAGE_CONTENT_PX } from "./model";
 import { SuggestionActions } from "./review";
 import { useWs } from "./workspace";
@@ -192,7 +192,12 @@ export function DocumentPane({ pages }: { pages: number }) {
   const redlines: Redlines = {
     byLine: new Map(pending.filter((s) => s.lineId && s.action !== "add").map((s) => [s.lineId!, s])),
     adds: pending.filter((s) => s.action === "add"),
-    actions: (s) => <SuggestionActions s={s} inline />,
+    actions: (s) => (
+      <>
+        <Citations ids={s.factIds} />
+        <SuggestionActions s={s} inline />
+      </>
+    ),
   };
   const i = ZOOMS.indexOf(zoom);
 

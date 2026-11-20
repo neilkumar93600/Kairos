@@ -22,7 +22,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (res.status === 204) return undefined as T;
   const body = (await res.json().catch(() => null)) as { error?: { code: string; message: string; details?: unknown } } | null;
   if (!res.ok) {
-    throw new ApiError(res.status, body?.error?.code ?? "unknown", body?.error?.message ?? "Request failed", body?.error?.details);
+    throw new ApiError(res.status, body?.error?.code ?? "unknown", body?.error?.message ?? "Could not reach Kairos right now. Try again in a moment.", body?.error?.details);
   }
   return body as T;
 }
