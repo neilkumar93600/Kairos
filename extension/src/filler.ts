@@ -61,9 +61,16 @@ export async function fillApplication(payload: FillPayload, doc: Document = docu
 
   const button = doc.querySelector<HTMLElement>(adapter.submitSelector);
   if (!button) return fail("Submit button not found");
+  // The page may already say "application received" (a job description does). Only a change counts: nothing matched before the
+  // click, or the address changed, or the form we submitted is gone.
+  const matchedBefore = adapter.isConfirmation(doc, url);
+  const hrefBefore = location.href;
   button.click();
 
-  const confirmed = await waitFor(() => adapter.isConfirmation(doc, new URL(location.href)) || null, 20_000);
+  const confirmed = await waitFor(
+    () => (adapter.isConfirmation(doc, new URL(location.href)) && (!matchedBefore || location.href !== hrefBefore || !button.isConnected) ? true : null),
+    20_000,
+  );
   if (!confirmed) return fail(missing.length ? `No confirmation; unfilled: ${missing.join(", ")}` : "No confirmation after submit");
 
   return {

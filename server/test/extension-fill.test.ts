@@ -36,6 +36,7 @@ function payload(ats: AtsProvider, opts: { sensitive: boolean; submit?: boolean 
 }
 
 const fake = createFakeAts();
+const accepted = () => fake.submissions.filter((s) => s.accepted);
 afterEach(() => {
   fake.assertClean();
   fake.submissions.length = 0;
@@ -91,6 +92,23 @@ describe.each(ATSES)("the extension filler on the %s fake form", (ats) => {
     expect(report).toMatchObject({ outcome: "failed", failureReason: "Filled for review; not submitted" });
     expect(fake.submissions).toEqual([]);
     expect(values[auth!]).not.toBe("");
+  });
+
+  it("INV-5: a posting that says 'application received' is not a confirmation; a refused POST stays a failure", async () => {
+    fake.setFormVariant(ats, "fit", "challenge");
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    const run = fillFakeForm(fake, url, payload(ats, { sensitive: true }), { stayOnError: true, html: (p) => p.replace("<form", "<p>Every application received is read by a person.</p><form") });
+    await vi.advanceTimersByTimeAsync(25_000);
+    const { report } = await run;
+    expect(report.outcome).toBe("failed");
+    expect(fake.submissions.every((s) => !s.accepted)).toBe(true);
+    fake.setFormVariant(ats, "fit", "open");
+  });
+
+  it("a real confirmation still counts when the posting already contained the words", async () => {
+    const { report } = await fillFakeForm(fake, url, payload(ats, { sensitive: true }), { html: (p) => p.replace("<form", "<p>Every application received is read by a person.</p><form") });
+    expect(report.outcome).toBe("submitted");
+    expect(accepted()).toHaveLength(1);
   });
 
   it("INV-8: a challenge page is a failure; the filler does not get past it", async () => {

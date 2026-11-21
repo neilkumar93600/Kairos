@@ -39,7 +39,8 @@ beforeEach(async () => {
   await import("../src/background");
 });
 
-const send = () => new Promise<{ error?: string }>((resolve) => onMessage({ type: "queue:send", applicationId: "app-1", review: false }, {}, resolve as (v: unknown) => void));
+const send = (review = false) => new Promise<{ error?: string }>((resolve) => onMessage({ type: "queue:send", applicationId: "app-1", review }, {}, resolve as (v: unknown) => void));
+const ready = () => new Promise<{ applicationId?: string; answers?: unknown[] } | null>((resolve) => onMessage({ type: "content:ready" }, { tab: { id: 7 } }, resolve as (v: unknown) => void));
 
 describe("the send press", () => {
   it("claims before it opens the tab", async () => {
@@ -55,6 +56,27 @@ describe("the send press", () => {
 
   it("releases the claim when the tab closes without a report", async () => {
     await send();
+    onRemoved(7);
+    await vi.waitFor(() => expect(calls).toContain("/api/extension/release"));
+  });
+
+  it("hands a submit payload to the page once: a confirmation page after an in-board navigation gets nothing", async () => {
+    await send();
+    expect(await ready()).toMatchObject({ applicationId: "app-1", submit: true });
+    expect(await ready()).toBeNull();
+  });
+
+  it("never releases after a submit payload was handed over: the filler may have clicked, so the lease settles as no_report", async () => {
+    await send();
+    await ready();
+    onRemoved(7);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calls).not.toContain("/api/extension/release");
+  });
+
+  it("review mode releases when the tab closes, even after the payload was handed over (the user presses submit)", async () => {
+    await send(true);
+    await ready();
     onRemoved(7);
     await vi.waitFor(() => expect(calls).toContain("/api/extension/release"));
   });

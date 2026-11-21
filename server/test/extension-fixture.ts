@@ -37,10 +37,10 @@ export interface FilledPage {
 }
 
 /** Loads the posting's form from the harness, runs fillApplication on it and returns the report. A submit is POSTed to the harness. */
-export async function fillFakeForm(fake: FakeAts, url: string, payload: FillPayload, opts: { resume?: boolean } = {}): Promise<FilledPage> {
+export async function fillFakeForm(fake: FakeAts, url: string, payload: FillPayload, opts: { resume?: boolean; html?: (page: string) => string; stayOnError?: boolean } = {}): Promise<FilledPage> {
   const page = fake.respond("GET", url);
   if (!page || page.status !== 200) throw new Error(`fake form not served for ${url}: ${page?.status}`);
-  const dom = new JSDOM(page.body, { url });
+  const dom = new JSDOM(opts.html ? opts.html(page.body) : page.body, { url });
   const win = dom.window as unknown as Window & typeof globalThis;
   for (const name of GLOBALS) vi.stubGlobal(name, win[name]);
   // jsdom has no DataTransfer and only takes a FileList in input.files; the content script runs in Chrome, which has both.
@@ -65,7 +65,7 @@ export async function fillFakeForm(fake: FakeAts, url: string, payload: FillPayl
     // Lever answers 200 with a script that navigates to /thanks; follow it like the browser would.
     const next = res && /location\.replace\((".*")\)/.exec(res.body)?.[1];
     if (next) res = fake.respond("GET", JSON.parse(next) as string);
-    if (res) doc.documentElement.innerHTML = res.body;
+    if (res && !(opts.stayOnError && res.status >= 400)) doc.documentElement.innerHTML = res.body; // a single-page form keeps its page when the POST is refused
   });
 
   try {

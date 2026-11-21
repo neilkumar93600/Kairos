@@ -8,17 +8,30 @@ import { unrecordedKey, type ExtensionMessage, type ExternalMessage, type FillPa
  * clears with the browser and is closed to content scripts by default, which matters because payloads hold answers.
  */
 const pendingKey = (tabId: number) => `pending:${tabId}`;
-const remember = (tabId: number, payload: FillPayload) => chrome.storage.session.set({ [pendingKey(tabId)]: payload });
+/** `handed`: a submit-mode payload went to the page, so the filler may have clicked. From then on the claim is never released. */
+type Pending = FillPayload & { handed?: boolean };
+const remember = (tabId: number, payload: Pending) => chrome.storage.session.set({ [pendingKey(tabId)]: payload });
 const forget = (tabId: number) => chrome.storage.session.remove(pendingKey(tabId));
-async function recall(tabId: number): Promise<FillPayload | null> {
+async function recall(tabId: number): Promise<Pending | null> {
   const stored = await chrome.storage.session.get(pendingKey(tabId));
-  return (stored[pendingKey(tabId)] as FillPayload | undefined) ?? null;
+  return (stored[pendingKey(tabId)] as Pending | undefined) ?? null;
 }
 
 let cachedQueue: QueueItem[] = [];
 async function refreshQueue() {
   cachedQueue = await fetchQueue();
   return cachedQueue;
+}
+
+/**
+ * A tab that ended without a report. Before the payload was handed over (or in review mode, where the user presses submit) nothing
+ * was sent, so the claim goes back. After a submit-mode handover the filler may have clicked: no release, because a released
+ * claim reads as "failed, no credit used, resend" and would double-apply. The lease expires to no_report (needs_check) instead.
+ */
+function endedWithoutReport(sent: Pending, notOutcome: QueueOutcome) {
+  if (sent.handed) return notifyPanel(sent.applicationId, { outcome: "closed" });
+  void releaseApplication(sent.applicationId);
+  notifyPanel(sent.applicationId, notOutcome);
 }
 
 /** Tells the side panel how an application ended. Rejects when the panel is closed, which is fine: it reloads on open. */
@@ -59,8 +72,17 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, respond
       case "queue:send":
         await openForApplication(message.applicationId, message.review);
         return { ok: true };
-      case "content:ready":
-        return sender.tab?.id !== undefined ? recall(sender.tab.id) : null;
+      case "content:ready": {
+        const tabId = sender.tab?.id;
+        const stored = tabId !== undefined ? await recall(tabId) : null;
+        if (tabId === undefined || !stored || stored.handed) return null;
+        if (stored.submit) {
+          // Once only: a page after an in-board navigation (a confirmation page) must not get the payload and click again.
+          // The record keeps just what a report check needs, not the answers.
+          await remember(tabId, { applicationId: stored.applicationId, submit: true, handed: true, answers: [], resumeLines: [], coverLetter: null });
+        }
+        return stored;
+      }
       case "content:report": {
         const report: SubmissionReport = message.report;
         const tabId = sender.tab?.id;
@@ -111,8 +133,7 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   void recall(tabId).then((sent) => {
     if (!sent) return;
     void forget(tabId);
-    void releaseApplication(sent.applicationId);
-    notifyPanel(sent.applicationId, { outcome: "failed", reason: "This job page moved off a board Kairos can fill" });
+    endedWithoutReport(sent, { outcome: "failed", reason: "This job page moved off a board Kairos can fill" });
   });
 });
 
@@ -121,7 +142,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   void recall(tabId).then((sent) => {
     if (!sent) return;
     void forget(tabId);
-    void releaseApplication(sent.applicationId);
-    notifyPanel(sent.applicationId, { outcome: "closed" });
+    endedWithoutReport(sent, { outcome: "closed" });
   });
 });
