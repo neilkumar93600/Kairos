@@ -51,7 +51,7 @@ A restricted key works if it can read Prices and write Customer portal. If someo
 
 ## 3. Plan changes and credits
 
-Credits come only from a paid invoice (`invoice.paid`). The first line that is not a proration and whose price is in `STRIPE_PRICES` decides the grant: that plan's cycle at that interval (`creditsPerInvoice`). An invoice with only proration lines grants nothing, and a $0 invoice grants nothing unless its coupon is in `STRIPE_GRANT_COUPONS`. Plan features (cloud applier, polling, resume profiles) follow the subscription itself (`customer.subscription.updated`), so they change as soon as Stripe applies the change.
+Credits come only from a paid invoice (`invoice.paid`). The first line that is not a proration and whose price is in `STRIPE_PRICES` decides the grant: that plan's cycle at that interval (`creditsPerInvoice`). An invoice with only proration lines grants nothing, and an invoice whose total is $0 or less grants nothing unless its coupon is in `STRIPE_GRANT_COUPONS`. The total counts, not what the card paid: a renewal paid from the customer's Stripe balance still grants. Plan features (cloud applier, polling, resume profiles) follow the subscription itself (`customer.subscription.updated`), so they change as soon as Stripe applies the change.
 
 | Change in the portal | Features | Charged | Credits |
 |---|---|---|---|
@@ -60,7 +60,7 @@ Credits come only from a paid invoice (`invoice.paid`). The first line that is n
 | Downgrade or shorter interval | Unchanged until the period ends | Nothing now | The renewal at the new price grants that price's cycle |
 | Cancel | Unchanged until the period ends, then Free | Nothing | None; credits already granted stay |
 
-Credits already granted are never removed by a plan change. Each paid invoice caps the balance at twice its own grant plus what approved applications hold (WP-32): anything above is written off as an `expiry` row under the same invoice id. The cap follows the new invoice, so a move to a smaller cycle (a quarterly payer moving to weekly) writes off everything above twice the weekly grant at the first weekly renewal. Stripe decides whether a mixed change (a cheaper plan on a longer interval) counts as a downgrade. If it applies the change at once and the unused-time credit covers the whole invoice, that $0 invoice grants nothing.
+Credits already granted are never removed by a plan change. Each paid invoice caps the balance at twice the largest grant whose paid period is still running when that invoice is paid (its own included), plus what approved applications hold (WP-32): anything above is written off as an `expiry` row under the same invoice id. Nobody loses credits inside a period they paid for: a quarterly payer moved to weekly keeps the quarterly cap until the quarter ends, and the first weekly renewal after that caps at twice the weekly grant. The moment is Stripe's `paid_at` and each grant's note records its period end, so a late or redriven invoice gives the same result. Stripe decides whether a mixed change (a cheaper plan on a longer interval) counts as a downgrade. If it applies the change at once and the unused-time credit covers the whole invoice, that $0 invoice grants nothing.
 
 The owner has not yet confirmed the upgrade rule. Upgraders get no new credits until their next renewal (gap-map billing-65). Granting the difference at upgrade time would need code in `invoiceGrant` (owner-actions/WP-47.md step 8).
 
