@@ -4,7 +4,7 @@ import type { Db } from "../db/client";
 import { consentRecords, erasedEmails, MAIL_OPT_OUTS, profiles, savedSearches, subscriptions, user } from "../db/schema";
 import { CONSENT_PURPOSE } from "../lib/broadcast";
 import { env } from "../lib/env";
-import { grantFreeCredits } from "./credits";
+import { grantFreeCredits, lockCreditBalance } from "./credits";
 import { emailHashIfKeyed } from "./erasure";
 import { keptOptOuts } from "./mail-preferences";
 
@@ -22,6 +22,8 @@ function forwardingAddressFor(userId: string): string {
 export async function bootstrapUser(db: Db, userId: string): Promise<boolean> {
   return db.transaction(async (tx) => {
     const [account] = await tx.select({ email: user.email }).from(user).where(eq(user.id, userId));
+    // Rule L1: the free grant below writes the balance row, and nothing here may hold a lock a balance holder waits on.
+    if (account) await lockCreditBalance(tx, userId);
     const mailHash = account ? emailHashIfKeyed(account.email) : null;
     // The optional mail kinds start off until the person consents (MAIL_CONSENT_DEFAULT, owner-actions/WP-35.md).
     // An address that objected before (even through an erased account) stays opted out of those kinds.

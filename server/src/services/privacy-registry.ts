@@ -113,6 +113,11 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
   { table: "forwarding_verifications", column: "user_id", erase: "cascade", export: ALL },
   { table: "subscriptions", column: "user_id", erase: "cascade", export: ALL },
   { table: "credit_ledger", column: "user_id", erase: "archive", export: ALL },
+  { table: "credit_balances", column: "user_id", erase: "cascade", export: false, why: "a cache of the exported ledger and applications" },
+  // WP-32. Ids and integers from an allowlist, never a raw event. A row not yet tied to a user holds the Stripe customer id, and
+  // an invoice's payload the user id: the erasure transaction scrubs those by customer (services/erasure.ts), the rest cascade,
+  // and an event arriving after the erasure keeps neither. Deleted 90 days after it finished.
+  { table: "stripe_events", column: "user_id", erase: "cascade", export: false, why: "ids of billing objects for diagnosis; the billing records themselves are in subscriptions, credit_ledger and at Stripe" },
   { table: "user_daily_usage", column: "user_id", erase: "cascade", export: ALL },
   { table: "ai_usage", column: "user_id", erase: "cascade", export: ALL },
   { table: "contact_messages", column: "email", by: "email", erase: "delete", export: { omit: ["email_hash", "message_hash"] } },

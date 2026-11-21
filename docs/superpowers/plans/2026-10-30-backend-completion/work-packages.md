@@ -576,6 +576,8 @@ autopilot_settings with consent_version and a fresh session. Match hand-offs fro
 
 Contract releases after soak: drop the resume source_text and inbound text_body plaintext columns once the encrypted columns have been read-verified for 14 days; FK RESTRICT for jobs.company_id and applications.job_id; SET NOT NULL on backfilled columns; drop the superseded indexes; add `applications (updated_at) WHERE status = 'draft'` for draft expiry (WP-29). Each change ships behind the '-- kairos:contract' header with a restore rehearsal on a staging dump. Files: db/schema/* contract migrations.
 
+WP-32's expand left these for the contract once store-then-process has run for 7 days: `stripe_events.status` default to `received` and `processed_at`'s default dropped (the previous release's insert named neither), and `stripe_events_consistency_ck` to require an outcome on `processed` and `ignored` rows once retention has removed the outcome-less rows that release wrote (90 days).
+
 `test/tracker.int.test.ts`'s `seedApp("submitted")` inserts `stage` NULL, which `applications_stage_shape_ck` would refuse: give that fixture `stage: "applied"` when the check lands.
 
 **Acceptance:** No plaintext copy of resume source or reply bodies exists in the database. Restore rehearsal T-DB-4 passes on a staging dump before each release.

@@ -148,6 +148,11 @@ export const RETENTION_RULES = {
     days: 90,
     run: (d: number) => batched(() => sql`delete from outbox where id in (select id from outbox where status = 'dead' and updated_at < ${before(d)} limit ${BATCH})`),
   },
+  /** Finished Stripe events (FR-58, _db/billing.md 3.5): the audit trail is the ledger and Stripe. A row still received or dead stays. */
+  stripe_events: {
+    days: 90,
+    run: (d: number) => batched(() => sql`delete from stripe_events where id in (select id from stripe_events where status in ('processed','ignored') and received_at < ${before(d)} limit ${BATCH})`),
+  },
   /** Sensitive answer and receipt values, after submitted or withdrawn (processScrubApplications). */
   scrub_applications: { days: 7, run: null },
 } as const;

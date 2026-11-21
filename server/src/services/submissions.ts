@@ -11,7 +11,7 @@ import { logger } from "../lib/logger";
 import { PRESIGN_MAX_SEC, storage } from "../lib/storage";
 import { redrive } from "../jobs/queues";
 import { effectivePlan } from "./billing-events";
-import { availableCreditsNow } from "./credits";
+import { availableCredits, lockCreditBalance } from "./credits";
 import { recordEvent } from "./events";
 import { redactConfirmation } from "./sensitive";
 
@@ -163,8 +163,8 @@ async function snapshots(tx: Tx, rows: { id: string; resumeLines: unknown; cover
  * free_grant_used (WP-32), the Autopilot guards (WP-36).
  */
 async function approveCore(tx: Tx, userId: string, ids: string[], channel: SubmitChannel, resend = false): Promise<ApproveResult> {
-  // One approval at a time per user: two tabs reading the same balance would otherwise both commit. WP-32 moves this to the balance row.
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${userId}))`);
+  // One approval at a time per user: two tabs reading the same balance would otherwise both commit. Rule L1 (services/credits.ts).
+  const credits = await lockCreditBalance(tx, userId);
   const rows = await tx
     .select({ a: applications, companyId: jobs.companyId, closedAt: jobs.closedAt })
     .from(applications)
@@ -228,7 +228,7 @@ async function approveCore(tx: Tx, userId: string, ids: string[], channel: Submi
   }
 
   // Only rows this call moves need a credit: a repeat's reservation is already counted as in flight.
-  const available = await availableCreditsNow(tx, userId);
+  const available = availableCredits(credits.balance, credits.inFlight);
   if (moving.length > available) {
     throw paymentRequired(`You have ${available} credits left for ${moving.length} applications`, { available, requested: moving.length });
   }
@@ -329,6 +329,8 @@ export async function resendApplication(db: Db, userId: string, id: string, chan
  */
 export async function withdrawApplication(db: Db, userId: string, id: string): Promise<void> {
   const held = await db.transaction(async (tx) => {
+    // An approval leaving the in-flight set takes the balance through the trigger, so rule L1 applies.
+    await lockCreditBalance(tx, userId);
     const [updated] = await tx
       .update(applications)
       .set({ status: "withdrawn", leaseSessionId: null, leaseExpiresAt: null, updatedAt: new Date() })
