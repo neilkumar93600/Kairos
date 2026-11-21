@@ -189,8 +189,10 @@ async function reconcileSubscriptions(api: ReconcileApi): Promise<{ drifted: num
       if (!(err instanceof BillingAnomaly)) throw err;
       out.anomalies++;
     }
-    if (tracked && stale) await sync(customer, tracked);
-    else if (liveHere.length === 1 && liveHere[0]!.id !== local.stripeSubscriptionId && (!tracked || LIVE_ENDED.has(tracked.status))) await sync(customer, liveHere[0]!);
+    // Stripe's only live subscription replaces an ended tracked one first: syncing the ended one would only write Free.
+    const replacement = liveHere.length === 1 && liveHere[0]!.id !== local.stripeSubscriptionId && (!tracked || LIVE_ENDED.has(tracked.status)) ? liveHere[0] : undefined;
+    if (replacement) await sync(customer, replacement);
+    else if (tracked && stale) await sync(customer, tracked);
   }
   return out;
 }

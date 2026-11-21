@@ -43,6 +43,8 @@ describe.skipIf(!hasTestDb)("the billing reconcile", () => {
     ({
       id,
       amount_paid: amount,
+      total: amount,
+      status_transitions: { paid_at: 1_800_000_000 },
       customer,
       discounts: [],
       lines: { data: [{ pricing: { price_details: { price } }, parent: { subscription_item_details: { proration: false } } }], has_more: false },
