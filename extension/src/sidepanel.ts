@@ -77,7 +77,8 @@ function update(row: Row, state: RowState, moveFocus = false) {
 async function act(row: Row, review: boolean) {
   update(row, { kind: review ? "review" : "sending" }, true);
   const res = await chrome.runtime.sendMessage({ type: "queue:send", applicationId: row.item.applicationId, review });
-  if (res?.error) update(row, { kind: "failed", text: "Could not open the application page. Nothing was sent and no credit was used." });
+  if (res?.error === "api_409") update(row, { kind: "failed", text: "This application is already being sent in another tab. Nothing extra was sent." });
+  else if (res?.error) update(row, { kind: "failed", text: "Could not open the application page. Nothing was sent and no credit was used." });
 }
 
 function buildRow(item: QueueItem): Row {

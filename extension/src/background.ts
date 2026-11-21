@@ -1,5 +1,5 @@
 import type { SubmissionReport } from "@auto-career/shared";
-import { connectWithOneTimeToken, fetchQueue, sendReport } from "./lib/api";
+import { claimApplication, connectWithOneTimeToken, fetchQueue, releaseApplication, sendReport } from "./lib/api";
 import { unrecordedKey, type ExtensionMessage, type ExternalMessage, type FillPayload, type PanelMessage, type QueueItem, type QueueOutcome } from "./lib/messages";
 
 /**
@@ -36,12 +36,19 @@ async function openForApplication(applicationId: string, review: boolean) {
   const find = (queue: QueueItem[]) => queue.find((q) => q.applicationId === applicationId);
   const item = find(cachedQueue) ?? find(await refreshQueue());
   if (!item) throw new Error("not_in_queue");
-  // Review mode opens the tab in front and stops before submitting; otherwise it works in the background.
-  // Parked on a blank page first, so the payload is stored before the real page can ask for it.
-  const tab = await chrome.tabs.create({ url: "about:blank", active: review });
-  if (tab.id === undefined) throw new Error("tab_failed");
-  await remember(tab.id, { ...item, submit: !review });
-  await chrome.tabs.update(tab.id, { url: item.applyUrl });
+  // INV-4: claim first. A second tab (or a second press) gets 409 here and never opens a page, so the employer sees one submit.
+  await claimApplication(applicationId);
+  try {
+    // Review mode opens the tab in front and stops before submitting; otherwise it works in the background.
+    // Parked on a blank page first, so the payload is stored before the real page can ask for it.
+    const tab = await chrome.tabs.create({ url: "about:blank", active: review });
+    if (tab.id === undefined) throw new Error("tab_failed");
+    await remember(tab.id, { ...item, submit: !review });
+    await chrome.tabs.update(tab.id, { url: item.applyUrl });
+  } catch (err) {
+    await releaseApplication(applicationId);
+    throw err;
+  }
 }
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, respond) => {
@@ -104,6 +111,7 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   void recall(tabId).then((sent) => {
     if (!sent) return;
     void forget(tabId);
+    void releaseApplication(sent.applicationId);
     notifyPanel(sent.applicationId, { outcome: "failed", reason: "This job page moved off a board Kairos can fill" });
   });
 });
@@ -113,6 +121,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   void recall(tabId).then((sent) => {
     if (!sent) return;
     void forget(tabId);
+    void releaseApplication(sent.applicationId);
     notifyPanel(sent.applicationId, { outcome: "closed" });
   });
 });
