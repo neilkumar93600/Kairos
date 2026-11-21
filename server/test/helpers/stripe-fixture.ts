@@ -19,6 +19,8 @@ export interface FixtureScenario {
   events: FixtureEvent[];
   /** Every ledger row the replay must leave, on top of the free grant of 25 (without ids or times). */
   ledger: { reason: string; delta: number; invoice: string; note: string }[];
+  /** The grant note of a paid invoice of this scenario, with the end of its period. */
+  grantNoteOf(n: number, plan: string): string;
   subscription: { plan: string; interval: string | null; status: string; cancelAtPeriodEnd: boolean; collectionPaused: boolean };
 }
 
@@ -57,14 +59,25 @@ export function lifecycle(userId: string, tag: string): FixtureScenario {
     id: invoiceId(n),
     object: "invoice",
     amount_paid: amountPaid,
+    total: amountPaid,
+    status_transitions: { paid_at: null as number | null },
     customer,
     discounts: [],
     lines: { data: lines, has_more: false },
     parent: { subscription_details: { metadata: { userId }, subscription: subId } },
   });
 
+  // One fixture day is one billing period: an invoice is paid at its event's second and its lines run one day, so each renewal
+  // lands exactly at the end of the period before it, as Stripe's do.
+  const periodEnds = new Map<string, number>();
   const push = (type: string, object: unknown, subscription?: Stripe.Subscription, sameSecond = false) => {
     if (!sameSecond) second += 86_400;
+    const o = object as { object?: string; id: string; status_transitions?: { paid_at: number | null }; lines?: { data: { period?: unknown }[] } };
+    if (o.object === "invoice") {
+      o.status_transitions = { paid_at: second };
+      for (const l of o.lines?.data ?? []) l.period = { start: second, end: second + 86_400 };
+      periodEnds.set(o.id, second + 86_400);
+    }
     const id = `evt_fixture_${tag}_${events.length + 1}`;
     events.push({ event: { id, object: "event", created: second, type, data: { object } } as unknown as Stripe.Event, subscription });
   };
@@ -97,17 +110,20 @@ export function lifecycle(userId: string, tag: string): FixtureScenario {
   push("invoice.paid", invoice(7, [line(starter)], 0));
   push("charge.refunded", { ...PERSON, id: `ch_fixture_${tag}`, object: "charge", amount: 1900, customer });
 
+  const grantNoteOf = (n: number, plan: string) =>
+    `plan=${plan} interval=month until=${new Date(periodEnds.get(invoiceId(n))! * 1000).toISOString()}`;
   return {
     events,
+    grantNoteOf,
     ledger: [
-      { reason: "plan_grant", delta: 1000, invoice: invoiceId(1), note: "plan=starter interval=month" },
-      { reason: "plan_grant", delta: 1000, invoice: invoiceId(2), note: "plan=starter interval=month" },
+      { reason: "plan_grant", delta: 1000, invoice: invoiceId(1), note: grantNoteOf(1, "starter") },
+      { reason: "plan_grant", delta: 1000, invoice: invoiceId(2), note: grantNoteOf(2, "starter") },
       { reason: "expiry", delta: -25, invoice: invoiceId(2), note: "rollover cap 2x grant=1000" },
-      { reason: "plan_grant", delta: 1200, invoice: invoiceId(4), note: "plan=pro interval=month" },
+      { reason: "plan_grant", delta: 1200, invoice: invoiceId(4), note: grantNoteOf(4, "pro") },
       { reason: "expiry", delta: -800, invoice: invoiceId(4), note: "rollover cap 2x grant=1200" },
-      { reason: "plan_grant", delta: 1200, invoice: invoiceId(5), note: "plan=pro interval=month" },
+      { reason: "plan_grant", delta: 1200, invoice: invoiceId(5), note: grantNoteOf(5, "pro") },
       { reason: "expiry", delta: -1200, invoice: invoiceId(5), note: "rollover cap 2x grant=1200" },
-      { reason: "plan_grant", delta: 1000, invoice: invoiceId(6), note: "plan=starter interval=month" },
+      { reason: "plan_grant", delta: 1000, invoice: invoiceId(6), note: grantNoteOf(6, "starter") },
       { reason: "expiry", delta: -1400, invoice: invoiceId(6), note: "rollover cap 2x grant=1000" },
     ],
     subscription: { plan: "free", interval: null, status: "canceled", cancelAtPeriodEnd: false, collectionPaused: false },

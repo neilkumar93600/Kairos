@@ -60,10 +60,12 @@ describe.skipIf(!hasTestDb)("POST /api/webhooks/stripe against Postgres", () => 
   const paidInvoice = (id: string, opts: { userId: string | null; amountPaid?: number; price?: string; customer?: string; hasMore?: boolean }) => ({
     id,
     amount_paid: opts.amountPaid ?? 1200,
+    total: opts.amountPaid ?? 1200,
+    status_transitions: { paid_at: 1_800_000_000 },
     customer: opts.customer ?? "cus_1",
     discounts: [],
     lines: {
-      data: [{ pricing: { price_details: { price: opts.price ?? "price_pro_week" } }, parent: { subscription_item_details: { proration: false } } }],
+      data: [{ pricing: { price_details: { price: opts.price ?? "price_pro_week" } }, parent: { subscription_item_details: { proration: false } }, period: { start: 1_800_000_000, end: 1_802_592_000 } }],
       has_more: opts.hasMore ?? false,
     },
     parent: { subscription_details: { metadata: opts.userId ? { userId: opts.userId } : {}, subscription: "sub_1" } },
@@ -203,13 +205,14 @@ describe.skipIf(!hasTestDb)("POST /api/webhooks/stripe against Postgres", () => 
     expect(await eventRow("evt_badshape")).toMatchObject({ status: "dead", lastError: "payload_invalid", payload: null });
   });
 
-  it("a customer owned by another account is permanent: dead with customer_conflict, and nothing half-written", async () => {
+  it("a customer owned by another account is permanent: dead before anything is written, and the unique index stays the backstop", async () => {
     const [a, b] = [await seedUser(db), await seedUser(db)];
     const { eq } = await import("drizzle-orm");
     await db.update(schema.subscriptions).set({ stripeCustomerId: "cus_1" }).where(eq(schema.subscriptions.userId, a));
     vi.spyOn(stripeClient.subscriptions, "retrieve").mockResolvedValue(subscription("sub_b", "active", b) as never);
     await send("evt_conflict", "customer.subscription.updated", { id: "sub_b", customer: "cus_1" });
-    expect(await eventRow("evt_conflict")).toMatchObject({ status: "dead", lastError: "customer_conflict" });
+    // The metadata names b, the customer belongs to a: resolveUser refuses before the write that would hit the index.
+    expect(await eventRow("evt_conflict")).toMatchObject({ status: "dead", lastError: "anomaly_no_user" });
     expect((await subscriptionRowFor(b))?.plan).toBe("free");
   });
 
@@ -292,7 +295,7 @@ describe.skipIf(!hasTestDb)("POST /api/webhooks/stripe against Postgres", () => 
     const rows = await grantsFor("in_cap");
     expect(rows.map((r) => [r.reason, r.delta, r.note]).sort()).toEqual([
       ["expiry", -2000, "rollover cap 2x grant=1000"],
-      ["plan_grant", 1000, "plan=starter interval=month"],
+      ["plan_grant", 1000, "plan=starter interval=month until=2027-02-14T08:00:00.000Z"],
     ]);
     await send("evt_cap_again", "invoice.paid", paidInvoice("in_cap", { userId, price: "price_starter_month" }));
     expect(await grantsFor("in_cap")).toHaveLength(2);
@@ -351,15 +354,23 @@ describe.skipIf(!hasTestDb)("POST /api/webhooks/stripe against Postgres", () => 
   });
 
   it("an invoice for an erased user is recorded and ignored, and keeps no id", async () => {
+    const { erasureUserHash, emailHash } = await import("../src/services/erasure");
+    await db.insert(schema.deletionTasks).values({ userHash: erasureUserHash("erased-user-id"), emailHash: emailHash("erased@example.com"), requestedBy: "user" });
     expect((await send("evt_erased", "invoice.paid", paidInvoice("in_erased", { userId: "erased-user-id" }))).status).toBe(200);
     expect(await eventRow("evt_erased")).toMatchObject({ status: "ignored", outcome: "user_deleted", userId: null, payload: null, stripeCustomerId: null });
     expect(await grantsFor("in_erased")).toHaveLength(0);
   });
 
+  it("an invoice for a user id that never existed and was never erased goes dead for an operator", async () => {
+    expect((await send("evt_typo", "invoice.paid", paidInvoice("in_typo", { userId: "no-such-user" }))).status).toBe(200);
+    expect(await eventRow("evt_typo")).toMatchObject({ status: "dead", outcome: "anomaly_no_user" });
+    expect(await grantsFor("in_typo")).toHaveLength(0);
+  });
+
   it("decides a truncated invoice from all of its lines", async () => {
     const userId = await seedUser(db);
     const line = { pricing: { price_details: { price: "price_starter_month" } }, parent: { subscription_item_details: { proration: false } } };
-    const list = vi.spyOn(stripeClient.invoices, "listLineItems").mockReturnValue({ autoPagingToArray: async () => [line] } as never);
+    const list = vi.spyOn(stripeClient.invoices, "listLineItems").mockResolvedValue({ data: [line], has_more: false } as never);
     const invoice = { ...paidInvoice("in_long", { userId, hasMore: true }), lines: { data: [], has_more: true } };
     expect((await send("evt_long", "invoice.paid", invoice)).status).toBe(200);
     expect(list).toHaveBeenCalledWith("in_long", { limit: 100 }, { timeout: 10_000, maxNetworkRetries: 0 });

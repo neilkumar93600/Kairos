@@ -164,7 +164,7 @@ describe.skipIf(!hasTestDb)("Stripe replay", () => {
     const [created, paid, updated] = scenario.events;
     const state: { current?: Stripe.Subscription } = {};
     await deliver(paid!, state);
-    expect(await ledgerOf(userId)).toEqual([{ reason: "plan_grant", delta: 1000, invoice: "in_fixture_early_1", note: "plan=starter interval=month" }]);
+    expect(await ledgerOf(userId)).toEqual([{ reason: "plan_grant", delta: 1000, invoice: "in_fixture_early_1", note: scenario.grantNoteOf(1, "starter") }]);
     expect((await subscriptionOf(userId)).plan).toBe("free");
     await deliver(created!, state);
     await deliver(updated!, state);
@@ -185,7 +185,7 @@ describe.skipIf(!hasTestDb)("Stripe replay", () => {
     };
     const first = await replay();
     expect(await replay()).toEqual(first);
-    const paid = events.filter((e) => e.event.type === "invoice.paid" && (e.event.data.object as Stripe.Invoice).amount_paid > 0).map((e) => (e.event.data.object as Stripe.Invoice).id);
+    const paid = events.filter((e) => e.event.type === "invoice.paid" && (e.event.data.object as Stripe.Invoice).total > 0).map((e) => (e.event.data.object as Stripe.Invoice).id);
     expect(first.filter((r) => r.reason === "plan_grant").map((r) => r.invoice).sort()).toEqual([...new Set(paid)].sort());
   });
 });

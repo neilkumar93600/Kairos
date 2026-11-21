@@ -21,7 +21,7 @@ const { closeDb, db: appDb } = await import("../src/db/client");
 const { readMigrations, runMigrations } = await import("../src/db/migrator");
 const schema = await import("../src/db/schema");
 const { effectivePlan } = await import("../src/services/billing-events");
-const { adjustCredits, applyInvoiceGrant, lockCreditBalance, readCredits } = await import("../src/services/credits");
+const { adjustCredits, applyInvoiceGrant, grantNote, lockCreditBalance, readCredits } = await import("../src/services/credits");
 const { eraseUser } = await import("../src/services/erasure");
 const { processInvariantsNightly } = await import("../src/jobs/invariants");
 const { getFlags, resetFlagCache, setFlag } = await import("../src/lib/flags");
@@ -77,8 +77,8 @@ describe.skipIf(!hasTestDb)("credit_balances against Postgres", () => {
 
   it("a no-op insert changes nothing: a duplicate charge or grant is not counted", async () => {
     const userId = await seedUser(tdb, { credits: 5 });
-    await tdb.transaction((tx) => applyInvoiceGrant(tx, { userId, delta: 100, stripeInvoiceId: "in_dup", note: "plan=pro interval=week" }));
-    await tdb.transaction((tx) => applyInvoiceGrant(tx, { userId, delta: 100, stripeInvoiceId: "in_dup", note: "plan=pro interval=week" }));
+    await tdb.transaction((tx) => applyInvoiceGrant(tx, { userId, delta: 100, stripeInvoiceId: "in_dup", note: "plan=pro interval=week", at: new Date() }));
+    await tdb.transaction((tx) => applyInvoiceGrant(tx, { userId, delta: 100, stripeInvoiceId: "in_dup", note: "plan=pro interval=week", at: new Date() }));
     expect(await cache(userId)).toMatchObject({ balance: 105 });
   });
 
@@ -148,10 +148,50 @@ describe.skipIf(!hasTestDb)("credit_balances against Postgres", () => {
     const userId = await seedUser(tdb, { credits: 2500 });
     for (let i = 0; i < 20; i++) await application(userId, "approved", `held-${i}`);
     expect(await cache(userId)).toMatchObject({ balance: 2500, inFlight: 20 });
-    await tdb.transaction((tx) => applyInvoiceGrant(tx, { userId, delta: 1000, stripeInvoiceId: "in_roll", note: "plan=starter interval=month" }));
+    await tdb.transaction((tx) => applyInvoiceGrant(tx, { userId, delta: 1000, stripeInvoiceId: "in_roll", note: "plan=starter interval=month", at: new Date() }));
     expect(await cache(userId)).toMatchObject({ balance: 2020, inFlight: 20 });
     const expiry = await tdb.select().from(schema.creditLedger).where(eq(schema.creditLedger.reason, "expiry"));
     expect(expiry.map((r) => [r.delta, r.note, r.stripeInvoiceId])).toEqual([[-1480, "rollover cap 2x grant=1000", "in_roll"]]);
+  });
+
+  it("the cap is taken at the invoice's paid moment, from the notes, never the clock (WP-32 G3 option B)", async () => {
+    // Every moment is years in the past: a cap read from now() would see the quarter as over and expire 2,600 at the first month.
+    const userId = await seedUser(tdb);
+    const day = (d: string) => new Date(`${d}T00:00:00Z`);
+    const grant = (id: string, delta: number, plan: string, interval: string, paid: string, until: string) =>
+      tdb.transaction((tx) => applyInvoiceGrant(tx, { userId, delta, stripeInvoiceId: id, note: grantNote(plan, interval, day(until)), at: day(paid) }));
+    const expiries = async () =>
+      (await tdb.select().from(schema.creditLedger).where(eq(schema.creditLedger.reason, "expiry"))).map((r) => [r.stripeInvoiceId, r.delta, r.note]).sort();
+
+    await grant("in_q", 3600, "pro", "quarter", "2020-01-01", "2020-04-01");
+    // A move to Starter monthly, paid mid-quarter: the quarter is still paid for, so its cap holds. 3,600 + 1,000 is under 7,200.
+    await grant("in_m1", 1000, "starter", "month", "2020-02-01", "2020-03-01");
+    expect(await expiries()).toEqual([]);
+    // Another month inside the quarter: 4,600 + 1,000 is 5,600, still under 2 x 3,600.
+    await grant("in_m2", 1000, "starter", "month", "2020-03-01", "2020-04-01");
+    expect(await expiries()).toEqual([]);
+    // The quarter has ended: Starter's own cap, 2,000. 5,600 + 1,000 - 2,000 = 4,600 expire.
+    await grant("in_m3", 1000, "starter", "month", "2020-04-01", "2020-05-01");
+    expect(await expiries()).toEqual([["in_m3", -4600, "rollover cap 2x grant=1000"]]);
+    expect(await cache(userId)).toMatchObject({ balance: 2000 });
+
+    // A redrive of the first renewal much later writes nothing new: one grant and one expiry per invoice.
+    await grant("in_m1", 1000, "starter", "month", "2020-02-01", "2020-03-01");
+    expect(await cache(userId)).toMatchObject({ balance: 2000 });
+  });
+
+  it("the same grants on a second user give the same ledger, whenever they run", async () => {
+    const run = async () => {
+      const userId = await seedUser(tdb);
+      for (const [id, delta, paid, until] of [["in_a", 3600, "2021-01-01", "2021-04-01"], ["in_b", 1000, "2021-03-15", "2021-04-15"], ["in_c", 1000, "2021-04-15", "2021-05-15"]] as const) {
+        await tdb.transaction((tx) => applyInvoiceGrant(tx, { userId, delta, stripeInvoiceId: `${id}_${userId}`, note: grantNote("pro", "month", new Date(`${until}T00:00:00Z`)), at: new Date(`${paid}T00:00:00Z`) }));
+      }
+      const rows = await tdb.select().from(schema.creditLedger).where(eq(schema.creditLedger.userId, userId));
+      return rows.map((r) => [r.reason, r.delta, r.stripeInvoiceId?.replace(`_${userId}`, ""), r.note]).sort();
+    };
+    const first = await run();
+    expect(first).toContainEqual(["expiry", -3600, "in_c", "rollover cap 2x grant=1000"]);
+    expect(await run()).toEqual(first);
   });
 
   describe("LEDGER-2, the recount", () => {
