@@ -135,8 +135,8 @@ describe.skipIf(!hasChromium)("fillInBrowser in Chromium", () => {
     expect(await run(form(), reason("No confirmation after submit"))).toMatchObject({ code: "unconfirmed" });
   });
 
-  it("records an error after the filler starts as unconfirmed: the confirmation navigation, a bad report, the 120 s race", async () => {
-    const navigates = filler(`location.href = "/embed/job_app/confirmation"; await new Promise(() => {});`);
+  it("records an error after the filler starts as unconfirmed: a navigation to a page that is no confirmation, a bad report, the 120 s race", async () => {
+    const navigates = filler(`location.href = "/embed/job_app/next"; await new Promise(() => {});`);
     expect(await run(form(), navigates)).toMatchObject({ code: "unconfirmed", detail: "fill_interrupted" });
     expect(await run(form(), filler(`return { outcome: "yes" };`))).toMatchObject({ code: "unconfirmed", detail: "invalid_report" });
     expect(await run(form(), filler(`await new Promise(() => {});`), 300)).toMatchObject({ code: "unconfirmed", detail: "fill_interrupted" });
@@ -185,9 +185,12 @@ describe.skipIf(!hasChromium)("fillInBrowser in Chromium", () => {
       if (outcome.submitted) expect(outcome.report.filledFields.map((f) => f.fieldKey)).toEqual(["first_name", "email"]);
     });
 
-    it("records a form whose confirmation navigates as unconfirmed (needs_check), never as a resendable failure", async () => {
-      const outcome = await runReal(`<!doctype html><form action="/embed/job_app/confirmation" method=get>${fields}</form>`);
-      expect(outcome).toMatchObject({ submitted: false, code: "unconfirmed" });
+    it("reads a confirmation the submit navigates to with the adapter's own rule (T-006.5); any other landing stays unconfirmed (needs_check)", async () => {
+      const confirmed = await runReal(`<!doctype html><form action="/embed/job_app/confirmation" method=get>${fields}</form>`);
+      expect(confirmed.submitted).toBe(true);
+      if (confirmed.submitted) expect(confirmed.report.applicationId).toBe(APP_ID);
+      const elsewhere = await runReal(`<!doctype html><form action="/embed/job_app/next" method=get>${fields}</form>`);
+      expect(elsewhere).toMatchObject({ submitted: false, code: "unconfirmed", detail: "fill_interrupted" });
     });
   });
 

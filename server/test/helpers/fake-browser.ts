@@ -29,9 +29,12 @@ export function fakeBrowser(opts: { frames?: string[]; fill?: () => Promise<unkn
     },
     waitForLoadState: async () => {},
     frames: () => (opts.frames ?? []).map((u) => ({ url: () => u, frameElement: async () => ({ evaluate: async () => true }) })),
-    evaluate: async (fn: unknown) => (typeof fn === "string" ? undefined : fill()),
+    // The filler bundle (a string), the filler call (with its payload), or the read of a page a submit landed on: no confirmation.
+    evaluate: async (fn: unknown, arg?: unknown) => (typeof fn === "string" ? undefined : arg === undefined ? { text: "", ready: true } : fill()),
   };
-  const context = { route: async () => {}, on: () => {}, newPage: async () => page, close: async () => {} };
+  // The main-frame hop guard's CDP session (jobs/cloud-apply.ts guardTopLevelHops): no hops happen here.
+  const cdp = { on: () => {}, send: async () => ({ frameTree: { frame: { id: "main" } } }) };
+  const context = { route: async () => {}, on: () => {}, newPage: async () => page, newCDPSession: async () => cdp, close: async () => {} };
   vi.spyOn(chromium, "launch").mockResolvedValue({ newContext: async () => context, on: () => {}, close: async () => {} } as never);
   return fill;
 }

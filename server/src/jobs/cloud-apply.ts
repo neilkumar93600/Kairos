@@ -1,7 +1,7 @@
 import { DelayedError, type Job } from "bullmq";
 import { readFileSync } from "node:fs";
 import { sql } from "drizzle-orm";
-import type { Browser, Frame, Page } from "playwright-core";
+import type { Browser, BrowserContext, Frame, Page } from "playwright-core";
 import { submissionReportSchema, type ApplicationAnswer, type ResumeLine, type SubmissionReport } from "@auto-career/shared";
 // The filler's own selector (07-cloud-applier 3.2). server/Dockerfile copies these files for its build too, since build.mjs bundles every entry.
 import { detectAdapter } from "../../../extension/src/ats";
@@ -14,6 +14,7 @@ import { signal } from "../lib/sentry";
 import { boundedEvidence, cloudAllowed, type FailureCode } from "../services/submissions";
 import { admitOrPark, type ApplyGate } from "./apply-gate";
 import { applierPool } from "./browser-pool";
+import { egressGuardUrl, isInternalTarget } from "./egress-guard";
 import { renderAndWait, type JobData } from "./queues";
 
 /**
@@ -56,23 +57,8 @@ export function atsOfApplyUrl(raw: string): string | undefined {
   }
 }
 
-/**
- * A request no employer page may make: any IP literal (the metadata address, loopback, private ranges; real pages
- * load by name) or a private-network name (single label, localhost, .local, .internal such as *.railway.internal).
- * ponytail: literal hosts only. A public name that resolves to a private address needs the egress proxy of
- * 07-cloud-applier 7.5 (platform-69), which this route check does not replace.
- */
-export function isInternalTarget(raw: string): boolean {
-  let u: URL;
-  try {
-    u = new URL(raw);
-  } catch {
-    return true;
-  }
-  if (u.protocol !== "http:" && u.protocol !== "https:") return false; // data: and blob: never leave the browser
-  const host = u.hostname.replace(/\.$/, "");
-  return host.startsWith("[") || /^\d+\.\d+\.\d+\.\d+$/.test(host) || !host.includes(".") || /(^|\.)(localhost|local|internal)$/.test(host);
-}
+// The route check below and the egress guard share one rule; the guard also refuses names that resolve to private addresses.
+export { isInternalTarget };
 
 export type ChallengeKind = "recaptcha" | "hcaptcha" | "turnstile" | "interstitial" | "http_403" | "http_429";
 
@@ -149,6 +135,56 @@ async function visibleChallenge(page: Page): Promise<ChallengeKind | null> {
 }
 
 /**
+ * The filler waits for the confirmation inside the page, and that wait dies with the page when the submit navigates (a
+ * plain form POST; Lever's redirect to /thanks). Then the landed page is read with the filler's own rule (the adapter's
+ * isConfirmation) for as long as the filler would have waited, and only on an allowed ATS host. The page's report is gone
+ * with it, so the fields are not listed; the receipt is built from the stored answers anyway (services/settle.ts).
+ */
+async function confirmedAfterNavigation(page: Page, input: FillInput, attached: boolean, isBlocked: () => boolean): Promise<SubmissionReport | null> {
+  // A page that has loaded and sat on one URL for 3 s without a confirmation is not one; a client redirect moves the URL on.
+  let lastUrl = "";
+  let still = Date.now();
+  for (const until = Date.now() + 20_000; Date.now() < until && !isBlocked(); await new Promise((r) => setTimeout(r, 250))) {
+    const url = page.url();
+    if (url !== lastUrl) [lastUrl, still] = [url, Date.now()];
+    const adapter = isAllowedApplyUrl(url) ? detectAdapter(new URL(url)) : null;
+    if (!adapter) continue;
+    const landed = await page.evaluate(() => ({ text: document.body?.innerText || document.body?.textContent || "", ready: document.readyState === "complete" })).catch(() => null);
+    if (!landed) continue; // mid-navigation
+    const text = landed.text;
+    if (!adapter.isConfirmation({ body: { innerText: text } } as unknown as Document, new URL(url))) {
+      if (landed.ready && Date.now() - still > 3_000) return null;
+      continue;
+    }
+    return {
+      applicationId: input.applicationId,
+      outcome: "submitted",
+      filledFields: attached ? [{ fieldKey: "resume", label: "Resume", value: input.resumePdf!.name }] : [],
+      confirmationText: text.slice(0, 1000),
+      submittedAt: new Date().toISOString(),
+    };
+  }
+  return null;
+}
+
+/**
+ * Holds the main frame's navigations to the allowlist on every redirect hop, before the request leaves. context.route
+ * never sees a hop: Playwright continues redirects itself (T-006.5; it reached a real jobs.lever.co in T-006.2). This
+ * session pauses only main-frame documents; the egress guard covers every other connection.
+ */
+async function guardTopLevelHops(context: BrowserContext, page: Page, onBlocked: (url: string) => void): Promise<void> {
+  const cdp = await context.newCDPSession(page);
+  const { frameTree } = await cdp.send("Page.getFrameTree");
+  cdp.on("Fetch.requestPaused", (e: { requestId: string; frameId: string; request: { url: string } }) => {
+    const block = e.frameId === frameTree.frame.id && !isAllowedApplyUrl(e.request.url);
+    if (block) onBlocked(e.request.url);
+    // A page controls when this runs: nothing here may reject unhandled.
+    void (block ? cdp.send("Fetch.failRequest", { requestId: e.requestId, errorReason: "BlockedByClient" }) : cdp.send("Fetch.continueRequest", { requestId: e.requestId })).catch(() => {});
+  });
+  await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*", resourceType: "Document", requestStage: "Request" }] });
+}
+
+/**
  * Opens the apply page in a fresh context and runs the filler once with submit: true. Once the context exists every
  * path ends in an outcome (processCloudApply catches the rest). Before the filler call nothing can have reached the employer (applier_error and friends, resendable);
  * after it starts, an error or timeout may follow the click and is unconfirmed (needs_check, never resent blind).
@@ -157,11 +193,13 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
   if (!isAllowedApplyUrl(input.applyUrl)) return fail("applier_error", "apply_url_rejected");
 
   // No bypassCSP: the filler is evaluated through the DevTools protocol, which the page's CSP does not govern
-  // (checked on Greenhouse, Lever and Ashby, 2026-11-03), so the page keeps its own CSP.
-  const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false });
+  // (checked on Greenhouse, Lever and Ashby, 2026-11-03), so the page keeps its own CSP. Every connection goes through
+  // the egress guard; Playwright's proxy option keeps loopback on the proxy too (no implicit bypass).
+  const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false, proxy: { server: await egressGuardUrl() } });
   let page: Page | undefined;
   let navBlocked = false;
   let filling = false;
+  let attached = false;
   try {
     await input.onPhase?.("navigating");
     // Nothing here may throw or reject: a page controls when it runs, and an unhandled rejection would end the process.
@@ -183,6 +221,12 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
       return route.fallback().catch(() => {});
     });
     page = await context.newPage();
+    const mainPage = page;
+    await guardTopLevelHops(context, mainPage, (url) => {
+      navBlocked = true;
+      logger.warn({ applicationId: input.applicationId, host: url.split("/")[2], topLevel: true }, "applier redirect hop blocked");
+      signal("applier_nav_blocked");
+    });
     context.on("page", (p) => void (p !== page && p.close())); // popups: the run uses one page
     page.on("dialog", (d) => void d.dismiss().catch(() => {}));
 
@@ -201,7 +245,6 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
     // means nothing was sent. A page with no resume input sends without a file whatever the render did, as before WP-19.
     const selector = detectAdapter(new URL(input.applyUrl))?.resumeInputSelector;
     const fileInput = selector ? await page.$(selector) : null;
-    let attached = false;
     if (fileInput && input.resumePdf) {
       const ok = await fileInput
         .setInputFiles({ name: input.resumePdf.name, mimeType: "application/pdf", buffer: input.resumePdf.buffer }, { timeout: 15_000 })
@@ -237,7 +280,11 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
   } catch (err) {
     // Typical after the click: the confirmation navigates, which destroys the page context and rejects evaluate.
     logger.warn({ err, applicationId: input.applicationId, filling }, "cloud apply run interrupted");
-    if (filling) return fail("unconfirmed", "fill_interrupted");
+    if (filling) {
+      // A deadline means the page hung, not that it moved on: there is no landed page to read.
+      const report = page && (err as Error).message !== "fill deadline" ? await confirmedAfterNavigation(page, input, attached, () => navBlocked).catch(() => null) : null;
+      return report ? { submitted: true, report } : fail("unconfirmed", "fill_interrupted");
+    }
     return fail("applier_error", navBlocked ? "nav_host_not_allowed" : "navigation_failed");
   } finally {
     await context.close().catch(() => {});

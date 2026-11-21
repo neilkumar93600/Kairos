@@ -144,7 +144,8 @@ describe("a run the sweep gave up on", () => {
       frames: () => [],
       evaluate: async (fn: unknown) => (evaluated.push(fn), undefined),
     };
-    const browser = { newContext: async () => ({ route: async () => {}, on: () => {}, newPage: async () => page, close: async () => {} }) };
+    const cdp = { on: () => {}, send: async () => ({ frameTree: { frame: { id: "main" } } }) };
+    const browser = { newContext: async () => ({ route: async () => {}, on: () => {}, newPage: async () => page, newCDPSession: async () => cdp, close: async () => {} }) };
     const phases: string[] = [];
     const outcome = await fillInBrowser(browser as never, {
       applicationId: "a",
