@@ -134,25 +134,47 @@ async function visibleChallenge(page: Page): Promise<ChallengeKind | null> {
   return /^(just a moment|checking your browser|attention required)/i.test(title) || marker ? "interstitial" : null;
 }
 
+/** What the applier reads of the page in the main frame: its text, whether it finished loading, whether it still shows a form. */
+const readPage = () => ({
+  text: document.body?.innerText || document.body?.textContent || "",
+  ready: document.readyState === "complete",
+  form: !!document.querySelector("form [required], button[type=submit], input[type=submit]"),
+});
+type PageRead = { text: string; ready: boolean; form?: boolean };
+const asDoc = (text: string) => ({ body: { innerText: text } }) as unknown as Document;
+const withoutHash = (u: string) => u.split("#")[0];
+
 /**
  * The filler waits for the confirmation inside the page, and that wait dies with the page when the submit navigates (a
- * plain form POST; Lever's redirect to /thanks). Then the landed page is read with the filler's own rule (the adapter's
- * isConfirmation) for as long as the filler would have waited, and only on an allowed ATS host. The page's report is gone
- * with it, so the fields are not listed; the receipt is built from the stored answers anyway (services/settle.ts).
+ * plain form POST; Lever's redirect to /thanks). Then the landed page is read, for as long as the filler would have waited,
+ * and counts as confirmed only when all of these hold (R3, T-006.5): it is on an allowed ATS host; the main-frame document
+ * the browser landed on answered 2xx (a 422 re-render of the form is never a send); it shows no form any more (a re-render
+ * keeps its form, whatever its text says); and the adapter's rule holds, by URL alone (Lever /thanks, Greenhouse
+ * /confirmation) when the form page itself already matched the confirmation text (a job description that says
+ * "application received"). Anything else stays unconfirmed (needs_check, never charged). The page's report is gone with
+ * it, so the fields are not listed; the receipt is built from the stored answers anyway (services/settle.ts).
  */
-async function confirmedAfterNavigation(page: Page, input: FillInput, attached: boolean, isBlocked: () => boolean): Promise<SubmissionReport | null> {
+async function confirmedAfterNavigation(
+  page: Page,
+  input: FillInput,
+  attached: boolean,
+  seen: { isBlocked: () => boolean; preConfirmed: boolean; landedDoc: () => { url: string; status: number } | undefined },
+): Promise<SubmissionReport | null> {
   // A page that has loaded and sat on one URL for 3 s without a confirmation is not one; a client redirect moves the URL on.
   let lastUrl = "";
   let still = Date.now();
-  for (const until = Date.now() + 20_000; Date.now() < until && !isBlocked(); await new Promise((r) => setTimeout(r, 250))) {
+  for (const until = Date.now() + 20_000; Date.now() < until && !seen.isBlocked(); await new Promise((r) => setTimeout(r, 250))) {
     const url = page.url();
     if (url !== lastUrl) [lastUrl, still] = [url, Date.now()];
     const adapter = isAllowedApplyUrl(url) ? detectAdapter(new URL(url)) : null;
     if (!adapter) continue;
-    const landed = await page.evaluate(() => ({ text: document.body?.innerText || document.body?.textContent || "", ready: document.readyState === "complete" })).catch(() => null);
+    const landed: PageRead | null = await page.evaluate(readPage).catch(() => null);
     if (!landed) continue; // mid-navigation
-    const text = landed.text;
-    if (!adapter.isConfirmation({ body: { innerText: text } } as unknown as Document, new URL(url))) {
+    const doc = seen.landedDoc();
+    const answered = !!doc && withoutHash(doc.url) === withoutHash(url) && doc.status >= 200 && doc.status < 300;
+    const byUrl = adapter.isConfirmation(asDoc(""), new URL(url));
+    const byText = !seen.preConfirmed && adapter.isConfirmation(asDoc(landed.text), new URL(url));
+    if (!answered || landed.form || !(byUrl || byText)) {
       if (landed.ready && Date.now() - still > 3_000) return null;
       continue;
     }
@@ -160,7 +182,7 @@ async function confirmedAfterNavigation(page: Page, input: FillInput, attached: 
       applicationId: input.applicationId,
       outcome: "submitted",
       filledFields: attached ? [{ fieldKey: "resume", label: "Resume", value: input.resumePdf!.name }] : [],
-      confirmationText: text.slice(0, 1000),
+      confirmationText: landed.text.slice(0, 1000),
       submittedAt: new Date().toISOString(),
     };
   }
@@ -200,6 +222,9 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
   let navBlocked = false;
   let filling = false;
   let attached = false;
+  // Read for confirmedAfterNavigation: did the form page already match the confirmation text, and what did the main frame land on after the click.
+  let preConfirmed = false;
+  let landedDoc: { url: string; status: number } | undefined;
   try {
     await input.onPhase?.("navigating");
     // Nothing here may throw or reject: a page controls when it runs, and an unhandled rejection would end the process.
@@ -227,6 +252,11 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
       logger.warn({ applicationId: input.applicationId, host: url.split("/")[2], topLevel: true }, "applier redirect hop blocked");
       signal("applier_nav_blocked");
     });
+    mainPage.on("response", (r) => {
+      try {
+        if (filling && r.request().isNavigationRequest() && r.frame() === mainPage.mainFrame()) landedDoc = { url: r.url(), status: r.status() };
+      } catch {} // a response with no frame is not the main frame's
+    });
     context.on("page", (p) => void (p !== page && p.close())); // popups: the run uses one page
     page.on("dialog", (d) => void d.dismiss().catch(() => {}));
 
@@ -241,6 +271,8 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
     if (before) return fail("challenge", before);
 
     await page.evaluate(input.fillerSource);
+    const formRead: PageRead | null = await page.evaluate(readPage).catch(() => null);
+    preConfirmed = !!formRead && !!detectAdapter(new URL(input.applyUrl))?.isConfirmation(asDoc(formRead.text), new URL(input.applyUrl));
     // Before the mark of `filling` (phase `navigating`): an attach that fails, or a file the page wants and we lack, still
     // means nothing was sent. A page with no resume input sends without a file whatever the render did, as before WP-19.
     const selector = detectAdapter(new URL(input.applyUrl))?.resumeInputSelector;
@@ -273,7 +305,13 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
     const parsed = submissionReportSchema.safeParse({ ...(raw as object), applicationId: input.applicationId, submittedAt: new Date().toISOString() });
     if (!parsed.success) return fail("unconfirmed", "invalid_report");
     if (attached) parsed.data.filledFields.push({ fieldKey: "resume", label: "Resume", value: input.resumePdf!.name });
-    if (parsed.data.outcome === "submitted") return { submitted: true, report: parsed.data };
+    if (parsed.data.outcome === "submitted") {
+      if (!preConfirmed) return { submitted: true, report: parsed.data };
+      // The form page itself already read as a confirmation, and the filler checks once right after its click, before the
+      // page moves (extension/src/filler.ts), so its "submitted" proves nothing here. Only the landed page can, by URL alone.
+      const landed = await confirmedAfterNavigation(page, input, attached, { isBlocked: () => navBlocked, preConfirmed, landedDoc: () => landedDoc });
+      return landed ? { submitted: true, report: landed } : fail("unconfirmed", "preconfirmed_form");
+    }
     // A captcha that appears on submit blocks the post, so it is a challenge rather than an unconfirmed send.
     const after = await visibleChallenge(page);
     return after ? fail("challenge", after) : fail(codeForFillerReason(parsed.data.failureReason), "filler_reported");
@@ -282,7 +320,7 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
     logger.warn({ err, applicationId: input.applicationId, filling }, "cloud apply run interrupted");
     if (filling) {
       // A deadline means the page hung, not that it moved on: there is no landed page to read.
-      const report = page && (err as Error).message !== "fill deadline" ? await confirmedAfterNavigation(page, input, attached, () => navBlocked).catch(() => null) : null;
+      const report = page && (err as Error).message !== "fill deadline" ? await confirmedAfterNavigation(page, input, attached, { isBlocked: () => navBlocked, preConfirmed, landedDoc: () => landedDoc }).catch(() => null) : null;
       return report ? { submitted: true, report } : fail("unconfirmed", "fill_interrupted");
     }
     return fail("applier_error", navBlocked ? "nav_host_not_allowed" : "navigation_failed");

@@ -14,10 +14,10 @@ import { signal } from "../lib/sentry";
  */
 
 const PRIVATE = new net.BlockList();
-for (const [net4, prefix] of [["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.168.0.0", 16], ["198.18.0.0", 15], ["224.0.0.0", 3]] as const)
+for (const [net4, prefix] of [["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.168.0.0", 16], ["198.18.0.0", 15], ["224.0.0.0", 3], ["168.63.129.16", 32]] as const)
   PRIVATE.addSubnet(net4, prefix, "ipv4");
 // No ::ffff:0:0/96 rule: BlockList checks a mapped address against the IPv4 rules itself, and that rule would match every IPv4.
-for (const [net6, prefix] of [["::", 127], ["64:ff9b::", 96], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8]] as const) PRIVATE.addSubnet(net6, prefix, "ipv6");
+for (const [net6, prefix] of [["::", 127], ["64:ff9b::", 96], ["64:ff9b:1::", 48], ["2001::", 32], ["2002::", 16], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8]] as const) PRIVATE.addSubnet(net6, prefix, "ipv6");
 
 export const isPrivateAddress = (address: string) => PRIVATE.check(address, net.isIPv6(address) ? "ipv6" : "ipv4");
 
@@ -53,7 +53,12 @@ const refuse = (socket: net.Socket, host: string, reason: string) => {
   socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
 };
 
+/** A lookup that never answers would hold the tunnel open; a slow name is refused like a dead one. */
+const LOOKUP_MS = 5_000;
+
 export function startEgressGuard(): Promise<{ url: string; close: () => void }> {
+  // This variable turns off Playwright's forcing of loopback through the proxy: loopback would then skip the guard.
+  if (process.env.PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK) return Promise.reject(new Error("egress_guard_loopback_bypass"));
   const server = http.createServer((req, res) => {
     // Plain HTTP (an absolute-form request) is never needed: the apply pages and their subresources are HTTPS.
     logger.warn({ host: req.headers.host, reason: "plain_http" }, "egress blocked");
@@ -66,25 +71,33 @@ export function startEgressGuard(): Promise<{ url: string; close: () => void }> 
     const host = target?.[1] ?? "";
     const reason = target ? refusedTarget(host, target[2]!) : "malformed";
     if (reason) return refuse(client, host, reason);
-    lookup(host, { all: true, verbatim: true }).then(
-      (addresses) => {
-        if (!addresses.length || addresses.some((a) => isPrivateAddress(a.address))) return refuse(client, host, "private_address");
-        const upstream = net.connect({ host: addresses[0]!.address, port: 443, timeout: 15_000 });
-        upstream.on("timeout", () => upstream.destroy());
-        upstream.on("error", () => client.destroy());
-        client.on("close", () => upstream.destroy());
-        upstream.on("connect", () => {
-          upstream.setTimeout(0);
-          if (head.length) upstream.write(head);
-          client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-          upstream.pipe(client).pipe(upstream);
-        });
-      },
-      () => refuse(client, host, "unresolved"),
-    );
+    let timer: NodeJS.Timeout | undefined;
+    Promise.race([
+      lookup(host, { all: true, verbatim: true }),
+      new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error("lookup timeout")), LOOKUP_MS))),
+    ])
+      .finally(() => clearTimeout(timer))
+      .then(
+        (addresses) => {
+          if (!addresses.length || addresses.some((a) => isPrivateAddress(a.address))) return refuse(client, host, "private_address");
+          const upstream = net.connect({ host: addresses[0]!.address, port: 443, timeout: 15_000 });
+          upstream.on("timeout", () => upstream.destroy());
+          upstream.on("error", () => client.destroy());
+          client.on("close", () => upstream.destroy());
+          upstream.on("connect", () => {
+            upstream.setTimeout(0);
+            if (head.length) upstream.write(head);
+            client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+            upstream.pipe(client).pipe(upstream);
+          });
+        },
+        () => refuse(client, host, "unresolved"),
+      );
   });
   return new Promise((resolve, reject) => {
     server.once("error", reject);
+    // After the start, a server error must never be an unhandled event that ends the applier.
+    server.once("listening", () => server.on("error", (err) => logger.error({ err }, "egress guard error")));
     server.listen(0, "127.0.0.1", () => {
       server.unref();
       resolve({ url: `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`, close: () => server.close() });
