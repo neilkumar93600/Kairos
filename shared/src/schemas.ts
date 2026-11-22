@@ -371,3 +371,20 @@ export const savedSearchSchema = z.object({
   createdAt: z.string(),
 });
 export type SavedSearch = z.infer<typeof savedSearchSchema>;
+
+/**
+ * GET /api/billing/offer-pause (WP-33): the pause after a genuine offer. `applicationsPausedAt` is set while new approvals
+ * are paused; `pendingApplyAfter` is when a pending pause applies unless undone. POST .../resume answers `offerPauseResumeSchema`.
+ */
+export const offerPauseStatusSchema = z.object({
+  applicationsPausedAt: z.string().nullable(),
+  pendingApplyAfter: z.string().nullable(),
+});
+export type OfferPauseStatusResponse = z.infer<typeof offerPauseStatusSchema>;
+export const offerPauseResumeSchema = z.object({
+  /** A pause in force was cleared. */
+  resumed: z.boolean(),
+  /** Pending pauses cancelled (0 or 1). */
+  cancelled: z.number().int().min(0),
+});
+export type OfferPauseResume = z.infer<typeof offerPauseResumeSchema>;

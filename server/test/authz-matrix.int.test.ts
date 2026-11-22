@@ -186,6 +186,17 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
       subject: `Re: ${tag}`,
       textBody: `Thanks for applying to ${tag}`,
     });
+    // WP-33: an applied offer pause and a pending one, so a resume by the other tenant would show in rowsOf.
+    const [offer, offer2] = await tdb
+      .insert(schema.inboundEmails)
+      .values([1, 2].map((n) => ({ userId, applicationId: application!.id, providerMessageId: `${MARKER}-${letter}-offer${n}`, sender: "hr@example.com", subject: `Offer ${tag}`, textBody: "Your offer letter", kind: "offer" as const, ruleKind: "offer" as const })))
+      .returning();
+    const pausedAt = new Date(Date.now() - 3_600_000);
+    await tdb.insert(schema.offerPauseCandidates).values([
+      { userId, inboundEmailId: offer!.id, applicationId: application!.id, state: "applied", appliedAt: pausedAt, createdAt: new Date(pausedAt.getTime() - 49 * 3_600_000), applyAfter: new Date(pausedAt.getTime() - 3_600_000) },
+      { userId, inboundEmailId: offer2!.id, applicationId: application!.id, applyAfter: new Date(Date.now() + 3_600_000) },
+    ]);
+    await tdb.update(schema.profiles).set({ applicationsPausedAt: pausedAt }).where(eq(schema.profiles.userId, userId));
     await tdb.insert(schema.account).values({ id: randomUUID(), accountId: userId, providerId: "credential", userId, password: MARKER });
     await tdb.insert(schema.session).values({ id: randomUUID(), token: `${MARKER}-${letter}`, userId, expiresAt: new Date(Date.now() + 86_400_000) });
     const fileKey = `snapshots/${userId}/cv.pdf`;
@@ -211,6 +222,7 @@ describe.skipIf(!hasTestDb)("authorization matrix: two users against Postgres", 
       applications: json(await tdb.select().from(s.applications).where(eq(s.applications.userId, userId))),
       creditLedger: json(await tdb.select().from(s.creditLedger).where(eq(s.creditLedger.userId, userId))),
       inboundEmails: json(await tdb.select().from(s.inboundEmails).where(eq(s.inboundEmails.userId, userId))),
+      offerPauseCandidates: json(await tdb.select().from(s.offerPauseCandidates).where(eq(s.offerPauseCandidates.userId, userId))),
       savedSearches: json(await tdb.select().from(s.savedSearches).where(eq(s.savedSearches.userId, userId))),
       trackerItems: json(await tdb.select().from(s.trackerItems).where(eq(s.trackerItems.userId, userId))),
       contacts: json(await tdb.select().from(s.contacts).where(eq(s.contacts.userId, userId))),

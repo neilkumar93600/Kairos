@@ -23,6 +23,8 @@ export const FLAG_SCHEMAS = {
   approvals_frozen: z.boolean(),
   cloud_applier_open: z.boolean(),
   llm_shed_level: z.number().int().min(0).max(3),
+  /** WP-33: an offer pause also pauses Stripe collection. Off by default (payments come later): off, only new applications pause. */
+  offer_pause_stripe: z.boolean(),
 } as const;
 export type FlagKey = keyof typeof FLAG_SCHEMAS;
 
@@ -72,6 +74,8 @@ export interface Flags {
   approvalsFrozen: boolean;
   cloudApplierOpen: boolean;
   llmShedLevel: 0 | 1 | 2 | 3;
+  /** The offer-pause executor and resume call Stripe only when this is on (offer_pause_stripe, default off). */
+  offerPauseStripe: boolean;
   /** ATS names whose cloud runs are off; those applications go through the extension. */
   extensionOnly: ReadonlySet<string>;
   features: ReadonlyMap<string, boolean>;
@@ -117,6 +121,7 @@ export function resolveFlags(
     // won over the env would make CLOUD_APPLIER_OPEN=0 plus a redeploy (the hard stop) a no-op.
     cloudApplierOpen: e.CLOUD_APPLIER_OPEN && (open.success ? open.data : true),
     llmShedLevel: Math.max(shed, e.LLM_SHED_LEVEL ?? 0) as 0 | 1 | 2 | 3,
+    offerPauseStripe: bool("offer_pause_stripe"),
     extensionOnly: new Set([...rows].filter(([k, v]) => k.startsWith(EXTENSION_ONLY_PREFIX) && v === true).map(([k]) => k.slice(EXTENSION_ONLY_PREFIX.length))),
     features,
     agentDisabled: new Set([...family<boolean>("agent_disabled")].filter(([, v]) => v).map(([k]) => k)),

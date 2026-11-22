@@ -112,6 +112,8 @@ export const PRIVACY_REGISTRY: readonly PrivacyEntry[] = [
   // WP-24: a Gmail forwarding code and link Kairos received for the user, kept at most 3 days.
   { table: "forwarding_verifications", column: "user_id", erase: "cascade", export: ALL },
   { table: "subscriptions", column: "user_id", erase: "cascade", export: ALL },
+  // WP-33: the offer-pause decisions (which reply, when it applied or was undone). Ids, times and codes only.
+  { table: "offer_pause_candidates", column: "user_id", erase: "cascade", export: ALL },
   { table: "credit_ledger", column: "user_id", erase: "archive", export: ALL },
   { table: "credit_balances", column: "user_id", erase: "cascade", export: false, why: "a cache of the exported ledger and applications" },
   // WP-32. Ids and integers from an allowlist, never a raw event. A row not yet tied to a user holds the Stripe customer id, and

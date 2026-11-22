@@ -15,7 +15,8 @@ const OPS_FLAGS_KEY_CK = new RegExp(readFileSync(new URL("../drizzle/0019_verifi
 
 describe("resolveFlags", () => {
   it("is all off with an empty table and an unset env", () => {
-    expect(resolveFlags(rows({}), none, off)).toMatchObject({ pauseCloudApply: false, pauseScoring: false, llmPaused: false, approvalsFrozen: false, cloudApplierOpen: false, llmShedLevel: 0 });
+    expect(resolveFlags(rows({}), none, off)).toMatchObject({ pauseCloudApply: false, pauseScoring: false, llmPaused: false, approvalsFrozen: false, cloudApplierOpen: false, llmShedLevel: 0, offerPauseStripe: false });
+    expect(resolveFlags(rows({ offer_pause_stripe: true }), none, off).offerPauseStripe).toBe(true);
   });
 
   it("PAUSE_SCORING in the env pauses whatever the table says; the table can pause when the env does not", () => {

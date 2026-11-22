@@ -106,7 +106,8 @@ export async function seedEverything(db: Db, email: string, mark = MARK) {
   await db.insert(schema.creditLedger).values({ userId: id, delta: -1, reason: "submission", applicationId: app!.id });
   // WP-35: bootstrapUser made the default saved search; a reminder about the application.
   await db.insert(schema.reminders).values({ userId: id, kind: "no_reply", applicationId: app!.id, dueAt: new Date() });
-  await db.insert(schema.inboundEmails).values({ userId: id, applicationId: app!.id, providerMessageId: randomUUID(), sender: "hr@co.example", subject: "Re", textBody: mark });
+  const [offer] = await db.insert(schema.inboundEmails).values({ userId: id, applicationId: app!.id, providerMessageId: randomUUID(), sender: "hr@co.example", subject: "Re", textBody: mark }).returning();
+  await db.insert(schema.offerPauseCandidates).values({ userId: id, inboundEmailId: offer!.id, applicationId: app!.id, applyAfter: new Date(Date.now() + 48 * 3600_000) }); // WP-33
   // WP-24: a Gmail code held for the user; privacy-scripts.int.test.ts needs a row in every exported table.
   await db.insert(schema.forwardingVerifications).values({ userId: id, provider: "gmail", code: "123456", expiresAt: new Date(Date.now() + 3 * 86_400_000) });
   await db.insert(schema.contactMessages).values({ name: "Ann", email: email.toUpperCase(), topic: "support", message: mark });

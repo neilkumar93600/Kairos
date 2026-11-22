@@ -225,6 +225,13 @@
       "when": 1795237293563,
       "tag": "0031_wp32_billing",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1795260935682,
+      "tag": "0032_offer_pause",
+      "breakpoints": true
     }
   ]
 }

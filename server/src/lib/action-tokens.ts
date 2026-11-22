@@ -26,8 +26,11 @@ export type StoredPurpose = (typeof ACTION_TOKEN_PURPOSES)[number];
 export type LinkPurpose = StoredPurpose | "resume_pdf";
 
 const DAY = 86_400_000;
-/** The longest a link of each purpose may live; action_tokens_lifetime_ck enforces the stored ones again. */
-export const LINK_LIFETIME_MS: Record<LinkPurpose, number> = { resend: 7 * DAY, offer_pause_undo: 7 * DAY, unsubscribe: 90 * DAY, resume_pdf: DAY };
+/**
+ * The longest a link of each purpose may live; action_tokens_lifetime_ck enforces the stored ones again (at 7 days, the
+ * looser bound). offer_pause_undo is the 48-hour undo window itself (WP-33): its link expires when the pause becomes due.
+ */
+export const LINK_LIFETIME_MS: Record<LinkPurpose, number> = { resend: 7 * DAY, offer_pause_undo: 2 * DAY, unsubscribe: 90 * DAY, resume_pdf: DAY };
 
 export interface LinkClaims {
   purpose: LinkPurpose;

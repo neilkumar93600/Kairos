@@ -58,3 +58,26 @@ export function planForPriceId(priceId: string): { plan: PlanId; interval: Billi
 
 // The grant math lives in shared so the landing calculator and billing cannot drift; re-exported for existing callers.
 export { creditsPerInvoice };
+
+/**
+ * The two Stripe calls of the offer pause (WP-33, workers/09-billing-events 3.5). Only jobs/offer-pause.ts calls them, and
+ * only while the offer_pause_stripe flag is on. The metadata is what the subscription sync reads as pause_source
+ * 'offer_email'; the resume clears it ("" unsets a metadata key). Tests pass fakes instead.
+ */
+export interface OfferPauseStripe {
+  pause(subscriptionId: string, idempotencyKey: string): Promise<void>;
+  resume(subscriptionId: string): Promise<void>;
+}
+
+export const liveOfferPauseStripe: OfferPauseStripe = {
+  async pause(subscriptionId, idempotencyKey) {
+    await stripe().subscriptions.update(
+      subscriptionId,
+      { pause_collection: { behavior: "void" }, metadata: { pausedBy: "offer-email" } },
+      { ...INLINE_REQUEST, idempotencyKey },
+    );
+  },
+  async resume(subscriptionId) {
+    await stripe().subscriptions.update(subscriptionId, { pause_collection: "", metadata: { pausedBy: "" } }, INLINE_REQUEST);
+  },
+};
