@@ -43,13 +43,30 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/**
+ * Only the board's confirmation address confirms (CEO decision 2026-11-27, R3c): Lever's /thanks does; the fake Greenhouse and
+ * Ashby forms confirm in place at the same address, so the filler waits its 20 s and reports "No confirmation" (settled
+ * needs_check, never a charge), although the employer has the application.
+ */
+const confirmsByAddress = (ats: AtsProvider) => ats === "lever";
+
+/** Fills and submits; for a board that confirms in place, the filler's 20 s wait runs on fake timers. */
+async function submit(ats: AtsProvider, url: string, p: FillPayload, opts: Parameters<typeof fillFakeForm>[3] = {}) {
+  if (confirmsByAddress(ats)) return fillFakeForm(fake, url, p, opts);
+  vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+  const run = fillFakeForm(fake, url, p, opts);
+  await vi.advanceTimersByTimeAsync(25_000);
+  return run;
+}
+
 describe.each(ATSES)("the extension filler on the %s fake form", (ats) => {
   const url = formUrl(ats, "fit");
   const [auth, sponsor] = SENSITIVE_FIELDS[ats];
 
-  it("fills, uploads the resume, submits once and reads the confirmation", async () => {
-    const { report } = await fillFakeForm(fake, url, payload(ats, { sensitive: true }));
-    expect(report).toMatchObject({ outcome: "submitted", applicationId: APP_ID });
+  it("fills, uploads the resume and submits once; only a confirmation address confirms", async () => {
+    const { report } = await submit(ats, url, payload(ats, { sensitive: true }));
+    if (confirmsByAddress(ats)) expect(report).toMatchObject({ outcome: "submitted", applicationId: APP_ID });
+    else expect(report).toMatchObject({ outcome: "failed", applicationId: APP_ID, failureReason: "No confirmation after submit" });
     expect(report.filledFields.map((f) => f.fieldKey)).toEqual(expect.arrayContaining(["email", "why", "work_auth", "sponsorship", "resume"]));
 
     expect(fake.submissions).toHaveLength(1);
@@ -63,7 +80,7 @@ describe.each(ATSES)("the extension filler on the %s fake form", (ats) => {
   });
 
   it("INV-9: work authorization, sponsorship and EEO carry the stored answers and nothing else", async () => {
-    await fillFakeForm(fake, url, payload(ats, { sensitive: true }));
+    await submit(ats, url, payload(ats, { sensitive: true }));
     const sent = fake.submissions.at(-1)!.fields;
     const yes = ats === "greenhouse" ? "1" : "Yes";
     const no = ats === "greenhouse" ? "0" : "No";
@@ -105,9 +122,9 @@ describe.each(ATSES)("the extension filler on the %s fake form", (ats) => {
     fake.setFormVariant(ats, "fit", "open");
   });
 
-  it("a real confirmation still counts when the posting already contained the words: the new text is what confirms", async () => {
-    const { report } = await fillFakeForm(fake, url, payload(ats, { sensitive: true }), { html: (p) => p.replace("<form", "<p>Every application received is read by a person.</p><form") });
-    expect(report).toMatchObject({ outcome: "submitted", matchedBefore: true });
+  it("a posting that already says 'application received' confirms only on the board's confirmation address", async () => {
+    const { report } = await submit(ats, url, payload(ats, { sensitive: true }), { html: (p) => p.replace("<form", "<p>Every application received is read by a person.</p><form") });
+    expect(report).toMatchObject({ outcome: confirmsByAddress(ats) ? "submitted" : "failed", matchedBefore: true });
     expect(accepted()).toHaveLength(1);
   });
 

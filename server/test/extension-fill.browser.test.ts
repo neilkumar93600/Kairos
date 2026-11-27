@@ -5,9 +5,10 @@ import { chromium, type Browser } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 /**
- * T-006.6 R3b: the REAL filler bundle in real Chromium (jsdom hid this one). A single-page form swaps its submit button for a
- * spinner while posting; when the POST is refused (422) a new button renders. The job description already says "application
- * received". Nothing may count as a confirmation. Skipped in CI and without Playwright's Chromium, like the other browser tests.
+ * The REAL filler bundle in real Chromium (jsdom hid these). Only the board's own confirmation address, reached by the submit,
+ * confirms (CEO decision 2026-11-27, R3c): page text never does, so a refused POST cannot settle as submitted (INV-5) whatever the
+ * page writes, and a board that confirms in place ends as "No confirmation" (needs_check, never a charge). The R3c probes P1, B1,
+ * B3 and B4 are here verbatim in spirit. Skipped in CI and without Playwright's Chromium, like the other browser tests.
  */
 const hasChromium = !process.env.CI && (() => {
   try {
@@ -17,24 +18,38 @@ const hasChromium = !process.env.CI && (() => {
   }
 })();
 const APP_ID = "8d6f2a3e-1d3c-4b8f-9a7e-2f1e0c9b7a61";
-const PAGE = "https://jobs.ashbyhq.com/acme/2222/application";
-const SUBMIT = "https://jobs.ashbyhq.com/acme/2222/submit";
+const ASHBY = "https://jobs.ashbyhq.com/acme/2222/application";
+const LEVER = "https://jobs.lever.co/acme/1111/apply";
+const GREENHOUSE = "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=1";
 const filler = () =>
   buildSync({ entryPoints: [fileURLToPath(new URL("../../extension/src/filler.ts", import.meta.url))], bundle: true, format: "iife", write: false, define: { __API_BASE__: '"http://localhost"' } }).outputFiles[0]!.text;
 
-/** pre: the description says it before the click. late: it renders only after the refused POST. ok: the POST succeeds and the form is replaced by new text. */
-type Mode = "pre" | "late" | "ok";
+/** Each board's own name field (extension/src/ats/*). */
+const NAME_FIELD: Record<string, string> = { "jobs.ashbyhq.com": "_systemfield_name", "jobs.lever.co": "name", "job-boards.greenhouse.io": "first_name" };
 const DESC = "<p>We read every application received within a week.</p>";
-const spa = (mode: Mode) => `<!doctype html><title>Apply</title><h1>Engineer</h1><div id=d>${mode === "late" ? "" : DESC}</div>
-  <form id=f><input name=_systemfield_name required><input name=_systemfield_email required><span id=slot><button type=submit>Submit application</button></span></form>
+/** Puts the submit button back and shows an error, as a single-page form does after a refused POST. */
+const RESTORE = `slot.innerHTML = '<button type=submit>Submit application</button>'; document.body.insertAdjacentHTML("beforeend", "<p class=error>Something went wrong.</p>");`;
+const TOAST = `document.body.insertAdjacentHTML("beforeend", "<div role=status>Thank you for applying! We could not save it, try again.</div>");`;
+
+interface Spa {
+  /** The job description already says "application received" at load. */
+  descAtLoad?: boolean;
+  /** The form's fields carry \`required\` (default) or rely on script validation. */
+  required?: boolean;
+  /** What the POST answers. */
+  status: number;
+  /** Runs in the page after the POST answers (\`slot\`, \`r\` in scope). */
+  after: string;
+}
+/** A single-page form: on submit the button becomes a spinner, the form POSTs with fetch, then \`after\` runs. */
+const spa = (o: Spa, submitUrl: string, nameField: string) => `<!doctype html><title>Apply</title><h1>Engineer</h1><div id=d>${o.descAtLoad ? DESC : ""}</div>
+  <div id=view><form id=f><input name=${nameField} ${o.required === false ? "" : "required"}><input name=email ${o.required === false ? "" : "required"}>
+  <span id=slot><button type=submit>Submit application</button></span></form></div>
   <script>
   document.getElementById("f").addEventListener("submit", async (e) => { e.preventDefault();
-    document.getElementById("slot").innerHTML = "<span>Submitting</span>";
-    const r = await fetch("${SUBMIT}", { method: "POST" });
-    if (r.ok) { document.getElementById("f").remove(); document.body.insertAdjacentHTML("beforeend", "<h2>Thank you for applying.</h2>"); return; }
-    if (${JSON.stringify(mode)} === "late") document.getElementById("d").innerHTML = ${JSON.stringify(DESC)};
-    document.getElementById("slot").innerHTML = '<button type=submit>Submit application</button>';
-    document.body.insertAdjacentHTML("beforeend", "<p>Something went wrong. Please try again.</p>");
+    const slot = document.getElementById("slot"); slot.innerHTML = "<span>Submitting</span>";
+    const r = await fetch(${JSON.stringify(submitUrl)}, { method: "POST" });
+    ${o.after}
   });
   </script>`;
 
@@ -47,45 +62,68 @@ describe.skipIf(!hasChromium)("the filler in Chromium on a single-page form", ()
     await browser?.close();
   });
 
-  async function run(mode: Mode) {
+  async function run(pageUrl: string, o: Spa) {
+    const submitUrl = new URL("submit", pageUrl).href;
     const ctx = await browser.newContext();
     let posts = 0;
     await ctx.route("**/*", (route) => {
       const url = route.request().url();
-      if (url === PAGE) return route.fulfill({ status: 200, contentType: "text/html", body: spa(mode) });
-      if (url === SUBMIT) {
+      if (url === pageUrl) return route.fulfill({ status: 200, contentType: "text/html", body: spa(o, submitUrl, NAME_FIELD[new URL(pageUrl).hostname]!) });
+      if (url === submitUrl) {
         posts += 1;
-        return route.fulfill({ status: mode === "ok" ? 200 : 422, contentType: "application/json", body: "{}" });
+        return route.fulfill({ status: o.status, contentType: "application/json", body: "{}" });
       }
       return route.abort("failed"); // nothing else leaves the machine
     });
     const page = await ctx.newPage();
-    await page.goto(PAGE);
+    await page.goto(pageUrl);
     await page.evaluate(filler());
     const answers = [
-      { fieldKey: "full_name", label: "Full name", value: "Ada Lovelace", source: "profile" },
+      { fieldKey: "first_name", label: "First name", value: "Ada", source: "profile" },
+      { fieldKey: "last_name", label: "Last name", value: "Lovelace", source: "profile" },
       { fieldKey: "email", label: "Email", value: "ada@example.com", source: "profile" },
     ];
-    const report = (await page.evaluate((p) => (window as unknown as { __kairosFill: (p: unknown) => Promise<unknown> }).__kairosFill(p), { applicationId: APP_ID, answers, resumeLines: [], coverLetter: null, submit: true })) as { outcome: string; matchedBefore: boolean };
+    const report = (await page.evaluate((p) => (window as unknown as { __kairosFill: (p: unknown) => Promise<unknown> }).__kairosFill(p), { applicationId: APP_ID, answers, resumeLines: [], coverLetter: null, submit: true })) as {
+      outcome: string;
+      failureReason?: string;
+      matchedBefore: boolean;
+    };
     await ctx.close();
     return { report, posts };
   }
 
-  it("a refused POST (422) with 'application received' in the description is a failure, not a confirmation", async () => {
-    const { report, posts } = await run("pre");
+  const refused = {
+    P1_prematched_description_spinner_422: { descAtLoad: true, status: 422, after: RESTORE },
+    B1_error_replaces_the_form_with_the_phrase: { status: 422, after: `document.getElementById("view").innerHTML = "<p>Sorry, no application received. Please try again later.</p>";` },
+    B3_thanks_toast_form_kept_without_required: { required: false, status: 422, after: `${RESTORE} ${TOAST}` },
+    B4_error_swaps_to_the_posting_overview_with_the_description: { status: 422, after: `document.getElementById("view").innerHTML = ${JSON.stringify(`<h2>Overview</h2>${DESC}<a href=#>Apply</a>`)};` },
+  } satisfies Record<string, Spa>;
+
+  it.each(Object.entries(refused))("R3c %s: a refused POST (422) is a failure, never a confirmation (INV-5)", async (_, o) => {
+    const { report, posts } = await run(ASHBY, o);
     expect(posts).toBe(1);
-    expect(report).toMatchObject({ outcome: "failed", matchedBefore: true });
+    expect(report).toMatchObject({ outcome: "failed", failureReason: "No confirmation after submit" });
   }, 60_000);
 
-  it("a confirmation-like description rendered AFTER the click on a refused POST (fields still on the page) is a failure", async () => {
-    const { report, posts } = await run("late");
+  it("an accepted POST that confirms in place (form replaced by thanks text, no new address) is a failure: needs_check, never a charge", async () => {
+    const inPlace = { descAtLoad: true, status: 200, after: `document.getElementById("f").remove(); document.body.insertAdjacentHTML("beforeend", "<h2>Thank you for applying.</h2>");` };
+    const { report, posts } = await run(ASHBY, inPlace);
     expect(posts).toBe(1);
-    expect(report).toMatchObject({ outcome: "failed", matchedBefore: false });
+    expect(report).toMatchObject({ outcome: "failed", failureReason: "No confirmation after submit", matchedBefore: true });
   }, 60_000);
 
-  it("a genuine in-place confirmation that replaces the form with new text is submitted, even when the description already had the words", async () => {
-    const { report, posts } = await run("ok");
+  it.each([
+    ["Lever /thanks", LEVER, "/acme/1111/thanks"],
+    ["Greenhouse /confirmation", GREENHOUSE, "/embed/job_app/confirmation?for=acme&token=1"],
+  ])("%s: the board's own confirmation address, reached after the POST, is submitted", async (_, url, path) => {
+    const moves = { status: 200, after: `if (r.ok) { history.pushState(null, "", ${JSON.stringify(path)}); document.getElementById("view").innerHTML = "<h2>Application submitted</h2>"; }` };
+    const { report, posts } = await run(url, moves);
     expect(posts).toBe(1);
-    expect(report).toMatchObject({ outcome: "submitted", matchedBefore: true });
+    expect(report).toMatchObject({ outcome: "submitted" });
+  }, 60_000);
+
+  it("a refused POST stays a failure even on a board with a confirmation address, when the address does not move", async () => {
+    const { report } = await run(LEVER, { descAtLoad: true, status: 422, after: `${RESTORE} ${TOAST}` });
+    expect(report).toMatchObject({ outcome: "failed" });
   }, 60_000);
 });

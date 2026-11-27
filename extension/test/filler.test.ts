@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { detectAdapter } from "../src/ats";
 import { fillApplication } from "../src/filler";
 import { findField, normalizeLabel, setValue } from "../src/lib/fill";
@@ -23,7 +23,13 @@ const payload = (submit: boolean): FillPayload => ({
   ],
 });
 
+/** Where the page is; the board's submit moves it to its confirmation address, unless a test makes it confirm in place. */
+let here: Location;
+let inPlace = false;
+
 beforeEach(() => {
+  here = loc(greenhouseUrl);
+  inPlace = false;
   document.body.innerHTML = `
     <form id="application_form">
       <label for="first_name">First Name *</label><input id="first_name" required />
@@ -35,6 +41,7 @@ beforeEach(() => {
     </form>`;
   document.querySelector("form")!.addEventListener("submit", (e) => {
     e.preventDefault();
+    if (!inPlace) here.href = "https://job-boards.greenhouse.io/embed/job_app/confirmation?for=acme&token=1";
     document.body.innerHTML = "<h1>Thank you for applying!</h1>";
   });
 });
@@ -67,10 +74,22 @@ describe("fillApplication", () => {
     expect((document.getElementById("email") as HTMLInputElement).value).toBe("nilesh@example.com");
   });
 
-  it("submits and reports success when the board confirms", async () => {
-    const report = await fillApplication(payload(true), document, loc(greenhouseUrl));
+  it("submits and reports success when the board moves to its confirmation address", async () => {
+    const report = await fillApplication(payload(true), document, here);
     expect(report.outcome).toBe("submitted");
     expect(report.confirmationText).toContain("Thank you for applying");
+  });
+
+  it("text that confirms in place, with no confirmation address, is never a confirmation (R3c): a failure, settled needs_check", async () => {
+    inPlace = true;
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    try {
+      const run = fillApplication(payload(true), document, here);
+      await vi.advanceTimersByTimeAsync(25_000);
+      expect(await run).toMatchObject({ outcome: "failed", failureReason: "No confirmation after submit" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("refuses to submit while a required field is empty", async () => {

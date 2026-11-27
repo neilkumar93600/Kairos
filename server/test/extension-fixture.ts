@@ -64,7 +64,10 @@ export async function fillFakeForm(fake: FakeAts, url: string, payload: FillPayl
     let res = fake.respond("POST", url, contentType, body);
     // Lever answers 200 with a script that navigates to /thanks; follow it like the browser would.
     const next = res && /location\.replace\((".*")\)/.exec(res.body)?.[1];
-    if (next) res = fake.respond("GET", JSON.parse(next) as string);
+    if (next) {
+      res = fake.respond("GET", JSON.parse(next) as string);
+      dom.reconfigure({ url: JSON.parse(next) as string }); // the address moves, as in a browser (the filler confirms on it)
+    }
     if (res && !(opts.stayOnError && res.status >= 400)) doc.documentElement.innerHTML = res.body; // a single-page form keeps its page when the POST is refused
   });
 

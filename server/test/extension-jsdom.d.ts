@@ -4,5 +4,7 @@ declare module "jsdom" {
     constructor(html?: string, options?: { url?: string });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     window: any;
+    /** Moves window.location without a navigation (the fixture follows a board's redirect this way). */
+    reconfigure(settings: { url?: string }): void;
   }
 }
