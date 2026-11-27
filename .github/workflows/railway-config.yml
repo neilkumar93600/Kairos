@@ -44,7 +44,9 @@ jobs:
       - name: Plan
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
-        run: railway config plan --out railway-plan.json | tee plan.txt
+        run: |
+          [ -n "$RAILWAY_TOKEN" ] || { echo "::error::Repository secret RAILWAY_TOKEN_STAGING is not set (Settings > Secrets and variables > Actions). Create a project token for the kairos staging environment."; exit 1; }
+          railway config plan --out railway-plan.json | tee plan.txt
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: railway-plan-staging
@@ -58,7 +60,7 @@ jobs:
           diff=$(jq -r '.diff // empty' railway-plan.json); [ -n "$diff" ] || diff=$(cat plan.txt)
           { echo '<!-- railway-plan -->'; echo '### Railway plan: staging'; echo; echo '```diff'; echo "$diff"; echo '```'; echo
             jq -r 'if .destructive then "**Destructive:** merging will not apply this plan. Apply it by hand after review.\n" else empty end' railway-plan.json
-            echo 'Merging applies exactly this plan to staging. Production gets the file with the code, through `promote.yml`.'; } > comment.md
+            echo "Merging applies exactly this plan to staging. Production gets the file with the code, through \`promote.yml\`."; } > comment.md
           id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate --jq '.[] | select(.body | startswith("<!-- railway-plan -->")) | .id' | tail -n1)
           if [ -n "$id" ]; then gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@comment.md >/dev/null
           else gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file comment.md; fi

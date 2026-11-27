@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "integrate/**"]
   pull_request:
 
 permissions:
@@ -97,7 +97,16 @@ jobs:
       - run: npm ci --ignore-scripts && npm rebuild esbuild
       - name: Expand-only linter; migrations on the base branch unchanged
         working-directory: server
-        run: node scripts/lint-migrations.mjs --base "${{ github.event.pull_request.base.sha || github.event.before }}"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # A branch's first push has an all-zero `before` (and a force push an unknown one): use the fork point from main.
+          if ! echo "$BASE_SHA" | grep -Eq '^[0-9a-f]{40}$' || echo "$BASE_SHA" | grep -Eq '^0+$' || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin main
+            BASE_SHA=$(git merge-base origin/main HEAD)
+          fi
+          echo "lint-migrations base: $BASE_SHA"
+          node scripts/lint-migrations.mjs --base "$BASE_SHA"
       - name: drizzle-kit check
         working-directory: server
         run: npx drizzle-kit check
