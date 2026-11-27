@@ -32,8 +32,10 @@ interface Fixture {
 
 /** Fillers standing in for extension/dist/filler.js: each defines window.__kairosFill. */
 const filler = (body: string) => `window.__kairosFill = async (p) => { ${body} };`;
+/** A board that confirms by moving to its confirmation address (only that confirms, R3c), then the page's report. */
 const SUBMITTED = filler(
-  `return { applicationId: "00000000-0000-4000-8000-000000000000", outcome: "submitted", submittedAt: "not a date", confirmationText: "Thanks!",
+  `history.pushState(null, "", "/embed/job_app/confirmation?for=acme&token=1");
+  return { applicationId: "00000000-0000-4000-8000-000000000000", outcome: "submitted", submittedAt: "not a date", confirmationText: "Thanks!",
     filledFields: [{ fieldKey: "first_name", label: "<img src=x onerror=alert(1)>", value: "Mallory" }, { fieldKey: "injected", label: "x", value: "y" }] };`,
 );
 
@@ -135,8 +137,8 @@ describe.skipIf(!hasChromium)("fillInBrowser in Chromium", () => {
     expect(await run(form(), reason("No confirmation after submit"))).toMatchObject({ code: "unconfirmed" });
   });
 
-  it("records an error after the filler starts as unconfirmed: the confirmation navigation, a bad report, the 120 s race", async () => {
-    const navigates = filler(`location.href = "/embed/job_app/confirmation"; await new Promise(() => {});`);
+  it("records an error after the filler starts as unconfirmed: a navigation to a page that is no confirmation, a bad report, the 120 s race", async () => {
+    const navigates = filler(`location.href = "/embed/job_app/next"; await new Promise(() => {});`);
     expect(await run(form(), navigates)).toMatchObject({ code: "unconfirmed", detail: "fill_interrupted" });
     expect(await run(form(), filler(`return { outcome: "yes" };`))).toMatchObject({ code: "unconfirmed", detail: "invalid_report" });
     expect(await run(form(), filler(`await new Promise(() => {});`), 300)).toMatchObject({ code: "unconfirmed", detail: "fill_interrupted" });
@@ -166,7 +168,7 @@ describe.skipIf(!hasChromium)("fillInBrowser in Chromium", () => {
     const resumeInput = `<input type=file id=resume name=resume required>`;
 
     it("attaches the PDF to the form's resume input before the filler submits, and the page really holds the file", async () => {
-      const page = `<!doctype html><form onsubmit="event.preventDefault(); const f = document.getElementById('resume').files[0]; document.body.textContent = 'Thank you for applying! ' + f.name + ' ' + f.size + ' ' + f.type">${resumeInput}${fields}</form>`;
+      const page = `<!doctype html><form onsubmit="event.preventDefault(); const f = document.getElementById('resume').files[0]; history.pushState(null, '', '/embed/job_app/confirmation?for=acme&token=1'); document.body.textContent = 'Thank you for applying! ' + f.name + ' ' + f.size + ' ' + f.type">${resumeInput}${fields}</form>`;
       const outcome = await runReal(page, { resumePdf: { name: "Ada Lovelace - Resume.pdf", buffer: Buffer.from("%PDF-1.7 test") } });
       expect(outcome.submitted).toBe(true);
       if (outcome.submitted) {
@@ -179,15 +181,23 @@ describe.skipIf(!hasChromium)("fillInBrowser in Chromium", () => {
       expect(await runReal(`<!doctype html><form>${resumeInput}${fields}</form>`)).toMatchObject({ submitted: false, code: "applier_error", detail: "resume_missing" });
     });
 
-    it("fills and submits a form that confirms in the page", async () => {
+    it("an in-place confirmation, thanks text with no confirmation address, is unconfirmed whatever the filler says (R3c)", async () => {
       const outcome = await runReal(`<!doctype html><form onsubmit="event.preventDefault(); document.body.textContent = 'Thank you for applying!'">${fields}</form>`);
+      expect(outcome).toMatchObject({ submitted: false, code: "unconfirmed" });
+    }, 60_000); // a URL-only filler waits its full 20 s before it says "No confirmation"
+
+    it("fills and submits a single-page form that moves to its confirmation address", async () => {
+      const outcome = await runReal(`<!doctype html><form onsubmit="event.preventDefault(); history.pushState(null, '', '/embed/job_app/confirmation?for=acme&token=1'); document.body.textContent = 'Thank you for applying!'">${fields}</form>`);
       expect(outcome.submitted).toBe(true);
       if (outcome.submitted) expect(outcome.report.filledFields.map((f) => f.fieldKey)).toEqual(["first_name", "email"]);
     });
 
-    it("records a form whose confirmation navigates as unconfirmed (needs_check), never as a resendable failure", async () => {
-      const outcome = await runReal(`<!doctype html><form action="/embed/job_app/confirmation" method=get>${fields}</form>`);
-      expect(outcome).toMatchObject({ submitted: false, code: "unconfirmed" });
+    it("reads a confirmation the submit navigates to with the adapter's own rule (T-006.5); any other landing stays unconfirmed (needs_check)", async () => {
+      const confirmed = await runReal(`<!doctype html><form action="/embed/job_app/confirmation" method=get>${fields}</form>`);
+      expect(confirmed.submitted).toBe(true);
+      if (confirmed.submitted) expect(confirmed.report.applicationId).toBe(APP_ID);
+      const elsewhere = await runReal(`<!doctype html><form action="/embed/job_app/next" method=get>${fields}</form>`);
+      expect(elsewhere).toMatchObject({ submitted: false, code: "unconfirmed", detail: "fill_interrupted" });
     });
   });
 

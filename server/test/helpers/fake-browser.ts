@@ -8,9 +8,11 @@ import { vi } from "vitest";
  */
 export function fakeBrowser(opts: { frames?: string[]; fill?: () => Promise<unknown>; goto?: () => Promise<void>; resumeInput?: { uploads: unknown[]; required?: boolean; fails?: boolean } } = {}) {
   const fill = vi.fn(opts.fill ?? (async () => ({})));
+  // A "submitted" fill moves the page to the board's confirmation address, as Greenhouse does: only that confirms (R3c).
+  let url = "https://job-boards.greenhouse.io/x/jobs/1";
   const page = {
     on: () => {},
-    url: () => "https://job-boards.greenhouse.io/x/jobs/1",
+    url: () => url,
     title: async () => "Apply",
     // The fake ATS's resume input, when the test gives it one: setInputFiles is recorded there.
     $: async (selector: string) =>
@@ -29,9 +31,18 @@ export function fakeBrowser(opts: { frames?: string[]; fill?: () => Promise<unkn
     },
     waitForLoadState: async () => {},
     frames: () => (opts.frames ?? []).map((u) => ({ url: () => u, frameElement: async () => ({ evaluate: async () => true }) })),
-    evaluate: async (fn: unknown) => (typeof fn === "string" ? undefined : fill()),
+    // The filler bundle (a string), the filler call (with its payload), or the read of a page a submit landed on: no confirmation.
+    evaluate: async (fn: unknown, arg?: unknown) => {
+      if (typeof fn === "string") return undefined;
+      if (arg === undefined) return { text: "", ready: true };
+      const report = await fill();
+      if ((report as { outcome?: string } | null)?.outcome === "submitted") url = "https://job-boards.greenhouse.io/x/jobs/1/confirmation";
+      return report;
+    },
   };
-  const context = { route: async () => {}, on: () => {}, newPage: async () => page, close: async () => {} };
+  // The main-frame hop guard's CDP session (jobs/cloud-apply.ts guardTopLevelHops): no hops happen here.
+  const cdp = { on: () => {}, send: async () => ({ frameTree: { frame: { id: "main" } } }) };
+  const context = { route: async () => {}, on: () => {}, newPage: async () => page, newCDPSession: async () => cdp, close: async () => {} };
   vi.spyOn(chromium, "launch").mockResolvedValue({ newContext: async () => context, on: () => {}, close: async () => {} } as never);
   return fill;
 }

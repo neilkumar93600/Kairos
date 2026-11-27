@@ -109,13 +109,19 @@ export function watchMemory(pool: { recycle(reason: string): void }, limitMb: nu
   }, everyMs).unref();
 }
 
+/**
+ * Launch flags the egress guard depends on (07-cloud-applier 3.2 item 4). WebRTC sends UDP straight from the browser, around the
+ * proxy (R3, T-006.5: STUN packets reached 127.0.0.1); this policy allows WebRTC only through the proxy, which refuses it.
+ */
+export const APPLIER_CHROMIUM_ARGS = ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"];
+
 let shared: ReturnType<typeof browserPool> | undefined;
 
 /** The applier's pool. Without chromiumSandbox: true Playwright adds --no-sandbox; off only under the signed S-AP4 risk acceptance. */
 export function applierPool(): ReturnType<typeof browserPool> {
   shared ??= browserPool(() => {
     const e = applierEnv();
-    return chromium.launch({ headless: true, executablePath: e.CHROMIUM_EXECUTABLE_PATH, chromiumSandbox: e.APPLIER_CHROMIUM_SANDBOX });
+    return chromium.launch({ headless: true, executablePath: e.CHROMIUM_EXECUTABLE_PATH, chromiumSandbox: e.APPLIER_CHROMIUM_SANDBOX, args: APPLIER_CHROMIUM_ARGS });
   }, applierEnv().APPLIER_RECYCLE_AFTER);
   return shared;
 }

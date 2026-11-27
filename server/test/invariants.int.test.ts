@@ -91,7 +91,8 @@ describe.skipIf(!hasTestDb)("P0 invariants against Postgres", () => {
     const failedReport = (applicationId: string) => ({
       applicationId,
       outcome: "failed" as const,
-      failureReason: "Form not found",
+      // A filler reason from before its click: nothing was sent (R3c deny-list; any other reason is unconfirmed and may settle forward).
+      failureReason: "Submit button not found",
       filledFields: [],
       submittedAt: new Date().toISOString(),
     });

@@ -142,9 +142,10 @@ describe("a run the sweep gave up on", () => {
       goto: async () => ({ status: () => 200 }),
       waitForLoadState: async () => {},
       frames: () => [],
-      evaluate: async (fn: unknown) => (evaluated.push(fn), undefined),
+      evaluate: async (fn: unknown, arg?: unknown) => (evaluated.push(arg === undefined ? fn : "called with a payload"), undefined),
     };
-    const browser = { newContext: async () => ({ route: async () => {}, on: () => {}, newPage: async () => page, close: async () => {} }) };
+    const cdp = { on: () => {}, send: async () => ({ frameTree: { frame: { id: "main" } } }) };
+    const browser = { newContext: async () => ({ route: async () => {}, on: () => {}, newPage: async () => page, newCDPSession: async () => cdp, close: async () => {} }) };
     const phases: string[] = [];
     const outcome = await fillInBrowser(browser as never, {
       applicationId: "a",
@@ -161,7 +162,9 @@ describe("a run the sweep gave up on", () => {
     expect(phases).toEqual(["navigating", "filling"]);
     expect(outcome).toEqual({ submitted: false, code: "applier_error", detail: "navigation_failed" });
     // The filler script was injected; __kairosFill, the only thing that clicks, was never called.
-    expect(evaluated).toEqual(["window.__kairosFill = () => {}"]);
+    // (The other call is the read of the form page before the fill, with no payload.)
+    expect(evaluated[0]).toBe("window.__kairosFill = () => {}");
+    expect(evaluated).not.toContain("called with a payload");
   });
 });
 
