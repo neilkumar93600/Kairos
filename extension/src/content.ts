@@ -25,12 +25,22 @@ async function main() {
     });
     return;
   }
+  const loadHref = window.location.href;
   const report: SubmissionReport = await fillApplication(payload);
 
-  if (!payload.submit && report.outcome === "failed") {
-    // Review mode: the user checks the filled form and presses the board's own submit button.
-    // When the board shows its confirmation, record the submission with what we filled.
-    const confirmed = await waitFor(() => adapter.isConfirmation(document, new URL(window.location.href)) || null, REVIEW_WINDOW_MS, 1000);
+  if (!payload.submit) {
+    // Review mode: the user checks the filled form and presses the board's own submit button. Once they do, tell the worker:
+    // from then on the claim is never released (a release offers Send again and would double-apply) and later pages are confirm-only.
+    const handOver = () => void chrome.runtime.sendMessage({ type: "content:handed", applicationId: payload.applicationId });
+    document.addEventListener("submit", handOver, true);
+    document.addEventListener("click", (e) => (e.target instanceof Element && e.target.closest(adapter.submitSelector) ? handOver() : undefined), true);
+    // Same rule as the filler: only the board's confirmation address, reached after load, confirms. Page text never does
+    // (a description can say "application received"). Ashby confirms in place, so it reports nothing and settles as needs_check.
+    const confirmed = await waitFor(
+      () => (window.location.href !== loadHref && adapter.isConfirmationUrl(new URL(window.location.href)) ? true : null),
+      REVIEW_WINDOW_MS,
+      1000,
+    );
     if (!confirmed) return;
     await chrome.runtime.sendMessage({
       type: "content:report",

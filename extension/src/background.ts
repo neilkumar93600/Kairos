@@ -8,7 +8,10 @@ import { unrecordedKey, type ExtensionMessage, type ExternalMessage, type FillPa
  * clears with the browser and is closed to content scripts by default, which matters because payloads hold answers.
  */
 const pendingKey = (tabId: number) => `pending:${tabId}`;
-/** `handed`: a submit-mode payload went to the page, so the filler may have clicked. From then on the claim is never released. */
+/**
+ * `handed`: the form may have been submitted, either a submit-mode payload went to the page (the filler clicks) or, in review
+ * mode, the user pressed the form's submit. From then on the claim is never released.
+ */
 type Pending = FillPayload & { handed?: boolean };
 const remember = (tabId: number, payload: Pending) => chrome.storage.session.set({ [pendingKey(tabId)]: payload });
 const forget = (tabId: number) => chrome.storage.session.remove(pendingKey(tabId));
@@ -24,9 +27,9 @@ async function refreshQueue() {
 }
 
 /**
- * A tab that ended without a report. Before the payload was handed over (or in review mode, where the user presses submit) nothing
- * was sent, so the claim goes back. After a submit-mode handover the filler may have clicked: no release, because a released
- * claim reads as "failed, no credit used, resend" and would double-apply. The lease expires to no_report (needs_check) instead.
+ * A tab that ended without a report. Before the handover (or, in review mode, before the user pressed submit) nothing was sent,
+ * so the claim goes back. After it the form may have been submitted: no release, because a released claim reads as "failed,
+ * no credit used, resend" and would double-apply. The lease expires to no_report (needs_check) instead.
  */
 function endedWithoutReport(sent: Pending, notOutcome: QueueOutcome) {
   if (sent.handed) return notifyPanel(sent.applicationId, { outcome: "closed" });
@@ -85,6 +88,15 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, respond
           await remember(tabId, { applicationId: stored.applicationId, submit: true, handed: true, answers: [], resumeLines: [], coverLetter: null });
         }
         return stored;
+      }
+      case "content:handed": {
+        // Review mode: the user pressed the form's submit, so the employer may have it. Same as a submit-mode handover: never
+        // release, and any later page in this tab is confirm-only. Keeps no answers.
+        const tabId = sender.tab?.id;
+        const stored = tabId !== undefined ? await recall(tabId) : null;
+        if (tabId === undefined || !stored || stored.applicationId !== message.applicationId || stored.handed) return { ok: true };
+        await remember(tabId, { applicationId: stored.applicationId, submit: false, handed: true, answers: [], resumeLines: [], coverLetter: null });
+        return { ok: true };
       }
       case "content:report": {
         const report: SubmissionReport = message.report;
