@@ -7,6 +7,7 @@ import { HttpError } from "../lib/errors";
 import { getFlags } from "../lib/flags";
 import { logger } from "../lib/logger";
 import { count } from "../lib/metrics";
+import { signal } from "../lib/sentry";
 import { liveOfferPauseStripe, type OfferPauseStripe } from "../services/stripe";
 import type { Rendered } from "./notify";
 
@@ -137,8 +138,10 @@ async function applyOne(id: string, userId: string, stripe: OfferPauseStripe, ca
             .update(offerPauseCandidates)
             .set(failed ? { state: "failed", attempts, lastError: code, updatedAt: sql`now()` } : { attempts, lastError: code, updatedAt: sql`now()` })
             .where(and(eq(offerPauseCandidates.id, id), eq(offerPauseCandidates.state, "pending")));
-          if (failed) logger.error({ candidateId: id, code }, "offer pause gave up after 5 Stripe failures; nothing paused");
-          else logger.warn({ candidateId: id, code, attempts }, "offer pause Stripe call failed; retried next run");
+          if (failed) {
+            logger.error({ candidateId: id, code }, "offer pause gave up after 5 Stripe failures; nothing paused");
+            signal("offer_pause_failed");
+          } else logger.warn({ candidateId: id, code, attempts }, "offer pause Stripe call failed; retried next run");
           return failed ? "failed" : "retried";
         }
       }

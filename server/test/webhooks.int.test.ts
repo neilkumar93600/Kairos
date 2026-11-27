@@ -289,20 +289,21 @@ describe.skipIf(!hasTestDb)("POST /api/webhooks/stripe against Postgres", () => 
     expect(await eventRow("evt_paid_2")).toMatchObject({ status: "processed", outcome: "grant_duplicate", userId });
   });
 
-  // [pause source, the offer flow's latest applied_at relative to the pause (ms; null: no applied candidate), result]
+  // [pause source, the offer flow's latest applied_at relative to the pause (ms; null: no applied candidate), Stripe's status after, result]
   it.each([
-    ["offer_email", 0, null],
-    ["offer_email", 60_000, null],
-    ["offer_email", null, "kept"],
-    ["offer_email", -60_000, "kept"],
-    ["customer", 0, "kept"],
-  ] as const)("billing resumed from a %s pause, offer applied at %s: applications paused are %s (09-billing-events 3.3)", async (source, appliedOffset, expected) => {
+    ["offer_email", 0, "active", null],
+    ["offer_email", 60_000, "active", "kept"],
+    ["offer_email", null, "active", "kept"],
+    ["offer_email", -60_000, "active", "kept"],
+    ["offer_email", 0, "canceled", "kept"],
+    ["customer", 0, "active", "kept"],
+  ] as const)("billing unpaused from a %s pause, offer applied at %s, now %s: applications paused are %s (09-billing-events 3.3)", async (source, appliedOffset, status, expected) => {
     const { eq } = await import("drizzle-orm");
     const userId = await seedUser(db);
     const pausedAt = new Date("2026-11-01T00:00:00Z");
     await db.insert(schema.profiles).values({ userId, forwardingAddress: `fwd-${userId}@in.test`, applicationsPausedAt: pausedAt });
     if (appliedOffset !== null) {
-      // WP-33: the offer flow's record. Only a pause at or before its latest applied_at is the offer's to clear.
+      // WP-33: the offer flow's record. Only the pause equal to its latest applied_at is the offer's to clear.
       const appliedAt = new Date(pausedAt.getTime() + appliedOffset);
       const [mail] = await db.insert(schema.inboundEmails).values({ userId, providerMessageId: `m-${userId}`, sender: "hr@acme.com", subject: "Offer", textBody: "offer letter", kind: "offer", ruleKind: "offer" }).returning();
       await db.insert(schema.offerPauseCandidates).values({
@@ -313,9 +314,9 @@ describe.skipIf(!hasTestDb)("POST /api/webhooks/stripe against Postgres", () => 
       .update(schema.subscriptions)
       .set({ plan: "pro", interval: "week", status: "active", stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_1", collectionPaused: true, pauseSource: source })
       .where(eq(schema.subscriptions.userId, userId));
-    // The portal resumed it: Stripe's subscription has no pause_collection any more.
-    vi.spyOn(stripeClient.subscriptions, "retrieve").mockResolvedValue(subscription("sub_1", "active", userId) as never);
-    expect((await send(`evt_resume_${source}`, "customer.subscription.updated", { id: "sub_1", customer: "cus_1" })).status).toBe(200);
+    // The portal resumed it, or it was cancelled while paused: Stripe's subscription has no pause_collection any more.
+    vi.spyOn(stripeClient.subscriptions, "retrieve").mockResolvedValue(subscription("sub_1", status, userId) as never);
+    expect((await send(`evt_resume_${source}_${status}`, "customer.subscription.updated", { id: "sub_1", customer: "cus_1" })).status).toBe(200);
     const [profile] = await db.select().from(schema.profiles).where(eq(schema.profiles.userId, userId));
     expect(profile!.applicationsPausedAt).toEqual(expected === null ? null : pausedAt);
     const [row] = await db.select().from(schema.subscriptions).where(eq(schema.subscriptions.userId, userId));

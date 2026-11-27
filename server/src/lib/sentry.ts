@@ -180,6 +180,8 @@ const SIGNALS = {
   billing_reconcile_findings: 1,
   /** Over 5 missing grants in one reconcile: webhook delivery is broken (A-BILL-6, WP-32). Pages. */
   billing_grants_missing: 6,
+  /** An offer pause gave up after 5 Stripe failures: nothing was paused, the user is still billed and applying (A-BILL-5, WP-33). Pages. */
+  offer_pause_failed: 1,
 } as const;
 export type Signal = keyof typeof SIGNALS;
 

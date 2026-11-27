@@ -16,6 +16,8 @@ process.env.API_PUBLIC_ORIGIN = "https://api.kairos.test";
 
 const enqueue = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock("../src/jobs/queues", async (orig) => ({ ...(await orig<typeof import("../src/jobs/queues")>()), enqueue }));
+const signal = vi.hoisted(() => vi.fn());
+vi.mock("../src/lib/sentry", async (orig) => ({ ...(await orig<typeof import("../src/lib/sentry")>()), signal }));
 
 const { createApp } = await import("../src/app");
 const { closeDb } = await import("../src/db/client");
@@ -251,8 +253,11 @@ describe.skipIf(!hasTestDb)("offer pause against Postgres", () => {
       await reply();
       await elapse();
       failWith = "rate_limit";
+      signal.mockClear();
       for (let i = 1; i < MAX_ATTEMPTS; i++) expect(await processOfferPauseApply(fakeStripe)).toMatchObject({ retried: 1 });
+      expect(signal).not.toHaveBeenCalledWith("offer_pause_failed");
       expect(await processOfferPauseApply(fakeStripe)).toMatchObject({ failed: 1 });
+      expect(signal).toHaveBeenCalledWith("offer_pause_failed");
       expect((await candidates())[0]).toMatchObject({ state: "failed", attempts: MAX_ATTEMPTS, lastError: "rate_limit" });
       expect(await pausedAt()).toBeNull();
     });
