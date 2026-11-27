@@ -289,14 +289,26 @@ describe.skipIf(!hasTestDb)("POST /api/webhooks/stripe against Postgres", () => 
     expect(await eventRow("evt_paid_2")).toMatchObject({ status: "processed", outcome: "grant_duplicate", userId });
   });
 
+  // [pause source, the offer flow's latest applied_at relative to the pause (ms; null: no applied candidate), result]
   it.each([
-    ["offer_email", null],
-    ["customer", "kept"],
-  ] as const)("billing resumed from a %s pause: applications paused by an offer are %s (09-billing-events 3.3)", async (source, expected) => {
+    ["offer_email", 0, null],
+    ["offer_email", 60_000, null],
+    ["offer_email", null, "kept"],
+    ["offer_email", -60_000, "kept"],
+    ["customer", 0, "kept"],
+  ] as const)("billing resumed from a %s pause, offer applied at %s: applications paused are %s (09-billing-events 3.3)", async (source, appliedOffset, expected) => {
     const { eq } = await import("drizzle-orm");
     const userId = await seedUser(db);
     const pausedAt = new Date("2026-11-01T00:00:00Z");
     await db.insert(schema.profiles).values({ userId, forwardingAddress: `fwd-${userId}@in.test`, applicationsPausedAt: pausedAt });
+    if (appliedOffset !== null) {
+      // WP-33: the offer flow's record. Only a pause at or before its latest applied_at is the offer's to clear.
+      const appliedAt = new Date(pausedAt.getTime() + appliedOffset);
+      const [mail] = await db.insert(schema.inboundEmails).values({ userId, providerMessageId: `m-${userId}`, sender: "hr@acme.com", subject: "Offer", textBody: "offer letter", kind: "offer", ruleKind: "offer" }).returning();
+      await db.insert(schema.offerPauseCandidates).values({
+        userId, inboundEmailId: mail!.id, state: "applied", appliedAt, createdAt: new Date(appliedAt.getTime() - 49 * 3_600_000), applyAfter: new Date(appliedAt.getTime() - 3_600_000),
+      });
+    }
     await db
       .update(schema.subscriptions)
       .set({ plan: "pro", interval: "week", status: "active", stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_1", collectionPaused: true, pauseSource: source })
