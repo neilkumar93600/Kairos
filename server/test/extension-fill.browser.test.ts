@@ -22,13 +22,17 @@ const SUBMIT = "https://jobs.ashbyhq.com/acme/2222/submit";
 const filler = () =>
   buildSync({ entryPoints: [fileURLToPath(new URL("../../extension/src/filler.ts", import.meta.url))], bundle: true, format: "iife", write: false, define: { __API_BASE__: '"http://localhost"' } }).outputFiles[0]!.text;
 
-const spa = (accepted: boolean) => `<!doctype html><title>Apply</title><h1>Engineer</h1><p>We read every application received within a week.</p>
+/** pre: the description says it before the click. late: it renders only after the refused POST. ok: the POST succeeds and the form is replaced by new text. */
+type Mode = "pre" | "late" | "ok";
+const DESC = "<p>We read every application received within a week.</p>";
+const spa = (mode: Mode) => `<!doctype html><title>Apply</title><h1>Engineer</h1><div id=d>${mode === "late" ? "" : DESC}</div>
   <form id=f><input name=_systemfield_name required><input name=_systemfield_email required><span id=slot><button type=submit>Submit application</button></span></form>
   <script>
   document.getElementById("f").addEventListener("submit", async (e) => { e.preventDefault();
     document.getElementById("slot").innerHTML = "<span>Submitting</span>";
     const r = await fetch("${SUBMIT}", { method: "POST" });
-    if (r.ok) { document.body.innerHTML = "<h1>Your application was successfully submitted.</h1><p>Thank you for applying.</p>"; return; }
+    if (r.ok) { document.getElementById("f").remove(); document.body.insertAdjacentHTML("beforeend", "<h2>Thank you for applying.</h2>"); return; }
+    if (${JSON.stringify(mode)} === "late") document.getElementById("d").innerHTML = ${JSON.stringify(DESC)};
     document.getElementById("slot").innerHTML = '<button type=submit>Submit application</button>';
     document.body.insertAdjacentHTML("beforeend", "<p>Something went wrong. Please try again.</p>");
   });
@@ -43,15 +47,15 @@ describe.skipIf(!hasChromium)("the filler in Chromium on a single-page form", ()
     await browser?.close();
   });
 
-  async function run(accept: boolean) {
+  async function run(mode: Mode) {
     const ctx = await browser.newContext();
     let posts = 0;
     await ctx.route("**/*", (route) => {
       const url = route.request().url();
-      if (url === PAGE) return route.fulfill({ status: 200, contentType: "text/html", body: spa(accept) });
+      if (url === PAGE) return route.fulfill({ status: 200, contentType: "text/html", body: spa(mode) });
       if (url === SUBMIT) {
         posts += 1;
-        return route.fulfill({ status: accept ? 200 : 422, contentType: "application/json", body: "{}" });
+        return route.fulfill({ status: mode === "ok" ? 200 : 422, contentType: "application/json", body: "{}" });
       }
       return route.abort("failed"); // nothing else leaves the machine
     });
@@ -68,14 +72,20 @@ describe.skipIf(!hasChromium)("the filler in Chromium on a single-page form", ()
   }
 
   it("a refused POST (422) with 'application received' in the description is a failure, not a confirmation", async () => {
-    const { report, posts } = await run(false);
+    const { report, posts } = await run("pre");
     expect(posts).toBe(1);
     expect(report).toMatchObject({ outcome: "failed", matchedBefore: true });
   }, 60_000);
 
-  it("an accepted POST that re-renders in place is still not provable here: matchedBefore pages need a new address (fails safe)", async () => {
-    const { report, posts } = await run(true);
+  it("a confirmation-like description rendered AFTER the click on a refused POST (fields still on the page) is a failure", async () => {
+    const { report, posts } = await run("late");
     expect(posts).toBe(1);
-    expect(report).toMatchObject({ outcome: "failed", matchedBefore: true });
+    expect(report).toMatchObject({ outcome: "failed", matchedBefore: false });
+  }, 60_000);
+
+  it("a genuine in-place confirmation that replaces the form with new text is submitted, even when the description already had the words", async () => {
+    const { report, posts } = await run("ok");
+    expect(posts).toBe(1);
+    expect(report).toMatchObject({ outcome: "submitted", matchedBefore: true });
   }, 60_000);
 });

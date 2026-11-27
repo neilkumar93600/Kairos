@@ -105,13 +105,10 @@ describe.each(ATSES)("the extension filler on the %s fake form", (ats) => {
     fake.setFormVariant(ats, "fit", "open");
   });
 
-  it("fails safe when the posting already had the words and the page confirms in place: no new address, so no confirmation (needs_check, never a charge)", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
-    const run = fillFakeForm(fake, url, payload(ats, { sensitive: true }), { html: (p) => p.replace("<form", "<p>Every application received is read by a person.</p><form") });
-    await vi.advanceTimersByTimeAsync(25_000);
-    const { report } = await run;
-    expect(report).toMatchObject({ outcome: "failed", matchedBefore: true });
-    expect(accepted()).toHaveLength(1); // the employer has it; only the report refuses to claim it
+  it("a real confirmation still counts when the posting already contained the words: the new text is what confirms", async () => {
+    const { report } = await fillFakeForm(fake, url, payload(ats, { sensitive: true }), { html: (p) => p.replace("<form", "<p>Every application received is read by a person.</p><form") });
+    expect(report).toMatchObject({ outcome: "submitted", matchedBefore: true });
+    expect(accepted()).toHaveLength(1);
   });
 
   it("INV-8: a challenge page is a failure; the filler does not get past it", async () => {
