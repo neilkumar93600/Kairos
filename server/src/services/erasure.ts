@@ -1,8 +1,8 @@
 import { createHmac } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "../db/client";
-import { contactMessages, deletionTasks, erasedEmails, newsletterSubscribers, subscriptions, user } from "../db/schema";
+import { applications, contactMessages, creditBalances, deletionTasks, erasedEmails, newsletterSubscribers, stripeEvents, subscriptions, user } from "../db/schema";
 import { env } from "../lib/env";
 import { logger } from "../lib/logger";
 import { storage, storageConfig, type Storage } from "../lib/storage";
@@ -103,6 +103,10 @@ export async function archiveLedger(tx: Tx, userIds: string[]): Promise<void> {
  */
 export async function eraseUser(db: Db, userId: string, requestedBy: RequestedBy, tombstones: TombstoneStore | null = null): Promise<string | null> {
   const erased = await db.transaction(async (tx) => {
+    // Rule L1 first, then the applications, then the user. Holding the user row while the cascade waits on a settlement or a
+    // claim would deadlock: each of those inserts rows with a foreign key to it.
+    await tx.select({ userId: creditBalances.userId }).from(creditBalances).where(eq(creditBalances.userId, userId)).for("update");
+    await tx.select({ id: applications.id }).from(applications).where(eq(applications.userId, userId)).orderBy(asc(applications.id)).for("update");
     const [u] = await tx.select({ id: user.id, email: user.email }).from(user).where(eq(user.id, userId)).for("update");
     if (!u) return null;
     const [sub] = await tx.select({ customer: subscriptions.stripeCustomerId }).from(subscriptions).where(eq(subscriptions.userId, u.id));
@@ -123,6 +127,19 @@ export async function eraseUser(db: Db, userId: string, requestedBy: RequestedBy
     await tx.delete(contactMessages).where(sql`${contactMessages.emailHash} = ${task.emailHash} or lower(${contactMessages.email}) = lower(${u.email})`);
     // Newsletter sign-ups (WP-50) are not accounts either: the same two keys (the stored address is already lower case).
     await tx.delete(newsletterSubscribers).where(sql`${newsletterSubscribers.emailHash} = ${task.emailHash} or ${newsletterSubscribers.email} = lower(btrim(${u.email}))`);
+    // Stripe events not yet tied to the user do not cascade. Nothing reads them after this: one still waiting ends as user_deleted.
+    if (customer) {
+      await tx
+        .update(stripeEvents)
+        .set({
+          payload: null,
+          stripeCustomerId: null,
+          outcome: sql`case when ${stripeEvents.status} = 'received' then 'user_deleted' else ${stripeEvents.outcome} end`,
+          processedAt: sql`coalesce(${stripeEvents.processedAt}, case when ${stripeEvents.status} = 'received' then now() end)`,
+          status: sql`case when ${stripeEvents.status} = 'received' then 'ignored' else ${stripeEvents.status} end`,
+        })
+        .where(eq(stripeEvents.stripeCustomerId, customer));
+    }
     await tx.delete(user).where(eq(user.id, u.id));
     return task;
   });

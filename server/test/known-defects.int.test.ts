@@ -75,12 +75,12 @@ describe.skipIf(!hasTestDb)("known defects (expected failures)", () => {
     expect(after?.status).not.toBe("approved");
   });
 
-  // D-14: a 2xx to Stripe must mean the event is durably stored (store, then process). Today a failing handler rolls the
-  // event row back and answers 500, so a Stripe outage while the retries run out loses the event for good.
-  it.fails("D-14: a Stripe event whose handler fails is still stored and acknowledged for reprocessing", async () => {
+  // D-14, fixed by WP-32: a 2xx to Stripe means the event is durably stored (store, then process), so a Stripe outage while the
+  // retries run out can no longer lose it.
+  it("D-14: a Stripe event whose handler would fail is still stored and acknowledged for reprocessing", async () => {
     const userId = await seedUser(db);
     vi.spyOn(stripeClient.subscriptions, "retrieve").mockRejectedValue(new Error("stripe down"));
-    const payload = JSON.stringify({ id: "evt_d14", object: "event", type: "customer.subscription.updated", data: { object: { id: "sub_1", metadata: { userId } } } });
+    const payload = JSON.stringify({ id: "evt_d14", object: "event", created: 1_800_000_000, type: "customer.subscription.updated", data: { object: { id: "sub_1", metadata: { userId } } } });
     const signature = stripeClient.webhooks.generateTestHeaderString({ payload, secret: "whsec_test_known_defects" });
 
     const res = await request(app).post("/api/webhooks/stripe").set("stripe-signature", signature).set("content-type", "application/json").send(payload);

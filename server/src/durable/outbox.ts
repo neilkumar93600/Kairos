@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNotNull, lte, or, sql } from "drizzle-orm";
 import { db, type Db } from "../db/client";
-import { applications, opsAudit, outbox, submissionAttempts } from "../db/schema";
+import { applications, opsAudit, outbox, stripeEvents, submissionAttempts } from "../db/schema";
 import { queue, QUEUE_CONFIG, redrive, type JobData, type OutboxQueue, type QueueName } from "../jobs/queues";
 import { HttpError, notFound } from "../lib/errors";
 import { deadline } from "../lib/lifecycle";
@@ -63,6 +63,22 @@ export async function emitOutbox<N extends OutboxQueue>(tx: Db | Tx, name: N, da
   assertIdsOnly(data);
   if (!ID_SHAPE.test(key)) throw new Error("outbox key is not id-shaped");
   await tx.insert(outbox).values({ queue: name, dedupeKey: key, payload: data }).onConflictDoNothing({ target: outbox.dedupeKey });
+}
+
+/**
+ * Opens the row of work that must run again, or writes it if retention took it: back to pending with its attempts reset. A
+ * row still moving is left alone. The consumer must be safe to run again, which every consumer here is by rule 2.
+ */
+export async function reopenOutbox<N extends OutboxQueue>(tx: Db | Tx, name: N, data: JobData[N], key: string): Promise<void> {
+  assertIdsOnly(data);
+  await tx
+    .insert(outbox)
+    .values({ queue: name, dedupeKey: key, payload: data })
+    .onConflictDoUpdate({
+      target: outbox.dedupeKey,
+      set: { status: "pending", attempts: 0, lastError: null, availableAt: sql`now()`, updatedAt: sql`now()` },
+      where: inArray(outbox.status, ["dead", "done"]),
+    });
 }
 
 /**
@@ -263,6 +279,11 @@ async function cloudApplyRefusal(tx: Tx, applicationId: unknown, rowAttemptNo: u
 /** What may refuse a resume, per queue the outbox feeds. Default deny: a queue with no entry does not resume (no_refusal_check). */
 const RESUME_REFUSALS: Record<OutboxQueue, (tx: Tx, payload: Record<string, unknown>) => Promise<string | null>> = {
   "cloud-apply": (tx, payload) => cloudApplyRefusal(tx, payload.applicationId, payload.attemptNo),
+  // Safe to run at any time: the job reads the event's status under the customer's lock. Refused only when there is nothing to do.
+  stripe: async (tx, payload) => {
+    const [event] = await tx.select({ status: stripeEvents.status }).from(stripeEvents).where(eq(stripeEvents.id, String(payload.eventId)));
+    return event?.status === "received" ? null : "not_received";
+  },
 };
 
 /**

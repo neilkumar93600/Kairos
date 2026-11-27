@@ -11,6 +11,7 @@ import { signal } from "../lib/sentry";
  * `freezes` (I-4 and LEDGER-1, the money checks of workers/15-ops-monitors 3.6) set approvals_frozen (an ops_audit row,
  * actor system:invariants); the rest page and leave approvals open, because a user's own action can trip them (unconfirming
  * a cited fact, a late confirmation). Only the owner lifts a freeze, through /api/admin/flags.
+ * LEDGER-2 is what notices a credit_balances row that left its sources: approvals trust that cache, so it freezes too.
  * Not checkable yet, because their tables arrive with WP-42/WP-26: I-2 possible duplicates, I-5 (application_events),
  * I-7 (verification_results).
  * M-1 (user_match_state) and M-2 (ghost verdicts) wait for those tables, WP-34.
@@ -71,6 +72,14 @@ export const HOURLY: Check[] = [
   },
   // Hourly on purpose: outbox_dead fires once when a row dies, and this keeps asking until an operator has looked.
   { id: "OX-2", freezes: false, what: "a dead outbox row: money or sending work waits on an operator (GET /api/admin/outbox)", query: count(sql`select id from outbox where status = 'dead'`) },
+  {
+    id: "BILL-7",
+    freezes: false,
+    what: "the daily billing reconcile has stopped: no success in 26 hours, so a lost webhook heals nowhere (A-BILL-7)",
+    // Only once it has run at all, so a fresh database is clean. owner-actions/WP-32.md asks to look after the first night.
+    query: count(sql`select 1 where exists (select 1 from metrics_minute where name = 'billing.reconcile.success')
+      and not exists (select 1 from metrics_minute where name = 'billing.reconcile.success' and minute > now() - interval '26 hours')`),
+  },
   { id: "BL-2", freezes: false, what: "a negative credit balance", query: count(sql`select user_id from credit_ledger group by user_id having sum(delta) < 0`) },
   {
     id: "LEDGER-1",
@@ -80,7 +89,19 @@ export const HOURLY: Check[] = [
   },
 ];
 
+/**
+ * One statement, so its snapshot holds the triggers' same-transaction writes and work in flight is never a false positive.
+ * From "user", not from credit_balances, so a row that went missing while the ledger has credits counts as well.
+ * ponytail: one pass over every user; chunk by user id (1,000 a statement, _db/billing.md 6) when it nears the 120 s limit.
+ */
+export const BALANCE_DRIFT = sql`select u.id from "user" u
+    left join credit_balances b on b.user_id = u.id
+    cross join lateral (select coalesce(sum(l.delta), 0)::int as total from credit_ledger l where l.user_id = u.id) l
+    cross join lateral (select count(*)::int as n from applications a where a.user_id = u.id and a.status in ('approved','submitting')) a
+   where coalesce(b.balance, 0) <> l.total or coalesce(b.in_flight, 0) <> a.n`;
+
 export const NIGHTLY: Check[] = [
+  { id: "LEDGER-2", freezes: true, what: "a cached balance or in-flight count differs from its recount: repair with scripts/ops-billing.ts repair-balance", query: count(BALANCE_DRIFT) },
   {
     id: "OX-1",
     freezes: false,
@@ -142,6 +163,8 @@ const PII_COLUMNS = [
   ["submission_attempts", "evidence"],
   ["outbox", "dedupe_key"],
   ["outbox", "last_error"],
+  ["stripe_events", "payload"],
+  ["stripe_events", "last_error"],
 ] as const;
 
 const hasPii = (table: string, column: string) =>

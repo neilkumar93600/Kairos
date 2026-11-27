@@ -582,7 +582,7 @@ export function rolloverExpiry(balanceAfterGrant: number, inFlight: number, gran
 // grant = creditsPerInvoice(plan, interval) from shared/src/plans.ts
 ```
 
-Worked example: Starter monthly, grant 1,000. Balance before the invoice 2,500, in-flight 20. After the grant 3,500. Expiry `max(0, 3,500 - 20 - 2,000) = 1,480`, written as an `expiry` row with delta -1,480 and the same invoice id, note `rollover cap 2x grant=1000`. Balance after 2,020 equals `2 x grant + in_flight`, so the 20 reserved credits are untouched. The free grant is not special-cased; it is part of the balance and is only ever capped when the user is a paid subscriber.
+Worked example: Starter monthly, grant 1,000. Balance before the invoice 2,500, in-flight 20. After the grant 3,500. Expiry `max(0, 3,500 - 20 - 2,000) = 1,480`, written as an `expiry` row with delta -1,480 and the same invoice id, note `rollover cap 2x grant=1000`. Balance after 2,020 equals `2 x grant + in_flight`, so the 20 reserved credits are untouched. The free grant never expires (docs/pricing.md; revised 2026-11-21, T-006.9 R2): the expiry is `max(0, balance - in_flight - 2 x cap - free_grant)`, where `free_grant` is the user's free_grant row (25, at most plans.ts's free allowance) or 0. With the free 25 on top, the same example expires 1,480 and leaves 2,045. `cap` is the largest grant whose paid period still runs at the invoice's paid moment (G3 option B, `rolloverCap`). Positive `admin_adjustment` rows count inside the cap like any other credit.
 
 ### 4.3 Ledger rows
 

@@ -168,6 +168,18 @@ const SIGNALS = {
   orphan_uploads: 1,
   /** A-WS-6: a rendered PDF's text layer lost a line, so no file left (WP-19). A template or font bug. */
   render_text_mismatch: 1,
+  /** A Stripe event stored over 30 minutes ago and still not applied: plan changes are stalling (A-BILL-2, WP-32). Pages. */
+  stripe_event_stuck: 1,
+  /** A Stripe webhook failed its signature: a wrong or rolled secret, or a forgery (A-BILL-3, WP-32). 5 a minute. Email. */
+  stripe_signature_rejected: 5,
+  /** A Stripe event no retry can fix waits on an operator: scripts/ops-billing.ts (A-BILL-4, WP-32). Pages. */
+  stripe_event_dead: 1,
+  /** A refund or a dispute: no credits changed, an operator decides (A-BILL-4, WP-32). Pages. */
+  stripe_money_movement: 1,
+  /** The daily reconcile healed a lost webhook or found drift, a double-live customer or a wrong price (A-BILL-6, WP-32). Email. */
+  billing_reconcile_findings: 1,
+  /** Over 5 missing grants in one reconcile: webhook delivery is broken (A-BILL-6, WP-32). Pages. */
+  billing_grants_missing: 6,
 } as const;
 export type Signal = keyof typeof SIGNALS;
 

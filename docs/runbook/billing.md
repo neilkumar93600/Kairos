@@ -51,7 +51,7 @@ A restricted key works if it can read Prices and write Customer portal. If someo
 
 ## 3. Plan changes and credits
 
-Credits come only from a paid invoice (`invoice.paid`). The first line that is not a proration and whose price is in `STRIPE_PRICES` decides the grant: that plan's cycle at that interval (`creditsPerInvoice`). An invoice with only proration lines grants nothing, and a $0 invoice grants nothing unless its coupon is in `STRIPE_GRANT_COUPONS`. Plan features (cloud applier, polling, resume profiles) follow the subscription itself (`customer.subscription.updated`), so they change as soon as Stripe applies the change.
+Credits come only from a paid invoice (`invoice.paid`). The first line that is not a proration and whose price is in `STRIPE_PRICES` decides the grant: that plan's cycle at that interval (`creditsPerInvoice`). An invoice with only proration lines grants nothing. The deciding line's own net amount (its amount less its discounts) must be above $0: a trial line, or a line a 100% promotion code discounts to $0, grants nothing unless the coupon is in `STRIPE_GRANT_COUPONS`. Neither the invoice total nor what the card paid decides: a downgrade renewal whose proration credit takes the total to $0 or below, and a renewal paid from the customer's Stripe balance, both grant the plan's cycle. Plan features (cloud applier, polling, resume profiles) follow the subscription itself (`customer.subscription.updated`), so they change as soon as Stripe applies the change.
 
 | Change in the portal | Features | Charged | Credits |
 |---|---|---|---|
@@ -60,7 +60,7 @@ Credits come only from a paid invoice (`invoice.paid`). The first line that is n
 | Downgrade or shorter interval | Unchanged until the period ends | Nothing now | The renewal at the new price grants that price's cycle |
 | Cancel | Unchanged until the period ends, then Free | Nothing | None; credits already granted stay |
 
-Credits already granted are never removed by a plan change, and today they do not expire: the rollover cap in docs/pricing.md (two invoices' worth, `expiry` rows) is not built yet. Stripe decides whether a mixed change (a cheaper plan on a longer interval) counts as a downgrade. If it applies the change at once and the unused-time credit covers the whole invoice, that $0 invoice grants nothing.
+Credits already granted are never removed by a plan change. Each paid invoice caps the balance at twice the largest grant whose paid period is still running when that invoice is paid (its own included), plus what approved applications hold (WP-32): anything above is written off as an `expiry` row under the same invoice id. Nobody loses credits inside a period they paid for: a quarterly payer moved to weekly keeps the quarterly cap until the quarter ends, and the first weekly renewal after that caps at twice the weekly grant. The moment is Stripe's `paid_at` and each grant's note records its period end, so a late or redriven invoice gives the same result. The free grant (25) never expires: it is left out of what the cap can write off. A positive operator adjustment (`ops-billing adjust`) is an ordinary credit and counts inside the cap, so a goodwill credit above twice the grant expires at the next paid invoice; give it after that invoice, or tell the user. Stripe decides whether a mixed change (a cheaper plan on a longer interval) counts as a downgrade; its renewal line grants as above.
 
 The owner has not yet confirmed the upgrade rule. Upgraders get no new credits until their next renewal (gap-map billing-65). Granting the difference at upgrade time would need code in `invoiceGrant` (owner-actions/WP-47.md step 8).
 
@@ -77,8 +77,24 @@ Kairos sends no payment emails. When a renewal fails:
 
 ## 5. Refunds and disputes
 
-Policy and the decision still open: owner-actions/WP-10.md, step 3. The code only alerts. `charge.refunded` and `charge.dispute.created` log `stripe refund or dispute: no credits changed, operator decision needed`, and no credit or plan changes until you act in Stripe.
+Policy and the decision still open: owner-actions/WP-10.md, step 3. The code only alerts. `charge.refunded` and `charge.dispute.created` end as `alert_only`, log `stripe money movement: no credits changed, operator decision needed` and raise the `stripe_money_movement` signal; no credit or plan changes until you act. A credit correction is `scripts/ops-billing.ts adjust` or `refund` (section 7).
 
 ## 6. Webhook
 
-The endpoint, the nine events, secret rolls and the `anomaly_*` 500s are in owner-actions/WP-10.md, steps 1, 5 and 6. Stripe Tax adds no event types.
+The endpoint, the nine events and secret rolls are in owner-actions/WP-10.md, steps 1 and 5. Stripe Tax adds no event types.
+
+Since WP-32 the route stores and answers: a 2xx means the event is a `stripe_events` row in `received`, never that it was applied, and an `anomaly_*` no longer answers 500. The `stripe` queue applies it, one customer at a time. Where an event is: `select id, type, status, outcome, last_error, attempts, redrives from stripe_events where id = '<evt_...>'`.
+
+## 7. When billing pages (R-BILL)
+
+| Signal | Means | Do |
+|---|---|---|
+| `stripe_event_stuck` (A-BILL-2) | An event stored over 30 minutes ago is not applied | `last_error` of the oldest `received` rows. `stripe_auth`: the key (R-BILL-3, runbook/keys.md). `stripe_5xx`, `stripe_connection`: Stripe; it heals itself, up to 6 reopenings 12 hours apart. `db_*`: the database. Nothing in `last_error`: the worker or Redis is down (`outbox_lag`) |
+| `stripe_signature_rejected` (A-BILL-3) | Webhooks fail their signature | A rolled secret: `STRIPE_WEBHOOK_SECRET` and `_PREVIOUS` on sd1-api. Stripe redelivers for 3 days, and the daily reconcile grants what was lost |
+| `stripe_event_dead` (A-BILL-4) | An event no retry can fix | `npx tsx scripts/ops-billing.ts dead`. `anomaly_unmapped_price`: add the price to `STRIPE_PRICES`, redeploy, then `redrive`. `anomaly_no_user`: find the account in Stripe (the customer's metadata), link it or refund in Stripe, then `redrive`. `customer_conflict`: two accounts claim one customer; decide which, fix `subscriptions.stripe_customer_id`, `redrive`. `payload_invalid`: a shape the extract does not know; leave it dead and let the reconcile heal the effect, or fix `buildEventExtract` and `redrive`. `retries_exhausted`: as `stripe_event_stuck`, then `redrive` |
+| `stripe_money_movement` (A-BILL-4) | A refund or dispute | Section 5 |
+| `billing_reconcile_findings`, `billing_grants_missing` (A-BILL-6) | The daily reconcile healed a lost webhook or found drift | Its log line `billing reconcile` has the counts. Missing grants were already granted; over 5 means webhook delivery is broken (A-BILL-3's checks). `doubleLive`: a double checkout; cancel one in Stripe and `adjust` back a duplicate grant. `priceMismatch`: a Stripe price differs from `shared/src/plans.ts`; fix one of them. `balanceDrift`: see LEDGER-2 |
+| `invariant_breach` with LEDGER-2 | A cached balance left its recount; approvals are frozen | Find why first (a write as the migrator, a restore without the cache). Then `DATABASE_URL=<migrator> npx tsx scripts/ops-billing.ts repair-balance --actor <you> --user <id>` per user, and lift `approvals_frozen` in /api/admin/flags |
+| `invariant_breach` with BILL-7 | No reconcile success in 26 hours | The worker's `billing-reconcile` schedule and its failed jobs; a Stripe outage fails the run and tomorrow covers the same 7 days |
+
+Every `ops-billing.ts` action writes an `ops_audit` row, and `adjust` also reaches Sentry through ledger-watch.

@@ -17,6 +17,7 @@ export const QUEUES = {
   maintenance: "maintenance",
   notify: "notify",
   render: "render",
+  stripe: "stripe",
 } as const;
 
 export interface JobData {
@@ -39,6 +40,8 @@ export interface JobData {
   notify: { kind: (typeof EMAIL_KINDS)[number]; entityId: string; userId: string | null };
   /** Ids only: the worker reads the document itself, so no resume text sits in Redis (jobs/render.ts). */
   render: { kind: "snapshot"; applicationId: string; attemptNo: number; attemptId?: string; worker?: string } | { kind: "export"; userId: string; resumeId: string };
+  /** One stored Stripe event (services/billing-events.ts); everything else is read from its row. */
+  stripe: { eventId: string };
 }
 
 /** What a render job answers. `url` is a short presigned GET for a cloud send; null when there is nothing to attach or no one to hand it to. */
@@ -54,7 +57,7 @@ export type QueueName = keyof JobData;
  * The queues the outbox feeds (durable/outbox.ts). emitOutbox takes only these, and resume needs a refusal check for each,
  * so adding one here is what puts a queue on the seam, and the compiler asks for the rest.
  */
-export const OUTBOX_QUEUES = ["cloud-apply"] as const;
+export const OUTBOX_QUEUES = ["cloud-apply", "stripe"] as const;
 export type OutboxQueue = (typeof OUTBOX_QUEUES)[number];
 
 /**
@@ -116,6 +119,8 @@ export const QUEUE_CONFIG: Record<QueueName, QueueConfig> = {
   // killed at 10 s and an R2 call ends at 30 s. Quick tries fit three times in the applier's 90 s wait; a slow path does not,
   // and the applier's wait ends first (RENDER_WAIT_MS in jobs/cloud-apply.ts).
   render: { concurrency: 2, attempts: 3, backoffMs: 2_000, lockDurationMs: 60_000 },
+  // A run is a 10 s refetch at most, plus the wait on one customer's earlier event. 3 s doubling: 8 tries over about 6 minutes (billing-17).
+  stripe: { concurrency: 4, attempts: 8, backoffMs: 3_000, lockDurationMs: 60_000 },
 };
 
 /** Every queue the worker consumes, with its concurrency: the table's, or QUEUE_CONCURRENCY's. Refuses unknown names. */
