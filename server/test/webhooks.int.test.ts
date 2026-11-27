@@ -65,7 +65,7 @@ describe.skipIf(!hasTestDb)("POST /api/webhooks/stripe against Postgres", () => 
     customer: opts.customer ?? "cus_1",
     discounts: [],
     lines: {
-      data: [{ pricing: { price_details: { price: opts.price ?? "price_pro_week" } }, parent: { subscription_item_details: { proration: false } }, period: { start: 1_800_000_000, end: 1_802_592_000 } }],
+      data: [{ pricing: { price_details: { price: opts.price ?? "price_pro_week" } }, parent: { subscription_item_details: { proration: false } }, period: { start: 1_800_000_000, end: 1_802_592_000 }, amount: opts.amountPaid ?? 1200 }],
       has_more: opts.hasMore ?? false,
     },
     parent: { subscription_details: { metadata: opts.userId ? { userId: opts.userId } : {}, subscription: "sub_1" } },
@@ -289,8 +289,49 @@ describe.skipIf(!hasTestDb)("POST /api/webhooks/stripe against Postgres", () => 
     expect(await eventRow("evt_paid_2")).toMatchObject({ status: "processed", outcome: "grant_duplicate", userId });
   });
 
+  it.each([
+    ["offer_email", null],
+    ["customer", "kept"],
+  ] as const)("billing resumed from a %s pause: applications paused by an offer are %s (09-billing-events 3.3)", async (source, expected) => {
+    const { eq } = await import("drizzle-orm");
+    const userId = await seedUser(db);
+    const pausedAt = new Date("2026-11-01T00:00:00Z");
+    await db.insert(schema.profiles).values({ userId, forwardingAddress: `fwd-${userId}@in.test`, applicationsPausedAt: pausedAt });
+    await db
+      .update(schema.subscriptions)
+      .set({ plan: "pro", interval: "week", status: "active", stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_1", collectionPaused: true, pauseSource: source })
+      .where(eq(schema.subscriptions.userId, userId));
+    // The portal resumed it: Stripe's subscription has no pause_collection any more.
+    vi.spyOn(stripeClient.subscriptions, "retrieve").mockResolvedValue(subscription("sub_1", "active", userId) as never);
+    expect((await send(`evt_resume_${source}`, "customer.subscription.updated", { id: "sub_1", customer: "cus_1" })).status).toBe(200);
+    const [profile] = await db.select().from(schema.profiles).where(eq(schema.profiles.userId, userId));
+    expect(profile!.applicationsPausedAt).toEqual(expected === null ? null : pausedAt);
+    const [row] = await db.select().from(schema.subscriptions).where(eq(schema.subscriptions.userId, userId));
+    expect(row).toMatchObject({ collectionPaused: false, pauseSource: null });
+  });
+
+  it("a downgrade renewal whose proration credit takes the total below 0 still grants the new plan (R2 finding 3)", async () => {
+    const userId = await seedUser(db);
+    const downgrade = {
+      ...paidInvoice("in_down", { userId, price: "price_starter_month", amountPaid: 0 }),
+      total: -4100,
+      lines: {
+        data: [
+          { pricing: { price_details: { price: "price_pro_week" } }, parent: { subscription_item_details: { proration: true } }, amount: -6000 },
+          { pricing: { price_details: { price: "price_starter_month" } }, parent: { subscription_item_details: { proration: false } }, period: { start: 1_800_000_000, end: 1_802_592_000 }, amount: 1900 },
+        ],
+        has_more: false,
+      },
+    };
+    expect((await send("evt_down", "invoice.paid", downgrade)).status).toBe(200);
+    expect((await grantsFor("in_down")).map((r) => [r.reason, r.delta])).toEqual([["plan_grant", 1000]]);
+    expect(await eventRow("evt_down")).toMatchObject({ status: "processed", outcome: "grant_applied" });
+  });
+
   it("a grant over the cap writes one expiry under the same invoice, and a replay writes nothing more", async () => {
-    const userId = await seedUser(db, { credits: 3000 });
+    // An adjustment, not seedUser's credits: those are a free_grant row, and the free grant never expires.
+    const userId = await seedUser(db);
+    await db.insert(schema.creditLedger).values({ userId, delta: 3000, reason: "admin_adjustment", note: "fixture balance" });
     await send("evt_cap", "invoice.paid", paidInvoice("in_cap", { userId, price: "price_starter_month" }));
     const rows = await grantsFor("in_cap");
     expect(rows.map((r) => [r.reason, r.delta, r.note]).sort()).toEqual([
@@ -369,7 +410,7 @@ describe.skipIf(!hasTestDb)("POST /api/webhooks/stripe against Postgres", () => 
 
   it("decides a truncated invoice from all of its lines", async () => {
     const userId = await seedUser(db);
-    const line = { pricing: { price_details: { price: "price_starter_month" } }, parent: { subscription_item_details: { proration: false } } };
+    const line = { pricing: { price_details: { price: "price_starter_month" } }, parent: { subscription_item_details: { proration: false } }, amount: 1900 };
     const list = vi.spyOn(stripeClient.invoices, "listLineItems").mockResolvedValue({ data: [line], has_more: false } as never);
     const invoice = { ...paidInvoice("in_long", { userId, hasMore: true }), lines: { data: [], has_more: true } };
     expect((await send("evt_long", "invoice.paid", invoice)).status).toBe(200);

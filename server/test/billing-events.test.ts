@@ -42,13 +42,15 @@ function sub(status: string, opts: { price?: string; userId?: string; id?: strin
   } as unknown as Stripe.Subscription;
 }
 
-type InvoiceOpts = { id?: string; amountPaid?: number; total?: number; paidAt?: number | null; userId?: string | null; hasMore?: boolean; subscription?: string | null };
+type InvoiceOpts = { id?: string; amountPaid?: number; total?: number; lineAmount?: number; paidAt?: number | null; userId?: string | null; hasMore?: boolean; subscription?: string | null };
 const PAID_AT = 1_800_000_000;
 const PERIOD_END = PAID_AT + 30 * 86_400;
-const line = (price: string, proration = false, end = PERIOD_END) => ({
+const line = (price: string, proration = false, end = PERIOD_END, amount = 1900, discount = 0) => ({
   pricing: { price_details: { price } },
   parent: { subscription_item_details: { proration } },
   period: { start: end - 30 * 86_400, end },
+  amount,
+  discount_amounts: discount ? [{ amount: discount, discount: "di_1" }] : [],
 });
 
 function invoice(prices: string[], opts: InvoiceOpts = {}): Stripe.Invoice {
@@ -60,7 +62,7 @@ function invoice(prices: string[], opts: InvoiceOpts = {}): Stripe.Invoice {
     status_transitions: { paid_at: opts.paidAt === undefined ? PAID_AT : opts.paidAt },
     customer: "cus_1",
     discounts: [],
-    lines: { data: prices.map((price) => line(price)), has_more: opts.hasMore ?? false },
+    lines: { data: prices.map((price) => line(price, false, PERIOD_END, opts.lineAmount ?? opts.total ?? opts.amountPaid ?? 1900)), has_more: opts.hasMore ?? false },
     parent: { subscription_details: { metadata, subscription: opts.subscription === undefined ? "sub_1" : opts.subscription } },
   } as unknown as Stripe.Invoice;
 }
@@ -139,7 +141,7 @@ describe("invoiceGrant", () => {
   });
 
   it("decides from the full line list when the event's inline lines were truncated", () => {
-    expect(invoiceGrant(inv([], { hasMore: true }), [{ priceId: "price_pro_week", proration: false, periodEnd: PERIOD_END }])).toEqual({
+    expect(invoiceGrant(inv([], { hasMore: true }), [{ priceId: "price_pro_week", proration: false, periodEnd: PERIOD_END, net: 1200 }])).toEqual({
       delta: creditsPerInvoice("pro", "week"),
       stripeInvoiceId: "in_1",
       plan: "pro",
@@ -158,9 +160,33 @@ describe("invoiceGrant", () => {
     expect(invoiceGrant(inv(["price_starter_month"], { amountPaid: 0, total: 1900 }))).toEqual(starter);
   });
 
-  it("grants nothing when the total is 0 or below, whatever was charged", () => {
-    expect(invoiceGrant(inv(["price_starter_month"], { amountPaid: 0, total: 0 }))).toEqual({ outcome: "zero_amount" });
-    expect(invoiceGrant(inv(["price_starter_month"], { amountPaid: 0, total: -500 }))).toEqual({ outcome: "zero_amount" });
+  it("a Max to Starter downgrade mid-cycle: the renewal line is charged though prorations take the total below 0", () => {
+    const extract = invoiceExtract({
+      ...invoice([], { amountPaid: 0, total: -2600 }),
+      lines: {
+        data: [line("price_max_month", true, PERIOD_END, -6000), line("price_starter_month", true, PERIOD_END, 1500), line("price_starter_month", false, PERIOD_END, 1900)],
+        has_more: false,
+      },
+    } as unknown as Stripe.Invoice);
+    expect(extract.lines.map((l) => l.net)).toEqual([-6000, 1500, 1900]);
+    expect(invoiceGrant(extract)).toEqual(starter);
+  });
+
+  it("a 100% promotion code discounts the line to 0: no grant, unless the coupon is allowlisted", () => {
+    const extract = invoiceExtract({ ...invoice([], { amountPaid: 0, total: 0 }), lines: { data: [line("price_starter_month", false, PERIOD_END, 1900, 1900)], has_more: false } } as unknown as Stripe.Invoice);
+    expect(extract.lines[0]!.net).toBe(0);
+    expect(invoiceGrant(extract)).toEqual({ outcome: "zero_amount" });
+    expect(invoiceGrant(extract, extract.lines, ["OTHER100"])).toEqual({ outcome: "zero_amount" });
+    expect(invoiceGrant(extract, extract.lines, ["BETA100"])).toEqual(starter);
+  });
+
+  it("a trial line of 0 grants nothing, whatever else the invoice holds", () => {
+    expect(invoiceGrant(inv(["price_starter_month"], { amountPaid: 0, total: 500, lineAmount: 0 }))).toEqual({ outcome: "zero_amount" });
+  });
+
+  it("a $0 invoice for a price we do not know needs no operator; a charged one does", () => {
+    expect(invoiceGrant(inv(["price_retired"], { amountPaid: 0, total: 0 }))).toEqual({ outcome: "zero_amount" });
+    expect(() => invoiceGrant(inv(["price_retired"], { amountPaid: 0, total: 1900 }))).toThrow(/anomaly_unmapped_price/);
   });
 
   it("takes paidAt from status_transitions.paid_at and periodEnd from the line that decides, not a proration line", () => {
@@ -174,9 +200,19 @@ describe("invoiceGrant", () => {
   });
 
   it("null when Stripe gave no paid moment or no period", () => {
-    const extract = invoiceExtract({ ...invoice([], { paidAt: null }), lines: { data: [{ pricing: { price_details: { price: "price_pro_week" } } }], has_more: false } } as unknown as Stripe.Invoice);
+    const extract = invoiceExtract({ ...invoice([], { paidAt: null }), lines: { data: [{ pricing: { price_details: { price: "price_pro_week" } }, amount: 1200 }], has_more: false } } as unknown as Stripe.Invoice);
     expect(extract.paidAt).toBeNull();
     expect(invoiceGrant(extract)).toMatchObject({ periodEnd: null, paidAt: null });
+  });
+
+  it("without paid_at the invoice's creation is the moment, never the clock", () => {
+    expect(invoiceExtract({ ...invoice(["price_pro_week"], { paidAt: null }), created: PAID_AT - 3600 } as unknown as Stripe.Invoice).paidAt).toBe(PAID_AT - 3600);
+  });
+
+  it("a line without an amount counts as 0, never as paid", () => {
+    const extract = invoiceExtract({ ...invoice([]), lines: { data: [{ ...line("price_starter_month"), amount: undefined }], has_more: false } } as unknown as Stripe.Invoice);
+    expect(extract.lines[0]!.net).toBe(0);
+    expect(invoiceGrant(extract)).toEqual({ outcome: "zero_amount" });
   });
 });
 
@@ -243,6 +279,15 @@ describe("rolloverExpiry (billing-37, T-BE-1, T-8)", () => {
   ])("balance %i, in flight %i, grant %i expires %i", (balance, inFlight, grant, expiry) => {
     expect(rolloverExpiry(balance, inFlight, grant)).toBe(expiry);
   });
+
+  it.each([
+    [2025, 0, 1000, 25, 0], // two unused Starter months and the free 25: nothing expires
+    [2026, 0, 1000, 25, 1], // one over
+    [3525, 20, 1000, 25, 1480], // the worked example, with the free grant on top
+    [2025, 0, 1000, 0, 25], // a user who never had the free grant
+  ])("balance %i, in flight %i, cap %i, free grant %i expires %i: the free grant never expires", (balance, inFlight, cap, free, expiry) => {
+    expect(rolloverExpiry(balance, inFlight, cap, free)).toBe(expiry);
+  });
 });
 
 describe("buildEventExtract (T-BE-5): the stored form holds ids and integers, never what a raw event carries", () => {
@@ -276,6 +321,7 @@ describe("buildEventExtract (T-BE-5): the stored form holds ids and integers, ne
       id: `in_${"y".repeat(61)}`,
       userId: "u".repeat(64),
       total: -2_000_000_000,
+      lineAmount: -2_000_000_000,
       paidAt: 9_999_999_999,
     });
     const { payload } = buildEventExtract(event("invoice.paid", long));
@@ -400,6 +446,13 @@ describe("processStripeEvent", () => {
   it("reports what the save's guard said", async () => {
     const d = deps({ saveSubscription: vi.fn(async () => "stale" as const) });
     await expect(processStripeEvent(stored("customer.subscription.updated", sub("active")), { subscription: sub("active") }, d)).resolves.toMatchObject({ status: "ignored", outcome: "subscription_stale" });
+  });
+
+  it("a grant's moment falls back to the event's creation when the invoice gave none", async () => {
+    const d = deps();
+    const bare = { ...invoice(["price_starter_month"], { paidAt: null }) };
+    await processStripeEvent(stored("invoice.paid", bare), {}, d);
+    expect(vi.mocked(d.grantCredits).mock.calls[0]?.[0].paidAt).toEqual(new Date(1_800_000_000 * 1000));
   });
 
   it("rejects when a handler fails", async () => {
@@ -596,6 +649,7 @@ describe("invoiceGrant with plan changes", () => {
   const line = (price: string, proration: boolean) => ({
     pricing: { price_details: { price } },
     parent: { subscription_item_details: { proration } },
+    amount: proration ? -900 : 1200,
   });
   const inv2 = (id: string, lines: unknown[], amountPaid: number) =>
     invoiceExtract({ id, amount_paid: amountPaid, total: amountPaid, lines: { data: lines, has_more: false }, parent: { subscription_details: { metadata: { userId: "u1" } } } } as unknown as Stripe.Invoice);

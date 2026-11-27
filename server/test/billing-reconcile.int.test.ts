@@ -47,7 +47,7 @@ describe.skipIf(!hasTestDb)("the billing reconcile", () => {
       status_transitions: { paid_at: 1_800_000_000 },
       customer,
       discounts: [],
-      lines: { data: [{ pricing: { price_details: { price } }, parent: { subscription_item_details: { proration: false } } }], has_more: false },
+      lines: { data: [{ pricing: { price_details: { price } }, parent: { subscription_item_details: { proration: false } }, amount }], has_more: false },
       parent: { subscription_details: { metadata: userId ? { userId } : {}, subscription: "sub_x" } },
     }) as unknown as Stripe.Invoice;
 
@@ -64,7 +64,8 @@ describe.skipIf(!hasTestDb)("the billing reconcile", () => {
       allSubscriptions: async () => opts.subs ?? [],
       price: opts.price ?? goodPrice,
       fetch: {
-        retrieveSubscription: async (id: string) => byId.get(id)!,
+        // As Stripe answers for a subscription it does not have.
+        retrieveSubscription: async (id: string) => byId.get(id) ?? Promise.reject(Object.assign(new Error("No such subscription"), { type: "StripeInvalidRequestError", code: "resource_missing" })),
         listInvoiceLines: async () => [],
         invoiceCouponIds: async () => [],
       },
@@ -89,7 +90,7 @@ describe.skipIf(!hasTestDb)("the billing reconcile", () => {
 
   it("a paid invoice no event delivered gets its grant and its rollover, once, and a $0 one gets none", async () => {
     const userId = await linked("cus_lost");
-    await tdb.insert(schema.creditLedger).values({ userId, delta: 2500, reason: "free_grant" });
+    await tdb.insert(schema.creditLedger).values({ userId, delta: 2500, reason: "admin_adjustment", note: "fixture balance" });
     const a = api({ invoices: [paid("in_lost", "cus_lost", null), paid("in_zero", "cus_lost", null, 0)] });
     expect(await processBillingReconcile(a)).toMatchObject({ invoicesListed: 2, missingGrants: 1 });
     expect((await grants(userId)).filter((g) => g.stripeInvoiceId).map((g) => [g.reason, g.delta]).sort()).toEqual([["expiry", -1500], ["plan_grant", 1000]]);
@@ -122,6 +123,47 @@ describe.skipIf(!hasTestDb)("the billing reconcile", () => {
     expect(report).toMatchObject({ subscriptionDrift: 1, synced: 1 });
     expect(await row(userId)).toMatchObject({ status: "past_due", cancelAtPeriodEnd: true, stripeEventCreated: guard });
     expect((await row(userId)).pastDueSince).toBeInstanceOf(Date);
+  });
+
+  it("a tracked subscription missing from the list is asked for, not written Free: still live at Stripe, it stays (R2 finding 2)", async () => {
+    const userId = await linked("cus_late", { plan: "pro", interval: "week", status: "active", stripeSubscriptionId: "sub_late" });
+    let asked = 0;
+    const a = api();
+    a.fetch.retrieveSubscription = async () => {
+      asked++;
+      return sub("sub_late", "cus_late", userId);
+    };
+    const report = await processBillingReconcile(a);
+    expect(asked).toBe(1);
+    expect(await row(userId)).toMatchObject({ plan: "pro", status: "active", stripeSubscriptionId: "sub_late" });
+    expect(report).toMatchObject({ subscriptionDrift: 1, synced: 1, anomalies: 0 });
+  });
+
+  it("only Stripe's resource_missing ends a tracked subscription; another Stripe error writes nothing and fails the run", async () => {
+    const gone = await linked("cus_gone", { plan: "pro", interval: "week", status: "active", stripeSubscriptionId: "sub_gone" });
+    const a = api();
+    a.fetch.retrieveSubscription = async () => Promise.reject(Object.assign(new Error("No such subscription"), { type: "StripeInvalidRequestError", code: "resource_missing" }));
+    await processBillingReconcile(a);
+    expect(await row(gone)).toMatchObject({ plan: "free", status: "canceled", stripeSubscriptionId: "sub_gone" });
+
+    const blip = await linked("cus_blip", { plan: "pro", interval: "week", status: "active", stripeSubscriptionId: "sub_blip" });
+    const b = api();
+    b.fetch.retrieveSubscription = async () => Promise.reject(Object.assign(new Error("timeout"), { type: "StripeConnectionError" }));
+    await expect(processBillingReconcile(b)).rejects.toThrow(/timeout/);
+    expect(await row(blip)).toMatchObject({ plan: "pro", status: "active" });
+  });
+
+  it("a renewal paid three weeks after it was created is still in the window (R2 finding 6)", async () => {
+    const asked: Date[] = [];
+    const a = {
+      ...api(),
+      paidInvoicesSince: async (since: Date) => {
+        asked.push(since);
+        return [];
+      },
+    };
+    await processBillingReconcile(a);
+    expect(Date.now() - asked[0]!.getTime()).toBeGreaterThanOrEqual(30 * 24 * 3600_000 - 60_000);
   });
 
   it("a live subscription whose events were lost is picked up, and Stripe's only one replaces a dead tracked one", async () => {
