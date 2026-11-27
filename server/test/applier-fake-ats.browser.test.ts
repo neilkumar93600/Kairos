@@ -173,14 +173,14 @@ describe.skipIf(!hasChromium)("cloud applier on the fake-ATS forms (Chromium)", 
       expect(outcome).toMatchObject({ submitted: false, code: "unconfirmed" });
     });
 
-    it("a filler report that says the page matched before its click needs the URL rule (R3b matchedBefore)", async () => {
+    it("a filler's 'submitted' counts only at a confirmation address, whatever filler wrote it (R3c)", async () => {
       const apply = "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=9";
-      const says = `window.__kairosFill = async (p) => ({ applicationId: p.applicationId, outcome: "submitted", matchedBefore: true, confirmationText: "Thank you for applying!", filledFields: [], submittedAt: new Date().toISOString() });`;
-      // The form page itself does not match: only the filler's matchedBefore says the page matched before its click.
+      const says = (move: string) =>
+        `window.__kairosFill = async (p) => { ${move} return { applicationId: p.applicationId, outcome: "submitted", confirmationText: "Thank you for applying!", filledFields: [], submittedAt: new Date().toISOString() }; };`;
       const page = "<!doctype html><title>Apply</title>";
-      expect(await run(apply, browser({ [apply]: { body: page } }), { fillerSource: says })).toMatchObject({ submitted: false, code: "unconfirmed", detail: "preconfirmed_form" });
-      const plain = says.replace("matchedBefore: true, ", "");
-      expect((await run(apply, browser({ [apply]: { body: "<!doctype html><title>Apply</title>" } }), { fillerSource: plain })).submitted).toBe(true);
+      expect(await run(apply, browser({ [apply]: { body: page } }), { fillerSource: says("") })).toMatchObject({ submitted: false, code: "unconfirmed", detail: "no_confirmation_address" });
+      const moved = await run(apply, browser({ [apply]: { body: page } }), { fillerSource: says(`history.pushState(null, "", "/embed/job_app/confirmation?for=acme&token=9");`) });
+      expect(moved.submitted).toBe(true);
     });
 
     it("a landed page that still has a form control (a type-less button) is not a confirmation (R3b)", async () => {
@@ -234,13 +234,18 @@ describe.skipIf(!hasChromium)("cloud applier on the fake-ATS forms (Chromium)", 
   }, 30_000);
 
   describe.each(["greenhouse", "lever", "ashby"] as const)("%s", (ats) => {
-    it("submits an approved application: custom question, stored sensitive answers only, resume attached, confirmation captured", async () => {
+    it("submits an approved application: custom question, stored sensitive answers only, resume attached; only Lever's /thanks confirms", async () => {
       const outcome = await run(formUrl(ats, "fit"), browser(), { answers: answersFor(ats), resumePdf: PDF });
-      expect(outcome.submitted).toBe(true);
-      if (!outcome.submitted) return;
-      expect(outcome.report.applicationId).toBe(APP_ID);
-      expect(outcome.report.confirmationText).toMatch(/thank you/i);
-      expect(outcome.report.filledFields.map((f) => f.fieldKey)).toContain("resume");
+      if (ats === "lever") {
+        expect(outcome.submitted).toBe(true);
+        if (!outcome.submitted) return;
+        expect(outcome.report.applicationId).toBe(APP_ID);
+        expect(outcome.report.confirmationText).toMatch(/thank you/i);
+        expect(outcome.report.filledFields.map((f) => f.fieldKey)).toContain("resume");
+      } else {
+        // The fake Greenhouse and Ashby forms confirm in place at the apply address: needs_check, never a charge (R3c, CEO 2026-11-27).
+        expect(outcome).toMatchObject({ submitted: false, code: "unconfirmed" });
+      }
 
       expect(fake.submissions).toHaveLength(1);
       const sent = fake.submissions[0]!;

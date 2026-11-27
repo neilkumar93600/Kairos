@@ -504,15 +504,26 @@ describe.skipIf(!hasTestDb)("WP-29 settlement against Postgres", () => {
       expect((await appOf(withdrawn)).status).toBe("withdrawn");
     });
 
-    it("failed on approved: 200, extension_reported, the client's reason, no charge, the credit freed", async () => {
+    it("failed on approved before the click: 200, extension_reported, the client's reason, no charge, the credit freed", async () => {
+      const u = await user();
+      const id = await approved(u);
+      const reason = "Required fields left empty: 2. Review the form in the tab.";
+      const res = await report(u, body(id, "failed", { failureReason: reason }));
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ status: "failed" });
+      expect(await appOf(id)).toMatchObject({ status: "failed", failureCode: "extension_reported", failureReason: reason });
+      expect(await charges(id)).toEqual([]);
+      expect(await attemptsOf(id)).toMatchObject([{ state: "failed", failureCode: "extension_reported" }]);
+    });
+
+    it("failed with any other reason (R3c deny-list): unconfirmed and needs_check, since the click may have sent it; no charge", async () => {
       const u = await user();
       const id = await approved(u);
       const res = await report(u, body(id, "failed", { failureReason: "Tab closed" }));
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ status: "failed" });
-      expect(await appOf(id)).toMatchObject({ status: "failed", failureCode: "extension_reported", failureReason: "Tab closed" });
+      expect(await appOf(id)).toMatchObject({ status: "failed", failureCode: "unconfirmed" });
       expect(await charges(id)).toEqual([]);
-      expect(await attemptsOf(id)).toMatchObject([{ state: "failed", failureCode: "extension_reported" }]);
+      expect(await attemptsOf(id)).toMatchObject([{ state: "needs_check", failureCode: "unconfirmed" }]);
     });
 
     it("failed while another session holds a live lease: 409 and nothing moves; from the holder it lands", async () => {
@@ -725,7 +736,8 @@ describe.skipIf(!hasTestDb)("WP-29 settlement against Postgres", () => {
       const id = await draft(u);
       await approveWithSkips(db, u, [id], "extension");
       const before = (await appOf(id)).resumeSnapshot;
-      await recordExtensionReport(db, u, "s1", { applicationId: id, outcome: "failed", filledFields: [], submittedAt: new Date().toISOString() });
+      // A reason from before the click, so the resend needs no acknowledgement (R3c deny-list).
+      await recordExtensionReport(db, u, "s1", { applicationId: id, outcome: "failed", failureReason: "Submit button not found", filledFields: [], submittedAt: new Date().toISOString() });
       await resendApplication(db, u, id, "extension", false);
       expect((await appOf(id)).resumeSnapshot).toEqual(before);
     });

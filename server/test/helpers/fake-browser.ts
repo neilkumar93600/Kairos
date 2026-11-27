@@ -8,9 +8,11 @@ import { vi } from "vitest";
  */
 export function fakeBrowser(opts: { frames?: string[]; fill?: () => Promise<unknown>; goto?: () => Promise<void>; resumeInput?: { uploads: unknown[]; required?: boolean; fails?: boolean } } = {}) {
   const fill = vi.fn(opts.fill ?? (async () => ({})));
+  // A "submitted" fill moves the page to the board's confirmation address, as Greenhouse does: only that confirms (R3c).
+  let url = "https://job-boards.greenhouse.io/x/jobs/1";
   const page = {
     on: () => {},
-    url: () => "https://job-boards.greenhouse.io/x/jobs/1",
+    url: () => url,
     title: async () => "Apply",
     // The fake ATS's resume input, when the test gives it one: setInputFiles is recorded there.
     $: async (selector: string) =>
@@ -30,7 +32,13 @@ export function fakeBrowser(opts: { frames?: string[]; fill?: () => Promise<unkn
     waitForLoadState: async () => {},
     frames: () => (opts.frames ?? []).map((u) => ({ url: () => u, frameElement: async () => ({ evaluate: async () => true }) })),
     // The filler bundle (a string), the filler call (with its payload), or the read of a page a submit landed on: no confirmation.
-    evaluate: async (fn: unknown, arg?: unknown) => (typeof fn === "string" ? undefined : arg === undefined ? { text: "", ready: true } : fill()),
+    evaluate: async (fn: unknown, arg?: unknown) => {
+      if (typeof fn === "string") return undefined;
+      if (arg === undefined) return { text: "", ready: true };
+      const report = await fill();
+      if ((report as { outcome?: string } | null)?.outcome === "submitted") url = "https://job-boards.greenhouse.io/x/jobs/1/confirmation";
+      return report;
+    },
   };
   // The main-frame hop guard's CDP session (jobs/cloud-apply.ts guardTopLevelHops): no hops happen here.
   const cdp = { on: () => {}, send: async () => ({ frameTree: { frame: { id: "main" } } }) };
