@@ -184,7 +184,7 @@ describe.skipIf(!hasChromium)("fillInBrowser in Chromium", () => {
     it("an in-place confirmation, thanks text with no confirmation address, is unconfirmed whatever the filler says (R3c)", async () => {
       const outcome = await runReal(`<!doctype html><form onsubmit="event.preventDefault(); document.body.textContent = 'Thank you for applying!'">${fields}</form>`);
       expect(outcome).toMatchObject({ submitted: false, code: "unconfirmed" });
-    });
+    }, 60_000); // a URL-only filler waits its full 20 s before it says "No confirmation"
 
     it("fills and submits a single-page form that moves to its confirmation address", async () => {
       const outcome = await runReal(`<!doctype html><form onsubmit="event.preventDefault(); history.pushState(null, '', '/embed/job_app/confirmation?for=acme&token=1'); document.body.textContent = 'Thank you for applying!'">${fields}</form>`);
