@@ -14,7 +14,7 @@ const TITLES: Record<Notification["kind"], string> = {
   autopilot_sent: "Sent by Autopilot",
   autopilot_paused: "Autopilot paused itself",
   resend_available: "A send failed and can be resent",
-  offer_pause_notice: "Offer detected: billing will pause",
+  offer_pause_notice: "Offer detected: new applications will pause",
   reply_important: "Important reply",
   forwarding_code: "Your Gmail forwarding code arrived",
 };

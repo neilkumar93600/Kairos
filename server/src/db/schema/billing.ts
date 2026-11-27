@@ -3,6 +3,7 @@ import { boolean, check, index, integer, jsonb, pgTable, smallint, text, timesta
 import { user } from "./auth";
 import { applications } from "./applications";
 import { billingInterval, creditReason, planId } from "./enums";
+import { inboundEmails } from "./messaging";
 
 /** Every credit in or out. Balance = SUM(delta). One debit per application, enforced by the partial index. */
 export const creditLedger = pgTable(
@@ -138,5 +139,56 @@ export const stripeEvents = pgTable(
     ),
     check("stripe_events_last_error_ck", sql`last_error IS NULL OR char_length(last_error) <= 120`),
     check("stripe_events_payload_ck", sql`payload IS NULL OR octet_length(payload::text) <= 4096`),
+  ],
+);
+
+/** The undo window of an offer pause (FR-48, D-26): the candidate's apply_after and its undo link's expiry. */
+export const OFFER_PAUSE_UNDO_HOURS = 48;
+
+/**
+ * Offer-pause candidates (WP-33, 02-database 7.4.6): a rule-tagged offer from a verified sender of a submitted application
+ * waits 48 hours for an undo, then jobs/offer-pause.ts pauses new applications (and Stripe collection, behind the
+ * offer_pause_stripe flag). One candidate per email, one pending per user. gen_random_uuid, not uuidv7 (R-6: Postgres 17).
+ * Skip reasons: already_paused (applications were paused already) and no_longer_offer (the email was reclassified).
+ */
+export const offerPauseCandidates = pgTable(
+  "offer_pause_candidates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    inboundEmailId: uuid("inbound_email_id")
+      .notNull()
+      .references(() => inboundEmails.id, { onDelete: "cascade" }),
+    applicationId: uuid("application_id").references(() => applications.id, { onDelete: "set null" }),
+    state: text("state").notNull().default("pending"),
+    skipReason: text("skip_reason"),
+    applyAfter: timestamp("apply_after", { withTimezone: true }).notNull(),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+    attempts: smallint("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("offer_pause_candidates_email_uq").on(t.inboundEmailId),
+    uniqueIndex("offer_pause_one_pending_uq").on(t.userId).where(sql`state = 'pending'`),
+    index("offer_pause_due_idx").on(t.applyAfter).where(sql`state = 'pending'`),
+    index("offer_pause_user_idx").on(t.userId, t.createdAt.desc()),
+    index("offer_pause_application_idx").on(t.applicationId).where(sql`application_id IS NOT NULL`),
+    check("offer_pause_state_ck", sql`state IN ('pending','applied','cancelled','skipped','failed')`),
+    check("offer_pause_skip_reason_ck", sql`skip_reason IS NULL OR skip_reason IN ('already_paused','no_longer_offer')`),
+    check("offer_pause_window_ck", sql`apply_after > created_at`),
+    check(
+      "offer_pause_consistency_ck",
+      sql`(state = 'pending' AND applied_at IS NULL AND cancelled_at IS NULL AND skip_reason IS NULL)
+        OR (state = 'applied' AND applied_at IS NOT NULL AND cancelled_at IS NULL AND skip_reason IS NULL)
+        OR (state = 'cancelled' AND cancelled_at IS NOT NULL AND applied_at IS NULL AND skip_reason IS NULL)
+        OR (state = 'skipped' AND skip_reason IS NOT NULL AND applied_at IS NULL AND cancelled_at IS NULL)
+        OR (state = 'failed' AND last_error IS NOT NULL AND applied_at IS NULL AND cancelled_at IS NULL)`,
+    ),
+    check("offer_pause_last_error_ck", sql`last_error IS NULL OR char_length(last_error) <= 120`),
   ],
 );

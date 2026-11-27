@@ -9,7 +9,8 @@ import { classifyByRules, RULES_VERSION, stripQuoted } from "../services/email-c
 import { recordEvent } from "../services/events";
 import { readBody, SPAM_RESTRICT } from "../services/inbound";
 import { linkCandidates, pickLink, signedForApplication, type LinkResult } from "../services/linker";
-import { addNotification } from "./notify";
+import { addNotification, enqueueNotify } from "./notify";
+import { createOfferPauseCandidate } from "./offer-pause";
 import type { JobData } from "./queues";
 
 /**
@@ -18,7 +19,10 @@ import type { JobData } from "./queues";
  * the row is still unclassified (classified_at IS NULL), and with it the reply event, the forward-only stage, the
  * reply_important notification and the forwarding activation. A second run, a redelivery or a racing worker finds the
  * row classified and writes nothing, so a reply yields one event (dedupe key reply:<id> backs that up).
- * An offer tag changes no billing state (CISO mustFix 5); the offer-pause candidate flow is not built here.
+ * An offer tag changes no billing state (CISO mustFix 5). It can only start the offer-pause flow (WP-33, jobs/offer-pause.ts):
+ * a candidate that pauses new applications 48 hours later unless the user undoes it, and only for an offer the rule (never
+ * the model) tagged, from a verified sender of a submitted application, not likely spam. A newsletter that says "offer
+ * letter" is tagged offer but has no such sender, so it creates nothing.
  *
  * Mail is unauthenticated: anyone who learns the forwarding address can write anything. So a reply can only set a stage
  * that ends the forward path (rejected is final, offer blocks all but rejected) when its sender is proven: a domain-tier
@@ -123,9 +127,19 @@ export async function processClassifyEmail(job: Pick<Job<JobData["classify-email
     if (IMPORTANT.has(kind) && !restricted) {
       await addNotification(tx, { userId: email.userId, kind: "reply_important", entityId: id, detail: { applicationId: appId, kind } });
     }
-    return { applied: true as const, stageChanged, event };
+    // Offer pause (workers/10-inbound-email B6): the rule's offer, never the model's, from a proven sender, not likely spam.
+    const offer =
+      kind === "offer" && ruleKind === "offer" && authenticated && !restricted
+        ? await createOfferPauseCandidate(tx, { userId: email.userId, inboundEmailId: id, applicationId: appId })
+        : null;
+    if (offer) {
+      await addNotification(tx, { userId: email.userId, kind: "offer_pause_notice", entityId: id, detail: { applicationId: appId, applyAfter: offer.applyAfter.toISOString() } });
+    }
+    return { applied: true as const, stageChanged, event, offerCandidateId: offer?.id ?? null };
   });
 
+  // After the commit; a lost enqueue is redriven by notify-reconcile from the notification row.
+  if (result.applied && "offerCandidateId" in result && result.offerCandidateId) await enqueueNotify("offer_pause_notice", id, email.userId);
   if (result.applied) {
     count("inbound.classified", 1, kind);
     if (!stageAllowed && link.applicationId) count("inbound.stage_held", 1, kind);

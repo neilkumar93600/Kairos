@@ -55,6 +55,10 @@ describe("job schedules", () => {
     expect(byId["invariants-nightly"]).toMatchObject({ queue: "maintenance", repeat: { pattern: "45 3 * * *", tz: "UTC" } });
   });
 
+  it("due offer pauses are applied every 15 minutes (WP-33)", () => {
+    expect(byId["offer-pause-apply"]).toMatchObject({ queue: "maintenance", repeat: { every: 15 * 60_000 } });
+  });
+
   it("an unknown maintenance job fails instead of passing silently", async () => {
     await expect(processMaintenance({ name: "nope" } as never)).rejects.toThrow(/nope/);
   });

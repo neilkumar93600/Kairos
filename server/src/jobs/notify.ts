@@ -12,6 +12,7 @@ import { signal } from "../lib/sentry";
 import { renderForwardingCode } from "../services/forwarding";
 import { renderNewsletterConfirm } from "../services/newsletter";
 import { renderResendAvailable, renderReturnToDraft } from "../services/submission-mail";
+import { renderOfferPauseNotice } from "./offer-pause";
 import { enqueue, redrive, type JobData } from "./queues";
 
 /**
@@ -44,6 +45,7 @@ export const RENDERERS: Partial<Record<EmailKind, Renderer>> = {
   newsletter_confirm: renderNewsletterConfirm,
   resend_available: renderResendAvailable,
   return_to_draft: renderReturnToDraft,
+  offer_pause_notice: renderOfferPauseNotice,
 };
 
 /**

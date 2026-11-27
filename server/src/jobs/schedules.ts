@@ -14,6 +14,7 @@ import { processMailRetention, processNotifyReconcile } from "./notify";
 import { processPartitions } from "./partitions";
 import { processReminders } from "./reminders";
 import { processTrackerProjector } from "./tracker-projector";
+import { processOfferPauseApply } from "./offer-pause";
 import type { QueueName } from "./queues";
 import {
   processAuthSweep,
@@ -100,6 +101,8 @@ export const SCHEDULES: Schedule[] = [
   { queue: "maintenance", id: "contact-reconcile", repeat: { every: 5 * MINUTE }, run: processContactReconcile },
   // Automatic tracker stages from application_events (WP-21, PRD 9.1).
   { queue: "maintenance", id: "tracker-projector", repeat: { every: MINUTE }, run: processTrackerProjector },
+  // Due offer pauses: new applications stop 48 hours after a genuine offer unless undone; Stripe only behind offer_pause_stripe (WP-33).
+  { queue: "maintenance", id: "offer-pause-apply", repeat: { every: 15 * MINUTE }, run: () => processOfferPauseApply() },
 ];
 
 /** The maintenance queue's processor: the scheduler id is the job name. */

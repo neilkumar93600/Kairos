@@ -465,9 +465,19 @@ function eventDeps(tx: Tx): StripeEventDeps {
       if (saved.length === 0) return "stale";
       // An offer pause ends when billing resumes (09-billing-events 3.3): the portal, the user or an operator unpaused it, so
       // applications are sent again. Only a pause the offer flow set; a customer's own pause never paused applications.
-      // TODO(T-006.3): with offer_pause_candidates (0032), clear only a pause at or before its latest applied_at.
-      if (before?.collectionPaused && before.pauseSource === "offer_email" && !values.collectionPaused) {
-        await tx.update(profiles).set({ applicationsPausedAt: null }).where(and(eq(profiles.userId, userId), isNotNull(profiles.applicationsPausedAt)));
+      // Tied to the offer flow's own record (0032): only the pause equal to its latest applied_at (both were the same now()), so
+      // no applied candidate means nothing is cleared. Only into a live paid status: a cancel while paused keeps it paused.
+      if (before?.collectionPaused && before.pauseSource === "offer_email" && !values.collectionPaused && PAID_STATUSES.includes(values.status)) {
+        await tx
+          .update(profiles)
+          .set({ applicationsPausedAt: null })
+          .where(
+            and(
+              eq(profiles.userId, userId),
+              isNotNull(profiles.applicationsPausedAt),
+              sql`${profiles.applicationsPausedAt} = (SELECT max(applied_at) FROM offer_pause_candidates WHERE user_id = ${userId} AND state = 'applied')`,
+            ),
+          );
       }
       return "saved";
     },

@@ -247,6 +247,12 @@ GRANT SELECT, INSERT ON email_suppressions TO kairos_worker;
 -- real mail arrives or it expires. No runtime role but these two, and the readonly role sees nothing of it.
 GRANT SELECT, INSERT, UPDATE ON forwarding_verifications TO kairos_api;
 GRANT SELECT, DELETE ON forwarding_verifications TO kairos_worker;
+-- Offer pause (WP-33, 02-database 4.2). Only the worker creates a candidate (classify-email, the rule path) and applies it;
+-- the api reads one and cancels it (the undo link, POST /api/billing/offer-pause/resume). The api never inserts one, so a
+-- request can never start a pause.
+GRANT SELECT, UPDATE ON offer_pause_candidates TO kairos_api;
+GRANT SELECT, INSERT, UPDATE ON offer_pause_candidates TO kairos_worker;
+GRANT SELECT ON offer_pause_candidates TO kairos_readonly;
 -- The user's undo of a mail-set stage (POST /api/applications/:id/stage/clear) detaches the replies that set it: these two
 -- columns only, so the api still cannot rewrite what a mail said, its tag or when it arrived.
 GRANT UPDATE (application_id, linked_by) ON inbound_emails TO kairos_api;

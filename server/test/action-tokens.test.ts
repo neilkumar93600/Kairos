@@ -51,6 +51,9 @@ describe("signed links (lib/action-tokens.ts)", () => {
   it("refuses to sign a link that outlives its purpose's lifetime", () => {
     expect(() => signLink({ ...claims, expiresAt: new Date(now + LINK_LIFETIME_MS.resend + 1000) }, v1, now)).toThrow(/lifetime/);
     expect(() => signLink({ ...claims, purpose: "resume_pdf", expiresAt: new Date(now + 25 * HOUR) }, v1, now)).toThrow(/lifetime/);
+    // WP-33: the undo link is the 48-hour window itself.
+    expect(() => signLink({ ...claims, purpose: "offer_pause_undo", expiresAt: new Date(now + 49 * HOUR) }, v1, now)).toThrow(/lifetime/);
+    expect(signLink({ ...claims, purpose: "offer_pause_undo", expiresAt: new Date(now + 48 * HOUR) }, v1, now)).toBeTruthy();
     expect(signLink({ ...claims, purpose: "unsubscribe", entityId: "digest", expiresAt: new Date(now + 80 * 24 * HOUR) }, v1, now)).toBeTruthy();
   });
 

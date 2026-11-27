@@ -264,6 +264,8 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
       mail_opt_outs: ["SID", "S", ""],
       // WP-24: the api stores and acknowledges a Gmail code; the worker reads it for the email and deletes it.
       forwarding_verifications: ["SIU", "SD", ""],
+      // WP-33: only the worker creates and applies an offer pause; the api reads and cancels one. Ids, times and codes only.
+      offer_pause_candidates: ["SU", "SIU", "S"],
       // WP-50: the worker renders the confirm email and runs retention; it never takes a sign-up.
       newsletter_subscribers: ["SIUD", "SUD", ""],
       // WP-26: both processes run the verifier; only the worker's retention deletes. Hashes and verdicts, nothing to read.

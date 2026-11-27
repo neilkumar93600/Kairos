@@ -69,6 +69,8 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "POST /api/contact": { public: "the public contact form: stores a message and reads nothing back" },
   "GET /api/applications/:id/resend-link": { public: "the signed token is the credential; GET only reads, and shows what a POST would do" },
   "POST /api/applications/:id/resend-link": { public: "the signed token is the credential; single use, it re-approves one failed application of the token's own user" },
+  "GET /api/billing/offer-pause/undo": { public: "the signed token is the credential; GET only reads, and shows what a POST would cancel" },
+  "POST /api/billing/offer-pause/undo": { public: "the signed token is the credential; single use, it cancels one pending offer pause of the token's own user" },
   "GET /api/unsubscribe": { public: "the signed token is the credential; GET only reads, and shows what a POST would stop" },
   "POST /api/unsubscribe": { public: "the signed token is the credential; it turns off one optional mail kind for the token's own user" },
   "POST /api/newsletter": { public: "the public newsletter form: the same 202 for every address, reads nothing back" },
@@ -135,6 +137,9 @@ export const MATRIX: Record<string, MatrixEntry> = {
   "POST /api/forwarding/confirm": own("/api/forwarding/confirm", { provider: "other" }),
   "POST /api/billing/checkout": { ...own("/api/billing/checkout", { plan: "starter", interval: "month" }), fresh: true },
   "POST /api/billing/portal": { ...own("/api/billing/portal"), fresh: true },
+  // WP-33: the caller's own pause only; neither takes an id.
+  "GET /api/billing/offer-pause": own("/api/billing/offer-pause"),
+  "POST /api/billing/offer-pause/resume": own("/api/billing/offer-pause/resume"),
 
   "GET /api/extension/queue": own("/api/extension/queue"),
   "POST /api/extension/claim": { nocache: true, request: (t) => ({ path: "/api/extension/claim", body: { applicationId: t.applicationId } }) },

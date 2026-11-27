@@ -13,6 +13,7 @@ import { creditsRouter } from "./credits";
 import { extensionRouter } from "./extension";
 import { signedLinkRouter } from "./links";
 import { resendLinkAction } from "./resend-link";
+import { offerPauseRouter, offerPauseUndoAction } from "./offer-pause";
 import { filesRouter } from "./files";
 import { employmentsRouter } from "./employments";
 import { forwardingRouter } from "./forwarding";
@@ -43,6 +44,8 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   // The signed resend link (05-api 10.4): the token is the credential, and it must stay above the session chain below.
   // Its budget is resend's: ROUTE_DEADLINES matches the path inside the /api router, and under this mount req.path is "/", so a row there could never match.
   router.use("/applications/:id/resend-link", deadline(DEADLINE.render), limits.link, signedLinkRouter(resendLinkAction));
+  // The emailed offer-pause undo link (WP-33): the token is the credential, so it sits here too, ahead of the /billing session chain.
+  router.use("/billing/offer-pause/undo", routeDeadline, limits.link, signedLinkRouter(offerPauseUndoAction));
   // Public newsletter (WP-50): its own classes per route (routes/newsletter.ts), ahead of the anonymous class.
   router.use("/newsletter", routeDeadline, newsletterRouter(limits));
   router.use(routeDeadline, limits.anon);
@@ -80,6 +83,8 @@ export function apiRouter(gateway: AuthGateway, limits: Limiters) {
   router.use("/credits", authed, creditsRouter);
   router.use("/inbox", authed, inboxRouter);
   router.use("/forwarding", authed, forwardingRouter);
+  // Offer pause status and resume (WP-33): signed in, not session-fresh: resume only undoes a pause Kairos set (sending, and billing behind offer_pause_stripe). Ahead of /billing so its fresh chain never sees it.
+  router.use("/billing/offer-pause", authed, offerPauseRouter);
   router.use("/billing", freshAuthed, limits.billing, billingRouter);
   // The claim starts a send (05-api 13.3, session-nocache): a revoked session stops here at once. No age limit: the extension's session is long-lived.
   const extensionAuthed = [requireAuth(gateway, (req) => (req.method === "POST" && req.path === "/claim" ? "session-fresh" : "session"), { enforceAge: () => false }), limits.user, noStore];
