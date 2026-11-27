@@ -30,6 +30,8 @@ const schema = await import("../src/db/schema");
 const { processCloudApply } = await import("../src/jobs/cloud-apply");
 const { applierPool, closeBrowser } = await import("../src/jobs/browser-pool");
 const { settleAll } = await import("./helpers/settle");
+const { recordExtensionReport } = await import("../src/services/settle");
+const { resendApplication } = await import("../src/services/submissions");
 
 const ANSWERS = [
   { fieldKey: "first_name", label: "First name", value: "Ada", source: "profile" as const },
@@ -80,14 +82,14 @@ describe.skipIf(!hasTestDb)("T-006.5 cloud applier settlement on the fake-ATS ou
   }
 
   let n = 0;
-  async function application(ats: AtsProvider, status: "approved" | "draft" = "approved") {
+  async function application(ats: AtsProvider, status: "approved" | "draft" = "approved", channel: "cloud" | "extension" = "cloud") {
     n += 1;
     const [c] = await db.insert(schema.companies).values({ name: `Acme ${n}`, ats, boardToken: `acme-${n}` }).returning();
     const [job] = await db
       .insert(schema.jobs)
       .values({ companyId: c!.id, externalId: `fit-${n}`, title: "Junior Engineer", descriptionText: "Build things", applyUrl: formUrl(ats, "fit") })
       .returning();
-    const approved = status === "approved" ? { channel: "cloud" as const, approvedAt: new Date(), approvedBy: "user" as const, attemptNo: 1 } : {};
+    const approved = status === "approved" ? { channel, approvedAt: new Date(), approvedBy: "user" as const, attemptNo: 1 } : {};
     const [row] = await db.insert(schema.applications).values({ userId: OWNER, jobId: job!.id, resumeLines: [LINE], answers: ANSWERS, status, ...approved }).returning();
     return { id: row!.id, jobId: job!.id };
   }
@@ -153,6 +155,22 @@ describe.skipIf(!hasTestDb)("T-006.5 cloud applier settlement on the fake-ATS ou
     expect(await appOf(id)).toMatchObject({ status: "failed", failureCode: "unconfirmed" });
     expect(await attemptsOf(id)).toMatchObject([{ state: "needs_check" }]);
     expect(await charges(id)).toEqual([]);
+  });
+
+  it("an extension report of 'No confirmation' after the click is unconfirmed: no charge, no blind resend, a late confirmation still settles once (R3b)", async () => {
+    const { id } = await application("greenhouse", "approved", "extension");
+    const failed = { applicationId: id, outcome: "failed" as const, failureReason: "No confirmation after submit", filledFields: [], submittedAt: new Date().toISOString() };
+    await expect(recordExtensionReport(db, OWNER, "s1", failed)).resolves.toEqual({ status: "failed" });
+
+    expect(await appOf(id)).toMatchObject({ status: "failed", failureCode: "unconfirmed" });
+    expect(await attemptsOf(id)).toMatchObject([{ channel: "extension", state: "needs_check", failureCode: "unconfirmed" }]);
+    expect(await charges(id)).toEqual([]);
+    // The employer may have it: a resend needs the user's acknowledgement (a second application otherwise).
+    await expect(resendApplication(db, OWNER, id, "extension", false)).rejects.toMatchObject({ code: "acknowledgement_required" });
+
+    await recordExtensionReport(db, OWNER, "s1", { ...failed, outcome: "submitted", failureReason: undefined, confirmationText: "Thank you for applying." });
+    expect((await appOf(id)).status).toBe("submitted");
+    expect(await charges(id)).toHaveLength(1);
   });
 
   it("only an approved row is claimed: a draft is never run (INV-3)", async () => {

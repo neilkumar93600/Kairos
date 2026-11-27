@@ -165,6 +165,36 @@ describe.skipIf(!hasChromium)("cloud applier on the fake-ATS forms (Chromium)", 
       expect(outcome).toMatchObject({ submitted: false, code: "unconfirmed" });
     });
 
+    it("text the page renders after the first read (here: when the resume is attached) still counts as already matched (R3b)", async () => {
+      const late = `<!doctype html><title>Apply</title><p id=desc></p><form method=post action="${LEVER}"><input name=name required><input name=email required>
+        <input type=file name=resume onchange="document.getElementById('desc').textContent = 'We read every application received.'"><button type=submit>Submit</button></form>`;
+      const landed = "<!doctype html><title>Done</title><p>Thank you for applying.</p>";
+      const outcome = await run(LEVER, browser({ [LEVER]: { body: late, post: { body: landed } } }), { answers, resumePdf: PDF });
+      expect(outcome).toMatchObject({ submitted: false, code: "unconfirmed" });
+    });
+
+    it("a filler report that says the page matched before its click needs the URL rule (R3b matchedBefore)", async () => {
+      const apply = "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=9";
+      const says = `window.__kairosFill = async (p) => ({ applicationId: p.applicationId, outcome: "submitted", matchedBefore: true, confirmationText: "Thank you for applying!", filledFields: [], submittedAt: new Date().toISOString() });`;
+      // The form page itself does not match: only the filler's matchedBefore says the page matched before its click.
+      const page = "<!doctype html><title>Apply</title>";
+      expect(await run(apply, browser({ [apply]: { body: page } }), { fillerSource: says })).toMatchObject({ submitted: false, code: "unconfirmed", detail: "preconfirmed_form" });
+      const plain = says.replace("matchedBefore: true, ", "");
+      expect((await run(apply, browser({ [apply]: { body: "<!doctype html><title>Apply</title>" } }), { fillerSource: plain })).submitted).toBe(true);
+    });
+
+    it("a landed page that still has a form control (a type-less button) is not a confirmation (R3b)", async () => {
+      const greenhouse = "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=8";
+      const plainForm = `<!doctype html><title>Apply</title><form method=post action="${greenhouse}"><input name=first_name required><input name=email required><button type=submit>Submit</button></form>`;
+      const ghAnswers: ApplicationAnswer[] = [
+        { fieldKey: "first_name", label: "First name", value: "Ada", source: "profile" },
+        { fieldKey: "email", label: "Email", value: "ada@example.com", source: "profile" },
+      ];
+      const landed = "<!doctype html><title>Done</title><p>Thank you for applying.</p><form><button>Apply to another job</button></form>";
+      const outcome = await run(greenhouse, browser({ [greenhouse]: { body: plainForm, post: { body: landed } } }), { answers: ghAnswers });
+      expect(outcome).toMatchObject({ submitted: false, code: "unconfirmed" });
+    });
+
     it("the same description still confirms on Lever's /thanks, by URL, after a 2xx landing with no form", async () => {
       const thanks = "https://jobs.lever.co/acme/1111/thanks";
       const outcome = await run(

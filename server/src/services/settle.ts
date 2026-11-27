@@ -10,7 +10,7 @@ import { signal } from "../lib/sentry";
 import { chargeSubmission } from "./credits";
 import { recordEvent } from "./events";
 import { redactConfirmation } from "./sensitive";
-import { AMBIGUOUS, boundedEvidence, CLOUD_DEAD_ENDS, FAILURE_MESSAGES, RESENDABLE, type FailureCode } from "./submissions";
+import { AMBIGUOUS, boundedEvidence, CLOUD_DEAD_ENDS, FAILURE_MESSAGES, isAfterClickReason, RESENDABLE, type FailureCode } from "./submissions";
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Attempt = typeof submissionAttempts.$inferSelect;
@@ -217,7 +217,7 @@ async function upsertExtensionRow(
   app: App,
   ats: Attempt["ats"],
   sessionId: string,
-  row: { state: "submitted" | "failed"; failureCode?: FailureCode; evidence: Record<string, unknown>; leaseConflict?: boolean },
+  row: { state: "submitted" | "failed" | "needs_check"; failureCode?: FailureCode; evidence: Record<string, unknown>; leaseConflict?: boolean },
 ): Promise<string> {
   const [saved] = await tx
     .insert(submissionAttempts)
@@ -312,13 +312,18 @@ async function reportTx(db: Db, userId: string, sessionId: string, report: Submi
     if (app.status !== "approved" && app.status !== "submitting") return { status: app.status, entity: null, refuse: app.status };
     // Only the applier settles a cloud send in progress (applications-v07); a live lease's holder may be submitting.
     if ((app.channel === "cloud" && app.status === "submitting") || leaseConflict) return { status: app.status, entity: null, refuse: app.status };
-    const reason = report.failureReason?.trim().slice(0, 500) || FAILURE_MESSAGES.extension_reported;
+    // A filler reason that follows its click (R3b, T-006.5): the employer may have it, so it is unconfirmed (acknowledged before
+    // any resend, settled forward by a late report), never a resendable extension_reported.
+    const afterClick = isAfterClickReason(report.failureReason?.trim());
+    const code: FailureCode = afterClick ? "unconfirmed" : "extension_reported";
+    const state = afterClick ? "needs_check" : "failed";
+    const reason = afterClick ? FAILURE_MESSAGES.unconfirmed : report.failureReason?.trim().slice(0, 500) || FAILURE_MESSAGES.extension_reported;
     if (open?.channel === "extension") {
-      await tx.update(submissionAttempts).set({ state: "failed", failureCode: "extension_reported", phase: "reported", evidence, settledAt: new Date() }).where(eq(submissionAttempts.id, open.id));
+      await tx.update(submissionAttempts).set({ state, failureCode: code, phase: "reported", evidence, settledAt: new Date() }).where(eq(submissionAttempts.id, open.id));
     } else {
-      await upsertExtensionRow(tx, app, ats, sessionId, { state: "failed", failureCode: "extension_reported", evidence });
+      await upsertExtensionRow(tx, app, ats, sessionId, { state, failureCode: code, evidence });
     }
-    return { status: "failed", entity: await recordFailed(tx, app, "extension_reported", "user", reason) };
+    return { status: "failed", entity: await recordFailed(tx, app, code, "user", reason) };
   });
 }
 

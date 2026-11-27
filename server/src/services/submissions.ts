@@ -82,6 +82,9 @@ export const CLOUD_DEAD_ENDS: Readonly<Record<string, string>> = {
   resume_missing: "This job board needs a resume file and this application has none, so nothing was sent and no credit was used. Send it from the extension and attach your resume on the job page yourself.",
 };
 
+/** The filler's reasons that follow its click (extension/src/filler.ts, pinned in cloud-apply.test.ts): the send may have reached the employer. */
+export const isAfterClickReason = (reason = "") => reason.startsWith("No confirmation");
+
 /** The send may have reached the employer: never resent without the user's acknowledgement, and a later report can settle it forward. */
 export const AMBIGUOUS: ReadonlySet<FailureCode> = new Set(["unconfirmed", "timeout", "no_report"]);
 /** Nothing reached the employer: resent on request. posting_closed alone is in neither set (INV-23). */

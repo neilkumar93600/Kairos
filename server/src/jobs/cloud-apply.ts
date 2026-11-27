@@ -138,7 +138,7 @@ async function visibleChallenge(page: Page): Promise<ChallengeKind | null> {
 const readPage = () => ({
   text: document.body?.innerText || document.body?.textContent || "",
   ready: document.readyState === "complete",
-  form: !!document.querySelector("form [required], button[type=submit], input[type=submit]"),
+  form: !!document.querySelector("form [required], button[type=submit], input[type=submit], form button:not([type]), form input[type=button], form input:not([type=hidden])"),
 });
 type PageRead = { text: string; ready: boolean; form?: boolean };
 const asDoc = (text: string) => ({ body: { innerText: text } }) as unknown as Document;
@@ -271,8 +271,11 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
     if (before) return fail("challenge", before);
 
     await page.evaluate(input.fillerSource);
-    const formRead: PageRead | null = await page.evaluate(readPage).catch(() => null);
-    preConfirmed = !!formRead && !!detectAdapter(new URL(input.applyUrl))?.isConfirmation(asDoc(formRead.text), new URL(input.applyUrl));
+    const readsAsConfirmation = async () => {
+      const formRead: PageRead | null = await page!.evaluate(readPage).catch(() => null);
+      return !!formRead && !!detectAdapter(new URL(input.applyUrl))?.isConfirmation(asDoc(formRead.text), new URL(input.applyUrl));
+    };
+    preConfirmed = await readsAsConfirmation();
     // Before the mark of `filling` (phase `navigating`): an attach that fails, or a file the page wants and we lack, still
     // means nothing was sent. A page with no resume input sends without a file whatever the render did, as before WP-19.
     const selector = detectAdapter(new URL(input.applyUrl))?.resumeInputSelector;
@@ -289,6 +292,7 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
     } else if (fileInput && (await fileInput.evaluate((e) => (e as HTMLInputElement).required))) {
       return fail("applier_error", "resume_missing");
     }
+    preConfirmed ||= await readsAsConfirmation();
     await input.onPhase?.("filling");
     filling = true;
     let timer: NodeJS.Timeout | undefined;
@@ -302,6 +306,8 @@ export async function fillInBrowser(browser: Pick<Browser, "newContext">, input:
     ]).finally(() => clearTimeout(timer));
 
     // The page wrote this object: keep its shape only, and pin it to the application the applier claimed.
+    // The schema drops keys it does not know, so the filler's matchedBefore is read from the raw report.
+    preConfirmed ||= (raw as { matchedBefore?: unknown } | null)?.matchedBefore === true;
     const parsed = submissionReportSchema.safeParse({ ...(raw as object), applicationId: input.applicationId, submittedAt: new Date().toISOString() });
     if (!parsed.success) return fail("unconfirmed", "invalid_report");
     if (attached) parsed.data.filledFields.push({ fieldKey: "resume", label: "Resume", value: input.resumePdf!.name });
