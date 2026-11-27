@@ -20,11 +20,14 @@ function fieldFor(doc: Document, adapter: AtsFormAdapter | null, answer: Applica
   return findField(doc, answer.fieldKey, answer.label);
 }
 
+/** The report, plus whether the page already read "application received" before the click (the cloud applier uses it). */
+export type FillReport = SubmissionReport & { matchedBefore?: boolean };
+
 /**
  * Fills the current page's application form and, when payload.submit is true, submits it and waits
  * for the board's confirmation. Runs in the content script and, injected, in the cloud applier.
  */
-export async function fillApplication(payload: FillPayload, doc: Document = document, location: Location = window.location): Promise<SubmissionReport> {
+export async function fillApplication(payload: FillPayload, doc: Document = document, location: Location = window.location): Promise<FillReport> {
   const url = new URL(location.href);
   const adapter = detectAdapter(url);
   const filledFields: SubmissionReport["filledFields"] = [];
@@ -44,10 +47,12 @@ export async function fillApplication(payload: FillPayload, doc: Document = docu
     } else missing.push("Resume");
   }
 
-  const fail = (reason: string): SubmissionReport => ({
+  let matchedBefore = false;
+  const fail = (reason: string): FillReport => ({
     applicationId: payload.applicationId,
     outcome: "failed",
     failureReason: reason,
+    matchedBefore,
     filledFields,
     submittedAt: new Date().toISOString(),
   });
@@ -61,14 +66,14 @@ export async function fillApplication(payload: FillPayload, doc: Document = docu
 
   const button = doc.querySelector<HTMLElement>(adapter.submitSelector);
   if (!button) return fail("Submit button not found");
-  // The page may already say "application received" (a job description does). Only a change counts: nothing matched before the
-  // click, or the address changed, or the form we submitted is gone.
-  const matchedBefore = adapter.isConfirmation(doc, url);
+  // The page may already say "application received" (a job description does). Then only a new address confirms: a single-page
+  // form swaps its button and re-renders, so "the form is gone" proves nothing (a refused POST looks the same).
+  matchedBefore = adapter.isConfirmation(doc, url);
   const hrefBefore = location.href;
   button.click();
 
   const confirmed = await waitFor(
-    () => (adapter.isConfirmation(doc, new URL(location.href)) && (!matchedBefore || location.href !== hrefBefore || !button.isConnected) ? true : null),
+    () => (adapter.isConfirmation(doc, new URL(location.href)) && (!matchedBefore || location.href !== hrefBefore) ? true : null),
     20_000,
   );
   if (!confirmed) return fail(missing.length ? `No confirmation; unfilled: ${missing.join(", ")}` : "No confirmation after submit");
@@ -76,6 +81,7 @@ export async function fillApplication(payload: FillPayload, doc: Document = docu
   return {
     applicationId: payload.applicationId,
     outcome: "submitted",
+    matchedBefore,
     filledFields,
     confirmationText: pageText(doc).slice(0, 1000),
     submittedAt: new Date().toISOString(),

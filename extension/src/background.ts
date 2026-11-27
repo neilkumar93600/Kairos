@@ -75,7 +75,10 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, respond
       case "content:ready": {
         const tabId = sender.tab?.id;
         const stored = tabId !== undefined ? await recall(tabId) : null;
-        if (tabId === undefined || !stored || stored.handed) return null;
+        if (tabId === undefined || !stored) return null;
+        // A page loaded after the submit (Lever /thanks): confirm only, never fill or click again. The content script reports
+        // submitted if this page's address is the board's confirmation address.
+        if (stored.handed) return { confirmOnly: true, applicationId: stored.applicationId };
         if (stored.submit) {
           // Once only: a page after an in-board navigation (a confirmation page) must not get the payload and click again.
           // The record keeps just what a report check needs, not the answers.

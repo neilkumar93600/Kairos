@@ -14,8 +14,17 @@ const REVIEW_WINDOW_MS = 15 * 60_000;
 async function main() {
   const adapter = detectAdapter(new URL(window.location.href));
   if (!adapter) return;
-  const payload = (await chrome.runtime.sendMessage({ type: "content:ready" })) as FillPayload | null;
+  const payload = (await chrome.runtime.sendMessage({ type: "content:ready" })) as (FillPayload & { confirmOnly?: undefined }) | { confirmOnly: true; applicationId: string } | null;
   if (!payload) return;
+  if (payload.confirmOnly) {
+    // The page after a navigating submit. Only the board's own confirmation address counts; text on a page proves nothing here.
+    if (!adapter.isConfirmationUrl(new URL(window.location.href))) return;
+    await chrome.runtime.sendMessage({
+      type: "content:report",
+      report: { applicationId: payload.applicationId, outcome: "submitted", filledFields: [], confirmationText: pageText(document).slice(0, 1000), submittedAt: new Date().toISOString() },
+    });
+    return;
+  }
   const report: SubmissionReport = await fillApplication(payload);
 
   if (!payload.submit && report.outcome === "failed") {

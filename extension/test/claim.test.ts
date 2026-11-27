@@ -60,10 +60,10 @@ describe("the send press", () => {
     await vi.waitFor(() => expect(calls).toContain("/api/extension/release"));
   });
 
-  it("hands a submit payload to the page once: a confirmation page after an in-board navigation gets nothing", async () => {
+  it("hands a submit payload to the page once: a page after a navigating submit gets a confirm-only marker", async () => {
     await send();
     expect(await ready()).toMatchObject({ applicationId: "app-1", submit: true });
-    expect(await ready()).toBeNull();
+    expect(await ready()).toEqual({ confirmOnly: true, applicationId: "app-1" }); // never the payload again
   });
 
   it("never releases after a submit payload was handed over: the filler may have clicked, so the lease settles as no_report", async () => {

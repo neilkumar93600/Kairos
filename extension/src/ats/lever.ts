@@ -14,5 +14,6 @@ export const leverForm: AtsFormAdapter = {
   },
   resumeInputSelector: 'input[type=file][name="resume"]',
   submitSelector: 'button[type=submit], #btn-submit',
+  isConfirmationUrl: (url) => url.pathname.endsWith("/thanks"),
   isConfirmation: (doc, url) => url.pathname.endsWith("/thanks") || CONFIRMATION_TEXT.test(pageText(doc)),
 };
