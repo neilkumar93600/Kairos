@@ -145,7 +145,9 @@ describe.skipIf(!hasTestDb)("credit_balances against Postgres", () => {
   });
 
   it("the rollover keeps what approved applications hold (the worked example of _db/billing.md 4.2)", async () => {
-    const userId = await seedUser(tdb, { credits: 2500 });
+    // An adjustment, not seedUser's credits: those are a free_grant row, and the free grant never expires.
+    const userId = await seedUser(tdb);
+    await tdb.insert(schema.creditLedger).values({ userId, delta: 2500, reason: "admin_adjustment", note: "fixture balance" });
     for (let i = 0; i < 20; i++) await application(userId, "approved", `held-${i}`);
     expect(await cache(userId)).toMatchObject({ balance: 2500, inFlight: 20 });
     await tdb.transaction((tx) => applyInvoiceGrant(tx, { userId, delta: 1000, stripeInvoiceId: "in_roll", note: "plan=starter interval=month", at: new Date() }));
@@ -178,6 +180,20 @@ describe.skipIf(!hasTestDb)("credit_balances against Postgres", () => {
     // A redrive of the first renewal much later writes nothing new: one grant and one expiry per invoice.
     await grant("in_m1", 1000, "starter", "month", "2020-02-01", "2020-03-01");
     expect(await cache(userId)).toMatchObject({ balance: 2000 });
+  });
+
+  it("the free grant never expires inside the cap (R2 finding 1, docs/pricing.md)", async () => {
+    const userId = await seedUser(tdb, { credits: 25 });
+    const grant = (id: string, paid: string, until: string) =>
+      tdb.transaction((tx) => applyInvoiceGrant(tx, { userId, delta: 1000, stripeInvoiceId: id, note: grantNote("starter", "month", new Date(`${until}T00:00:00Z`)), at: new Date(`${paid}T00:00:00Z`) }));
+    await grant("in_f1", "2022-01-01", "2022-02-01");
+    await grant("in_f2", "2022-02-01", "2022-03-01");
+    // 25 + 2,000 unused: the cap is 2,000 and the free 25 stay.
+    expect(await cache(userId)).toMatchObject({ balance: 2025 });
+    await grant("in_f3", "2022-03-01", "2022-04-01");
+    const expiry = await tdb.select().from(schema.creditLedger).where(eq(schema.creditLedger.reason, "expiry"));
+    expect(expiry.map((r) => [r.stripeInvoiceId, r.delta])).toEqual([["in_f3", -1000]]);
+    expect(await cache(userId)).toMatchObject({ balance: 2025 });
   });
 
   it("the same grants on a second user give the same ledger, whenever they run", async () => {

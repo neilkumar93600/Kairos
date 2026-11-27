@@ -1,9 +1,9 @@
-import { and, eq, isNull, or, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type Stripe from "stripe";
 import { z } from "zod";
 import type { BillingInterval, PlanId } from "@auto-career/shared";
 import type { Db } from "../db/client";
-import { deletionTasks, stripeEvents, subscriptions, user, type StripeEventOutcome } from "../db/schema";
+import { deletionTasks, profiles, stripeEvents, subscriptions, user, type StripeEventOutcome } from "../db/schema";
 import { emitOutbox, reopenOutbox } from "../durable/outbox";
 import { env } from "../lib/env";
 import { logger } from "../lib/logger";
@@ -88,7 +88,7 @@ export interface InvoiceGrant {
 }
 
 const stripeId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
-/** Worst case about 2.8 KB: 20 lines of three short fields and a few 64-character ids, under stripe_events_payload_ck's 4 KB. */
+/** Worst case about 3.3 KB: 20 lines of four short fields and a few 64-character ids, under stripe_events_payload_ck's 4 KB. */
 const MAX_LINES = 20;
 
 /**
@@ -104,11 +104,12 @@ export const stripeEventPayload = z.discriminatedUnion("kind", [
     customerId: stripeId.nullable(),
     userId: stripeId.nullable(),
     amountPaid: z.number().int().nonnegative(),
-    /** What the invoice was for, whatever paid it: a renewal paid from a proration credit has amount_paid 0 and a total. */
+    /** The whole invoice after discounts and prorations; decides only an invoice whose lines name no known price. */
     total: z.number().int(),
-    /** Unix seconds, from status_transitions.paid_at: the moment the rollover cap is computed at, so a replay gives the same ledger. */
+    /** Unix seconds: status_transitions.paid_at, else the invoice's creation. The rollover cap's moment, so a replay gives the same ledger. */
     paidAt: z.number().int().nullable(),
-    lines: z.array(z.strictObject({ priceId: stripeId.nullable(), proration: z.boolean(), periodEnd: z.number().int().nullable() })).max(MAX_LINES),
+    /** net: the line's own amount minus its discounts, in cents. What a regular line charged, whatever prorations or balance paid it. */
+    lines: z.array(z.strictObject({ priceId: stripeId.nullable(), proration: z.boolean(), periodEnd: z.number().int().nullable(), net: z.number().int() })).max(MAX_LINES),
     linesTruncated: z.boolean(),
   }),
   z.strictObject({ kind: z.literal("payment_failed"), invoiceId: stripeId.nullable(), customerId: stripeId.nullable(), subscriptionId: stripeId.nullable() }),
@@ -210,12 +211,20 @@ export function couponIdsOf(invoice: Stripe.Invoice): string[] {
   return invoice.discounts.flatMap((d) => (typeof d === "string" ? [] : [idOf(d.source.coupon)])).filter((id): id is string => id !== null);
 }
 
+/** A line's amount less its discounts. A missing amount counts as 0, never as paid. */
+function lineNet(line: Stripe.InvoiceLineItem): number {
+  const amount = Number.isInteger(line.amount) ? line.amount : 0;
+  const discounts = (line.discount_amounts ?? []).reduce((sum, d) => sum + (Number.isInteger(d.amount) ? d.amount : 0), 0);
+  return amount - discounts;
+}
+
 const lineExtract = (line: Stripe.InvoiceLineItem): InvoiceExtract["lines"][number] => {
   const price = line.pricing?.price_details?.price;
   return {
     priceId: typeof price === "string" ? price : null,
     proration: Boolean(line.parent?.subscription_item_details?.proration || line.parent?.invoice_item_details?.proration),
     periodEnd: line.period?.end ?? null,
+    net: lineNet(line),
   };
 };
 
@@ -229,7 +238,7 @@ export function invoiceExtract(invoice: Stripe.Invoice): InvoiceExtract {
     // A missing amount must never count as paid.
     amountPaid: invoice.amount_paid > 0 ? invoice.amount_paid : 0,
     total: Number.isInteger(invoice.total) ? invoice.total : 0,
-    paidAt: invoice.status_transitions?.paid_at ?? null,
+    paidAt: invoice.status_transitions?.paid_at ?? invoice.created ?? null,
     lines: invoice.lines.data.slice(0, MAX_LINES).map(lineExtract),
     linesTruncated: invoice.lines.has_more || invoice.lines.data.length > MAX_LINES,
   };
@@ -261,25 +270,34 @@ export const handledEventType = (type: string): boolean => SUBSCRIPTION_EVENTS.h
 /** Decides nothing but "no credits for this invoice", and why. */
 export type NoGrant = { outcome: "zero_amount" | "proration_only" };
 
+/** The line that decides a grant: the first one that is not a proration and has a price in STRIPE_PRICES. */
+const decidingLine = (lines: InvoiceExtract["lines"]) => lines.find((l) => !l.proration && l.priceId && planForPriceId(l.priceId));
+
 /**
- * The credits a paid invoice earns, or why none: its total is 0 and no coupon is in STRIPE_GRANT_COUPONS (a 100% promotion
- * code, a trial), or every line is a proration. The total, not amount_paid: Stripe leaves out what the customer's balance paid,
- * so a renewal paid from a downgrade's proration credit has amount_paid 0 and is still a paid period. The first non-proration line with a known plan price decides: proration lines
+ * The credits a paid invoice earns, or why none. The first non-proration line with a known plan price decides: proration lines
  * carry the OLD plan's price ("Unused time on Starter") and come first after a plan change; the next renewal grants the new
- * plan's cycle. Regular lines with no known price throw.
+ * plan's cycle. That line's own net amount (its amount less its discounts) must be above 0, unless a coupon of the invoice is
+ * in STRIPE_GRANT_COUPONS: a trial line is 0 and a 100% promotion code discounts it to 0, so neither grants. The invoice total
+ * and amount_paid do not decide: a downgrade's proration credit on the same invoice can take the total to 0 or below, and the
+ * customer's Stripe balance leaves amount_paid at 0, yet the renewal line was charged. Every line a proration grants nothing;
+ * a charged regular line with no known price throws.
  */
 export function invoiceGrant(invoice: InvoiceExtract, lines = invoice.lines, couponIds: string[] = []): Omit<InvoiceGrant, "userId"> | NoGrant {
-  if (!(invoice.total > 0) && !couponIds.some((id) => env().STRIPE_GRANT_COUPONS.includes(id))) return { outcome: "zero_amount" };
-  const regular = lines.filter((line) => !line.proration);
-  if (regular.length === 0 || !invoice.invoiceId) return { outcome: "proration_only" };
-  const line = regular.find((l) => l.priceId && planForPriceId(l.priceId));
+  const allowlisted = couponIds.some((id) => env().STRIPE_GRANT_COUPONS.includes(id));
+  if (lines.every((l) => l.proration) || !invoice.invoiceId) return { outcome: "proration_only" };
+  const line = decidingLine(lines);
   const mapped = line?.priceId ? planForPriceId(line.priceId) : null;
-  if (!line || !mapped) throw new BillingAnomaly("anomaly_unmapped_price", `invoice ${invoice.invoiceId} has no line with a price in STRIPE_PRICES`);
+  if (!line || !mapped) {
+    // Nothing was charged for a price we do not know (a $0 trial of a retired price): nothing to lose, no operator needed.
+    if (!(invoice.total > 0) && !allowlisted) return { outcome: "zero_amount" };
+    throw new BillingAnomaly("anomaly_unmapped_price", `invoice ${invoice.invoiceId} has no line with a price in STRIPE_PRICES`);
+  }
+  if (!(line.net > 0) && !allowlisted) return { outcome: "zero_amount" };
   const at = (s: number | null) => (s === null ? null : new Date(s * 1000));
   return { delta: creditsPerInvoice(mapped.plan, mapped.interval), stripeInvoiceId: invoice.invoiceId, plan: mapped.plan, interval: mapped.interval, periodEnd: at(line.periodEnd), paidAt: at(invoice.paidAt) };
 }
 
-/** The Stripe calls an event needs: the live subscription (never the event body), every line of a long invoice, and the coupons of a $0 invoice while an allowlist is set. */
+/** The Stripe calls an event needs: the live subscription (never the event body), every line of a long invoice, and the coupons of an invoice whose deciding line is $0 while an allowlist is set. */
 export async function fetchStripeState(event: StoredEvent, deps: StripeFetchDeps): Promise<FetchedStripeState> {
   const p = event.payload;
   if (p?.kind === "subscription") return { subscription: await deps.retrieveSubscription(p.subscriptionId) };
@@ -287,7 +305,10 @@ export async function fetchStripeState(event: StoredEvent, deps: StripeFetchDeps
   if (p?.kind !== "invoice") return {};
   const state: FetchedStripeState = {};
   if (p.linesTruncated) state.lines = await deps.listInvoiceLines(p.invoiceId);
-  if (!(p.total > 0) && env().STRIPE_GRANT_COUPONS.length > 0) state.couponIds = await deps.invoiceCouponIds(p.invoiceId);
+  // The same question invoiceGrant asks: is the deciding line, or with none an invoice of a price we do not know, at $0?
+  const line = decidingLine(state.lines ? state.lines.map(lineExtract) : p.lines);
+  const zero = line ? !(line.net > 0) : !(p.total > 0);
+  if (zero && env().STRIPE_GRANT_COUPONS.length > 0) state.couponIds = await deps.invoiceCouponIds(p.invoiceId);
   return state;
 }
 
@@ -345,7 +366,7 @@ export async function processStripeEvent(event: StoredEvent, fetched: FetchedStr
   if ("outcome" in grant) return ignored(grant.outcome);
   const userId = await resolveUser(p.userId, p.customerId, deps);
   if (!userId) return ignored("user_deleted");
-  const applied = await deps.grantCredits({ userId, ...grant });
+  const applied = await deps.grantCredits({ userId, ...grant, paidAt: grant.paidAt ?? event.created });
   return { status: "processed", outcome: applied === "applied" ? "grant_applied" : "grant_duplicate", userId };
 }
 
@@ -416,7 +437,11 @@ function eventDeps(tx: Tx): StripeEventDeps {
     saveSubscription: async ({ userId, values }, eventCreated) => {
       // Lock order: the balance, then this row. The guard reads under both.
       await lockCreditBalance(tx, userId);
-      const [before] = await tx.select({ created: subscriptions.stripeEventCreated }).from(subscriptions).where(eq(subscriptions.userId, userId)).for("update");
+      const [before] = await tx
+        .select({ created: subscriptions.stripeEventCreated, collectionPaused: subscriptions.collectionPaused, pauseSource: subscriptions.pauseSource })
+        .from(subscriptions)
+        .where(eq(subscriptions.userId, userId))
+        .for("update");
       if (eventCreated && before?.created && eventCreated < before.created) return "stale";
       // An unpaid state only overwrites the row when it is about the subscription the row tracks (or none yet),
       // so a late event for an old, cancelled subscription cannot drop a user who has since subscribed again.
@@ -437,9 +462,17 @@ function eventDeps(tx: Tx): StripeEventDeps {
           ...(values.plan === "free" ? { where: tracksThis } : {}),
         })
         .returning({ userId: subscriptions.userId });
-      return saved.length > 0 ? "saved" : "stale";
+      if (saved.length === 0) return "stale";
+      // An offer pause ends when billing resumes (09-billing-events 3.3): the portal, the user or an operator unpaused it, so
+      // applications are sent again. Only a pause the offer flow set; a customer's own pause never paused applications.
+      // TODO(T-006.3): with offer_pause_candidates (0032), clear only a pause at or before its latest applied_at.
+      if (before?.collectionPaused && before.pauseSource === "offer_email" && !values.collectionPaused) {
+        await tx.update(profiles).set({ applicationsPausedAt: null }).where(and(eq(profiles.userId, userId), isNotNull(profiles.applicationsPausedAt)));
+      }
+      return "saved";
     },
     grantCredits: ({ plan, interval, periodEnd, paidAt, ...grant }) =>
+      // ponytail: Stripe always sets an invoice's created, so the clock is reached only by a hand-built reconcile payload.
       applyInvoiceGrant(tx, { ...grant, note: grantNote(plan, interval, periodEnd), at: paidAt ?? new Date() }),
   };
 }
@@ -515,6 +548,33 @@ export async function redriveStripeEvent(tx: Tx, eventId: string): Promise<boole
   if (!moved.length) return false;
   await reopenOutbox(tx, "stripe", { eventId }, stripeEventKey(eventId));
   return true;
+}
+
+/**
+ * The reconcile's check of a subscription its row tracks but Stripe's list did not show (a list taken before a checkout, or a
+ * subscription Stripe deleted). It asks Stripe under the customer's lock: only resource_missing writes the row canceled and
+ * Free; anything Stripe still has is saved through the event's own code. Returns the status the row was given, or null when
+ * the save was refused (an older snapshot, a user gone).
+ */
+export async function refetchTrackedSubscription(db: Db, customerId: string, userId: string, subscriptionId: string, api: StripeFetchDeps): Promise<string | null> {
+  return db.transaction(async (tx) => {
+    await lockStripeCustomer(tx, customerId);
+    let sub: Stripe.Subscription;
+    try {
+      sub = await api.retrieveSubscription(subscriptionId);
+    } catch (err) {
+      if ((err as { code?: string } | null)?.code !== "resource_missing") throw err;
+      await lockCreditBalance(tx, userId);
+      await tx
+        .update(subscriptions)
+        .set({ plan: "free", interval: null, status: "canceled", pastDueSince: null, collectionPaused: false, pauseSource: null, updatedAt: new Date() })
+        .where(and(eq(subscriptions.userId, userId), eq(subscriptions.stripeSubscriptionId, subscriptionId)));
+      return "canceled";
+    }
+    const stored: StoredEvent = { id: "reconcile", type: "reconcile", created: null, payload: { kind: "subscription", subscriptionId, customerId } };
+    const done = await processStripeEvent(stored, { subscription: sub }, eventDeps(tx));
+    return done.outcome === "subscription_synced" ? sub.status : null;
+  });
 }
 
 /** The reconcile's run of a listed invoice or a drifted subscription: the same code as an event's, behind any event of that customer. No guard: it read Stripe just now. */

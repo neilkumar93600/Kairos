@@ -180,7 +180,7 @@ describe.skipIf(!hasTestDb)("ops/provision-roles.sql", () => {
   // WP-32: what a real role does, not the fixture owner: no write grant on the cache, and the triggers still keep it.
   it.each(["kairos_api", "kairos_worker"])("as %s, a ledger insert and a status move reach the balance through the definer triggers", async (role) => {
     const userId = await seedUser(admin, { credits: 5 });
-    const [company] = await admin.insert(schema.companies).values({ name: "c", ats: "greenhouse", boardToken: `balance-${role}` }).returning();
+    const [company] = await admin.insert(schema.companies).values({ name: "c", ats: "greenhouse", boardToken: `balance-${role}-${randomUUID()}` }).returning();
     const [job] = await admin.insert(schema.jobs).values({ companyId: company!.id, externalId: "1", title: "t", applyUrl: "https://boards.greenhouse.io/x/jobs/1", descriptionText: "d" }).returning();
     const [app] = await admin.insert(schema.applications).values({ userId, jobId: job!.id, status: "draft" }).returning();
     const read = async () => (await raw.query("select balance, in_flight from credit_balances where user_id = $1", [userId])).rows[0];

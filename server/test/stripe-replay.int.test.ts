@@ -100,7 +100,8 @@ describe.skipIf(!hasTestDb)("Stripe replay", () => {
     expect(await subscriptionOf(userId)).toEqual(scenario.subscription);
     const { cache, recount } = await balanceOf(userId);
     expect(cache).toBe(recount);
-    expect(cache).toBe(25 + 1000 + 1000 - 25 + 1200 - 800 + 1200 - 1200 + 1000 - 1400);
+    // The free 25 never expire: the first renewal reaches 2,025 and writes nothing.
+    expect(cache).toBe(25 + 1000 + 1000 + 1200 - 800 + 1200 - 1200 + 1000 - 1400);
 
     const events = await tdb.select().from(schema.stripeEvents);
     expect(events).toHaveLength(scenario.events.length);

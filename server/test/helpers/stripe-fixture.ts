@@ -63,7 +63,8 @@ export function lifecycle(userId: string, tag: string): FixtureScenario {
     status_transitions: { paid_at: null as number | null },
     customer,
     discounts: [],
-    lines: { data: lines, has_more: false },
+    // Each line charged what the invoice did, unless it says otherwise: a $0 invoice has a $0 renewal line.
+    lines: { data: (lines as object[]).map((l) => ({ amount: amountPaid, ...l })), has_more: false },
     parent: { subscription_details: { metadata: { userId }, subscription: subId } },
   });
 
@@ -88,7 +89,7 @@ export function lifecycle(userId: string, tag: string): FixtureScenario {
   // Same second, and the invoice names the user: a grant needs no subscription row.
   push("invoice.paid", invoice(1, [line(starter)], 1900), undefined, true);
   subEvent("customer.subscription.updated", sub(starter, "active"), true);
-  push("invoice.paid", invoice(2, [line(starter)], 1900)); // a renewal: 25 + 1000 + 1000 is over the cap by 25
+  push("invoice.paid", invoice(2, [line(starter)], 1900)); // a renewal: 25 + 1000 + 1000, at the cap with the free 25 kept
   // Upgrade: the proration invoice grants nothing, and the next renewal grants the new plan.
   subEvent("customer.subscription.updated", sub(pro, "active"));
   push("invoice.paid", invoice(3, [line(starter, true), line(pro, true)], 2000), undefined, true);
@@ -118,7 +119,6 @@ export function lifecycle(userId: string, tag: string): FixtureScenario {
     ledger: [
       { reason: "plan_grant", delta: 1000, invoice: invoiceId(1), note: grantNoteOf(1, "starter") },
       { reason: "plan_grant", delta: 1000, invoice: invoiceId(2), note: grantNoteOf(2, "starter") },
-      { reason: "expiry", delta: -25, invoice: invoiceId(2), note: "rollover cap 2x grant=1000" },
       { reason: "plan_grant", delta: 1200, invoice: invoiceId(4), note: grantNoteOf(4, "pro") },
       { reason: "expiry", delta: -800, invoice: invoiceId(4), note: "rollover cap 2x grant=1200" },
       { reason: "plan_grant", delta: 1200, invoice: invoiceId(5), note: grantNoteOf(5, "pro") },

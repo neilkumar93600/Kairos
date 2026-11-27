@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getPlan } from "@auto-career/shared";
 import type { Db } from "../db/client";
 import { creditBalances, creditLedger } from "../db/schema";
@@ -11,11 +11,12 @@ export function availableCredits(balance: number, inFlight: number): number {
 }
 
 /**
- * The expiry of a rollover (billing-37, FR-47): what lies above twice the grant, never the credits approved applications
- * hold. Worked example of _db/billing.md 4.2: balance after the grant 3,500, in flight 20, grant 1,000 expires 1,480.
+ * The expiry of a rollover (billing-37, FR-47): what lies above twice the cap, never the credits approved applications hold
+ * and never the free grant (docs/pricing.md: "the free grant never expires"; it is 25 or, for a user who never got it, 0).
+ * Worked example of _db/billing.md 4.2: balance after the grant 3,500, in flight 20, grant 1,000, no free grant: 1,480 expire.
  */
-export function rolloverExpiry(balanceAfterGrant: number, inFlight: number, cap: number): number {
-  return Math.max(0, balanceAfterGrant - inFlight - 2 * cap);
+export function rolloverExpiry(balanceAfterGrant: number, inFlight: number, cap: number, freeGrant = 0): number {
+  return Math.max(0, balanceAfterGrant - inFlight - 2 * cap - freeGrant);
 }
 
 /** A plan_grant's note: what was bought, and when its own paid period ends (rolloverCap reads it back). */
@@ -113,17 +114,19 @@ export async function grantFreeCredits(tx: Tx, userId: string): Promise<boolean>
  * redelivered invoice, or the reconcile finding one an event already granted, writes nothing. Grants of different sizes
  * delivered out of order can leave a different expiry than in order: the cap applies to the balance at that moment.
  * `at` is the invoice's paid moment (rolloverCap).
- * ponytail: reads every plan_grant row of the user (a few a month) through credit_ledger_user_idx; bound it by created_at if
- * that ever matters.
+ * ponytail: reads every plan_grant row of the user (a few a month) and the one free grant through credit_ledger_user_idx;
+ * bound it by created_at if that ever matters.
  */
 export async function applyInvoiceGrant(tx: Tx, input: { userId: string; delta: number; stripeInvoiceId: string; note: string; at: Date }): Promise<"applied" | "duplicate"> {
   const { at, ...grant } = input;
   await lockCreditBalance(tx, grant.userId);
-  const earlier = await tx
-    .select({ delta: creditLedger.delta, note: creditLedger.note, createdAt: creditLedger.createdAt })
+  const rows = await tx
+    .select({ reason: creditLedger.reason, delta: creditLedger.delta, note: creditLedger.note, createdAt: creditLedger.createdAt })
     .from(creditLedger)
-    .where(and(eq(creditLedger.userId, grant.userId), eq(creditLedger.reason, "plan_grant")));
-  const cap = rolloverCap(grant.delta, earlier, at);
+    .where(and(eq(creditLedger.userId, grant.userId), inArray(creditLedger.reason, ["plan_grant", "free_grant"])));
+  const cap = rolloverCap(grant.delta, rows.filter((r) => r.reason === "plan_grant"), at);
+  // At most plans.ts's free grant (INV-10): the one free_grant row, never more whatever a row says.
+  const freeGrant = Math.min(getPlan("free").applicationsPerCycle, rows.filter((r) => r.reason === "free_grant").reduce((sum, r) => sum + r.delta, 0));
   const inserted = await tx
     .insert(creditLedger)
     .values({ ...grant, reason: "plan_grant" })
@@ -132,7 +135,7 @@ export async function applyInvoiceGrant(tx: Tx, input: { userId: string; delta: 
   if (inserted.length === 0) return "duplicate";
   // Read after the insert: credit_ledger_ai has added the grant in this transaction.
   const { balance, inFlight } = await readCredits(tx, grant.userId);
-  const expiry = rolloverExpiry(balance, inFlight, cap);
+  const expiry = rolloverExpiry(balance, inFlight, cap, freeGrant);
   if (expiry > 0) {
     await tx
       .insert(creditLedger)

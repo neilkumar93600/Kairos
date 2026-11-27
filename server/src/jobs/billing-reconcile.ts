@@ -7,7 +7,7 @@ import { env } from "../lib/env";
 import { logger } from "../lib/logger";
 import { gauge } from "../lib/metrics";
 import { signal } from "../lib/sentry";
-import { applyWithoutEvent, BillingAnomaly, invoiceExtract, liveStripeFetch, lockStripeCustomer, markStripeEventDead, PAST_DUE_GRACE_MS, redriveStripeEvent, stripeEventKey, subscriptionRow, type StripeFetchDeps } from "../services/billing-events";
+import { applyWithoutEvent, BillingAnomaly, invoiceExtract, liveStripeFetch, lockStripeCustomer, markStripeEventDead, PAST_DUE_GRACE_MS, redriveStripeEvent, refetchTrackedSubscription, stripeEventKey, subscriptionRow, type StripeFetchDeps } from "../services/billing-events";
 import { lockCreditBalance } from "../services/credits";
 import { stripe } from "../services/stripe";
 import { BALANCE_DRIFT } from "./invariants";
@@ -105,9 +105,14 @@ function liveApi(): ReconcileApi {
 const LIVE_ENDED = new Set(["canceled", "incomplete_expired"]);
 const customerOf = (s: { customer: string | { id: string } | null }): string | null => (typeof s.customer === "string" ? s.customer : (s.customer?.id ?? null));
 
-/** R1: a paid invoice of the last 7 days with no grant gets it now, through the event's own decision. Insert-once, so a racing event is harmless. */
+/**
+ * R1: a paid invoice created in the last 30 days with no grant gets it now, through the event's own decision. 30 days, not 7:
+ * Stripe lists by creation, and a renewal paid after about two weeks of card retries was created that long before it was paid.
+ * Insert-once, so a racing event is harmless.
+ */
+const INVOICE_WINDOW_MS = 30 * 24 * 3600_000;
 async function reconcileInvoices(api: ReconcileApi): Promise<{ listed: number; granted: number; anomalies: number }> {
-  const invoices = await api.paidInvoicesSince(new Date(Date.now() - 7 * 24 * 3600_000));
+  const invoices = await api.paidInvoicesSince(new Date(Date.now() - INVOICE_WINDOW_MS));
   const ids = invoices.flatMap((i) => (i.id ? [i.id] : []));
   const granted = new Set(
     ids.length ? (await db().select({ id: creditLedger.stripeInvoiceId }).from(creditLedger).where(and(eq(creditLedger.reason, "plan_grant"), inArray(creditLedger.stripeInvoiceId, ids)))).map((r) => r.id) : [],
@@ -169,17 +174,20 @@ async function reconcileSubscriptions(api: ReconcileApi): Promise<{ drifted: num
     const tracked = local.stripeSubscriptionId ? byId.get(local.stripeSubscriptionId) : undefined;
     const liveHere = live.get(customer) ?? [];
     if (local.stripeSubscriptionId && !tracked) {
-      // Stripe lists cancelled subscriptions too, so this one no longer exists there at all.
+      // Not in the list: deleted at Stripe, or created after the list was taken. Stripe is asked before anything is written.
       out.drifted++;
-      await db().transaction(async (tx) => {
-        await lockStripeCustomer(tx, customer);
-        await lockCreditBalance(tx, local.userId);
-        await tx
-          .update(subscriptions)
-          .set({ plan: "free", interval: null, status: "canceled", pastDueSince: null, collectionPaused: false, pauseSource: null, updatedAt: new Date() })
-          .where(and(eq(subscriptions.userId, local.userId), eq(subscriptions.stripeSubscriptionId, local.stripeSubscriptionId!)));
-      });
-      out.synced++;
+      let status: string | null = null;
+      try {
+        status = await refetchTrackedSubscription(db(), customer, local.userId, local.stripeSubscriptionId, api.fetch);
+      } catch (err) {
+        if (!(err instanceof BillingAnomaly)) throw err;
+        out.anomalies++;
+        logger.error({ subscriptionId: local.stripeSubscriptionId, code: err.outcome }, "billing reconcile: subscription needs an operator");
+        continue;
+      }
+      if (status) out.synced++;
+      // Still live at Stripe, or the save was refused: the row keeps tracking it, and no listed subscription replaces it.
+      if (!status || !LIVE_ENDED.has(status)) continue;
     }
     // Compared under a catch: an unmapped price is an anomaly to report, and the next row must still be checked.
     let stale = false;
