@@ -7,7 +7,7 @@ import { authClient } from "@/lib/auth-client";
 import { safeNext } from "@/lib/safe-next";
 import { Button } from "../shared/button";
 import { Field, Input } from "../shared/field";
-import { EMAIL_RE, FormError, FormNotice, INPUT, OrDivider, PasswordInput, useFieldErrors } from "./fields";
+import { EMAIL_RE, FormError, FormNotice, INPUT, PasswordInput, useFieldErrors } from "./fields";
 import { SocialButtons } from "./social-buttons";
 
 export function LoginForm() {
@@ -42,7 +42,6 @@ export function LoginForm() {
     <div className="flex flex-col gap-5">
       {params.get("reset") ? <FormNotice>Password updated. Sign in with the new one.</FormNotice> : null}
       <SocialButtons next={next} />
-      <OrDivider />
       <form noValidate onSubmit={onSubmit} onInput={clear} className="flex flex-col gap-4">
         <Field label="Email" htmlFor="email" error={errors.email}>
           <Input id="email" name="email" type="email" autoComplete="email" required aria-invalid={Boolean(errors.email) || undefined} className={INPUT} />

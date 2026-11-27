@@ -7,7 +7,7 @@ import { Suspense, useRef, useState, type FormEvent } from "react";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "../shared/button";
 import { Field, Input } from "../shared/field";
-import { EMAIL_RE, FormError, INPUT, OrDivider, PasswordInput, useFieldErrors } from "./fields";
+import { EMAIL_RE, FormError, INPUT, PasswordInput, useFieldErrors } from "./fields";
 import { SocialButtons } from "./social-buttons";
 
 const INTERVAL_WORD: Record<BillingInterval, string> = { week: "weekly", month: "monthly", quarter: "quarterly" };
@@ -81,7 +81,6 @@ export function SignUpForm() {
         <PlanNote />
       </Suspense>
       <SocialButtons next="/onboarding" beforeStart={checkAgreement} />
-      <OrDivider />
       <form noValidate onSubmit={onSubmit} onInput={clear} className="flex flex-col gap-4">
         <Field label="Full name" htmlFor="name" hint="As it should appear on applications." error={errors.name}>
           <Input id="name" name="name" autoComplete="name" required aria-invalid={Boolean(errors.name) || undefined} className={INPUT} />

@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "../shared/button";
-import { FormError } from "./fields";
+import { FormError, OrDivider } from "./fields";
 
 // Brand marks as the owner supplied them (2026-10-29). Google and LinkedIn keep their colours; Apple and GitHub take currentColor (Ink).
 const MARK = "size-5 shrink-0";
@@ -75,6 +75,20 @@ const PROVIDERS: { id: Provider; name: string; mark: ReactNode }[] = [
 export function SocialButtons({ next = "/dashboard", beforeStart }: { next?: string; beforeStart?: () => boolean }) {
   const [pending, setPending] = useState<Provider | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Only providers with an OAuth app on the API (GET /api/auth-providers). None → no row and no "or" divider.
+  const [enabled, setEnabled] = useState<string[]>([]);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/auth-providers")
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((d: { providers?: string[] }) => live && setEnabled(d.providers ?? []))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  const shown = PROVIDERS.filter((p) => enabled.includes(p.id));
+  const solo = shown.length === 1;
 
   async function start(p: (typeof PROVIDERS)[number]) {
     if (beforeStart && !beforeStart()) return;
@@ -87,10 +101,12 @@ export function SocialButtons({ next = "/dashboard", beforeStart }: { next?: str
     setError(`${p.name} sign-in is not available right now. Use your email, or another option.`);
   }
 
+  if (shown.length === 0) return null;
   return (
+    <>
     <div className="flex flex-col gap-3">
-      <div role="group" aria-label="Continue with" className="grid grid-cols-4 gap-3">
-        {PROVIDERS.map((p) => (
+      <div role="group" aria-label="Continue with" className={solo ? "grid gap-3" : "grid grid-cols-4 gap-3"}>
+        {shown.map((p) => (
           <Button
             key={p.id}
             type="button"
@@ -98,14 +114,17 @@ export function SocialButtons({ next = "/dashboard", beforeStart }: { next?: str
             disabled={pending !== null}
             aria-label={`Continue with ${p.name}`}
             title={`Continue with ${p.name}`}
-            className="w-full px-0 bg-surface backdrop-blur-none hover:bg-sunk"
+            className={`w-full bg-surface backdrop-blur-none hover:bg-sunk ${solo ? "gap-2" : "px-0"}`}
             onClick={() => start(p)}
           >
             {p.mark}
+            {solo && <span>Continue with {p.name}</span>}
           </Button>
         ))}
       </div>
       <FormError>{error}</FormError>
     </div>
+    <OrDivider />
+    </>
   );
 }
