@@ -1,5 +1,5 @@
 import type { SubmissionReport } from "@auto-career/shared";
-import { connectWithOneTimeToken, fetchQueue, sendReport } from "./lib/api";
+import { claimApplication, connectWithOneTimeToken, fetchQueue, releaseApplication, sendReport } from "./lib/api";
 import { unrecordedKey, type ExtensionMessage, type ExternalMessage, type FillPayload, type PanelMessage, type QueueItem, type QueueOutcome } from "./lib/messages";
 
 /**
@@ -8,17 +8,34 @@ import { unrecordedKey, type ExtensionMessage, type ExternalMessage, type FillPa
  * clears with the browser and is closed to content scripts by default, which matters because payloads hold answers.
  */
 const pendingKey = (tabId: number) => `pending:${tabId}`;
-const remember = (tabId: number, payload: FillPayload) => chrome.storage.session.set({ [pendingKey(tabId)]: payload });
+/**
+ * `handed`: the form may have been submitted, either a submit-mode payload went to the page (the filler clicks) or, in review
+ * mode, the user pressed the form's submit. From then on the claim is never released.
+ * `served`: a review payload went to the page; the next page load in that tab counts as handed.
+ */
+type Pending = FillPayload & { handed?: boolean; served?: boolean };
+const remember = (tabId: number, payload: Pending) => chrome.storage.session.set({ [pendingKey(tabId)]: payload });
 const forget = (tabId: number) => chrome.storage.session.remove(pendingKey(tabId));
-async function recall(tabId: number): Promise<FillPayload | null> {
+async function recall(tabId: number): Promise<Pending | null> {
   const stored = await chrome.storage.session.get(pendingKey(tabId));
-  return (stored[pendingKey(tabId)] as FillPayload | undefined) ?? null;
+  return (stored[pendingKey(tabId)] as Pending | undefined) ?? null;
 }
 
 let cachedQueue: QueueItem[] = [];
 async function refreshQueue() {
   cachedQueue = await fetchQueue();
   return cachedQueue;
+}
+
+/**
+ * A tab that ended without a report. Before the handover (or, in review mode, before the user pressed submit) nothing was sent,
+ * so the claim goes back. After it the form may have been submitted: no release, because a released claim reads as "failed,
+ * no credit used, resend" and would double-apply. The lease expires to no_report (needs_check) instead.
+ */
+function endedWithoutReport(sent: Pending, notOutcome: QueueOutcome) {
+  if (sent.handed) return notifyPanel(sent.applicationId, { outcome: "closed" });
+  void releaseApplication(sent.applicationId);
+  notifyPanel(sent.applicationId, notOutcome);
 }
 
 /** Tells the side panel how an application ended. Rejects when the panel is closed, which is fine: it reloads on open. */
@@ -36,12 +53,19 @@ async function openForApplication(applicationId: string, review: boolean) {
   const find = (queue: QueueItem[]) => queue.find((q) => q.applicationId === applicationId);
   const item = find(cachedQueue) ?? find(await refreshQueue());
   if (!item) throw new Error("not_in_queue");
-  // Review mode opens the tab in front and stops before submitting; otherwise it works in the background.
-  // Parked on a blank page first, so the payload is stored before the real page can ask for it.
-  const tab = await chrome.tabs.create({ url: "about:blank", active: review });
-  if (tab.id === undefined) throw new Error("tab_failed");
-  await remember(tab.id, { ...item, submit: !review });
-  await chrome.tabs.update(tab.id, { url: item.applyUrl });
+  // INV-4: claim first. A second tab (or a second press) gets 409 here and never opens a page, so the employer sees one submit.
+  await claimApplication(applicationId);
+  try {
+    // Review mode opens the tab in front and stops before submitting; otherwise it works in the background.
+    // Parked on a blank page first, so the payload is stored before the real page can ask for it.
+    const tab = await chrome.tabs.create({ url: "about:blank", active: review });
+    if (tab.id === undefined) throw new Error("tab_failed");
+    await remember(tab.id, { ...item, submit: !review });
+    await chrome.tabs.update(tab.id, { url: item.applyUrl });
+  } catch (err) {
+    await releaseApplication(applicationId);
+    throw err;
+  }
 }
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, respond) => {
@@ -52,8 +76,33 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, respond
       case "queue:send":
         await openForApplication(message.applicationId, message.review);
         return { ok: true };
-      case "content:ready":
-        return sender.tab?.id !== undefined ? recall(sender.tab.id) : null;
+      case "content:ready": {
+        const tabId = sender.tab?.id;
+        const stored = tabId !== undefined ? await recall(tabId) : null;
+        if (tabId === undefined || !stored) return null;
+        // A page loaded after the submit (Lever /thanks): confirm only, never fill or click again. The content script reports
+        // submitted if this page's address is the board's confirmation address.
+        // A review tab's second page load counts as handed too: any navigation there may follow the user's submit, and the
+        // content:handed message can be lost while the form page unloads.
+        if (stored.handed || stored.served) {
+          if (!stored.handed) await remember(tabId, { ...stored, handed: true });
+          return { confirmOnly: true, applicationId: stored.applicationId };
+        }
+        // Once only: a page after an in-board navigation (a confirmation page) must not get the payload and fill or click again.
+        // The record keeps just what a report check needs, not the answers. Submit mode is handed from here (the filler clicks).
+        const once = { applicationId: stored.applicationId, submit: stored.submit, answers: [], resumeLines: [], coverLetter: null };
+        await remember(tabId, stored.submit ? { ...once, handed: true } : { ...once, served: true });
+        return stored;
+      }
+      case "content:handed": {
+        // Review mode: the user pressed the form's submit, so the employer may have it. Same as a submit-mode handover: never
+        // release, and any later page in this tab is confirm-only. Keeps no answers.
+        const tabId = sender.tab?.id;
+        const stored = tabId !== undefined ? await recall(tabId) : null;
+        if (tabId === undefined || !stored || stored.applicationId !== message.applicationId || stored.handed) return { ok: true };
+        await remember(tabId, { applicationId: stored.applicationId, submit: false, handed: true, answers: [], resumeLines: [], coverLetter: null });
+        return { ok: true };
+      }
       case "content:report": {
         const report: SubmissionReport = message.report;
         const tabId = sender.tab?.id;
@@ -104,7 +153,7 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   void recall(tabId).then((sent) => {
     if (!sent) return;
     void forget(tabId);
-    notifyPanel(sent.applicationId, { outcome: "failed", reason: "This job page moved off a board Kairos can fill" });
+    endedWithoutReport(sent, { outcome: "failed", reason: "This job page moved off a board Kairos can fill" });
   });
 });
 
@@ -113,6 +162,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   void recall(tabId).then((sent) => {
     if (!sent) return;
     void forget(tabId);
-    notifyPanel(sent.applicationId, { outcome: "closed" });
+    endedWithoutReport(sent, { outcome: "closed" });
   });
 });

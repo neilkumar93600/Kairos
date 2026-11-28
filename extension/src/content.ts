@@ -14,14 +14,36 @@ const REVIEW_WINDOW_MS = 15 * 60_000;
 async function main() {
   const adapter = detectAdapter(new URL(window.location.href));
   if (!adapter) return;
-  const payload = (await chrome.runtime.sendMessage({ type: "content:ready" })) as FillPayload | null;
+  const payload = (await chrome.runtime.sendMessage({ type: "content:ready" })) as (FillPayload & { confirmOnly?: undefined }) | { confirmOnly: true; applicationId: string } | null;
   if (!payload) return;
+  if (payload.confirmOnly) {
+    // The page after a navigating submit. Only the board's own confirmation address counts; text on a page proves nothing here.
+    if (!adapter.isConfirmationUrl(new URL(window.location.href))) return;
+    await chrome.runtime.sendMessage({
+      type: "content:report",
+      report: { applicationId: payload.applicationId, outcome: "submitted", filledFields: [], confirmationText: pageText(document).slice(0, 1000), submittedAt: new Date().toISOString() },
+    });
+    return;
+  }
+  const loadHref = window.location.href;
+  if (!payload.submit) {
+    // Review mode: the user presses the board's own submit button, possibly before the fill below finishes (a slow resume
+    // download). Once they do, tell the worker: from then on the claim is never released (a release offers Send again and
+    // would double-apply) and later pages are confirm-only. So the listeners go on before the fill, not after it.
+    const handOver = () => void chrome.runtime.sendMessage({ type: "content:handed", applicationId: payload.applicationId });
+    document.addEventListener("submit", handOver, true);
+    document.addEventListener("click", (e) => (e.target instanceof Element && e.target.closest(adapter.submitSelector) ? handOver() : undefined), true);
+  }
   const report: SubmissionReport = await fillApplication(payload);
 
-  if (!payload.submit && report.outcome === "failed") {
-    // Review mode: the user checks the filled form and presses the board's own submit button.
-    // When the board shows its confirmation, record the submission with what we filled.
-    const confirmed = await waitFor(() => adapter.isConfirmation(document, new URL(window.location.href)) || null, REVIEW_WINDOW_MS, 1000);
+  if (!payload.submit) {
+    // Same rule as the filler: only the board's confirmation address, reached after load, confirms. Page text never does
+    // (a description can say "application received"). Ashby confirms in place, so it reports nothing and settles as needs_check.
+    const confirmed = await waitFor(
+      () => (window.location.href !== loadHref && adapter.isConfirmationUrl(new URL(window.location.href)) ? true : null),
+      REVIEW_WINDOW_MS,
+      1000,
+    );
     if (!confirmed) return;
     await chrome.runtime.sendMessage({
       type: "content:report",

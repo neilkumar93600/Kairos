@@ -22,6 +22,8 @@ export type ExtensionMessage =
   | { type: "queue:get" }
   | { type: "queue:send"; applicationId: string; review: boolean }
   | { type: "content:ready" }
+  /** Review mode: the user pressed the form's submit. */
+  | { type: "content:handed"; applicationId: string }
   | { type: "content:report"; report: SubmissionReport };
 
 /** How one application ended. `unrecorded`: the employer confirmed it, our API did not take the report. `closed`: the tab closed first. */

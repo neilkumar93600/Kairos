@@ -8,6 +8,8 @@ export interface AtsFormAdapter {
   fieldAliases: Record<string, string[]>;
   resumeInputSelector: string;
   submitSelector: string;
+  /** True when the address alone says "application received" (Lever /thanks, Greenhouse /confirmation). Text never counts here. */
+  isConfirmationUrl(url: URL): boolean;
   /** True once the page shows the board's own "application received" state. */
   isConfirmation(doc: Document, url: URL): boolean;
 }

@@ -11,5 +11,6 @@ export const ashbyForm: AtsFormAdapter = {
   },
   resumeInputSelector: 'input[type=file][id*="resume" i], input[type=file][name*="resume" i]',
   submitSelector: 'button[type=submit], button[class*="submit" i]',
+  isConfirmationUrl: () => false, // Ashby confirms in place, so a page loaded after a submit proves nothing
   isConfirmation: (doc) => CONFIRMATION_TEXT.test(pageText(doc)),
 };

@@ -44,3 +44,11 @@ export const fetchQueue = () => call<{ queue: QueueItem[] }>("/api/extension/que
 
 export const sendReport = (report: SubmissionReport) =>
   call<{ status: string | null }>("/api/extension/report", { method: "POST", body: JSON.stringify(report) });
+
+/** INV-4: the first claim wins (409 for every other tab). Nothing is opened or filled before this succeeds. */
+export const claimApplication = (applicationId: string) =>
+  call<{ claimed: true }>("/api/extension/claim", { method: "POST", body: JSON.stringify({ applicationId }) });
+
+/** Gives the claim back when the tab never reported. Best effort: an unreleased claim expires on the server in 10 minutes. */
+export const releaseApplication = (applicationId: string) =>
+  call<{ released: boolean }>("/api/extension/release", { method: "POST", body: JSON.stringify({ applicationId }) }).catch(() => undefined);

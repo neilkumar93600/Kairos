@@ -12,5 +12,6 @@ export const greenhouseForm: AtsFormAdapter = {
   },
   resumeInputSelector: 'input[type=file][id*="resume" i], input[type=file][name*="resume" i]',
   submitSelector: 'button[type=submit], input[type=submit], #submit_app',
+  isConfirmationUrl: (url) => url.pathname.includes("confirmation"),
   isConfirmation: (doc, url) => url.pathname.includes("confirmation") || CONFIRMATION_TEXT.test(pageText(doc)),
 };
