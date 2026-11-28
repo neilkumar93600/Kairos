@@ -33,17 +33,14 @@
   .auth .auth-link::before { content: ""; position: absolute; inset: -10px -4px; }
   .auth .auth-link:disabled { opacity: 0.5; cursor: default; }
   .auth .auth__switch { font: 400 15px / 1.4 var(--font-ui); color: var(--body); }
-  .auth .auth__agreement { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; color: var(--body); font-size: 14px; line-height: 1.5; }
-  .auth .auth__agreement input { flex: 0 0 18px; width: 18px; height: 18px; margin-top: 2px; accent-color: var(--ink); cursor: pointer; }
-  .auth .auth__agreement label { cursor: pointer; }
-  .auth .auth__agreement a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+  .auth .auth__terms { color: var(--body); font-size: 14px; line-height: 1.5; text-align: center; }
   .auth .auth__footer { padding: 0 24px max(24px, env(safe-area-inset-bottom)); }
   .auth .auth__footer nav { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 20px; }
   .auth .auth__footer a { display: inline-flex; align-items: center; min-height: 32px; color: var(--faint); font-size: 13px; text-underline-offset: 4px; }
   .auth :is(a, button, input):focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
   .auth :is(a, button):active:not(:disabled) { opacity: 0.72; }
   @media (hover: hover) and (pointer: fine) {
-    .auth :is(.auth-link, .lp-link, .auth__agreement a):hover { text-decoration-thickness: 2px; }
+    .auth :is(.auth-link, .lp-link, .auth__terms a):hover { text-decoration-thickness: 2px; }
     .auth .auth__footer a:hover { color: var(--ink); text-decoration: underline; }
   }
 
