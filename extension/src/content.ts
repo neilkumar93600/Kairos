@@ -26,14 +26,17 @@ async function main() {
     return;
   }
   const loadHref = window.location.href;
-  const report: SubmissionReport = await fillApplication(payload);
-
   if (!payload.submit) {
-    // Review mode: the user checks the filled form and presses the board's own submit button. Once they do, tell the worker:
-    // from then on the claim is never released (a release offers Send again and would double-apply) and later pages are confirm-only.
+    // Review mode: the user presses the board's own submit button, possibly before the fill below finishes (a slow resume
+    // download). Once they do, tell the worker: from then on the claim is never released (a release offers Send again and
+    // would double-apply) and later pages are confirm-only. So the listeners go on before the fill, not after it.
     const handOver = () => void chrome.runtime.sendMessage({ type: "content:handed", applicationId: payload.applicationId });
     document.addEventListener("submit", handOver, true);
     document.addEventListener("click", (e) => (e.target instanceof Element && e.target.closest(adapter.submitSelector) ? handOver() : undefined), true);
+  }
+  const report: SubmissionReport = await fillApplication(payload);
+
+  if (!payload.submit) {
     // Same rule as the filler: only the board's confirmation address, reached after load, confirms. Page text never does
     // (a description can say "application received"). Ashby confirms in place, so it reports nothing and settles as needs_check.
     const confirmed = await waitFor(

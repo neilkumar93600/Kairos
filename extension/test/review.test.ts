@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 // Review mode (side panel "Review"): the extension fills, the user presses the board's own submit. Ported from the R3d probe.
 // Each test uses its own application id: content scripts from earlier tests keep polling, and the worker ignores a report or a
 // handover for an application it did not open in that tab.
-const ITEM = { applicationId: "", applyUrl: "", title: "Engineer", answers: [{ fieldKey: "email", label: "Email", value: "a@b.co", source: "profile" }], resumeLines: [], coverLetter: null };
+const ITEM = { applicationId: "", applyUrl: "", title: "Engineer", answers: [{ fieldKey: "email", label: "Email", value: "a@b.co", source: "profile" }], resumeLines: [], coverLetter: null, resumePdfUrl: undefined as string | undefined };
 const reports: Array<{ applicationId: string; outcome: string }> = [];
 const calls: string[] = [];
 let onMessage: (m: unknown, s: unknown, r: (v: unknown) => void) => boolean;
@@ -13,19 +13,22 @@ const toBackground = (m: unknown) => new Promise((resolve) => onMessage(m, { tab
 const location = { href: "" };
 const settle = () => new Promise((r) => setTimeout(r, 50));
 // A description that already reads like a confirmation (P1).
-const PAGE = `<h1>Engineer</h1><p>Thank you for applying! Every application received is read by a person.</p><form><input name=email><button type=submit>Submit application</button></form>`;
+const PAGE = `<h1>Engineer</h1><p>Thank you for applying! Every application received is read by a person.</p><form><input name=email><input type=file name=resume><button type=submit>Submit application</button></form>`;
 
 /** Opens `applyUrl` in review mode and runs the content script on it. */
-async function review(applyUrl: string) {
+async function review(applyUrl: string, opts: { slowResume?: boolean } = {}) {
   reports.length = 0;
   calls.length = 0;
   for (const k of Object.keys(session)) delete session[k];
   vi.resetModules();
   ITEM.applicationId = crypto.randomUUID();
   ITEM.applyUrl = applyUrl;
+  ITEM.resumePdfUrl = opts.slowResume ? "https://r2.example.com/resume.pdf" : undefined;
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     const path = new URL(url).pathname;
     calls.push(path);
+    // A slow resume download that then fails: the fill is still running for 1.5 s.
+    if (path === "/resume.pdf") return new Promise((r) => setTimeout(() => r(new Response("x", { status: 500 })), 1500));
     if (path === "/api/extension/queue") return Response.json({ queue: [ITEM] });
     if (path === "/api/extension/report") reports.push(JSON.parse(String(init?.body)));
     return Response.json({ claimed: true, released: true, status: "submitted" });
@@ -101,5 +104,23 @@ describe("closing a review tab", () => {
     await settle();
     expect(calls).not.toContain("/api/extension/release");
     expect(mine()).toEqual([]);
+  });
+
+  it("after the user pressed submit while the fill was still attaching the resume (R3e E1): no release", async () => {
+    await review(BOARDS.ashby, { slowResume: true });
+    (document.querySelector("button") as HTMLButtonElement).click(); // ~50 ms in; the resume fetch takes 1.5 s
+    await new Promise((r) => setTimeout(r, 2000));
+    expect(calls).toContain("/resume.pdf");
+    onRemoved(7);
+    await settle();
+    expect(calls).not.toContain("/api/extension/release");
+  });
+
+  it("after a second page load in the tab (content:handed lost while the form unloaded): confirm-only, no release", async () => {
+    await review(BOARDS.ashby); // the worker never hears of a click
+    expect(await toBackground({ type: "content:ready" })).toEqual({ confirmOnly: true, applicationId: ITEM.applicationId });
+    onRemoved(7);
+    await settle();
+    expect(calls).not.toContain("/api/extension/release");
   });
 });

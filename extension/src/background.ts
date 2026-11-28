@@ -11,8 +11,9 @@ const pendingKey = (tabId: number) => `pending:${tabId}`;
 /**
  * `handed`: the form may have been submitted, either a submit-mode payload went to the page (the filler clicks) or, in review
  * mode, the user pressed the form's submit. From then on the claim is never released.
+ * `served`: a review payload went to the page; the next page load in that tab counts as handed.
  */
-type Pending = FillPayload & { handed?: boolean };
+type Pending = FillPayload & { handed?: boolean; served?: boolean };
 const remember = (tabId: number, payload: Pending) => chrome.storage.session.set({ [pendingKey(tabId)]: payload });
 const forget = (tabId: number) => chrome.storage.session.remove(pendingKey(tabId));
 async function recall(tabId: number): Promise<Pending | null> {
@@ -81,12 +82,16 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, respond
         if (tabId === undefined || !stored) return null;
         // A page loaded after the submit (Lever /thanks): confirm only, never fill or click again. The content script reports
         // submitted if this page's address is the board's confirmation address.
-        if (stored.handed) return { confirmOnly: true, applicationId: stored.applicationId };
-        if (stored.submit) {
-          // Once only: a page after an in-board navigation (a confirmation page) must not get the payload and click again.
-          // The record keeps just what a report check needs, not the answers.
-          await remember(tabId, { applicationId: stored.applicationId, submit: true, handed: true, answers: [], resumeLines: [], coverLetter: null });
+        // A review tab's second page load counts as handed too: any navigation there may follow the user's submit, and the
+        // content:handed message can be lost while the form page unloads.
+        if (stored.handed || stored.served) {
+          if (!stored.handed) await remember(tabId, { ...stored, handed: true });
+          return { confirmOnly: true, applicationId: stored.applicationId };
         }
+        // Once only: a page after an in-board navigation (a confirmation page) must not get the payload and fill or click again.
+        // The record keeps just what a report check needs, not the answers. Submit mode is handed from here (the filler clicks).
+        const once = { applicationId: stored.applicationId, submit: stored.submit, answers: [], resumeLines: [], coverLetter: null };
+        await remember(tabId, stored.submit ? { ...once, handed: true } : { ...once, served: true });
         return stored;
       }
       case "content:handed": {
