@@ -18,6 +18,8 @@ RUN npm ci --ignore-scripts --workspace @auto-career/server --include-workspace-
  && npm rebuild esbuild
 COPY shared shared
 COPY server server
+# cloud-apply.ts imports the ATS adapters from the extension (same as server/Dockerfile).
+COPY extension/src/ats extension/src/ats
 RUN npm run build --workspace @auto-career/server
 
 FROM base AS prod-deps
